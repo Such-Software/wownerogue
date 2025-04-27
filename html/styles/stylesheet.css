@@ -1,0 +1,199 @@
+/* Basic body styling */
+body {
+    background-color: #222;
+    color: #eee;
+    font-family: sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex; /* Use flexbox to center wrapper */
+    justify-content: center;
+    align-items: flex-start; /* Align wrapper to top */
+    min-height: 100vh;
+}
+
+/* Wrapper grid container */
+.wrapper {
+    display: grid;
+    /* Define grid areas */
+    grid-template-areas:
+        "header header header"
+        "status game game"
+        "chat game game"
+        "chat game game"
+        "chat input input"
+        "footer footer footer";
+    /* Define column sizes: status/chat column, game columns */
+    grid-template-columns: 250px 1fr 1fr; /* Left sidebar fixed width, game takes remaining space */
+    /* Define row sizes */
+    grid-template-rows: auto auto 1fr 1fr auto auto; /* Header, status, chat rows, input, footer */
+    gap: 10px; /* Spacing between grid items */
+    padding: 10px;
+    max-width: 1400px;
+    width: 95%;
+    border: 1px solid #444;
+    background-color: #333;
+    height: 95vh; /* Set height to fill most of viewport */
+}
+
+/* Assign elements to grid areas */
+.header { 
+    grid-area: header; 
+    background-color: #444; 
+    padding: 5px; 
+}
+
+.status { 
+    grid-area: status; 
+    background-color: #444;
+    padding: 10px;
+    font-weight: bold;
+}
+
+.chat { 
+    grid-area: chat; 
+    background-color: #444;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Prevent overflow */
+}
+
+.rotdis {
+    grid-area: game;
+    background-color: #111;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+/* Make ROT.js canvas display properly */
+.rotdis canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain; /* Preserve aspect ratio */
+}
+
+#messageInput { 
+    grid-area: input; 
+    background-color: #444; 
+    padding: 10px; 
+}
+
+.footer { 
+    grid-area: footer; 
+    background-color: #444; 
+    padding: 5px; 
+    text-align: center; 
+}
+
+/* Header styling */
+.header h1 {
+    margin: 0;
+    padding: 5px;
+    text-align: center;
+}
+
+/* Status styling */
+#blockheight {
+    color: lightblue;
+}
+
+/* Chat box styling */
+#messageBox {
+    flex-grow: 1; /* Allow message box to fill chat area */
+    border: 1px solid #555;
+    background-color: #2a2a2a;
+    overflow-y: auto; /* Enable vertical scrolling */
+    height: 100%; /* Fill available height */
+    margin-bottom: 5px;
+}
+
+#messages {
+    list-style-type: none;
+    margin: 0;
+    padding: 5px;
+}
+
+#messages li {
+    padding: 2px 0;
+    border-bottom: 1px dashed #444;
+    font-size: 0.9em;
+}
+
+/* Chat input styling */
+#chatForm {
+    display: flex;
+}
+
+#chatInput {
+    flex-grow: 1;
+    padding: 5px;
+    border: 1px solid #555;
+    background-color: #eee;
+    color: #111;
+}
+
+#chatForm button {
+    padding: 5px 10px;
+    border: 1px solid #555;
+    background-color: #666;
+    color: #eee;
+    cursor: pointer;
+}
+
+#chatForm button:hover {
+    background-color: #777;
+}
+
+/* Teletype styling */
+#staticbanner {
+   margin: 0;
+   padding: 5px;
+   text-align: left;
+   font-size: 24px;
+   color: #fff;
+}
+
+#banner {
+   display: inline-block;
+   min-height: 1em;
+}
+
+#bannercursor {
+   display: inline-block;
+   color: #fff;
+}
+
+/* Add these styles for chat messages */
+
+#messages li.self-command {
+    color: #aaf;
+    font-style: italic;
+}
+
+#messages li.payment {
+    color: #ff0;
+    font-weight: bold;
+    border-left: 3px solid #ff0;
+    padding-left: 5px;
+    margin: 5px 0;
+}
+
+#messages li.win {
+    color: #0f0;
+    font-weight: bold;
+}
+
+#messages li.lose {
+    color: #f00;
+    font-weight: bold;
+}
+
+#messages li.game-start {
+    color: #0ff;
+    font-weight: bold;
+    margin: 5px 0;
+}
+

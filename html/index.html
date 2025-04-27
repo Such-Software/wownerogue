@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+   <head>
+      <title>Wowgue</title>
+      <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
+      <link rel="icon" type="image/x-icon" href="favicon.ico">
+   </head>
+   <body>
+      <div class='wrapper'>
+         <div class='header'>
+            <h1 id='staticbanner'><span id='banner'></span><span id='bannercursor'></span></h1>
+         </div>
+         <!-- Status area (block height) -->
+         <div class='status'>
+            Block height: <span id="blockheight">0</span>
+         </div>
+         <!-- Chat area -->
+         <div class='chat'>
+            <div id='messageBox'>
+               <ul id='messages'>
+                  <li>Welcome to Wowgue!</li>
+                  <li>Type 'hello' to begin</li>
+               </ul>
+            </div>
+         </div>
+         <!-- Main game display -->
+         <div class='rotdis'></div>
+         <!-- Input area -->
+         <div id='messageInput'>
+            <form action="" id='chatForm'>
+               <input autocomplete="off" id='chatInput' />
+               <button>Send</button>
+            </form>
+         </div>
+         <div class="footer">
+            footer
+         </div>
+      </div>
+      
+      <script src="js/jquery-3.4.1.min.js"></script>
+      <script src="js/options.js"></script>
+      <script src="js/game.js"></script>
+      <script src="js/rot.min.js"></script>
+      <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+      <script src="js/teletype.js"></script>
+      <script>
+         // Initialize socket connection
+         var socket = io();
+         
+         // Socket event listeners
+         $(function() {
+             // Welcome message - when server confirms connection
+             socket.on('welcome', function(msg) {
+                 console.log('Received welcome:', msg);
+                 $('#messages').append($('<li>').text("Connected to server!"));
+                 scrollChat();
+             });
+             
+             // Blockheight update
+             socket.on('blockheight', function(msg) {
+                 $('#blockheight').text(msg);
+             });
+             
+             // Regular chat messages
+             socket.on('message', function(msg) {
+                 console.log('Received message:', msg);
+                 $('#messages').append($('<li>').text(msg));
+                 scrollChat();
+             });
+             
+             // Payment request (we'll handle this later)
+             socket.on('payment_request', function(data) {
+                 console.log('Payment request:', data);
+                 $('#messages').append($('<li class="payment">').text(
+                     "Send between " + data.minFee + " and " + data.maxFee + " WOW to: " + data.address
+                 ));
+                 scrollChat();
+             });
+             
+             // Game start event
+             socket.on('game_start', function(data) {
+                 console.log('Game starting:', data);
+                 $('#messages').append($('<li class="game-start">').text("Starting game..."));
+                 scrollChat();
+                 
+                 // Start the game with the received data
+                 Game.startGame(data);
+                 Game._drawGameScreen(); // Draw the initial game screen
+             });
+             
+             // Game update event
+             socket.on('game_update', function(data) {
+                 console.log('Game update:', data);
+                 
+                 // Update game state
+                 Game._player = data.player;
+                 Game._monster = data.monster;
+                 
+                 // Redraw the game screen
+                 Game._drawGameScreen();
+             });
+             
+             // Game over event
+             socket.on('game_over', function(data) {
+                 console.log('Game over:', data);
+                 
+                 // Handle game over state
+                 if (data.status === 'won') {
+                     Game._drawWinScreen(data.hasTreasure);
+                     $('#messages').append($('<li class="win">').text(
+                         "You won! " + (data.hasTreasure ? "You found the treasure!" : "")
+                     ));
+                 } else {
+                     Game._drawLoseScreen(data.reason);
+                     $('#messages').append($('<li class="lose">').text(
+                         "Game over: " + data.reason
+                     ));
+                 }
+                 scrollChat();
+             });
+             
+             // Handle chat form submission
+             $('#chatForm').submit(function(e) {
+                 e.preventDefault(); // Prevent page reload
+                 var message = $('#chatInput').val();
+                 
+                 if (message.trim() !== '') {
+                     // Send message to server
+                     socket.emit('chat message', message);
+                     
+                     // Special handling for commands
+                     if (message.toLowerCase() === 'enter') {
+                         $('#messages').append($('<li class="self-command">').text(
+                             "Requesting to enter the dungeon..."
+                         ));
+                     }
+                     
+                     // Clear input field
+                     $('#chatInput').val('');
+                 }
+                 return false;
+             });
+             
+             // Helper function to scroll chat to bottom
+             function scrollChat() {
+                 var messageBox = $('#messageBox');
+                 messageBox.scrollTop(messageBox.prop("scrollHeight"));
+             }
+         });
+      </script>
+      
+      <!-- Game initialization -->
+      <script>
+         // Function to initialize the game and append its display
+         function initializeAndAppendDisplay() {
+            console.log("Initializing Game...");
+            Game.init();
+            
+            if (!Game.getDisplay()) {
+               console.error("Game display object not found after Game.init(). Cannot append.");
+               return;
+            }
+            
+            var displayContainer = Game.getDisplay().getContainer();
+            var targetElement = $('.rotdis');
+            if (targetElement.length > 0) {
+               targetElement.append(displayContainer);
+               console.log("ROT display appended to .rotdis");
+            } else {
+               console.error("Target element '.rotdis' not found.");
+               document.body.appendChild(displayContainer);
+            }
+         }
+         
+         $(function() {
+             // Wait for tileset to be loaded, then initialize game
+             if (tileSetLoaded) {
+                initializeAndAppendDisplay();
+             } else {
+                console.log("Tileset not loaded yet, waiting for onload...");
+                tileSet.addEventListener('load', function() {
+                    initializeAndAppendDisplay();
+                });
+             }
+         });
+      </script>
+      <script>
+         $(function() {
+            // Initialize teletype only after DOM is ready
+            $('#banner').teletype({
+               text: ["Welcome traveler...", "You have arrived at...", "The Wowngeon"]
+            });
+            $('#bannercursor').teletype({
+               text: ['|', ' '], 
+               delay: 0, 
+               pause: 500
+            });
+            
+            // Add timeout to change text after animation completes
+            setTimeout(function() {
+               $('#banner, #bannercursor').remove();
+               $('#staticbanner').text("The Wowngeon");
+            }, 14340);
+         });
+      </script>
+   </body>
+</html>
