@@ -65,14 +65,16 @@ function generateDungeon(width, height) {
 class Game {
   constructor(socketId, mapWidth, mapHeight) {
     this.socketId = socketId;
-    this.width = mapWidth || 50;
-    this.height = mapHeight || 30;
+    this.width = mapWidth || 25; // Reduced default size to match client display
+    this.height = mapHeight || 19; // Reduced default size to match client display
     this.gameState = 'waiting'; // waiting, active, won, lost
     this.startBlock = null;
     this.dungeon = null;
     this.player = { x: 0, y: 0, hasKey: false, hasTreasure: false };
     this.monster = { x: 0, y: 0 };
     this.fee = 0; // Amount player paid
+    this.visibleTiles = {}; // Will store visible tiles
+    this.fov = null; // FOV calculator
     this.generateDungeon();
   }
   
@@ -92,6 +94,31 @@ class Game {
       this.monster.x = center[0];
       this.monster.y = center[1];
     }
+    
+    // Initialize FOV calculator
+    this.fov = new ROT.FOV.PreciseShadowcasting(
+      (x, y) => {
+        // Return true if the tile is transparent (can see through it)
+        return this.dungeon.map[y] && this.dungeon.map[y][x] === 0;
+      }
+    );
+    
+    // Calculate initial FOV
+    this.updateFOV();
+    
+    // Set game state to active
+    this.gameState = 'active';
+  }
+  
+  updateFOV() {
+    // Reset visible tiles
+    this.visibleTiles = {};
+    
+    // Calculate new visible tiles
+    this.fov.compute(this.player.x, this.player.y, 10, (x, y) => {
+      if (!this.visibleTiles[y]) this.visibleTiles[y] = {};
+      this.visibleTiles[y][x] = this.dungeon.map[y][x];
+    });
   }
   
   movePlayer(dx, dy) {
@@ -99,9 +126,12 @@ class Game {
     const newY = this.player.y + dy;
     
     // Check if the move is valid (not into a wall)
-    if (this.dungeon.map[newY][newX] === 0) {
+    if (this.dungeon.map[newY] && this.dungeon.map[newY][newX] === 0) {
       this.player.x = newX;
       this.player.y = newY;
+      
+      // Update FOV after movement
+      this.updateFOV();
       
       // Check if player found treasure
       if (this.dungeon.treasure && 
@@ -169,16 +199,82 @@ class Game {
     }
   }
   
+  // Replace getState() method with this relative-coordinates version
   getState() {
+    // Only include visible information and translate to player-relative coordinates
+    const playerX = this.player.x;
+    const playerY = this.player.y;
+    
+    // Create relative FOV map
+    const relativeVisibleTiles = {};
+    for (const y in this.visibleTiles) {
+      for (const x in this.visibleTiles[y]) {
+        const relX = parseInt(x) - playerX;
+        const relY = parseInt(y) - playerY;
+        
+        // Initialize row if needed
+        if (!relativeVisibleTiles[relY]) {
+          relativeVisibleTiles[relY] = {};
+        }
+        
+        // Add relative position tile
+        relativeVisibleTiles[relY][relX] = this.visibleTiles[y][x];
+      }
+    }
+    
+    // Create relative entity positions only if visible in FOV
+    const entityInfo = {};
+    
+    // Check if monster is visible
+    if (this.visibleTiles[this.monster.y] && 
+        this.visibleTiles[this.monster.y][this.monster.x] !== undefined) {
+      entityInfo.monster = {
+        x: this.monster.x - playerX,
+        y: this.monster.y - playerY
+      };
+    }
+    
+    // Check if entrance is visible
+    if (this.dungeon.entrance && 
+        this.visibleTiles[this.dungeon.entrance[1]] && 
+        this.visibleTiles[this.dungeon.entrance[1]][this.dungeon.entrance[0]] !== undefined) {
+      entityInfo.entrance = [
+        this.dungeon.entrance[0] - playerX,
+        this.dungeon.entrance[1] - playerY
+      ];
+    }
+    
+    // Check if exit is visible
+    if (this.dungeon.exit && 
+        this.visibleTiles[this.dungeon.exit[1]] && 
+        this.visibleTiles[this.dungeon.exit[1]][this.dungeon.exit[0]] !== undefined) {
+      entityInfo.exit = [
+        this.dungeon.exit[0] - playerX,
+        this.dungeon.exit[1] - playerY
+      ];
+    }
+    
+    // Check if treasure is visible
+    if (this.dungeon.treasure && 
+        this.visibleTiles[this.dungeon.treasure[1]] && 
+        this.visibleTiles[this.dungeon.treasure[1]][this.dungeon.treasure[0]] !== undefined) {
+      entityInfo.treasure = [
+        this.dungeon.treasure[0] - playerX,
+        this.dungeon.treasure[1] - playerY
+      ];
+    }
+    
     return {
       gameState: this.gameState,
-      player: this.player,
-      monster: this.monster,
-      map: this.dungeon.map,
-      entrance: this.dungeon.entrance,
-      exit: this.dungeon.exit,
-      treasure: this.dungeon.treasure,
-      hasTreasure: this.player.hasTreasure
+      player: {
+        // Player is always at relative (0,0)
+        x: 0,
+        y: 0,
+        hasKey: this.player.hasKey || false,
+        hasTreasure: this.player.hasTreasure || false
+      },
+      visibleTiles: relativeVisibleTiles,
+      ...entityInfo  // Only include visible entities
     };
   }
 }

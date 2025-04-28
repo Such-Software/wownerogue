@@ -1,3 +1,8 @@
+const Game = require('./game'); // Add this import at the top
+
+// Global users registry
+const userRegistry = new Map();
+
 function User(socketid, ip) {
     this.id = null;
     this.socketid = socketid;
@@ -12,34 +17,48 @@ function User(socketid, ip) {
     this.game = null; // Reference to current game
     this.paymentAmount = 0;
     this.paymentVerified = false;
+    
+    // Auto-register in the registry
+    userRegistry.set(socketid, this);
+    console.log(`User registered with socket ID: ${socketid}`);
 }
 
-User.prototype.startGame = function(mapWidth, mapHeight) {
-    const Game = require('./game');
-    this.game = new Game(this.socketid, mapWidth, mapHeight);
-    return this.game;
-};
+// Add lookup function
+function getUserBySocketId(socketId) {
+    const user = userRegistry.get(socketId);
+    console.log(`Looking up user ${socketId}: ${user ? "FOUND" : "NOT FOUND"}`);
+    return user;
+}
 
-User.prototype.verifyPayment = function(amount) {
-    this.paymentAmount = amount;
-    this.paymentVerified = true;
-    return true;
-};
+// Add function to remove user
+function removeUser(socketId) {
+    const removed = userRegistry.delete(socketId);
+    console.log(`User ${socketId} removed: ${removed ? "YES" : "NO"}`);
+    return removed;
+}
 
-User.prototype.calculateReward = function() {
-    if (!this.game || this.game.gameState !== 'won') return 0;
-    
-    // Base reward is 2x the entrance fee
-    let reward = this.paymentAmount * 2;
-    
-    // Bonus for finding treasure
-    if (this.game.player.hasTreasure) {
-        reward = this.paymentAmount * 5;
+// Get all users as array
+function getAllUsers() {
+    return Array.from(userRegistry.values());
+}
+
+// Add this method to your User function/class
+User.prototype.startGame = function(width, height) {
+    console.log(`Creating new game for user ${this.socketid} with dimensions ${width}x${height}`);
+    try {
+        this.game = new Game(this.socketid, width, height);
+        return this.game;
+    } catch (err) {
+        console.error("Error creating game:", err);
+        return null;
     }
-    
-    return reward;
 };
+
+// Rest of your existing code...
 
 module.exports = {
-  User: User
+    User: User,
+    getUserBySocketId: getUserBySocketId,
+    removeUser: removeUser,
+    getAllUsers: getAllUsers
 };

@@ -1,207 +1,755 @@
 <!DOCTYPE html>
 <html>
-   <head>
-      <title>Wowgue</title>
-      <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
-      <link rel="icon" type="image/x-icon" href="favicon.ico">
-   </head>
-   <body>
-      <div class='wrapper'>
-         <div class='header'>
-            <h1 id='staticbanner'><span id='banner'></span><span id='bannercursor'></span></h1>
-         </div>
-         <!-- Status area (block height) -->
-         <div class='status'>
-            Block height: <span id="blockheight">0</span>
-         </div>
-         <!-- Chat area -->
-         <div class='chat'>
-            <div id='messageBox'>
-               <ul id='messages'>
-                  <li>Welcome to Wowgue!</li>
-                  <li>Type 'hello' to begin</li>
-               </ul>
+<head>
+    <title>Wowgue - A Wownero Roguelike</title>
+    <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    
+    <!-- First load socket.io -->
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    
+    <!-- THEN initialize the socket -->
+    <script>
+    // Create socket connection BEFORE loading game.js
+    window.socket = io();
+    </script>
+    
+    <!-- Only AFTER socket is initialized, load other scripts -->
+    <script src="js/jquery-3.4.1.min.js"></script>
+    <script src="js/rot.min.js"></script>
+    <script src="js/options.js"></script>
+    <script src="js/game.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header area -->
+        <header class="banner">
+            <div id="staticbanner">
+                <span id="banner"></span><span id="bannercursor">|</span>
             </div>
-         </div>
-         <!-- Main game display -->
-         <div class='rotdis'></div>
-         <!-- Input area -->
-         <div id='messageInput'>
-            <form action="" id='chatForm'>
-               <input autocomplete="off" id='chatInput' />
-               <button>Send</button>
+        </header>
+        
+        <!-- Status area for block height -->
+        <div class="status">
+            <div id="blockHeight">Block Height: <span id="heightValue">Loading...</span></div>
+            <div id="connectionStatus">Status: <span id="statusValue">Connecting...</span></div>
+        </div>
+        
+        <!-- Game display -->
+        <div class="rotdis"></div>
+        
+        <!-- Chat messages area -->
+        <div class="chat-container">
+            <div id="messageBox">
+                <ul id="messages"></ul>
+            </div>
+        </div>
+        
+        <!-- Chat input in its own row -->
+        <div class="input-container">
+            <form id="chatForm" action="">
+                <input id="chatInput" autocomplete="off" placeholder="Type a command..." />
+                <button type="submit">Send</button>
             </form>
-         </div>
-         <div class="footer">
-            footer
-         </div>
-      </div>
-      
-      <script src="js/jquery-3.4.1.min.js"></script>
-      <script src="js/options.js"></script>
-      <script src="js/game.js"></script>
-      <script src="js/rot.min.js"></script>
-      <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
-      <script src="js/teletype.js"></script>
-      <script>
-         // Initialize socket connection
-         var socket = io();
-         
-         // Socket event listeners
-         $(function() {
-             // Welcome message - when server confirms connection
-             socket.on('welcome', function(msg) {
-                 console.log('Received welcome:', msg);
-                 $('#messages').append($('<li>').text("Connected to server!"));
-                 scrollChat();
-             });
-             
-             // Blockheight update
-             socket.on('blockheight', function(msg) {
-                 $('#blockheight').text(msg);
-             });
-             
-             // Regular chat messages
-             socket.on('message', function(msg) {
-                 console.log('Received message:', msg);
-                 $('#messages').append($('<li>').text(msg));
-                 scrollChat();
-             });
-             
-             // Payment request (we'll handle this later)
-             socket.on('payment_request', function(data) {
-                 console.log('Payment request:', data);
-                 $('#messages').append($('<li class="payment">').text(
-                     "Send between " + data.minFee + " and " + data.maxFee + " WOW to: " + data.address
-                 ));
-                 scrollChat();
-             });
-             
-             // Game start event
-             socket.on('game_start', function(data) {
-                 console.log('Game starting:', data);
-                 $('#messages').append($('<li class="game-start">').text("Starting game..."));
-                 scrollChat();
-                 
-                 // Start the game with the received data
-                 Game.startGame(data);
-                 Game._drawGameScreen(); // Draw the initial game screen
-             });
-             
-             // Game update event
-             socket.on('game_update', function(data) {
-                 console.log('Game update:', data);
-                 
-                 // Update game state
-                 Game._player = data.player;
-                 Game._monster = data.monster;
-                 
-                 // Redraw the game screen
-                 Game._drawGameScreen();
-             });
-             
-             // Game over event
-             socket.on('game_over', function(data) {
-                 console.log('Game over:', data);
-                 
-                 // Handle game over state
-                 if (data.status === 'won') {
-                     Game._drawWinScreen(data.hasTreasure);
-                     $('#messages').append($('<li class="win">').text(
-                         "You won! " + (data.hasTreasure ? "You found the treasure!" : "")
-                     ));
-                 } else {
-                     Game._drawLoseScreen(data.reason);
-                     $('#messages').append($('<li class="lose">').text(
-                         "Game over: " + data.reason
-                     ));
-                 }
-                 scrollChat();
-             });
-             
-             // Handle chat form submission
-             $('#chatForm').submit(function(e) {
-                 e.preventDefault(); // Prevent page reload
-                 var message = $('#chatInput').val();
-                 
-                 if (message.trim() !== '') {
-                     // Send message to server
-                     socket.emit('chat message', message);
-                     
-                     // Special handling for commands
-                     if (message.toLowerCase() === 'enter') {
-                         $('#messages').append($('<li class="self-command">').text(
-                             "Requesting to enter the dungeon..."
-                         ));
-                     }
-                     
-                     // Clear input field
-                     $('#chatInput').val('');
-                 }
-                 return false;
-             });
-             
-             // Helper function to scroll chat to bottom
-             function scrollChat() {
-                 var messageBox = $('#messageBox');
-                 messageBox.scrollTop(messageBox.prop("scrollHeight"));
-             }
-         });
-      </script>
-      
-      <!-- Game initialization -->
-      <script>
-         // Function to initialize the game and append its display
-         function initializeAndAppendDisplay() {
-            console.log("Initializing Game...");
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move
+        </div>
+    </div>
+
+    <!-- Add teletype JS implementation -->
+    <script>
+    // Simple teletype implementation
+    (function($) {
+        $.fn.teletype = function(options) {
+            var settings = $.extend({
+                text: [],
+                typeDelay: 100,
+                backDelay: 50,
+                pause: 1000,
+                loop: true,
+                cursor: ''
+            }, options);
+            
+            return this.each(function() {
+                var $el = $(this);
+                var currentTextIndex = 0;
+                var currentCharIndex = 0;
+                var isTyping = true;
+                
+                function type() {
+                    var currentText = settings.text[currentTextIndex];
+                    
+                    if (isTyping) {
+                        // Typing forward
+                        if (currentCharIndex < currentText.length) {
+                            $el.text($el.text() + currentText.charAt(currentCharIndex));
+                            currentCharIndex++;
+                            setTimeout(type, settings.typeDelay);
+                        } else {
+                            // Reached end of text, pause before backspacing
+                            isTyping = false;
+                            setTimeout(type, settings.pause);
+                        }
+                    } else {
+                        // Backspacing
+                        if (currentCharIndex > 0) {
+                            $el.text($el.text().slice(0, -1));
+                            currentCharIndex--;
+                            setTimeout(type, settings.backDelay);
+                        } else {
+                            // Finished backspacing, move to next text
+                            isTyping = true;
+                            currentTextIndex = (currentTextIndex + 1) % settings.text.length;
+                            if (currentTextIndex === 0 && !settings.loop) {
+                                // Stop if we've gone through all texts and not looping
+                                return;
+                            }
+                            setTimeout(type, settings.typeDelay);
+                        }
+                    }
+                }
+                
+                // Start typing
+                type();
+            });
+        };
+    })(jQuery);
+    
+    // Cursor blink effect
+    (function($) {
+        $.fn.blink = function(options) {
+            var settings = $.extend({
+                text: ['|', ' '],
+                delay: 500
+            }, options);
+            
+            return this.each(function() {
+                var $el = $(this);
+                var currentIndex = 0;
+                
+                function blink() {
+                    $el.text(settings.text[currentIndex]);
+                    currentIndex = (currentIndex + 1) % settings.text.length;
+                    setTimeout(blink, settings.delay);
+                }
+                
+                blink();
+            });
+        };
+    })(jQuery);
+    </script>
+    
+    <!-- Initialize teletype animation -->
+    <script>
+    $(function() {
+        $('#banner').teletype({
+            text: ["Welcome traveler...", "You have arrived at...", "The Wowngeon"],
+            typeDelay: 100,
+            backDelay: 50,
+            pause: 1500
+        });
+        
+        $('#bannercursor').blink({
+            text: ['|', ' '],
+            delay: 500
+        });
+        
+        // After animations are complete, set static text
+        setTimeout(function() {
+            $('#banner, #bannercursor').fadeOut(500, function() {
+                $('#staticbanner').text("THE WOWNGEON");
+            });
+        }, 14000);
+    });
+    </script>
+
+    <!-- Global scroll helper function -->
+    <script>
+    function scrollChat() {
+        var messageBox = $('#messageBox');
+        messageBox.scrollTop(messageBox.prop("scrollHeight"));
+    }
+    </script>
+
+    <script>
+    $(function() {
+        // Socket event listeners
+        socket.on('connect', function() {
+            console.log("Connected with socket ID:", socket.id);
+            
+            // Tell server our client ID
+            socket.emit('register_client', {
+                clientId: socket.id,
+                userAgent: navigator.userAgent
+            });
+        });
+        
+        socket.on('welcome', function(msg) {
+            $('#messages').append($('<li>').text("Connected to server!"));
+            scrollChat();
+        });
+        
+        socket.on('message', function(msg) {
+            $('#messages').append($('<li>').text(msg));
+            scrollChat();
+        });
+        
+        // Critical game events
+        // Replace the game_start handler with this improved version
+        socket.on('game_start', function(data) {
+            console.log("🎮 Received game_start broadcast:", data);
+            
+            // Log all socketIds for debugging
+            console.log("Current socket ID:", socket.id);
+            console.log("Target socket ID:", data.targetSocket);
+            
+            // Check if this event is for us
+            const isForUs = !data.targetSocket || data.targetSocket === socket.id;
+            console.log("Is this event for us?", isForUs ? "YES" : "NO");
+            
+            // Only process if directed at us or broadcast
+            if (!isForUs) {
+                console.log("Ignoring game_start message meant for another client");
+                return;
+            }
+            
+            // Check for required data
+            if (!data) {
+                console.error("❌ Error: Received empty game data!");
+                $('#messages').append($('<li class="error">').text("Error: No game data received"));
+                return;
+            }
+            
+            // Check if we have player data
+            if (!data.player || typeof data.player.x === 'undefined') {
+                console.error("❌ Error: Invalid player data in game_start");
+                $('#messages').append($('<li class="error">').text("Error: Invalid player data"));
+                return;
+            }
+            
+            // Track visibleTiles
+            if (!data.visibleTiles) {
+                console.warn("⚠️ Warning: No visibleTiles in game data, creating empty object");
+                data.visibleTiles = {};
+            }
+            
+            $('#messages').append($('<li class="game-start">').text("Starting game..."));
+            
+            try {
+                // Display what we received
+                $('#messages').append($('<li>').text(`Entering the dungeon at position (${data.player.x},${data.player.y})...`));
+                
+                // Start the game with received data (check if Game is available)
+                if (typeof Game !== 'undefined' && Game.startGame) {
+                    var success = Game.startGame(data);
+                    console.log("Game start result:", success ? "SUCCESS ✅" : "FAILED ❌");
+                    
+                    if (!success) {
+                        $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
+                        
+                        // Try ASCII mode as fallback
+                        if (typeof Game.switchToAsciiMode === 'function') {
+                            Game.switchToAsciiMode();
+                            success = Game.startGame(data);
+                        }
+                    }
+                } else {
+                    console.error("Game object not available yet!");
+                    // Try again in a moment
+                    setTimeout(function() {
+                        if (typeof Game !== 'undefined' && Game.startGame) {
+                            Game.startGame(data);
+                        }
+                    }, 500);
+                }
+                
+                window.focus();
+            } catch (err) {
+                console.error("Error starting game:", err);
+                $('#messages').append($('<li class="error">').text("Error: " + err.message));
+            }
+            
+            // Ensure chat is scrolled
+            if (typeof scrollChat === 'function') {
+                scrollChat();
+            }
+        });
+        
+        // Add game update handler
+        socket.on('game_update', function(data) {
+            console.log("🎮 Received game update:", data);
+            
+            // Update game state
+            if (typeof Game !== 'undefined' && typeof Game.updateGameState === 'function') {
+                Game.updateGameState(data);
+            }
+            
+            // Log player position
+            if (data.player) {
+                console.log(`Player now at: (${data.player.x}, ${data.player.y})`);
+            }
+        });
+
+        // Replace the chat form submission handler
+        $('#chatForm').submit(function(e) {
+            e.preventDefault();
+            var msg = $('#chatInput').val().trim();
+            if (msg) {
+                console.log(`📝 SENDING CHAT: "${msg}"`);
+                
+                // Special handling for enter command
+                if (msg.toLowerCase() === 'enter') {
+                    console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
+                    $('#messages').append($('<li style="color:#ff0">').text("Requesting to enter the dungeon..."));
+                }
+                
+                socket.emit('chat message', msg);
+                $('#chatInput').val('');
+            }
+            return false;
+        });
+    });
+    </script>
+
+    <!-- Initialize the game when everything is ready -->
+    <script>
+        $(function() {
             Game.init();
-            
-            if (!Game.getDisplay()) {
-               console.error("Game display object not found after Game.init(). Cannot append.");
-               return;
-            }
-            
-            var displayContainer = Game.getDisplay().getContainer();
-            var targetElement = $('.rotdis');
-            if (targetElement.length > 0) {
-               targetElement.append(displayContainer);
-               console.log("ROT display appended to .rotdis");
+        });
+    </script>
+
+    <!-- Block height update script -->
+    <script>
+    // Function to update block height display
+    function updateBlockHeight(height) {
+        $('#heightValue').text(height);
+    }
+    
+    // Listen for block updates from server
+    socket.on('blockheight', function(height) {
+        console.log(`📈 BLOCK HEIGHT: ${height}`);
+        updateBlockHeight(height);
+        $('#statusValue').text('Connected');
+        $('#statusValue').css('color', '#0f0');
+    });
+    
+    // Set a test value if no response
+    setTimeout(function() {
+        if ($('#heightValue').text() === 'Loading...') {
+            updateBlockHeight('---');
+            $('#statusValue').text('Waiting...');
+            $('#statusValue').css('color', '#ff0');
+        }
+    }, 5000);
+    </script>
+
+    <!-- Add browser detection info -->
+<div id="browser-info" style="position: fixed; right: 10px; top: 40px; background: rgba(0,0,0,0.7); color: #0f0; padding: 5px; font-family: monospace; font-size: 12px; z-index: 1000; display: none;">
+    <div>Browser: <span id="browser-name">checking...</span></div>
+    <div>Display: <span id="display-status">checking...</span></div>
+    <button onclick="document.getElementById('browser-info').style.display='none'" style="margin-top: 5px; background: #333; border: 1px solid #666; color: white; font-size: 10px; padding: 2px 4px;">
+        Close
+    </button>
+</div>
+
+<script>
+// Check browser and display status
+$(function() {
+    setTimeout(function() {
+        var browserInfo = document.getElementById('browser-info');
+        browserInfo.style.display = 'block';
+        
+        // Detect browser
+        var browserName = "Unknown";
+        if (navigator.userAgent.indexOf("Firefox") !== -1) {
+            browserName = "Firefox";
+        } else if (navigator.userAgent.indexOf("Chrome") !== -1) {
+            browserName = "Chrome/Chromium";
+        } else if (navigator.userAgent.indexOf("Safari") !== -1) {
+            browserName = "Safari";
+        } else if (navigator.userAgent.indexOf("Edge") !== -1) {
+            browserName = "Edge";
+        }
+        
+        document.getElementById('browser-name').textContent = browserName;
+        
+        // Check display status
+        var rotdis = document.querySelector('.rotdis');
+        var canvas = rotdis ? rotdis.querySelector('canvas') : null;
+        
+        if (canvas) {
+            document.getElementById('display-status').textContent = 
+                "OK (" + canvas.width + "x" + canvas.height + ")";
+            document.getElementById('display-status').style.color = "#0f0";
+        } else {
+            document.getElementById('display-status').textContent = "NOT FOUND";
+            document.getElementById('display-status').style.color = "#f00";
+        }
+        
+        // Hide after 10 seconds
+        setTimeout(function() {
+            browserInfo.style.display = 'none';
+        }, 10000);
+    }, 2000);
+});
+</script>
+
+<!-- Add ASCII Mode button at the top right -->
+<button id="toggle-mode" style="position: fixed; right: 10px; top: 10px; z-index: 1000; background: #333; color: white; padding: 5px; border: 1px solid #666; border-radius: 4px;">
+    Switch to ASCII Mode
+</button>
+
+<script>
+document.getElementById('toggle-mode').addEventListener('click', function() {
+    try {
+        // Check current mode and toggle accordingly
+        if (Game.isAsciiMode && Game.isAsciiMode()) {
+            console.log("Switching to TILE mode...");
+            if (typeof Game.switchToTileMode === 'function') {
+                Game.switchToTileMode();
+                this.textContent = "Switch to ASCII Mode";
+                this.style.background = "#333";
+                this.style.color = "white";
             } else {
-               console.error("Target element '.rotdis' not found.");
-               document.body.appendChild(displayContainer);
+                console.error("Game.switchToTileMode is not defined");
+                this.textContent = "Error: Tile Mode Not Available";
+                this.style.background = "#990000";
             }
-         }
-         
-         $(function() {
-             // Wait for tileset to be loaded, then initialize game
-             if (tileSetLoaded) {
-                initializeAndAppendDisplay();
-             } else {
-                console.log("Tileset not loaded yet, waiting for onload...");
-                tileSet.addEventListener('load', function() {
-                    initializeAndAppendDisplay();
-                });
-             }
-         });
-      </script>
-      <script>
-         $(function() {
-            // Initialize teletype only after DOM is ready
-            $('#banner').teletype({
-               text: ["Welcome traveler...", "You have arrived at...", "The Wowngeon"]
-            });
-            $('#bannercursor').teletype({
-               text: ['|', ' '], 
-               delay: 0, 
-               pause: 500
-            });
+        } else {
+            console.log("Switching to ASCII mode...");
+            if (typeof Game.switchToAsciiMode === 'function') {
+                Game.switchToAsciiMode();
+                this.textContent = "Switch to Tile Mode";
+                this.style.background = "#444";
+                this.style.color = "#0f0";
+            } else {
+                console.error("Game.switchToAsciiMode is not defined");
+                this.textContent = "Error: ASCII Mode Not Available";
+                this.style.background = "#990000";
+            }
+        }
+    } catch (err) {
+        console.error("Error switching display mode:", err);
+    }
+});
+</script>
+
+<!-- Add this outside of any $(function() { ... }) block, similar to blockheight handler -->
+<script>
+// Listen for game start events from server
+socket.on('game_start', function(data) {
+    console.log("🎮 GAME START EVENT received:", data);
+    
+    // Check for required data
+    if (!data) {
+        console.error("❌ Error: Received empty game data!");
+        $('#messages').append($('<li class="error">').text("Error: No game data received"));
+        return;
+    }
+    
+    // Check if we have player data
+    if (!data.player || typeof data.player.x === 'undefined') {
+        console.error("❌ Error: Invalid player data in game_start");
+        $('#messages').append($('<li class="error">').text("Error: Invalid player data"));
+        return;
+    }
+    
+    // Track visibleTiles
+    if (!data.visibleTiles) {
+        console.warn("⚠️ Warning: No visibleTiles in game data, creating empty object");
+        data.visibleTiles = {};
+    }
+    
+    $('#messages').append($('<li class="game-start">').text("Starting game..."));
+    
+    try {
+        // Display what we received
+        $('#messages').append($('<li>').text(`Entering the dungeon at position (${data.player.x},${data.player.y})...`));
+        
+        // Start the game with received data (check if Game is available)
+        if (typeof Game !== 'undefined' && Game.startGame) {
+            var success = Game.startGame(data);
+            console.log("Game start result:", success ? "SUCCESS ✅" : "FAILED ❌");
             
-            // Add timeout to change text after animation completes
+            if (!success) {
+                $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
+                
+                // Try ASCII mode as fallback
+                if (typeof Game.switchToAsciiMode === 'function') {
+                    Game.switchToAsciiMode();
+                    success = Game.startGame(data);
+                }
+            }
+        } else {
+            console.error("Game object not available yet!");
+            // Try again in a moment
             setTimeout(function() {
-               $('#banner, #bannercursor').remove();
-               $('#staticbanner').text("The Wowngeon");
-            }, 14340);
-         });
-      </script>
-   </body>
+                if (typeof Game !== 'undefined' && Game.startGame) {
+                    Game.startGame(data);
+                }
+            }, 500);
+        }
+        
+        window.focus();
+    } catch (err) {
+        console.error("Error starting game:", err);
+        $('#messages').append($('<li class="error">').text("Error: " + err.message));
+    }
+    
+    // Ensure chat is scrolled
+    if (typeof scrollChat === 'function') {
+        scrollChat();
+    }
+});
+</script>
+
+<!-- Enhanced socket logging wrapper -->
+<script>
+// Enhanced socket logging wrapper - FIXED VERSION
+(function(socket) {
+    // Save original emit function
+    const originalEmit = socket.emit;
+    
+    // Override emit to log outgoing events
+    socket.emit = function(event, data) {
+        console.log(`📤 SOCKET EMIT: ${event}`, data);
+        return originalEmit.apply(this, arguments);
+    };
+    
+    // DON'T override the normal 'on' function - this is causing issues
+    // Instead, add a listener for all events
+    socket.onAny((event, ...args) => {
+        console.log(`📥 SOCKET RECEIVED EVENT: ${event}`, args);
+        
+        // Special logging for game_start
+        if (event === 'game_start') {
+            const data = args[0];
+            console.log("🎮 GAME START DETAILS:");
+            console.log("- Player:", data && data.player ? `(${data.player.x},${data.player.y})` : "Missing");
+            console.log("- VisibleTiles:", data && data.visibleTiles ? Object.keys(data.visibleTiles).length + " rows" : "Missing");
+        }
+    });
+})(socket);
+
+// Force refresh socket connection status
+setTimeout(() => {
+    console.log("Socket connection status check:", socket.connected ? "CONNECTED" : "DISCONNECTED");
+    if (!socket.connected) {
+        console.error("⚠️ Socket is not connected! Attempting reconnect...");
+        socket.connect();
+    }
+}, 3000);
+</script>
+
+<!-- Add keyboard event logging -->
+<script>
+// Global keyboard event listener
+document.addEventListener('keydown', function(e) {
+    // Only log when game is active
+    if (Game && Game._gameActive) {
+        console.log(`🔤 KEY: ${e.key} (code: ${e.keyCode})`);
+        
+        // Log movement keys specifically
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
+            console.log(`🏃‍♂️ MOVEMENT: ${e.key}`);
+        }
+    }
+});
+</script>
+
+<!-- Add game state debugging helper -->
+<script>
+// Function to log current game state
+function debugGameState() {
+    if (!Game) {
+        console.error("Game object not available");
+        return;
+    }
+    
+    console.log("🔍 GAME STATE:");
+    console.log("- Active:", Game._gameActive);
+    console.log("- Player:", Game._player ? 
+        `(${Game._player.x},${Game._player.y})` : "Not set");
+    console.log("- Monster:", Game._monster ? 
+        `(${Game._monster.x},${Game._monster.y})` : "Not present");
+    console.log("- Display:", Game._display ? "Initialized" : "Not initialized");
+    
+    // Log visible tiles count
+    const visibleTileCount = Game._visibleTiles ? 
+        Object.keys(Game._visibleTiles).reduce((sum, rowKey) => {
+            return sum + Object.keys(Game._visibleTiles[rowKey]).length;
+        }, 0) : 0;
+    console.log("- Visible tiles:", visibleTileCount);
+    
+    // Run this every 10 seconds while game is active
+    if (Game._gameActive) {
+        setTimeout(debugGameState, 10000);
+    }
+}
+
+// Start debug logging when game activates
+const originalStartGame = Game.startGame;
+Game.startGame = function(data) {
+    const result = originalStartGame.call(this, data);
+    if (result) {
+        console.log("Game started successfully, initiating debug logging");
+        debugGameState();
+    }
+    return result;
+};
+</script>
+
+<script>
+// FOV debugging helper - add at end of page
+function debugClientFOV() {
+  if (typeof Game === 'undefined') {
+    console.error("Game not initialized");
+    return;
+  }
+  
+  console.log("🔍 CLIENT FOV DEBUG:");
+  console.log("- Game active:", Game._gameActive || false);
+  console.log("- Player:", Game._player ? 
+              `(${Game._player.x},${Game._player.y})` : "Not set");
+  
+  // Check visibleTiles
+  if (!Game._visibleTiles) {
+    console.error("❌ NO VISIBLE TILES DATA!");
+    return;
+  }
+  
+  const rowKeys = Object.keys(Game._visibleTiles);
+  console.log(`- Client has ${rowKeys.length} FOV rows`);
+  
+  if (rowKeys.length > 0) {
+    // Sample first row
+    const sampleRow = rowKeys[0];
+    const cellCount = Object.keys(Game._visibleTiles[sampleRow]).length;
+    console.log(`  - Sample row ${sampleRow} has ${cellCount} cells`);
+    
+    // Check if player is in visible tiles
+    if (Game._player && Game._visibleTiles[Game._player.y] && 
+        Game._visibleTiles[Game._player.y][Game._player.x] !== undefined) {
+      console.log("  ✅ Player position IS in visible tiles");
+    } else if (Game._player) {
+      console.log(`  ❌ Player position (${Game._player.x},${Game._player.y}) NOT in visible tiles!`);
+    }
+  }
+  
+  // Draw debug visualization
+  if (Game._display) {
+    console.log("Drawing debug visualization of FOV data...");
+    // Mark all visible tiles with a special character
+    for (const y in Game._visibleTiles) {
+      for (const x in Game._visibleTiles[y]) {
+        Game._display.draw(parseInt(x), parseInt(y), "·", "#ff0", "#008");
+      }
+    }
+    
+    // Re-draw player on top
+    if (Game._player) {
+      Game._display.draw(Game._player.x, Game._player.y, "@", "#fff", "#000");
+    }
+  }
+}
+
+// Add keyboard shortcut: Ctrl+Shift+F
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+    console.log("FOV debug triggered by keyboard shortcut");
+    debugClientFOV();
+  }
+});
+</script>
+
+<!-- Add this function at the end of your debugging scripts -->
+<script>
+function sendTestMove(direction) {
+    console.log("📤 Sending test move:", direction);
+    socket.emit('move', direction);
+}
+// Then you can test with sendTestMove("right") in console
+</script>
+
+<!-- Add this to your index.html to show input focus state -->
+<style>
+.game-focus-indicator {
+    position: fixed;
+    bottom: 5px;
+    right: 5px;
+    background: rgba(0,0,0,0.5);
+    color: white;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0.7;
+}
+.chat-focused .game-focus-indicator {
+    color: #aaa;
+}
+</style>
+
+<div class="game-focus-indicator">⌨️ Game Controls Active</div>
+
+<script>
+// Add this to monitor focus state
+$(function() {
+    const chatInput = $('#chatInput');
+    const body = $('body');
+    
+    chatInput.on('focus', function() {
+        body.addClass('chat-focused');
+        $('.game-focus-indicator').text('⌨️ Chat Input Active');
+    });
+    
+    chatInput.on('blur', function() {
+        body.removeClass('chat-focused');
+        $('.game-focus-indicator').text('⌨️ Game Controls Active');
+    });
+});
+</script>
+
+<!-- Add direct game_start_broadcast listener -->
+<script>
+socket.on('game_start_broadcast', function(data) {
+    console.log("🎮 Game start broadcast received:", data);
+    
+    // Check if this message is for us
+    const isForUs = data.targetSocketId === socket.id;
+    console.log(`Game broadcast for socket ${data.targetSocketId}, our ID is ${socket.id}, match: ${isForUs}`);
+    
+    if (isForUs) {
+        console.log("✅ This game broadcast is for us!");
+        // Process as if it were a direct game_start message
+        if (typeof Game !== 'undefined' && typeof Game.startGame === 'function') {
+            Game.startGame(data);
+        }
+    }
+});
+</script>
+
+<!-- Add this handler to show waiting status -->
+
+<script>
+// Add waiting_status handler
+socket.on('waiting_status', function(data) {
+    console.log("⏱️ Received waiting status:", data);
+    
+    if (data.status === 'waiting') {
+        // Show waiting message
+        $('#messages').append($('<li style="color:#ff0">').text(data.message));
+        
+        // Update game area with waiting screen
+        if (typeof Game !== 'undefined' && typeof Game.showWaitingScreen === 'function') {
+            Game.showWaitingScreen(data);
+        }
+    }
+});
+</script>
+
+</body>
 </html>

@@ -1,16 +1,62 @@
 var tileSet = document.createElement("img");
-var tileSetLoaded = false; // Flag to track loading status
+var tileSetLoaded = false;
 
+// More robust error handling
 tileSet.onload = function() {
-    console.log("Tileset image loaded successfully.");
+    console.log("✅ Tileset image loaded successfully!");
     tileSetLoaded = true;
-    // If Game.init was waiting, maybe trigger it now (handled in index.html)
+    
+    // Add visible verification on the page
+    var statusElem = document.createElement('div');
+    statusElem.style.position = 'fixed';
+    statusElem.style.bottom = '40px';
+    statusElem.style.right = '10px';
+    statusElem.style.background = 'rgba(0,255,0,0.5)';
+    statusElem.style.color = 'white';
+    statusElem.style.padding = '5px';
+    statusElem.style.fontSize = '12px';
+    statusElem.style.zIndex = '1000';
+    statusElem.textContent = '✓ Tileset loaded';
+    document.body.appendChild(statusElem);
+    setTimeout(() => statusElem.remove(), 5000);
 };
+
 tileSet.onerror = function() {
-    console.error("Failed to load tileset image!");
-    // Handle error appropriately - maybe fallback to a different layout?
+    console.error("❌ Failed to load tileset image!");
+    alert("Tileset image failed to load. Switching to ASCII mode.");
+    
+    // Force ASCII mode when tileset fails to load
+    if (typeof Game !== 'undefined' && Game._display) {
+        Game.switchToAsciiMode();
+    }
 };
-tileSet.src = "tiles.png"; // Set src AFTER setting onload/onerror
+
+// Try different possible paths (to handle serving from different directories)
+tileSet.src = "tiles.png"; // Try default path first
+
+// Add fallback function if main path fails
+setTimeout(function() {
+    if (!tileSetLoaded) {
+        console.warn("Tileset not loaded yet, trying alternate paths...");
+        tileSet.src = "./tiles.png"; // Try with explicit relative path
+        
+        setTimeout(function() {
+            if (!tileSetLoaded) {
+                tileSet.src = "/tiles.png"; // Try from root
+                
+                setTimeout(function() {
+                    if (!tileSetLoaded) {
+                        console.error("Failed to load tileset after trying multiple paths");
+                        alert("Could not load tileset. Switching to ASCII mode.");
+                        if (typeof Game !== 'undefined' && Game._display) {
+                            Game.switchToAsciiMode();
+                        }
+                    }
+                }, 1000);
+            }
+        }, 1000);
+    }
+}, 1000);
 
 var options = {
     layout: "tile",
