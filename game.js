@@ -152,7 +152,7 @@ class Game {
       this.moveMonster();
       
       // Check if monster caught player
-      if (this.monster.x === this.player.x && this.monster.y === this.player.y) {
+      if (checkMonsterKill(this.player, this.monster)) {
         this.gameState = 'lost';
         return { status: 'lost', reason: 'caught' };
       }
@@ -199,84 +199,100 @@ class Game {
     }
   }
   
-  // Replace getState() method with this relative-coordinates version
+  // Update the getState() method to include all entities with relative positions
   getState() {
-    // Only include visible information and translate to player-relative coordinates
+    // Calculate relative position of all entities from player's perspective
     const playerX = this.player.x;
     const playerY = this.player.y;
     
-    // Create relative FOV map
+    // Convert all visible tiles to relative coordinates
     const relativeVisibleTiles = {};
     for (const y in this.visibleTiles) {
       for (const x in this.visibleTiles[y]) {
         const relX = parseInt(x) - playerX;
         const relY = parseInt(y) - playerY;
         
-        // Initialize row if needed
+        // Create row if needed
         if (!relativeVisibleTiles[relY]) {
           relativeVisibleTiles[relY] = {};
         }
         
-        // Add relative position tile
+        // Store tile type at relative position
         relativeVisibleTiles[relY][relX] = this.visibleTiles[y][x];
       }
     }
     
-    // Create relative entity positions only if visible in FOV
-    const entityInfo = {};
-    
-    // Check if monster is visible
-    if (this.visibleTiles[this.monster.y] && 
-        this.visibleTiles[this.monster.y][this.monster.x] !== undefined) {
-      entityInfo.monster = {
-        x: this.monster.x - playerX,
-        y: this.monster.y - playerY
-      };
-    }
-    
-    // Check if entrance is visible
-    if (this.dungeon.entrance && 
-        this.visibleTiles[this.dungeon.entrance[1]] && 
-        this.visibleTiles[this.dungeon.entrance[1]][this.dungeon.entrance[0]] !== undefined) {
-      entityInfo.entrance = [
-        this.dungeon.entrance[0] - playerX,
-        this.dungeon.entrance[1] - playerY
-      ];
-    }
-    
-    // Check if exit is visible
-    if (this.dungeon.exit && 
-        this.visibleTiles[this.dungeon.exit[1]] && 
-        this.visibleTiles[this.dungeon.exit[1]][this.dungeon.exit[0]] !== undefined) {
-      entityInfo.exit = [
-        this.dungeon.exit[0] - playerX,
-        this.dungeon.exit[1] - playerY
-      ];
-    }
-    
-    // Check if treasure is visible
-    if (this.dungeon.treasure && 
-        this.visibleTiles[this.dungeon.treasure[1]] && 
-        this.visibleTiles[this.dungeon.treasure[1]][this.dungeon.treasure[0]] !== undefined) {
-      entityInfo.treasure = [
-        this.dungeon.treasure[0] - playerX,
-        this.dungeon.treasure[1] - playerY
-      ];
-    }
-    
-    return {
+    // Create the state object
+    const state = {
       gameState: this.gameState,
       player: {
-        // Player is always at relative (0,0)
-        x: 0,
+        x: 0, // Player is always at (0,0) in relative coordinates
         y: 0,
         hasKey: this.player.hasKey || false,
         hasTreasure: this.player.hasTreasure || false
       },
-      visibleTiles: relativeVisibleTiles,
-      ...entityInfo  // Only include visible entities
+      visibleTiles: relativeVisibleTiles
     };
+    
+    // Add monster if in view
+    if (this.monster && this.visibleTiles[this.monster.y] && 
+        this.visibleTiles[this.monster.y][this.monster.x] !== undefined) {
+      state.monster = {
+        x: this.monster.x - playerX, // Relative position
+        y: this.monster.y - playerY
+      };
+    }
+    
+    // Add entrance if defined
+    if (this.dungeon && this.dungeon.entrance) {
+      // Use array format for consistency
+      state.entrance = [
+        this.dungeon.entrance.x - playerX,
+        this.dungeon.entrance.y - playerY
+      ];
+    }
+    
+    // Add exit if in view
+    if (this.dungeon && this.dungeon.exit &&
+        this.visibleTiles[this.dungeon.exit.y] &&
+        this.visibleTiles[this.dungeon.exit.y][this.dungeon.exit.x] !== undefined) {
+      state.exit = [
+        this.dungeon.exit.x - playerX,
+        this.dungeon.exit.y - playerY
+      ];
+    }
+    
+    // Add treasure if in view
+    if (this.dungeon && this.dungeon.treasure &&
+        this.visibleTiles[this.dungeon.treasure.y] &&
+        this.visibleTiles[this.dungeon.treasure.y][this.dungeon.treasure.x] !== undefined) {
+      state.treasure = [
+        this.dungeon.treasure.x - playerX,
+        this.dungeon.treasure.y - playerY
+      ];
+    }
+    
+    return state;
   }
+}
+
+// Check if monster killed player
+function checkMonsterKill(player, monster) {
+    // Check for direct overlap - monster on same tile as player
+    if (monster.x === player.x && monster.y === player.y) {
+        return true; // Monster killed player
+    }
+    
+    // Check for adjacent tiles (optional - if you want 1-tile proximity kills)
+    const dx = Math.abs(monster.x - player.x);
+    const dy = Math.abs(monster.y - player.y);
+    
+    // If monster is adjacent (one tile away in any direction)
+    if ((dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)) {
+        return true; // Monster killed player
+    }
+    
+    return false; // Player is safe
 }
 
 module.exports = Game;

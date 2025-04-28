@@ -197,73 +197,36 @@
             scrollChat();
         });
         
-        // Critical game events
-        // Replace the game_start handler with this improved version
+        // Add or update the game_start handler
         socket.on('game_start', function(data) {
-            console.log("🎮 Received game_start broadcast:", data);
+            console.log("🎮 Game start received with data:", data);
+            $('#messages').append($('<li class="game-start">').text("Starting game..."));
             
-            // Log all socketIds for debugging
-            console.log("Current socket ID:", socket.id);
-            console.log("Target socket ID:", data.targetSocket);
-            
-            // Check if this event is for us
-            const isForUs = !data.targetSocket || data.targetSocket === socket.id;
-            console.log("Is this event for us?", isForUs ? "YES" : "NO");
-            
-            // Only process if directed at us or broadcast
-            if (!isForUs) {
-                console.log("Ignoring game_start message meant for another client");
-                return;
+            // Stop waiting screen animation if it's running
+            if (typeof Game !== 'undefined') {
+                Game.stopWaitingScreen();
             }
             
-            // Check for required data
             if (!data) {
-                console.error("❌ Error: Received empty game data!");
                 $('#messages').append($('<li class="error">').text("Error: No game data received"));
                 return;
             }
             
-            // Check if we have player data
-            if (!data.player || typeof data.player.x === 'undefined') {
-                console.error("❌ Error: Invalid player data in game_start");
-                $('#messages').append($('<li class="error">').text("Error: Invalid player data"));
-                return;
-            }
-            
-            // Track visibleTiles
-            if (!data.visibleTiles) {
-                console.warn("⚠️ Warning: No visibleTiles in game data, creating empty object");
-                data.visibleTiles = {};
-            }
-            
-            $('#messages').append($('<li class="game-start">').text("Starting game..."));
-            
             try {
-                // Display what we received
-                $('#messages').append($('<li>').text(`Entering the dungeon at position (${data.player.x},${data.player.y})...`));
+                // Start the game with received data
+                var success = Game.startGame(data);
+                console.log("Game start result:", success ? "SUCCESS" : "FAILED");
                 
-                // Start the game with received data (check if Game is available)
-                if (typeof Game !== 'undefined' && Game.startGame) {
-                    var success = Game.startGame(data);
-                    console.log("Game start result:", success ? "SUCCESS ✅" : "FAILED ❌");
+                if (!success) {
+                    $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
                     
-                    if (!success) {
-                        $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
-                        
-                        // Try ASCII mode as fallback
-                        if (typeof Game.switchToAsciiMode === 'function') {
-                            Game.switchToAsciiMode();
-                            success = Game.startGame(data);
-                        }
-                    }
-                } else {
-                    console.error("Game object not available yet!");
-                    // Try again in a moment
-                    setTimeout(function() {
-                        if (typeof Game !== 'undefined' && Game.startGame) {
+                    // Try switching to ASCII mode
+                    if (document.getElementById('toggle-mode')) {
+                        document.getElementById('toggle-mode').click();
+                        setTimeout(function() {
                             Game.startGame(data);
-                        }
-                    }, 500);
+                        }, 100);
+                    }
                 }
                 
                 window.focus();
@@ -271,44 +234,49 @@
                 console.error("Error starting game:", err);
                 $('#messages').append($('<li class="error">').text("Error: " + err.message));
             }
-            
-            // Ensure chat is scrolled
-            if (typeof scrollChat === 'function') {
-                scrollChat();
-            }
         });
-        
-        // Add game update handler
+
+        // Game update handler
         socket.on('game_update', function(data) {
-            console.log("🎮 Received game update:", data);
+            console.log("🎮 GAME UPDATE received:", data);
             
-            // Update game state
-            if (typeof Game !== 'undefined' && typeof Game.updateGameState === 'function') {
-                Game.updateGameState(data);
-            }
-            
-            // Log player position
-            if (data.player) {
-                console.log(`Player now at: (${data.player.x}, ${data.player.y})`);
+            if (typeof Game !== 'undefined') {
+                // Update all entity positions
+                Game._player = data.player;
+                Game._visibleTiles = data.visibleTiles;
+                Game._monster = data.monster;
+                Game._entrance = data.entrance;
+                Game._exit = data.exit;
+                Game._treasure = data.treasure;
+                
+                // Draw updated screen
+                Game._drawGameScreen();
             }
         });
 
-        // Replace the chat form submission handler
+        // Update the chat form submission handler that processes the "enter" command
+
         $('#chatForm').submit(function(e) {
             e.preventDefault();
             var msg = $('#chatInput').val().trim();
-            if (msg) {
-                console.log(`📝 SENDING CHAT: "${msg}"`);
+            
+            // Don't send empty messages
+            if (!msg) return false;
+            
+            console.log("📝 SENDING CHAT:", msg);
+            socket.emit('chat message', msg);
+            $('#chatInput').val('');
+            
+            // If the message is "enter", show the waiting screen
+            if (msg.toLowerCase() === 'enter') {
+                console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
                 
-                // Special handling for enter command
-                if (msg.toLowerCase() === 'enter') {
-                    console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
-                    $('#messages').append($('<li style="color:#ff0">').text("Requesting to enter the dungeon..."));
+                // Show waiting screen
+                if (typeof Game !== 'undefined') {
+                    Game.drawWaitingScreen();
                 }
-                
-                socket.emit('chat message', msg);
-                $('#chatInput').val('');
             }
+            
             return false;
         });
     });
@@ -437,317 +405,65 @@ document.getElementById('toggle-mode').addEventListener('click', function() {
 });
 </script>
 
-<!-- Add this outside of any $(function() { ... }) block, similar to blockheight handler -->
+<!-- Replace the queue_cancelled handler -->
 <script>
-// Listen for game start events from server
-socket.on('game_start', function(data) {
-    console.log("🎮 GAME START EVENT received:", data);
+// Handle queue cancellation
+socket.on('queue_cancelled', function() {
+    console.log("Queue cancelled, returning to welcome screen");
     
-    // Check for required data
-    if (!data) {
-        console.error("❌ Error: Received empty game data!");
-        $('#messages').append($('<li class="error">').text("Error: No game data received"));
-        return;
-    }
-    
-    // Check if we have player data
-    if (!data.player || typeof data.player.x === 'undefined') {
-        console.error("❌ Error: Invalid player data in game_start");
-        $('#messages').append($('<li class="error">').text("Error: Invalid player data"));
-        return;
-    }
-    
-    // Track visibleTiles
-    if (!data.visibleTiles) {
-        console.warn("⚠️ Warning: No visibleTiles in game data, creating empty object");
-        data.visibleTiles = {};
-    }
-    
-    $('#messages').append($('<li class="game-start">').text("Starting game..."));
-    
-    try {
-        // Display what we received
-        $('#messages').append($('<li>').text(`Entering the dungeon at position (${data.player.x},${data.player.y})...`));
-        
-        // Start the game with received data (check if Game is available)
-        if (typeof Game !== 'undefined' && Game.startGame) {
-            var success = Game.startGame(data);
-            console.log("Game start result:", success ? "SUCCESS ✅" : "FAILED ❌");
-            
-            if (!success) {
-                $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
-                
-                // Try ASCII mode as fallback
-                if (typeof Game.switchToAsciiMode === 'function') {
-                    Game.switchToAsciiMode();
-                    success = Game.startGame(data);
-                }
-            }
+    if (typeof Game !== 'undefined') {
+        // Try different naming patterns for compatibility
+        if (typeof Game._drawWelcomeScreen === 'function') {
+            Game._drawWelcomeScreen();
+        } else if (typeof Game.drawWelcomeScreen === 'function') {
+            Game.drawWelcomeScreen();
         } else {
-            console.error("Game object not available yet!");
-            // Try again in a moment
-            setTimeout(function() {
-                if (typeof Game !== 'undefined' && Game.startGame) {
-                    Game.startGame(data);
-                }
-            }, 500);
+            console.error("Welcome screen function not found");
+        }
+    }
+});
+</script>
+
+<!-- Add this before the closing </body> tag -->
+<script>
+// Game over handler
+socket.on('game_over', function(data) {
+    console.log("🎮 GAME OVER received:", data);
+    
+    // Update game state based on outcome
+    if (typeof Game !== 'undefined') {
+        if (data.status === 'won') {
+            // Show win message
+            $('#messages').append($('<li style="color:#0f0; font-weight:bold;">').text(
+                data.hasTreasure ? 
+                "YOU ESCAPED WITH THE TREASURE! YOU WON!" : 
+                "You escaped the dungeon alive!"
+            ));
+            
+            // Draw win screen
+            Game.drawWinScreen(data.hasTreasure);
+        } else {
+            // Show loss message
+            const reason = data.reason || "unknown";
+            let message = "You died in the dungeon!";
+            
+            if (reason === 'monster') {
+                message = "You were killed by the monster!";
+            } else if (reason === 'timeout') {
+                message = "You didn't escape before the next block was found!";
+            }
+            
+            $('#messages').append($('<li style="color:#f00; font-weight:bold;">').text(message));
+            
+            // Draw lose screen
+            Game.drawLoseScreen(reason);
         }
         
-        window.focus();
-    } catch (err) {
-        console.error("Error starting game:", err);
-        $('#messages').append($('<li class="error">').text("Error: " + err.message));
+        // Set game as inactive to prevent further movement
+        Game._gameActive = false;
     }
     
-    // Ensure chat is scrolled
-    if (typeof scrollChat === 'function') {
-        scrollChat();
-    }
-});
-</script>
-
-<!-- Enhanced socket logging wrapper -->
-<script>
-// Enhanced socket logging wrapper - FIXED VERSION
-(function(socket) {
-    // Save original emit function
-    const originalEmit = socket.emit;
-    
-    // Override emit to log outgoing events
-    socket.emit = function(event, data) {
-        console.log(`📤 SOCKET EMIT: ${event}`, data);
-        return originalEmit.apply(this, arguments);
-    };
-    
-    // DON'T override the normal 'on' function - this is causing issues
-    // Instead, add a listener for all events
-    socket.onAny((event, ...args) => {
-        console.log(`📥 SOCKET RECEIVED EVENT: ${event}`, args);
-        
-        // Special logging for game_start
-        if (event === 'game_start') {
-            const data = args[0];
-            console.log("🎮 GAME START DETAILS:");
-            console.log("- Player:", data && data.player ? `(${data.player.x},${data.player.y})` : "Missing");
-            console.log("- VisibleTiles:", data && data.visibleTiles ? Object.keys(data.visibleTiles).length + " rows" : "Missing");
-        }
-    });
-})(socket);
-
-// Force refresh socket connection status
-setTimeout(() => {
-    console.log("Socket connection status check:", socket.connected ? "CONNECTED" : "DISCONNECTED");
-    if (!socket.connected) {
-        console.error("⚠️ Socket is not connected! Attempting reconnect...");
-        socket.connect();
-    }
-}, 3000);
-</script>
-
-<!-- Add keyboard event logging -->
-<script>
-// Global keyboard event listener
-document.addEventListener('keydown', function(e) {
-    // Only log when game is active
-    if (Game && Game._gameActive) {
-        console.log(`🔤 KEY: ${e.key} (code: ${e.keyCode})`);
-        
-        // Log movement keys specifically
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
-            console.log(`🏃‍♂️ MOVEMENT: ${e.key}`);
-        }
-    }
-});
-</script>
-
-<!-- Add game state debugging helper -->
-<script>
-// Function to log current game state
-function debugGameState() {
-    if (!Game) {
-        console.error("Game object not available");
-        return;
-    }
-    
-    console.log("🔍 GAME STATE:");
-    console.log("- Active:", Game._gameActive);
-    console.log("- Player:", Game._player ? 
-        `(${Game._player.x},${Game._player.y})` : "Not set");
-    console.log("- Monster:", Game._monster ? 
-        `(${Game._monster.x},${Game._monster.y})` : "Not present");
-    console.log("- Display:", Game._display ? "Initialized" : "Not initialized");
-    
-    // Log visible tiles count
-    const visibleTileCount = Game._visibleTiles ? 
-        Object.keys(Game._visibleTiles).reduce((sum, rowKey) => {
-            return sum + Object.keys(Game._visibleTiles[rowKey]).length;
-        }, 0) : 0;
-    console.log("- Visible tiles:", visibleTileCount);
-    
-    // Run this every 10 seconds while game is active
-    if (Game._gameActive) {
-        setTimeout(debugGameState, 10000);
-    }
-}
-
-// Start debug logging when game activates
-const originalStartGame = Game.startGame;
-Game.startGame = function(data) {
-    const result = originalStartGame.call(this, data);
-    if (result) {
-        console.log("Game started successfully, initiating debug logging");
-        debugGameState();
-    }
-    return result;
-};
-</script>
-
-<script>
-// FOV debugging helper - add at end of page
-function debugClientFOV() {
-  if (typeof Game === 'undefined') {
-    console.error("Game not initialized");
-    return;
-  }
-  
-  console.log("🔍 CLIENT FOV DEBUG:");
-  console.log("- Game active:", Game._gameActive || false);
-  console.log("- Player:", Game._player ? 
-              `(${Game._player.x},${Game._player.y})` : "Not set");
-  
-  // Check visibleTiles
-  if (!Game._visibleTiles) {
-    console.error("❌ NO VISIBLE TILES DATA!");
-    return;
-  }
-  
-  const rowKeys = Object.keys(Game._visibleTiles);
-  console.log(`- Client has ${rowKeys.length} FOV rows`);
-  
-  if (rowKeys.length > 0) {
-    // Sample first row
-    const sampleRow = rowKeys[0];
-    const cellCount = Object.keys(Game._visibleTiles[sampleRow]).length;
-    console.log(`  - Sample row ${sampleRow} has ${cellCount} cells`);
-    
-    // Check if player is in visible tiles
-    if (Game._player && Game._visibleTiles[Game._player.y] && 
-        Game._visibleTiles[Game._player.y][Game._player.x] !== undefined) {
-      console.log("  ✅ Player position IS in visible tiles");
-    } else if (Game._player) {
-      console.log(`  ❌ Player position (${Game._player.x},${Game._player.y}) NOT in visible tiles!`);
-    }
-  }
-  
-  // Draw debug visualization
-  if (Game._display) {
-    console.log("Drawing debug visualization of FOV data...");
-    // Mark all visible tiles with a special character
-    for (const y in Game._visibleTiles) {
-      for (const x in Game._visibleTiles[y]) {
-        Game._display.draw(parseInt(x), parseInt(y), "·", "#ff0", "#008");
-      }
-    }
-    
-    // Re-draw player on top
-    if (Game._player) {
-      Game._display.draw(Game._player.x, Game._player.y, "@", "#fff", "#000");
-    }
-  }
-}
-
-// Add keyboard shortcut: Ctrl+Shift+F
-document.addEventListener('keydown', function(e) {
-  if (e.ctrlKey && e.shiftKey && e.key === 'F') {
-    console.log("FOV debug triggered by keyboard shortcut");
-    debugClientFOV();
-  }
-});
-</script>
-
-<!-- Add this function at the end of your debugging scripts -->
-<script>
-function sendTestMove(direction) {
-    console.log("📤 Sending test move:", direction);
-    socket.emit('move', direction);
-}
-// Then you can test with sendTestMove("right") in console
-</script>
-
-<!-- Add this to your index.html to show input focus state -->
-<style>
-.game-focus-indicator {
-    position: fixed;
-    bottom: 5px;
-    right: 5px;
-    background: rgba(0,0,0,0.5);
-    color: white;
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 12px;
-    pointer-events: none;
-    opacity: 0.7;
-}
-.chat-focused .game-focus-indicator {
-    color: #aaa;
-}
-</style>
-
-<div class="game-focus-indicator">⌨️ Game Controls Active</div>
-
-<script>
-// Add this to monitor focus state
-$(function() {
-    const chatInput = $('#chatInput');
-    const body = $('body');
-    
-    chatInput.on('focus', function() {
-        body.addClass('chat-focused');
-        $('.game-focus-indicator').text('⌨️ Chat Input Active');
-    });
-    
-    chatInput.on('blur', function() {
-        body.removeClass('chat-focused');
-        $('.game-focus-indicator').text('⌨️ Game Controls Active');
-    });
-});
-</script>
-
-<!-- Add direct game_start_broadcast listener -->
-<script>
-socket.on('game_start_broadcast', function(data) {
-    console.log("🎮 Game start broadcast received:", data);
-    
-    // Check if this message is for us
-    const isForUs = data.targetSocketId === socket.id;
-    console.log(`Game broadcast for socket ${data.targetSocketId}, our ID is ${socket.id}, match: ${isForUs}`);
-    
-    if (isForUs) {
-        console.log("✅ This game broadcast is for us!");
-        // Process as if it were a direct game_start message
-        if (typeof Game !== 'undefined' && typeof Game.startGame === 'function') {
-            Game.startGame(data);
-        }
-    }
-});
-</script>
-
-<!-- Add this handler to show waiting status -->
-
-<script>
-// Add waiting_status handler
-socket.on('waiting_status', function(data) {
-    console.log("⏱️ Received waiting status:", data);
-    
-    if (data.status === 'waiting') {
-        // Show waiting message
-        $('#messages').append($('<li style="color:#ff0">').text(data.message));
-        
-        // Update game area with waiting screen
-        if (typeof Game !== 'undefined' && typeof Game.showWaitingScreen === 'function') {
-            Game.showWaitingScreen(data);
-        }
-    }
+    scrollChat();
 });
 </script>
 

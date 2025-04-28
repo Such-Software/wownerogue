@@ -94,16 +94,13 @@ function startGamesForWaiting(blockHeight) {
     while (WAITING_PLAYERS.length > 0) {
         const playerEntry = WAITING_PLAYERS.shift();
         const serverId = playerEntry.serverId;
-        const clientId = playerEntry.clientId;
         
-        console.log(`Processing player: server=${serverId}, client=${clientId}`);
+        console.log(`Processing player: server=${serverId}`);
         
-        // Get the user object
         const currentUser = getUserBySocket(serverId);
         
         if (currentUser) {
             currentUser.blockRec = blockHeight;
-            console.log(`Creating new game for user ${serverId}`);
             
             try {
                 const game = currentUser.startGame(80, 40);
@@ -113,20 +110,18 @@ function startGamesForWaiting(blockHeight) {
                 gameState.blockHeight = blockHeight;
                 
                 console.log(`🎮 SENDING GAME_START to ${serverId}`);
-                console.log(`Player position: (${game.player.x}, ${game.player.y})`);
                 
-                // Send a single game start message to chat
-                io.to(serverId).emit('message', `Entering the dungeon at position (0,0)...`);
-                
-                // Then send the actual game state
+                // Send ONLY ONE message - the game state itself
                 io.to(serverId).emit('game_start', gameState);
                 
                 console.log(`Game started for player ${serverId}`);
             } catch (error) {
                 console.error(`Error creating game:`, error);
+                io.to(serverId).emit('message', 'Error starting game: ' + error.message);
             }
         } else {
             console.error(`User not found for socket ${serverId}`);
+            io.to(serverId).emit('message', 'Error: User not found');
         }
     }
 }
@@ -179,8 +174,7 @@ io.on('connection', function(socket) {
         'Welcome, to enter the dungeon type Enter, and you will be given a Wownero address, ' +
         'which you must send between 10-100 WOW to enter. The more you send, the more you can win.');
     }
-    // Update the 'enter' command handler to NOT start games immediately
-
+    // Update the 'enter' command handler to send waiting_status
     if (msg.toLowerCase() == 'enter') {
         console.log(`Player ${socket.id} requested to enter the dungeon`);
         
@@ -195,26 +189,40 @@ io.on('connection', function(socket) {
                 WAITING_PLAYERS.push({
                     serverId: socket.id,
                     clientId: socket.id,
-                    user: currentUser
+                    user: currentUser,
+                    joinedAt: Date.now()
                 });
                 
-                // Tell player they're in queue
-                io.to(socket.id).emit('message', 'Requesting to enter the dungeon...');
+                // Send waiting status data for display - THIS IS THE KEY PART
                 io.to(socket.id).emit('waiting_status', { 
                     status: 'waiting',
                     message: 'Waiting for the next block to be found...',
                     position: WAITING_PLAYERS.length,
-                    currentBlock: debugBlockHeight || lastBlockHeight
+                    currentBlock: debugBlockHeight || lastBlockHeight || 0,
+                    joinTime: Date.now()
                 });
                 
-                // Log the queue state
                 console.log(`Added player to queue. Current queue: ${WAITING_PLAYERS.length} players`);
-                
-                // NO LONGER start game immediately - wait for next block
-                // startGamesForWaiting(lastBlockHeight);
+            } else {
+                io.to(socket.id).emit('message', 'You are already in the queue. Please wait.');
             }
         } else {
             io.to(socket.id).emit('message', 'Error: Could not add you to the game queue. Please try again.');
+        }
+    }
+    // Add a handler for the 'cancel' command
+    else if (msg.toLowerCase() == 'cancel') {
+        // Remove player from waiting queue
+        const index = WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
+        
+        if (index !== -1) {
+            WAITING_PLAYERS.splice(index, 1);
+            io.to(socket.id).emit('message', 'You have left the queue.');
+            
+            // Reset to welcome screen
+            io.to(socket.id).emit('queue_cancelled');
+        } else {
+            io.to(socket.id).emit('message', 'You were not in the queue.');
         }
     }
     else {

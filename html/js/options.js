@@ -163,3 +163,13 @@ var options = {
         " ": [992, 64]
     }
 };
+
+// Update the tileset loading to properly set the global variables
+
+// Make sure the variables are properly set in the global scope
+window.tileSet = tileSet;
+window.tileMap = options.tileMap;
+
+// Add logging to confirm they're set
+console.log("✅ Tileset assigned to window.tileSet:", !!window.tileSet);
+console.log("✅ TileMap assigned to window.tileMap:", !!window.tileMap, "with keys:", window.tileMap ? Object.keys(window.tileMap).length : 0);
