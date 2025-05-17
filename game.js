@@ -115,51 +115,56 @@ class Game {
     this.visibleTiles = {};
     
     // Calculate new visible tiles
-    this.fov.compute(this.player.x, this.player.y, 10, (x, y) => {
-      if (!this.visibleTiles[y]) this.visibleTiles[y] = {};
-      this.visibleTiles[y][x] = this.dungeon.map[y][x];
+    this.fov.compute(this.player.x, this.player.y, 10, (x, y, r, visibility) => { // Added r and visibility params
+        if (visibility > 0) { // Only add if tile is actually visible
+            if (!this.visibleTiles[y]) {
+                this.visibleTiles[y] = {};
+            }
+            // Store the actual tile type (0 for floor, 1 for wall) from the dungeon map
+            if (this.dungeon && this.dungeon.map && this.dungeon.map[y] && this.dungeon.map[y][x] !== undefined) {
+                this.visibleTiles[y][x] = this.dungeon.map[y][x];
+            } else {
+                // Should not happen if FOV is within map bounds, but as a fallback:
+                // this.visibleTiles[y][x] = 1; // Default to wall if outside known map
+            }
+        }
     });
+    // console.log("FOV updated. Player:", this.player.x, this.player.y, "Visible tiles count:", Object.keys(this.visibleTiles).reduce((acc, k) => acc + Object.keys(this.visibleTiles[k]).length, 0));
   }
   
   movePlayer(dx, dy) {
     const newX = this.player.x + dx;
     const newY = this.player.y + dy;
     
-    // Check if the move is valid (not into a wall)
-    if (this.dungeon.map[newY] && this.dungeon.map[newY][newX] === 0) {
+    // Check if the move is valid (not into a wall and within map bounds)
+    if (this.dungeon && 
+        this.dungeon.map[newY] && 
+        this.dungeon.map[newY][newX] !== undefined && 
+        this.dungeon.map[newY][newX] === 0) { // 0 is floor
+      
       this.player.x = newX;
       this.player.y = newY;
+      console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
       
-      // Update FOV after movement
+      // Update FOV after moving
       this.updateFOV();
       
-      // Check if player found treasure
-      if (this.dungeon.treasure && 
-          newX === this.dungeon.treasure[0] && 
-          newY === this.dungeon.treasure[1]) {
+      // Check for game events like finding treasure or exit
+      if (this.dungeon.exit && newX === this.dungeon.exit[0] && newY === this.dungeon.exit[1]) {
+        // Handle win condition (e.g., escaped)
+        this.gameState = 'won'; // Or some other state
+        return { status: 'moved', event: 'escaped', player: this.player, visibleTiles: this.visibleTiles };
+      }
+      if (this.dungeon.treasure && newX === this.dungeon.treasure[0] && newY === this.dungeon.treasure[1] && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
+        // Remove treasure from map or mark as collected
+        return { status: 'moved', event: 'treasure_found', player: this.player, visibleTiles: this.visibleTiles };
       }
       
-      // Check if player reached exit
-      if (this.dungeon.exit && 
-          newX === this.dungeon.exit[0] && 
-          newY === this.dungeon.exit[1]) {
-        this.gameState = 'won';
-        return { status: 'won', hasTreasure: this.player.hasTreasure };
-      }
-      
-      // Move monster after player moves
-      this.moveMonster();
-      
-      // Check if monster caught player
-      if (checkMonsterKill(this.player, this.monster)) {
-        this.gameState = 'lost';
-        return { status: 'lost', reason: 'caught' };
-      }
-      
-      return { status: 'moved' };
+      return { status: 'moved', player: this.player, visibleTiles: this.visibleTiles };
     }
     
+    console.log(`Player move to ${newX},${newY} for socket ${this.socketId} is invalid (wall or out of bounds).`);
     return { status: 'invalid' };
   }
   
@@ -202,77 +207,26 @@ class Game {
   // Update the getState() method to include all entities with relative positions
   getState() {
     // Calculate relative position of all entities from player's perspective
-    const playerX = this.player.x;
-    const playerY = this.player.y;
+    // const playerX = this.player.x; // Not needed if sending absolute visibleTiles
+    // const playerY = this.player.y; // Not needed if sending absolute visibleTiles
     
-    // Convert all visible tiles to relative coordinates
-    const relativeVisibleTiles = {};
-    for (const y in this.visibleTiles) {
-      for (const x in this.visibleTiles[y]) {
-        const relX = parseInt(x) - playerX;
-        const relY = parseInt(y) - playerY;
-        
-        // Create row if needed
-        if (!relativeVisibleTiles[relY]) {
-          relativeVisibleTiles[relY] = {};
-        }
-        
-        // Store tile type at relative position
-        relativeVisibleTiles[relY][relX] = this.visibleTiles[y][x];
-      }
-    }
-    
-    // Create the state object
-    const state = {
+    // The client-side Game.js expects absolute coordinates for visibleTiles.
+    // So, no conversion to relative coordinates is needed here for visibleTiles.
+    // Just ensure this.visibleTiles is correctly populated by updateFOV.
+
+    // console.log("getState called. Player:", this.player, "Visible tiles keys:", Object.keys(this.visibleTiles || {}).length);
+
+    return {
       gameState: this.gameState,
-      player: {
-        x: 0, // Player is always at (0,0) in relative coordinates
-        y: 0,
-        hasKey: this.player.hasKey || false,
-        hasTreasure: this.player.hasTreasure || false
-      },
-      visibleTiles: relativeVisibleTiles
+      player: { ...this.player }, // Send a copy of player object
+      monster: this.monster ? { ...this.monster } : null, // Send a copy if monster exists
+      // items: { ...this.items }, // If you have items, send them too
+      visibleTiles: { ...this.visibleTiles }, // Send a copy of visible tiles
+      // You might also want to send entrance/exit if they are always known or become known
+      // entrance: this.dungeon ? this.dungeon.entrance : null,
+      // exit: this.dungeon ? this.dungeon.exit : null,
+      // treasure: this.dungeon ? this.dungeon.treasure : null
     };
-    
-    // Add monster if in view
-    if (this.monster && this.visibleTiles[this.monster.y] && 
-        this.visibleTiles[this.monster.y][this.monster.x] !== undefined) {
-      state.monster = {
-        x: this.monster.x - playerX, // Relative position
-        y: this.monster.y - playerY
-      };
-    }
-    
-    // Add entrance if defined
-    if (this.dungeon && this.dungeon.entrance) {
-      // Use array format for consistency
-      state.entrance = [
-        this.dungeon.entrance.x - playerX,
-        this.dungeon.entrance.y - playerY
-      ];
-    }
-    
-    // Add exit if in view
-    if (this.dungeon && this.dungeon.exit &&
-        this.visibleTiles[this.dungeon.exit.y] &&
-        this.visibleTiles[this.dungeon.exit.y][this.dungeon.exit.x] !== undefined) {
-      state.exit = [
-        this.dungeon.exit.x - playerX,
-        this.dungeon.exit.y - playerY
-      ];
-    }
-    
-    // Add treasure if in view
-    if (this.dungeon && this.dungeon.treasure &&
-        this.visibleTiles[this.dungeon.treasure.y] &&
-        this.visibleTiles[this.dungeon.treasure.y][this.dungeon.treasure.x] !== undefined) {
-      state.treasure = [
-        this.dungeon.treasure.x - playerX,
-        this.dungeon.treasure.y - playerY
-      ];
-    }
-    
-    return state;
   }
 }
 

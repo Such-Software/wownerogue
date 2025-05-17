@@ -18,6 +18,7 @@
     <script src="js/jquery-3.4.1.min.js"></script>
     <script src="js/rot.min.js"></script>
     <script src="js/options.js"></script>
+    <script src="js/teletype.js"></script> <!-- Load teletype.js -->
     <script src="js/game.js"></script>
 </head>
 <body>
@@ -36,7 +37,7 @@
         </div>
         
         <!-- Game display -->
-        <div class="rotdis"></div>
+        <div id="game-display" class="rotdis"></div>
         
         <!-- Chat messages area -->
         <div class="chat-container">
@@ -59,89 +60,6 @@
         </div>
     </div>
 
-    <!-- Add teletype JS implementation -->
-    <script>
-    // Simple teletype implementation
-    (function($) {
-        $.fn.teletype = function(options) {
-            var settings = $.extend({
-                text: [],
-                typeDelay: 100,
-                backDelay: 50,
-                pause: 1000,
-                loop: true,
-                cursor: ''
-            }, options);
-            
-            return this.each(function() {
-                var $el = $(this);
-                var currentTextIndex = 0;
-                var currentCharIndex = 0;
-                var isTyping = true;
-                
-                function type() {
-                    var currentText = settings.text[currentTextIndex];
-                    
-                    if (isTyping) {
-                        // Typing forward
-                        if (currentCharIndex < currentText.length) {
-                            $el.text($el.text() + currentText.charAt(currentCharIndex));
-                            currentCharIndex++;
-                            setTimeout(type, settings.typeDelay);
-                        } else {
-                            // Reached end of text, pause before backspacing
-                            isTyping = false;
-                            setTimeout(type, settings.pause);
-                        }
-                    } else {
-                        // Backspacing
-                        if (currentCharIndex > 0) {
-                            $el.text($el.text().slice(0, -1));
-                            currentCharIndex--;
-                            setTimeout(type, settings.backDelay);
-                        } else {
-                            // Finished backspacing, move to next text
-                            isTyping = true;
-                            currentTextIndex = (currentTextIndex + 1) % settings.text.length;
-                            if (currentTextIndex === 0 && !settings.loop) {
-                                // Stop if we've gone through all texts and not looping
-                                return;
-                            }
-                            setTimeout(type, settings.typeDelay);
-                        }
-                    }
-                }
-                
-                // Start typing
-                type();
-            });
-        };
-    })(jQuery);
-    
-    // Cursor blink effect
-    (function($) {
-        $.fn.blink = function(options) {
-            var settings = $.extend({
-                text: ['|', ' '],
-                delay: 500
-            }, options);
-            
-            return this.each(function() {
-                var $el = $(this);
-                var currentIndex = 0;
-                
-                function blink() {
-                    $el.text(settings.text[currentIndex]);
-                    currentIndex = (currentIndex + 1) % settings.text.length;
-                    setTimeout(blink, settings.delay);
-                }
-                
-                blink();
-            });
-        };
-    })(jQuery);
-    </script>
-    
     <!-- Initialize teletype animation -->
     <script>
     $(function() {
@@ -152,10 +70,10 @@
             pause: 1500
         });
         
-        $('#bannercursor').blink({
-            text: ['|', ' '],
-            delay: 500
-        });
+        // $(\'#bannercursor\').blink({ // <<< COMMENT OUT THIS BLOCK
+        //     text: [\'|\', \' \'],
+        //     delay: 500
+        // });
         
         // After animations are complete, set static text
         setTimeout(function() {
@@ -202,34 +120,36 @@
             console.log("🎮 Game start received with data:", data);
             $('#messages').append($('<li class="game-start">').text("Starting game..."));
             
-            // Stop waiting screen animation if it's running
             if (typeof Game !== 'undefined') {
                 Game.stopWaitingScreen();
             }
             
             if (!data) {
-                $('#messages').append($('<li class="error">').text("Error: No game data received"));
+                $('#messages').append($('<li class="error">').text("Error: No game data received from server."));
+                if (typeof Game !== 'undefined') Game._drawWelcomeScreen(); 
                 return;
             }
             
             try {
-                // Start the game with received data
-                var success = Game.startGame(data);
+                // Pass player, map, monsters, items, and initialVisibleTiles if available
+                var success = Game.startGame(
+                    data.player, 
+                    data.map, 
+                    data.monsters, 
+                    data.items,
+                    data.visibleTiles // Pass initial visible tiles from server
+                );
                 console.log("Game start result:", success ? "SUCCESS" : "FAILED");
                 
                 if (!success) {
-                    $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
-                    
-                    // Try switching to ASCII mode
-                    if (document.getElementById('toggle-mode')) {
-                        document.getElementById('toggle-mode').click();
-                        setTimeout(function() {
-                            Game.startGame(data);
-                        }, 100);
-                    }
+                    $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
+                    if (typeof Game !== 'undefined') Game._drawWelcomeScreen(); 
+                } else {
+                    // Shift focus to the game display area after successful game start
+                    $('#game-display').focus(); 
+                    updateFocusIndicator();
                 }
                 
-                window.focus();
             } catch (err) {
                 console.error("Error starting game:", err);
                 $('#messages').append($('<li class="error">').text("Error: " + err.message));
@@ -238,19 +158,24 @@
 
         // Game update handler
         socket.on('game_update', function(data) {
-            console.log("🎮 GAME UPDATE received:", data);
+            // console.log("🎮 GAME UPDATE received:", data); // Reduced verbosity
             
-            if (typeof Game !== 'undefined') {
-                // Update all entity positions
-                Game._player = data.player;
-                Game._visibleTiles = data.visibleTiles;
-                Game._monster = data.monster;
-                Game._entrance = data.entrance;
-                Game._exit = data.exit;
-                Game._treasure = data.treasure;
+            if (typeof Game !== 'undefined' && Game._gameActive) { // Ensure game is active
+                if (data.player) Game._player = data.player;
+                if (data.visibleTiles) {
+                    Game._visibleTiles = data.visibleTiles;
+                    Game._updateExploredTiles(); // Update explored based on new visibility
+                }
+                if (data.monster) Game._monster = data.monster; // Update monster data
+                if (data.items) Game._items = data.items; // Update items data
+                // Potentially update _entrance, _exit, _treasure if they are part of game_update
+                // Game._entrance = data.entrance;
+                // Game._exit = data.exit;
+                // Game._treasure = data.treasure;
                 
-                // Draw updated screen
                 Game._drawGameScreen();
+            } else {
+                // console.log("Game not active or Game undefined, skipping game_update draw.");
             }
         });
 
@@ -268,6 +193,7 @@
             $('#chatInput').val('');
             
             // If the message is "enter", show the waiting screen
+            // AND shift focus to game display if game is about to start
             if (msg.toLowerCase() === 'enter') {
                 console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
                 
@@ -275,11 +201,85 @@
                 if (typeof Game !== 'undefined') {
                     Game.drawWaitingScreen();
                 }
+                // Focus will be shifted in the 'game_start' handler after success
             }
             
             return false;
         });
+
+        // Set initial focus to chat input
+        $('#chatInput').focus();
+        updateFocusIndicator(); // Initial focus indicator update
+
+        // Add focus/blur listeners for visual indicator
+        $('#chatInput').on('focus', updateFocusIndicator).on('blur', updateFocusIndicator);
+        $('#game-display').on('focus', updateFocusIndicator).on('blur', updateFocusIndicator);
+
+        // Keyboard listener for game actions (WASD, Arrow Keys)
+        // Ensure this is attached to an element that can receive focus, like the game-display div.
+        // The game-display div needs a tabindex attribute to be focusable.
+        $('#game-display').attr('tabindex', '-1'); // Make it focusable
+
+        $(document).on('keydown', function(e) {
+            // console.log(`Keydown event: ${e.key}`, "Active element:", document.activeElement, "Game active?:", Game ? Game._gameActive : "Game undefined");
+
+            if (document.activeElement === $('#game-display')[0]) {
+                // console.log("Game display has focus.");
+                if (Game && Game._gameActive) {
+                    // console.log("Game is active. Processing key:", e.key);
+                    let dx = 0;
+                    let dy = 0;
+                    let moved = false;
+
+                    switch(e.key) {
+                        case 'w': case 'ArrowUp':    dy = -1; moved = true; break;
+                        case 's': case 'ArrowDown':  dy = 1;  moved = true; break;
+                        case 'a': case 'ArrowLeft':  dx = -1; moved = true; break;
+                        case 'd': case 'ArrowRight': dx = 1;  moved = true; break;
+                    }
+
+                    if (moved) {
+                        console.log(`Attempting to move: dx=${dx}, dy=${dy}. Key: ${e.key}`);
+                        e.preventDefault(); // Prevent page scrolling
+                        // Emit movement to server instead of directly calling Game.movePlayer
+                        socket.emit('player_move', { dx: dx, dy: dy });
+                        console.log(`Emitted player_move: dx=${dx}, dy=${dy}`);
+                    } else {
+                        // console.log("Key pressed on game display, but not a movement key:", e.key);
+                    }
+                } else {
+                    console.log("Game display has focus, but Game is not active. Game object:", Game, "Game._gameActive:", Game ? Game._gameActive : "N/A");
+                }
+            } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
+                // console.log("Enter pressed, focusing chat input.");
+                // If Enter is pressed and chat is not focused, focus chat
+                $('#chatInput').focus();
+                updateFocusIndicator();
+            } else {
+                // console.log("Keydown event, but game display not focused or not Enter key for chat focus. Active element:", document.activeElement);
+            }
+        });
     });
+
+    // Function to update visual focus indicator
+    function updateFocusIndicator() {
+        var gameDisplay = $('#game-display');
+        var chatInput = $('#chatInput');
+
+        if (document.activeElement === gameDisplay[0]) {
+            gameDisplay.css('outline', '2px solid yellow'); // Or some other visual cue
+            chatInput.css('outline', 'none');
+            console.log("Focus: Game Display");
+        } else if (document.activeElement === chatInput[0]) {
+            chatInput.css('outline', '2px solid cyan'); // Or some other visual cue
+            gameDisplay.css('outline', 'none');
+            console.log("Focus: Chat Input");
+        } else {
+            gameDisplay.css('outline', 'none');
+            chatInput.css('outline', 'none');
+            console.log("Focus: None or Other");
+        }
+    }
     </script>
 
     <!-- Initialize the game when everything is ready -->
@@ -373,34 +373,25 @@ $(function() {
 <script>
 document.getElementById('toggle-mode').addEventListener('click', function() {
     try {
+        var button = document.getElementById('toggle-mode');
         // Check current mode and toggle accordingly
-        if (Game.isAsciiMode && Game.isAsciiMode()) {
-            console.log("Switching to TILE mode...");
-            if (typeof Game.switchToTileMode === 'function') {
-                Game.switchToTileMode();
-                this.textContent = "Switch to ASCII Mode";
-                this.style.background = "#333";
-                this.style.color = "white";
-            } else {
-                console.error("Game.switchToTileMode is not defined");
-                this.textContent = "Error: Tile Mode Not Available";
-                this.style.background = "#990000";
-            }
-        } else {
+        if (Game && Game._isTileMode) { // If currently in Tile Mode
             console.log("Switching to ASCII mode...");
             if (typeof Game.switchToAsciiMode === 'function') {
                 Game.switchToAsciiMode();
-                this.textContent = "Switch to Tile Mode";
-                this.style.background = "#444";
-                this.style.color = "#0f0";
-            } else {
-                console.error("Game.switchToAsciiMode is not defined");
-                this.textContent = "Error: ASCII Mode Not Available";
-                this.style.background = "#990000";
-            }
+                button.textContent = 'Switch to Tile Mode';
+            } else { console.error("Game.switchToAsciiMode is not defined"); }
+        } else if (Game) { // If currently in ASCII mode (or Game object exists and not in tile mode)
+            console.log("Switching to TILE mode...");
+            if (typeof Game.switchToTileMode === 'function') {
+                Game.switchToTileMode();
+                button.textContent = 'Switch to ASCII Mode';
+            } else { console.error("Game.switchToTileMode is not defined"); }
+        } else {
+            console.error("Game object not available to toggle mode.");
         }
-    } catch (err) {
-        console.error("Error switching display mode:", err);
+    } catch (e) {
+        console.error("Error switching display mode:", e);
     }
 });
 </script>

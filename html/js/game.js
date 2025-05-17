@@ -8,850 +8,713 @@ if (typeof window !== 'undefined' && !window.socket) {
 }
 
 var Game = {
-    // Change dimensions to match the display options (25 × 19 tiles)
-    _screenWidth: 25,   // Used for drawing coordinates (columns)
-    _screenHeight: 19,  // Used for drawing coordinates (rows)
-    _mapWidth: 25,      // Logical map width (should match display)
-    _mapHeight: 19,     // Logical map height (should match display)
     _display: null,
-    _map: null,
+    _screenWidth: options.width,
+    _screenHeight: options.height,
+    _isTileMode: false, // Determined after checking tileset
+    _displayReady: false, // Flag to indicate if _display is initialized
     _player: null,
+    defaultFg: "#FFF", // Define defaultFg here
+    // _defaultBg: null, // Standard for transparent/display default
     _monster: null,
-    _exit: null,
-    _entrance: null,
-    _treasure: null,
-    _gameActive: false,
-    _message: "", // To display messages like 'waiting'
-    _visibleTiles: {}, // Store currently visible tiles
-    _exploredTiles: {}, // Store all tiles the player has seen
-    _isTileMode: false, // Track if we're in tile mode
+    _map: {},
+    _items: {},
+    _gameInProgress: false,
+    _inputEnabled: true,
+    _messageLog: [],
+    _maxLogMessages: 5,
+
+    init: function() {
+        console.log("Game.init called. 'this' is Game:", this === Game);
+        console.log("Is this.checkTileset a function?", typeof this.checkTileset);
+
+        if (typeof this.checkTileset !== 'function') {
+            console.error("CRITICAL: Game.checkTileset is not a function. Halting initialization.");
+            alert("Error: Game initialization failed (checkTileset not found). Please check game.js.");
+            return;
+        }
+
+        this.checkTileset(function(tilesetAvailable) {
+            console.log("Game.checkTileset callback. Tileset available: " + tilesetAvailable);
+            this._isTileMode = tilesetAvailable;
+
+            var displayOptions = {
+                width: this._screenWidth,
+                height: this._screenHeight,
+                forceSquareRatio: true, // Good for both modes generally
+            };
+
+            if (this._isTileMode) {
+                console.log("Initializing display in TILE mode.");
+                displayOptions.layout = "tile";
+                displayOptions.bg = window.options.bg; // Should be "transparent"
+                displayOptions.fg = window.options.fg || "#FFF"; // Default foreground for text not in tileMap
+                displayOptions.tileWidth = window.options.tileWidth;
+                displayOptions.tileHeight = window.options.tileHeight;
+                displayOptions.tileSet = window.options.tileSet;
+                displayOptions.tileMap = window.options.tileMap;
+                displayOptions.tileColorize = false; // Render tiles as-is from the tileset
+            } else {
+                console.log("Initializing display in ASCII mode.");
+                displayOptions.layout = "rect";
+                displayOptions.bg = "#000000"; // Black background for ASCII
+                displayOptions.fg = window.options.fg || "#FFF"; // Default foreground
+                displayOptions.fontSize = 18; // Adjust as needed for your font/preference
+                // Ensure no tile-specific options are passed if they might cause errors
+                delete displayOptions.tileWidth;
+                delete displayOptions.tileHeight;
+                delete displayOptions.tileSet;
+                delete displayOptions.tileMap;
+            }
+
+            try {
+                var gameDisplayContainer = document.getElementById("game-display");
+                if (!gameDisplayContainer) {
+                    console.error("Game display container #game-display not found in HTML!");
+                    alert("Error: Game display container #game-display not found. Cannot start game.");
+                    return;
+                }
+                this._display = new ROT.Display(displayOptions);
+                gameDisplayContainer.innerHTML = ''; // Clear any previous content (e.g., loading messages)
+                gameDisplayContainer.appendChild(this._display.getContainer());
+                console.log("ROT.Display initialized and appended. Display object:", this._display);
+                this._displayReady = true; // Set flag AFTER successful initialization
+                console.log("Game display initialized. _displayReady set to true.");
+
+                // Now that the display is ready, other things can happen,
+                // like drawing the welcome screen or enabling socket event handlers fully.
+                this._drawWelcomeScreen(); // Example: draw initial screen
+
+            } catch (e) {
+                console.error("Error initializing ROT.Display:", e);
+                alert("Failed to initialize game display. Error: " + e.message + ". Check console for details.");
+                this._displayReady = false; // Explicitly false on error
+            }
+        }.bind(this)); // CRUCIAL: bind 'this' for the callback to refer to the Game object
+    },
+
+    checkTileset: function(callback) {
+        console.log("Game.checkTileset called to determine mode.");
+        // This function relies on options.js to have attempted loading the tileset
+        // and set window.tileSet, window.tileMap, and window.globalTileSetStatus.
+
+        // Give a very short moment for options.js to potentially finish initial load attempts.
+        setTimeout(function() {
+            if (window.globalTileSetStatus === "error") {
+                console.warn("Tileset loading previously failed (window.globalTileSetStatus is 'error'). Using ASCII mode.");
+                callback(false); // Tileset not available
+            } else if (window.tileSet && window.tileSet.complete && window.tileSet.naturalHeight !== 0 && window.tileMap && Object.keys(window.tileMap).length > 0) {
+                console.log("Tileset and tileMap appear to be loaded and valid. Using TILE mode.");
+                callback(true); // Tileset available
+            } else {
+                // If not immediately ready, and no definitive error, try waiting a bit longer.
+                // options.js has its own timeouts. This is a secondary check.
+                console.log("Tileset not immediately confirmed. Waiting up to 3 seconds for options.js to complete loading...");
+                let attempts = 0;
+                const maxAttempts = 6; // Try for 3 seconds (6 * 500ms)
+                const interval = setInterval(function() {
+                    attempts++;
+                    if (window.globalTileSetStatus === "error") {
+                        clearInterval(interval);
+                        console.warn("Tileset loading failed during interval check in Game.checkTileset. Using ASCII mode.");
+                        callback(false);
+                    } else if (window.tileSet && window.tileSet.complete && window.tileSet.naturalHeight !== 0 && window.tileMap && Object.keys(window.tileMap).length > 0) {
+                        clearInterval(interval);
+                        console.log("Tileset and tileMap confirmed after delay in Game.checkTileset. Using TILE mode.");
+                        callback(true);
+                    } else if (attempts >= maxAttempts) {
+                        clearInterval(interval);
+                        console.error("Tileset did not become available after extended wait in Game.checkTileset. Assuming not available. Using ASCII mode.");
+                        callback(false); // Assume not available
+                    }
+                }.bind(this), 500); // Check every 500ms
+            }
+        }.bind(this), 50); // Small initial delay for options.js to run
+    },
+
+    _ensureDisplay: function() {
+        if (!this._display || !this._displayReady) {
+            console.warn("Display not ready or not initialized. Aborting drawing/game operation.");
+            return false;
+        }
+        return true;
+    },
+
+    _forceClearToBlack: function() {
+        if (!this._ensureDisplay()) {
+            console.warn("Game._forceClearToBlack: Display not ready, aborting.");
+            return;
+        }
+        // console.log("Game: _forceClearToBlack called at " + new Date().toLocaleTimeString());
+
+        const display = this._display;
+
+        // Step 1: Clear ROT.js's internal data cache and dirty flags.
+        // This ensures that ROT.js starts with a clean slate for what it thinks is on screen.
+        display._data = {};
+        display._dirty = {};
+        // console.log("Game._forceClearToBlack: Cleared display._data and display._dirty.");
+
+        // Step 2: Directly clear the visual canvas to black.
+        // This bypasses ROT.js's drawing for the initial clear, ensuring it's black.
+        var canvas = display.getContainer(); // This is typically the <canvas> element
+        if (canvas && typeof canvas.getContext === 'function') {
+            var ctx = canvas.getContext("2d");
+            if (ctx) {
+                // console.log(`Game._forceClearToBlack: Clearing canvas (${canvas.width}x${canvas.height}) to black.`);
+                ctx.fillStyle = "#000000";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                console.warn("Game._forceClearToBlack: Failed to get 2D context from canvas.");
+                this._fallbackClear(display);
+            }
+        } else {
+            console.warn("Game._forceClearToBlack: Display container is not a canvas or does not exist. Attempting fallback clear.");
+            this._fallbackClear(display);
+        }
+        // After this, the canvas is black. ROT.js's _data and _dirty are empty.
+        // Subsequent display.draw() calls (e.g., in _drawWelcomeScreen) will populate
+        // _data and _dirty for the specific cells they affect.
+        // The ROT.js _draw() loop will then only process these newly dirtied cells,
+        // for which _data will exist.
+    },
+
+    // Helper for fallback clear if direct canvas manipulation fails
+    _fallbackClear: function(display) {
+        console.warn("Game._forceClearToBlack: Using fallback clear method.");
+        const originalBg = display.getOptions().bg; // Get current bg from display's options
+        try {
+            if (display._options) { // Ensure _options exists
+                display._options.bg = "#000000"; // Set to black for the clear
+            }
+            display.clear(); // Use ROT.js's own clear method.
+                             // This will use the (now black) _options.bg.
+        } catch (e) {
+            console.error("Error during fallback clear:", e);
+        } finally {
+            if (display._options) { // Ensure _options exists before restoring
+                display._options.bg = originalBg; // Restore original background
+            }
+        }
+    },
+
+    // Add a helper for default colors to avoid errors if options.colors is not fully defined
+    // _getColor: function(type, defaultColor) {
+    // return (options.colors && options.colors[type]) ? options.colors[type] : defaultColor;
+    // }, // REMOVED
 
     _isFirefox: function() {
         return navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
     },
 
-    init: function() {
-        console.log("Initializing game");
-        
-        // Verify if tileset is actually loaded
-        this.checkTileset(function(isLoaded) {
-            if (isLoaded) {
-                Game._setupTileDisplay();
-            } else {
-                Game._setupAsciiDisplay();
-            }
-            
-            // Draw the welcome screen
-            Game._drawWelcomeScreen();
-            
-            // Set up the keyboard handler
-            Game._initializeKeyboardHandler();
-        });
-    },
-
-    // Initialize game with data from server
-    startGame: function(data) {
-        console.log("Starting game with data:", data);
-        
-        if (!data) {
-            console.error("No game data received!");
+    startGame: function(playerData, mapData, monsterData, itemData, initialVisibleTiles) { // Added initialVisibleTiles
+        if (!this._ensureDisplay()) {
+            console.error("Game: Cannot start game, display not ready.");
             return false;
         }
-        
+        console.log("Game: startGame called. PlayerData:", playerData, "MapData:", mapData, "InitialVisibleTiles:", initialVisibleTiles);
+
+        this.clearDisplay();
         try {
-            // Set game as active
             this._gameActive = true;
-            
-            // Set all game properties from data
-            this._player = data.player || { x: 12, y: 12 };
-            this._monster = data.monster;
-            this._entrance = data.entrance;
-            this._exit = data.exit;
-            this._treasure = data.treasure;
-            
-            // Get visible tiles, ensuring they're valid
-            if (data.visibleTiles && typeof data.visibleTiles === 'object') {
-                // Store the visible tiles
-                this._visibleTiles = data.visibleTiles;
-                console.log("Visible tiles:", Object.keys(this._visibleTiles).length, "rows");
+
+            // Robust player initialization
+            if (playerData && typeof playerData.x === 'number' && typeof playerData.y === 'number') {
+                this._player = { x: playerData.x, y: playerData.y };
             } else {
-                // If no tiles, create a basic visible area around player
-                console.log("No visible tiles provided, creating basic view");
-                this._visibleTiles = {};
-                const px = this._player.x;
-                const py = this._player.y;
-                
-                // Create a 5x5 visible area around player
-                for (let y = py-2; y <= py+2; y++) {
-                    if (!this._visibleTiles[y]) this._visibleTiles[y] = {};
-                    for (let x = px-2; x <= px+2; x++) {
-                        this._visibleTiles[y][x] = 0; // Floor tiles
+                console.warn("Invalid or missing playerData.x/y, using default player position.", playerData);
+                this._player = { x: 12, y: 12 }; // Default position
+            }
+            console.log("Player initialized to:", this._player);
+
+            this._monster = monsterData; // Assuming monsterData is structured correctly or null
+            this._item = itemData;       // Assuming itemData is structured correctly or null
+
+            this._map = {};
+            this._visibleTiles = {}; // Clear/initialize visible tiles
+            this._exploredTiles = this._exploredTiles || {}; // Initialize exploredTiles if it doesn't exist, or keep existing
+
+            let mapInitialized = false;
+
+            if (mapData && mapData.tiles && typeof mapData.tiles === 'object' && Object.keys(mapData.tiles).length > 0) {
+                console.log("Initializing map from mapData.tiles:", mapData.tiles);
+                for (var yKey in mapData.tiles) {
+                    const y = parseInt(yKey);
+                    this._map[y] = {};
+                    for (var xKey in mapData.tiles[y]) {
+                        const x = parseInt(xKey);
+                        this._map[y][x] = mapData.tiles[y][x];
                     }
                 }
+                mapInitialized = true;
+                console.log("Game map initialized from mapData.tiles:", this._map);
+            } else if (mapData && Array.isArray(mapData) && mapData.length > 0) {
+                console.warn("Received array-based mapData, attempting to convert.");
+                for (let y = 0; y < mapData.length; y++) {
+                    this._map[y] = {};
+                    if (mapData[y] && Array.isArray(mapData[y])) {
+                        for (let x = 0; x < mapData[y].length; x++) {
+                            this._map[y][x] = mapData[y][x];
+                        }
+                    }
+                }
+                mapInitialized = true;
+                console.log("Game map initialized from array-based mapData:", this._map);
+            } else if (initialVisibleTiles && typeof initialVisibleTiles === 'object' && Object.keys(initialVisibleTiles).length > 0) {
+                console.log("Initializing _visibleTiles from server-sent initialVisibleTiles and inferring _map for FOV.");
+                this._visibleTiles = JSON.parse(JSON.stringify(initialVisibleTiles)); // Deep copy
+
+                for (const yKey in this._visibleTiles) {
+                    const y = parseInt(yKey);
+                    this._map[y] = this._map[y] || {};
+                    for (const xKey in this._visibleTiles[y]) {
+                        const x = parseInt(xKey);
+                        // Store the tile type (0 for floor, 1 for wall, etc.) into _map
+                        // This allows client-side FOV to know about passability.
+                        this._map[y][x] = this._visibleTiles[y][x];
+                    }
+                }
+                mapInitialized = true;
+                console.log("Game map partially initialized for FOV from initialVisibleTiles:", this._map);
+                console.log("_visibleTiles set directly from initialVisibleTiles:", this._visibleTiles);
+            }
+
+            if (!mapInitialized) {
+                console.warn("No valid mapData or initialVisibleTiles provided. Creating default map for testing. mapData:", mapData, "initialVisibleTiles:", initialVisibleTiles);
+                const defaultMapWidth = this._screenWidth;
+                const defaultMapHeight = this._screenHeight;
+                for (let y = 0; y < defaultMapHeight; y++) {
+                    this._map[y] = {};
+                    for (let x = 0; x < defaultMapWidth; x++) {
+                        this._map[y][x] = (x === 0 || x === defaultMapWidth - 1 || y === 0 || y === defaultMapHeight - 1) ? 1 : 0;
+                    }
+                }
+                // Adjust player position if it's in a wall of the default map
+                if (this._map[this._player.y] && this._map[this._player.y][this._player.x] === 1) {
+                     this._player.x = Math.floor(defaultMapWidth / 2);
+                     this._player.y = Math.floor(defaultMapHeight / 2);
+                     if (this._map[this._player.y][this._player.x] === 1) { // If center is still wall (tiny map)
+                         this._map[this._player.y][this._player.x] = 0; // Force floor
+                     }
+                }
+                console.log("Default game map created. Player position:", this._player.x, this._player.y);
+            }
+
+            // Validate player position against the map
+            if (!this._map[this._player.y] || this._map[this._player.y][this._player.x] === undefined) {
+                console.error(`Player position (${this._player.x}, ${this._player.y}) is invalid or outside map boundaries AFTER map init. Attempting to find fallback.`);
+                let foundFallback = false;
+                for (let y_scan = 0; y_scan < this._screenHeight; y_scan++) { // Iterate within screen bounds for fallback
+                    if (this._map[y_scan]) {
+                        for (let x_scan = 0; x_scan < this._screenWidth; x_scan++) {
+                            if (this._map[y_scan][x_scan] === 0) { // Find first floor tile
+                                this._player.x = x_scan;
+                                this._player.y = y_scan;
+                                console.warn(`Player moved to fallback position: (${this._player.x}, ${this._player.y})`);
+                                foundFallback = true; break;
+                            }
+                        }
+                    }
+                    if (foundFallback) break;
+                }
+                if (!foundFallback) {
+                    console.error("Could not find a valid fallback starting position for the player on the map.");
+                    this._drawCenteredText(10, "Error: Map invalid / No player start!");
+                    return false;
+                }
+            }
+
+            // Initialize FOV
+            // FOV requires a map where 0 is passable, other numbers are not.
+            var fov = new ROT.FOV.PreciseShadowcasting(function(x, y) {
+                return (this._map[y] && this._map[y][x] !== undefined) ? (this._map[y][x] === 0) : false;
+            }.bind(this));
+
+            // If map was NOT built from initialVisibleTiles, compute FOV now.
+            // If it WAS built from initialVisibleTiles, _visibleTiles is already set.
+            // However, we run _updateExploredTiles and FOV compute to ensure consistency and explore.
+            if (!(initialVisibleTiles && typeof initialVisibleTiles === 'object' && Object.keys(initialVisibleTiles).length > 0)) {
+                this._visibleTiles = {}; // Clear if not set by server
+                fov.compute(this._player.x, this._player.y, 10, function(x, y, r, visibility) {
+                    if (!this._visibleTiles[y]) this._visibleTiles[y] = {};
+                    if (this._map[y] && this._map[y][x] !== undefined) {
+                        this._visibleTiles[y][x] = this._map[y][x];
+                    }
+                }.bind(this));
             }
             
-            // Update explored tiles
-            this._updateExploredTiles();
-            
-            // Clear and redraw the screen
-            this.clearDisplay();
-            
-            console.log("Drawing game screen for active game");
-            console.log("Player position:", this._player);
-            
-            // Draw the game with explicit console logging after each step
+            this._updateExploredTiles(); // Add all currently visible tiles to explored tiles
+            console.log("Initial FOV computed/processed. Visible tiles count:", Object.keys(this._visibleTiles).reduce((acc, yKey) => acc + Object.keys(this._visibleTiles[yKey]).length, 0));
+
+            if (!this._scheduler) this._scheduler = new ROT.Scheduler.Simple();
+            else this._scheduler.clear();
+            if (!this._engine) this._engine = new ROT.Engine(this._scheduler);
+
+            this._scheduler.add(this._player, true);
+            // this._engine.start(); // KEEP COMMENTED for now
+
+            console.log("Player coordinates before drawing game screen:", this._player.x, this._player.y);
+            if (!this._map[this._player.y] || this._map[this._player.y][this._player.x] === undefined) {
+                console.error(`Player position (${this._player.x}, ${this._player.y}) is STILL invalid before drawing. Map issue?`);
+                this._drawCenteredText(10, "Error: Player invalid for draw!");
+                return false;
+            }
+
             this._drawGameScreen();
-            
+            console.log("Game started successfully and initial screen drawn.");
             return true;
+
         } catch (err) {
-            console.error("Error starting game:", err);
+            console.error("Error during Game.startGame:", err);
+            console.error("Error name:", err.name, "Error message:", err.message, "Stack:", err.stack);
+            if (err.message && (err.message.includes("_map") || err.message.includes("Cannot read properties of undefined"))) {
+                console.error("Detailed error info: Player:", this._player, "Map keys:", Object.keys(this._map || {}).length);
+            }
+            try {
+                this._drawCenteredText(10, "Error starting game!");
+                this._drawCenteredText(12, "Check console (F12) for details.");
+            } catch (drawError) {
+                console.error("Failed to draw error message on screen:", drawError);
+            }
             return false;
         }
     },
     
     // Update game state with new data from server
     updateGameState: function(data) {
-        console.log("🎲 Updating game state with:", data);
+        console.log("🎲 Game.updateGameState received data:", data);
         
+        if (!this._gameActive) {
+            console.warn("Game.updateGameState called, but game is not active. Ignoring update.");
+            return;
+        }
         if (!data) {
-            console.error("No update data received!");
+            console.error("Game.updateGameState: No update data received!");
             return;
         }
         
         try {
-            // Update player position
+            let needsRedraw = false;
+
+            // Update player state
             if (data.player) {
-                console.log("Player position updated:", data.player);
+                // console.log("Player state updated:", data.player);
                 this._player = data.player;
+                needsRedraw = true;
             }
             
-            // Update monster position
-            if (data.monster !== undefined) {
+            // Update monster state
+            if (data.monster !== undefined) { // Check for undefined to allow null for no monster
+                // console.log("Monster state updated:", data.monster);
                 this._monster = data.monster;
+                needsRedraw = true;
             }
             
-            // Update visible tiles
-            if (data.visibleTiles && Object.keys(data.visibleTiles).length > 0) {
-                console.log("Visible tiles updated:", Object.keys(data.visibleTiles).length, "rows");
+            // Update items
+            if (data.items !== undefined) { // Check for undefined to allow empty or null
+                // console.log("Items state updated:", data.items);
+                this._items = data.items; // Ensure this is _items, not _item
+                needsRedraw = true;
+            }
+
+            // Update visible tiles (most critical for movement feedback)
+            if (data.visibleTiles && typeof data.visibleTiles === 'object' && Object.keys(data.visibleTiles).length > 0) {
+                console.log("Visible tiles updated. Number of rows:", Object.keys(data.visibleTiles).length);
                 this._visibleTiles = data.visibleTiles;
-                this._updateExploredTiles();
+                this._updateExploredTiles(); // This is important for fog of war
+                needsRedraw = true;
+            } else if (data.visibleTiles) {
+                // console.log("Received visibleTiles, but it was empty or not an object:", data.visibleTiles);
             }
             
-            // Redraw the game screen
-            console.log("Redrawing game screen after update");
-            this._drawGameScreen();
+            // Redraw the game screen if any relevant data changed
+            if (needsRedraw) {
+                console.log("Redrawing game screen due to game update.");
+                this._drawGameScreen();
+            } else {
+                // console.log("Game.updateGameState: No relevant data changed that requires a redraw.");
+            }
         } catch (err) {
-            console.error("Error updating game state:", err);
+            console.error("Error in Game.updateGameState:", err);
         }
     },
     
     _updateExploredTiles: function() {
         // Add all currently visible tiles to explored tiles
-        for (var y in this._visibleTiles) {
+        for (var yKey in this._visibleTiles) {
+            const y = parseInt(yKey);
             if (!this._exploredTiles[y]) this._exploredTiles[y] = {};
-            
-            for (var x in this._visibleTiles[y]) {
+            for (var xKey in this._visibleTiles[y]) {
+                const x = parseInt(xKey);
                 this._exploredTiles[y][x] = this._visibleTiles[y][x];
             }
         }
     },
     
     clearDisplay: function() {
-        // Clear the entire display area
-        this._display.clear();
+        if (!this._ensureDisplay()) return;
+        this._forceClearToBlack();
+        // console.log("Display cleared via _forceClearToBlack");
     },
 
     _drawGameScreen: function() {
-        console.log("Drawing game screen...");
+        if (!this._ensureDisplay()) return;
         
-        // Clear the display
-        this.clearDisplay();
-        
-        // Calculate screen center for display
+        const playerWX = this._player.x;
+        const playerWY = this._player.y;
         const centerX = Math.floor(this._screenWidth / 2);
         const centerY = Math.floor(this._screenHeight / 2);
-        
-        console.log("Screen center:", centerX, centerY);
-        
-        // Draw visible tiles centered on player
-        for (let relY in this._visibleTiles) {
-            relY = parseInt(relY);
-            for (let relX in this._visibleTiles[relY]) {
-                relX = parseInt(relX);
-                
-                // Convert to screen coordinates (centered)
-                const screenX = centerX + relX;
-                const screenY = centerY + relY;
-                
-                // Only draw if on screen
-                if (screenX >= 0 && screenY >= 0 && screenX < this._screenWidth && screenY < this._screenHeight) {
-                    const tileType = this._visibleTiles[relY][relX];
-                    
-                    // Draw tile based on type
-                    if (tileType === 1) { // Wall
-                        this._display.draw(screenX, screenY, '#', '#fff', '#000');
-                    } else { // Floor
-                        const tileChar = this.isAsciiMode() ? '.' : '\'';
-                        this._display.draw(screenX, screenY, tileChar, '#888', '#000');
+
+        const topLeftWX = playerWX - centerX;
+        const topLeftWY = playerWY - centerY;
+
+        for (let sy = 0; sy < this._screenHeight; sy++) {
+            for (let sx = 0; sx < this._screenWidth; sx++) {
+                const wx = topLeftWX + sx;
+                const wy = topLeftWY + sy;
+
+                let charStack = [];
+                let fgStack = []; 
+                let bgStack = []; 
+
+                let baseChar = ' ';
+                let baseFg = this.defaultFg; // Use this.defaultFg
+                let tileType;
+
+                if (this._visibleTiles[wy] && this._visibleTiles[wy][wx] !== undefined) {
+                    tileType = this._visibleTiles[wy][wx];
+                    baseFg = this.defaultFg; // Use this.defaultFg
+                    baseChar = (tileType === 1) ? '#' : (this._isTileMode ? "'" : ".");
+                } else if (this._exploredTiles[wy] && this._exploredTiles[wy][wx] !== undefined) {
+                    tileType = this._exploredTiles[wy][wx];
+                    baseFg = this.defaultFg; // Use this.defaultFg
+                    baseChar = (tileType === 1) ? '#' : (this._isTileMode ? "'" : ".");
+                }
+                charStack.push(baseChar);
+                fgStack.push(baseFg); 
+                bgStack.push(null);
+
+                // Items, Monsters, Player drawing logic
+                // Example for items (ensure _item and _isVisible are defined and work correctly)
+                if (this._item) { // Check if _item exists
+                    for (const itemKey in this._item) {
+                        if (this._item.hasOwnProperty(itemKey)) {
+                            const currentItem = this._item[itemKey];
+                            if (currentItem && currentItem.x === wx && currentItem.y === wy && this._isVisible(wx, wy)) {
+                                charStack.push('$'); // Assuming '$' for items
+                                fgStack.push(this.defaultFg); // Use this.defaultFg
+                                bgStack.push(null);
+                            }
+                        }
                     }
+                }
+                
+                if (this._monster && this._monster.x === wx && this._monster.y === wy && this._isVisible(wx, wy)) {
+                    charStack.push('~'); 
+                    fgStack.push(this.defaultFg); // Use this.defaultFg
+                    bgStack.push(null);
+                }
+                
+                if (wx === playerWX && wy === playerWY) {
+                    charStack.push('@'); 
+                    fgStack.push(this.defaultFg); // Use this.defaultFg
+                    bgStack.push(null);
+                }
+                
+                if (charStack.length > 0) {
+                     this._display.draw(sx, sy, charStack, fgStack, bgStack);
                 }
             }
         }
-        
-        // Draw special entities if they exist in game state
-        
-        // Check for entrance/exit at player position
-        const playerIsAtEntrance = this._entrance && 
-                                  this._entrance.x === 0 && 
-                                  this._entrance.y === 0;
-        
-        const playerIsAtExit = this._exit && 
-                              this._exit[0] === 0 && 
-                              this._exit[1] === 0;
-        
-        // Draw entrance if it exists in the game state
-        if (this._entrance) {
-            // Handle different data formats - could be [x,y] array or {x,y} object
-            const entranceX = Array.isArray(this._entrance) ? this._entrance[0] : this._entrance.x;
-            const entranceY = Array.isArray(this._entrance) ? this._entrance[1] : this._entrance.y;
-            const entranceScreenX = centerX + entranceX; 
-            const entranceScreenY = centerY + entranceY;
-            
-            console.log("Entrance position:", entranceX, entranceY);
-            console.log("Player relative position:", this._player.x, this._player.y);
-            
-            if (entranceScreenX >= 0 && entranceScreenY >= 0 && 
-                entranceScreenX < this._screenWidth && entranceScreenY < this._screenHeight) {
-                // Draw entrance with bright green color for visibility
-                this._display.draw(entranceScreenX, entranceScreenY, '<', '#0f0', '#000');
-                console.log(`Drew entrance at screen position (${entranceScreenX},${entranceScreenY})`);
-            }
+
+        if (this._message) {
+            this._drawCenteredText(this._screenHeight - 1, this._message);
         }
-        
-        // Draw exit if it exists in the game state
-        if (this._exit) {
-            // Handle different data formats - could be [x,y] array or {x,y} object
-            const exitX = Array.isArray(this._exit) ? this._exit[0] : this._exit.x;
-            const exitY = Array.isArray(this._exit) ? this._exit[1] : this._exit.y;
-            const exitScreenX = centerX + exitX;
-            const exitScreenY = centerY + exitY;
-            
-            console.log("Exit position:", exitX, exitY);
-            
-            if (exitScreenX >= 0 && exitScreenY >= 0 && 
-                exitScreenX < this._screenWidth && exitScreenY < this._screenHeight) {
-                // Draw exit with bright green color for visibility
-                this._display.draw(exitScreenX, exitScreenY, '>', '#0f0', '#000');
-                console.log(`Drew exit at screen position (${exitScreenX},${exitScreenY})`);
-            }
-        }
-        
-        // Draw treasure if it exists in the game state
-        if (this._treasure) {
-            const treasureX = Array.isArray(this._treasure) ? this._treasure[0] : this._treasure.x;
-            const treasureY = Array.isArray(this._treasure) ? this._treasure[1] : this._treasure.y;
-            const treasureScreenX = centerX + treasureX;
-            const treasureScreenY = centerY + treasureY;
-            
-            if (treasureScreenX >= 0 && treasureScreenY >= 0 && 
-                treasureScreenX < this._screenWidth && treasureScreenY < this._screenHeight) {
-                this._display.draw(treasureScreenX, treasureScreenY, '$', '#ff0', '#000');
-                console.log(`Drew treasure at screen position (${treasureScreenX},${treasureScreenY})`);
-            }
-        }
-        
-        // Draw monster if it exists in the game state
-        if (this._monster) {
-            const monsterX = this._monster.x;
-            const monsterY = this._monster.y;
-            const monsterScreenX = centerX + monsterX;
-            const monsterScreenY = centerY + monsterY;
-            
-            if (monsterScreenX >= 0 && monsterScreenY >= 0 && 
-                monsterScreenX < this._screenWidth && monsterScreenY < this._screenHeight) {
-                this._display.draw(monsterScreenX, monsterScreenY, '~', '#f00', '#000');
-                console.log(`Drew monster at screen position (${monsterScreenX},${monsterScreenY})`);
-            }
-        }
-        
-        // Always draw player at center of screen
-        // Special case: If player is at entrance/exit, add visual indicator
-        if (playerIsAtEntrance) {
-            console.log("Player is at entrance - drawing special indicator");
-            this._display.draw(centerX, centerY, '@', '#0ff', '#000'); // Special color for player on entrance
-        } else if (playerIsAtExit) {
-            console.log("Player is at exit - drawing special indicator");
-            this._display.draw(centerX, centerY, '@', '#0ff', '#000'); // Special color for player on exit
-        } else {
-            this._display.draw(centerX, centerY, '@', '#ff0', '#000'); // Normal player
-        }
-        
-        console.log(`Drew player at center of screen (${centerX},${centerY})`);
     },
-    
+
+    _drawCenteredText: function(y, text, color) { // Restored color parameter
+        if (!this._ensureDisplay()) return y;
+        const x = Math.floor((this._screenWidth - text.length) / 2);
+        const finalColor = color || this.defaultFg; // Use provided color or defaultFg
+        this._display.drawText(x, y, `%c{${finalColor}}${text}`); // Use color in drawText
+        return y + 1;
+    },
+
     _isVisible: function(x, y) {
-        // Check if a tile is currently visible
         return this._visibleTiles[y] && this._visibleTiles[y][x] !== undefined;
     },
 
-    // Add this helper method near other drawing functions
-    _drawBorder: function(color) {
-        const w = this._screenWidth;
-        const h = this._screenHeight;
-        
-        // Use the stored mode state to determine character
-        const borderChar = this._isTileMode ? "#" : "+";
-        color = color || '#888'; // Default color is gray
-        
-        // Draw the border
-        for (let x = 0; x < w; x++) {
-            for (let y = 0; y < h; y++) {
-                if (x === 0 || y === 0 || x === w-1 || y === h-1) {
-                    this._display.draw(x, y, borderChar, color, '#000');
-                }
-            }
-        }
-    },
+    _drawBorder: function() { // NEW SIGNATURE
+        if (!this._ensureDisplay()) return;
+        // console.log("Drawing border. Tile mode: " + this._isTileMode);
 
-    // Add these functions right before the closing }; of the Game object
-
-    // Win screen
-    drawWinScreen: function(hasTreasure) {
-        console.log("Drawing win screen, hasTreasure:", hasTreasure);
-        
-        // Clear the display
-        this.clearDisplay();
-        
-        // Draw green border
-        this._drawBorder('#0f0');
-        
-        // Draw win message
-        let y = 5;
-        y = this._drawCenteredText(y, "YOU ESCAPED!", "green");
-        y += 1;
-        
-        const subtitle = hasTreasure ? "WITH THE TREASURE!" : "ALIVE!";
-        y = this._drawCenteredText(y, subtitle, "yellow");
-        y += 2;
-        
-        if (hasTreasure) {
-            y = this._drawCenteredText(y, "You won extra Wownero!", "yellow");
-            y += 1;
+        for (var i = 0; i < this._screenWidth; i++) {
+            // this._display.draw(i, 0, "-", this._getColor("border_fg"), this._getColor("border_bg")); // OLD
+            // this._display.draw(i, this._screenHeight - 1, "-", this._getColor("border_fg"), this._getColor("border_bg")); // OLD
+            this._display.draw(i, 0, "-", this.defaultFg, null); // NEW
+            this._display.draw(i, this._screenHeight - 1, "-", this.defaultFg, null); // NEW
         }
-        
-        y += 1;
-        this._drawCenteredText(y, "Type ENTER to retry", "white");
-    },
-
-    // Lose screen
-    drawLoseScreen: function(reason) {
-        console.log("Drawing lose screen, reason:", reason);
-        
-        // Clear the display
-        this.clearDisplay();
-        
-        // Draw red border
-        this._drawBorder('#f00');
-        
-        // Draw lose message
-        let y = 5;
-        y = this._drawCenteredText(y, "YOU DIED!", "red");
-        y += 1;
-        
-        let subtitle = "";
-        if (reason === 'monster') {
-            subtitle = "KILLED BY THE MONSTER";
-        } else if (reason === 'timeout') {
-            subtitle = "YOU RAN OUT OF TIME";
+        for (var j = 1; j < this._screenHeight - 1; j++) {
+            // this._display.draw(0, j, "|", this._getColor("border_fg"), this._getColor("border_bg")); // OLD
+            // this._display.draw(this._screenWidth - 1, j, "|", this._getColor("border_fg"), this._getColor("border_bg")); // OLD
+            this._display.draw(0, j, "|", this.defaultFg, null); // NEW
+            this._display.draw(this._screenWidth - 1, j, "|", this.defaultFg, null); // NEW
         }
-        
-        if (subtitle) {
-            y = this._drawCenteredText(y, subtitle, "red");
-            y += 1;
-        }
-        
-        y += 2;
-        this._drawCenteredText(y, "Type ENTER to retry", "white");
-    },
-
-    // Public welcome screen method - add if missing
-    drawWelcomeScreen: function() {
-        this._drawWelcomeScreen();
     },
 
     _drawWelcomeScreen: function() {
-        console.log("Drawing welcome screen");
-        
-        // Clear the display
+        if (!this._ensureDisplay()) return;
         this.clearDisplay();
+        // console.log("Drawing welcome screen. Tile mode: " + this._isTileMode);
+
+        let y = Math.floor(this._screenHeight / 4);
+        y = this._drawCenteredText(y, "THE WOWNGEON", this.defaultFg); // Use this.defaultFg
+        y = this._drawCenteredText(y + 2, "A Wownero Roguelike", this.defaultFg); // Use this.defaultFg
         
-        // Draw the border with gray color
-        this._drawBorder('#888');
-        
-        // Draw content with centered text
-        let y = 3;
-        y = this._drawCenteredText(y, "WOWGUE", "white");
-        y += 4;
-        
-        // Draw instructions
-        y = this._drawCenteredText(y, "Type enter to start!", "yellow");
-        y = this._drawCenteredText(y, "Or type help...", "yellow");
-        y += 2;
-        
-        // Draw legend - keep these special characters with tile mappings
-        const centerX = Math.floor(this._screenWidth / 2) - 11; // Manual alignment for legend
-        this._display.drawText(centerX, y, "%c{cyan}@ %c{white}- This is you");     y++;
-        this._display.drawText(centerX, y, "%c{green}> %c{white}- Escape the dungeon"); y++;
-        this._display.drawText(centerX, y, "%c{red}~ %c{white}- Avoid the monster");  y++;
-        this._display.drawText(centerX, y, "%c{yellow}$ %c{white}- Secure the bag");    y++;
-        
-        // Draw footer
-        y += 1;
-        this._drawCenteredText(17, "Type enter in chat =", "gray");
+        // Original text regarding game start
+        y = this._drawCenteredText(y + 3, "Type 'ENTER' in chat", this.defaultFg);
+        y = this._drawCenteredText(y + 1, "to begin your descent...", this.defaultFg);
+        this._drawCenteredText(y + 3, "Good luck, adventurer!", this.defaultFg);
     },
 
-    _initializeKeyboardHandler: function() {
-        console.log("Initializing keyboard handler");
-        
-        // Use a local reference to avoid 'this' scope issues in event handler
-        const game = this;
-        
-        // Add event listener for keydown
-        window.addEventListener('keydown', function(e) {
-            // Only process keys when game is active
-            if (!game._gameActive) {
-                return;
-            }
-            
-            let direction = null;
-            
-            // Determine direction based on key
-            switch (e.key) {
-                case 'ArrowUp':
-                case 'w':
-                case 'W':
-                    direction = 'up';
-                    break;
-                    
-                case 'ArrowDown':
-                case 's':
-                case 'S':
-                    direction = 'down';
-                    break;
-                    
-                case 'ArrowLeft':
-                case 'a':
-                case 'A':
-                    direction = 'left';
-                    break;
-                    
-                case 'ArrowRight':
-                case 'd':
-                case 'D':
-                    direction = 'right';
-                    break;
-                    
-                default:
-                    // Not a movement key
-                    return;
-            }
-            
-            // Prevent default behavior for these keys (like scrolling)
-            e.preventDefault();
-            
-            console.log(`Key pressed: ${e.key}, sending direction: ${direction}`);
-            
-            // Send the movement to the server
-            if (window.socket && direction) {
-                window.socket.emit('move', direction);
-            }
-        });
-        
-        console.log("Keyboard handler initialized");
-    },
+    drawWinScreen: function(hasTreasure) {
+        if (!this._ensureDisplay()) return;
+        this.clearDisplay();
+        // console.log("Drawing win screen. Tile mode: " + this._isTileMode);
 
-    // Mode switching methods
-    isAsciiMode: function() {
-        return !this._isTileMode;
-    },
-
-    switchToTileMode: function() {
-        console.log("Switching to tile mode");
-        
-        if (!window.tileSet || !window.tileMap) {
-            console.error("Cannot switch to tile mode: tileset or tilemap not available");
-            return false;
+        let y = this._drawCenteredText(Math.floor(this._screenHeight / 3), "CONGRATULATIONS!");
+        if (hasTreasure) {
+            y = this._drawCenteredText(y + 2, "You escaped with the treasure!");
+        } else {
+            y = this._drawCenteredText(y + 2, "You escaped the dungeon!");
         }
-        
-        // Save current game state and screen center
-        const gameWasActive = this._gameActive;
-        
-        // Create new display with tile options
-        const oldContainer = this._display.getContainer();
-        const parentElement = oldContainer.parentElement;
-        
-        try {
-            this._isTileMode = true; // Update mode state
-            this._display = new ROT.Display({
-                width: this._screenWidth,
-                height: this._screenHeight,
-                fontSize: 16,
-                fontFamily: "monospace",
-                fg: "#fff", 
-                bg: "#000",
-                layout: "tile",
-                tileWidth: 32,
-                tileHeight: 32,
-                tileSet: window.tileSet,
-                tileMap: window.tileMap
-            });
-            
-            console.log("Created tile display with options:", this._display.getOptions());
-            
-            // Replace old container with new one
-            if (parentElement) {
-                parentElement.removeChild(oldContainer);
-                parentElement.appendChild(this._display.getContainer());
-            }
-            
-            // Redraw the screen
-            if (gameWasActive) {
-                this._drawGameScreen();
-            } else {
-                this._drawWelcomeScreen();
-            }
-            
-            return true;
-        } catch (err) {
-            this._isTileMode = false; // Revert if failed
-            console.error("Error switching to tile mode:", err);
-            return false;
+        this._drawCenteredText(y + 3, "A true hero of Wownero!");
+    },
+
+    drawLoseScreen: function(reason) {
+        if (!this._ensureDisplay()) return;
+        this.clearDisplay();
+        // console.log("Drawing lose screen. Tile mode: " + this._isTileMode);
+
+        let y = this._drawCenteredText(Math.floor(this._screenHeight / 3), "YOU HAVE PERISHED");
+        if (reason === 'monster') {
+            y = this._drawCenteredText(y + 2, "Slain by a fearsome beast.");
+        } else if (reason === 'timeout') {
+            y = this._drawCenteredText(y + 2, "The dungeon claimed you before the next block.");
+        } else {
+            y = this._drawCenteredText(y + 2, "Your adventure ends here.");
         }
+        this._drawCenteredText(y + 3, "Better luck next time.");
     },
-
-    switchToAsciiMode: function() {
-        console.log("Switching to ASCII mode");
-        
-        // Save current game state
-        const gameWasActive = this._gameActive;
-        
-        // Create new display with ASCII options
-        const oldContainer = this._display.getContainer();
-        const parentElement = oldContainer.parentElement;
-        
-        try {
-            this._isTileMode = false; // Update mode state
-            this._display = new ROT.Display({
-                width: this._screenWidth,
-                height: this._screenHeight,
-                fontSize: 18,
-                fontFamily: "monospace",
-                fg: "#fff",
-                bg: "#000",
-                layout: "rect"
-            });
-            
-            console.log("Created ASCII display with options:", this._display.getOptions());
-            
-            // Replace old container with new one
-            if (parentElement) {
-                parentElement.removeChild(oldContainer);
-                parentElement.appendChild(this._display.getContainer());
-            }
-            
-            // Redraw the screen
-            if (gameWasActive) {
-                this._drawGameScreen();
-            } else {
-                this._drawWelcomeScreen();
-            }
-            
-            return true;
-        } catch (err) {
-            console.error("Error switching to ASCII mode:", err);
-            return false;
-        }
-    },
-
-    // Update the init function to properly handle the tileset
-
-    init: function() {
-        console.log("Initializing game");
-        
-        // Verify if tileset is actually loaded
-        this.checkTileset(function(isLoaded) {
-            if (isLoaded) {
-                Game._setupTileDisplay();
-            } else {
-                Game._setupAsciiDisplay();
-            }
-            
-            // Draw the welcome screen
-            Game._drawWelcomeScreen();
-            
-            // Set up the keyboard handler
-            Game._initializeKeyboardHandler();
-        });
-    },
-
-    // Add helper function to check if tileset is truly loaded
-    checkTileset: function(callback) {
-        console.log("Checking if tileset is loaded...");
-        
-        // Give a short delay to ensure scripts are fully loaded
-        setTimeout(function() {
-            // More detailed logging to help debug
-            console.log("Tileset check:");
-            console.log("  window.tileSet exists:", !!window.tileSet);
-            console.log("  window.tileMap exists:", !!window.tileMap);
-            console.log("  tileMap keys:", window.tileMap ? Object.keys(window.tileMap).length : 0);
-            
-            // First do a quick check
-            if (!window.tileSet || !window.tileMap || 
-                !Object.keys(window.tileMap).length) {
-                console.log("❌ Tileset or tilemap not available or empty");
-                callback(false);
-                return;
-            }
-            
-            // For images, we need to make sure it's really loaded
-            if (window.tileSet.complete) {
-                console.log("✅ Tileset already loaded!");
-                callback(true);
-            } else {
-                console.log("⏳ Tileset still loading, adding load event listener");
-                // Add load listener to handle when it completes
-                window.tileSet.addEventListener('load', function() {
-                    console.log("✅ Tileset loaded via event!");
-                    callback(true);
-                });
-                
-                window.tileSet.addEventListener('error', function() {
-                    console.log("❌ Error loading tileset");
-                    callback(false);
-                });
-                
-                // Set a timeout just in case
-                setTimeout(function() {
-                    if (!window.tileSet.complete) {
-                        console.log("⏰ Tileset load timed out");
-                        callback(false);
-                    }
-                }, 3000);
-            }
-        }, 100); // Short delay to ensure scripts are loaded
-    },
-
-    // Setup tile display
-    _setupTileDisplay: function() {
-        console.log("Setting up tile display");
-        
-        this._isTileMode = true; // Set tile mode state
-        
-        this._display = new ROT.Display({
-            width: this._screenWidth,
-            height: this._screenHeight,
-            fontSize: 16,
-            fontFamily: "monospace",
-            fg: "#fff",
-            bg: "#000",
-            layout: "tile",
-            tileWidth: 32,
-            tileHeight: 32,
-            tileSet: window.tileSet,
-            tileMap: window.tileMap
-        });
-        
-        // Place the display in the div with class "rotdis"
-        const container = this._display.getContainer();
-        const rotdisElement = document.querySelector(".rotdis");
-        if (rotdisElement) {
-            // Clear any existing content first
-            rotdisElement.innerHTML = '';
-            rotdisElement.appendChild(container);
-        }
-        
-        console.log("✅ Tile display setup complete");
-    },
-
-    // Setup ASCII display
-    _setupAsciiDisplay: function() {
-        console.log("Setting up ASCII display");
-        
-        this._isTileMode = false; // Set ASCII mode state
-        
-        this._display = new ROT.Display({
-            width: this._screenWidth,
-            height: this._screenHeight,
-            fontSize: 18,
-            fontFamily: "monospace",
-            fg: "#fff",
-            bg: "#000",
-            layout: "rect"
-        });
-        
-        // Place the display in the div with class "rotdis"
-        const container = this._display.getContainer();
-        const rotdisElement = document.querySelector(".rotdis");
-        if (rotdisElement) {
-            // Clear any existing content first
-            rotdisElement.innerHTML = '';
-            rotdisElement.appendChild(container);
-        }
-        
-        console.log("✅ ASCII display setup complete");
-    },
-
-    // Add this method to the Game object
-
-    // Enhanced waiting screen with improved animation
 
     drawWaitingScreen: function() {
-        console.log("Drawing waiting screen");
-        
-        // Clear the display
-        this.clearDisplay();
-        
-        // Draw border
-        this._drawBorder('#888');
-        
-        // Draw title
-        this._drawCenteredText(5, "WAITING FOR DUNGEON...", "yellow");
-        
-        const _this = this;
-        let dots = 0;
-        let frame = 0;
-        
-        // Set up dungeon scene elements (static)
-        const width = this._screenWidth;
-        const centerY = 14;
-        const floorY = centerY + 1;
-        
-        // Define wall positions - now as constants for collision detection
-        const leftWallX = 5;
-        const rightWallX = width - 6;
-        
-        // Store the interval ID so we can clear it later
-        this._waitingInterval = setInterval(function() {
-            // Clear the animation area only (not the whole screen)
-            for (let x = 1; x < width-1; x++) {
-                _this._display.draw(x, centerY, ' ', '#fff', '#000');
-                _this._display.draw(x, centerY-1, ' ', '#fff', '#000');
-            }
-            
-            // Draw floor
-            for (let x = 1; x < width-1; x++) {
-                _this._display.draw(x, floorY, '.', '#888', '#000');
-            }
-            
-            // Draw walls and items (static elements)
-            _this._display.draw(leftWallX, centerY, '#', '#fff', '#000');  // Left Wall
-            _this._display.draw(rightWallX, centerY, '#', '#fff', '#000'); // Right Wall
-            _this._display.draw(width-9, floorY-1, '$', '#ff0', '#000'); // Treasure
-            _this._display.draw(width-4, floorY-1, '>', '#0f0', '#000'); // Exit
-            
-            // Calculate player position using a smoother sine wave
-            // This gives a natural back-and-forth motion
-            const playerPhase = (frame % 120) / 120; // 0.0 to 1.0 over 120 frames
-            const playerSine = Math.sin(playerPhase * 2 * Math.PI);
-            
-            // Map the sine wave (-1 to 1) to the available space between walls
-            // Add 0.5 to playerSine to map from [-1,1] to [-0.5,1.5], then clamp to [0,1]
-            const normalizedPos = Math.max(0, Math.min(1, playerSine * 0.5 + 0.5));
-            
-            // Calculate player position, keeping a safe distance from walls
-            const safeLeftX = leftWallX + 2;
-            const safeRightX = rightWallX - 2;
-            const playerX = Math.round(safeLeftX + normalizedPos * (safeRightX - safeLeftX));
-            
-            // Monster follows player with some lag and variation
-            // Use a different phase for the monster to create pursuing behavior
-            const monsterPhase = ((frame - 15) % 120) / 120; // 15 frames behind player
-            const monsterSine = Math.sin(monsterPhase * 2 * Math.PI);
-            const monsterNormPos = Math.max(0, Math.min(1, monsterSine * 0.5 + 0.5));
-            
-            // Monster stays in leftmost part of screen, never going beyond middle
-            const monsterMaxX = Math.min(playerX - 2, Math.floor(width/2) - 2);
-            const monsterMinX = leftWallX + 2;
-            const monsterX = Math.round(monsterMinX + monsterNormPos * (monsterMaxX - monsterMinX));
-            
-            // Draw player and monster with proper collision detection
-            _this._display.draw(playerX, centerY, '@', '#ff0', '#000');
-            _this._display.draw(monsterX, centerY, '~', '#f00', '#000');
-            
-            // Proper waiting text animation - first clear the line
-            const centerX = Math.floor(_this._screenWidth / 2);
-            for (let x = centerX-10; x <= centerX+10; x++) {
-                _this._display.draw(x, 10, ' ', '#fff', '#000');
-            }
-            
-            // Now draw the waiting text with fixed position
-            const waitingText = "Waiting";
-            const dotsText = ".".repeat(dots % 4);
-            const startX = centerX - Math.floor(waitingText.length / 2) - 2;
-            _this._display.drawText(startX, 10, "%c{white}" + waitingText + dotsText);
-            
-            // Update animation counters
-            dots++;
-            frame++;
-        }, 100); // Faster update rate for smoother animation
+        if (!this._ensureDisplay()) return;
+        this.clearDisplay(); // Clear it off
+        // console.log("Drawing waiting screen");
+
+        var text = "Waiting for server...";
+        // Use _drawCenteredText for consistency and color handling
+        this._drawCenteredText(Math.floor(this._screenHeight / 2), text, this.defaultFg);
     },
 
     // Method to stop the waiting animation
     stopWaitingScreen: function() {
-        if (this._waitingInterval) {
-            clearInterval(this._waitingInterval);
-            this._waitingInterval = null;
+        if (!this._ensureDisplay()) return;
+        this.clearDisplay(); // Clear it off
+        // console.log("Stopping waiting screen (clearing display)");
+        // Typically, another screen (like game screen) will be drawn immediately after.
+    },
+
+    // Helper function to draw centered text
+    _drawCenteredText: function(y, text, color) { // Restored color parameter
+        if (!this._ensureDisplay()) return y;
+        const x = Math.floor((this._screenWidth - text.length) / 2);
+        const finalColor = color || this.defaultFg; // Use provided color or defaultFg
+        this._display.drawText(x, y, `%c{${finalColor}}${text}`); // Use color in drawText
+        return y + 1;
+    },
+
+    switchToAsciiMode: function() {
+        console.log("Game.switchToAsciiMode called.");
+        this._isTileMode = false;
+        window.options.layout = "rect";
+
+        if (this._display) {
+            console.log("Display exists, attempting to re-initialize for ASCII mode.");
+            var gameDisplayContainer = document.getElementById("game-display");
+            if (gameDisplayContainer) gameDisplayContainer.innerHTML = '<p style="color:white;">Switching to ASCII mode, display will re-initialize...</p>';
+            
+            this._display = null;
+            this._displayReady = false;
+            this.init(); // Re-trigger initialization
+        } else {
+            console.log("Display does not exist yet, init() will handle ASCII mode based on _isTileMode flag.");
+            this.init(); // This will now initialize in ASCII mode due to the flag
         }
     },
 
-    // Add these helper functions for text and animation
+    switchToTileMode: function() {
+        console.log("Game.switchToTileMode called.");
+        this._isTileMode = true;
+        window.options.layout = "tile";
 
-    // Helper function to draw centered text
-    _drawCenteredText: function(y, text, color) {
-        const centerX = Math.floor(this._screenWidth / 2);
-        const x = centerX - Math.floor(text.length / 2);
-        
-        // Handle color formatting
-        if (color) {
-            text = "%c{" + color + "}" + text;
-        }
-        
-        this._display.drawText(x, y, text);
-        return y + 1; // Return next line position
-    }
-
-}; // End of Game object
-
-socket.on('game_start', function(data) {
-    console.log("🎮 Game start received with data:", data);
-    $('#messages').append($('<li class="game-start">').text("Starting game..."));
-    
-    if (!data) {
-        $('#messages').append($('<li class="error">').text("Error: No game data received"));
-        return;
-    }
-    
-    try {
-        // Start the game with received data
-        var success = Game.startGame(data);
-        console.log("Game start result:", success ? "SUCCESS" : "FAILED");
-        
-        if (!success) {
-            $('#messages').append($('<li class="error">').text("Game start failed - trying ASCII mode"));
+        if (this._display) {
+            console.log("Display exists, attempting to re-initialize for TILE mode.");
+            var gameDisplayContainer = document.getElementById("game-display");
+            if (gameDisplayContainer) gameDisplayContainer.innerHTML = '<p style="color:white;">Switching to TILE mode, display will re-initialize...</p>';
             
-            // Try switching to ASCII mode
-            if (document.getElementById('toggle-mode')) {
-                document.getElementById('toggle-mode').click();
-                setTimeout(function() {
-                    Game.startGame(data);
-                }, 100);
-            }
+            this._display = null;
+            this._displayReady = false;
+            this.init(); // Re-trigger initialization
+        } else {
+            console.log("Display does not exist yet, init() will handle TILE mode based on _isTileMode flag.");
+            this.init(); // This will now initialize in TILE mode due to the flag
+        }
+    },
+
+    // New method to handle player movement
+    movePlayer: function(dx, dy) {
+        if (!this._ensureDisplay()) return;
+        
+        const newX = this._player.x + dx;
+        const newY = this._player.y + dy;
+        
+        // Basic bounds checking
+        if (newX < 0 || newY < 0 || newX >= this._screenWidth || newY >= this._screenHeight) {
+            console.warn("Attempted to move player outside of bounds:", newX, newY);
+            return;
         }
         
-        window.focus();
-    } catch (err) {
-        console.error("Error starting game:", err);
-        $('#messages').append($('<li class="error">').text("Error: " + err.message));
+        // Check if the new position is a wall (1) or out of map bounds
+        if (this._map[newY] && this._map[newY][newX] !== undefined && this._map[newY][newX] !== 1) {
+            // Move the player
+            this._player.x = newX;
+            this._player.y = newY;
+            console.log("Player moved to:", this._player.x, this._player.y);
+            
+            // Update visibility and redraw
+            this._updateExploredTiles();
+            this._drawGameScreen();
+        } else {
+            console.log("Move blocked by wall or invalid map data at:", newX, newY);
+        }
+    },
+
+    // Debug function to print the map to console
+    debugPrintMap: function() {
+        console.log("Current game map:");
+        for (let y = 0; y < this._screenHeight; y++) {
+            let row = "";
+            for (let x = 0; x < this._screenWidth; x++) {
+                if (this._map[y] && this._map[y][x] !== undefined) {
+                    row += this._map[y][x] + " ";
+                } else {
+                    row += "? "; // Unknown/undefined area
+                }
+            }
+            console.log(row);
+        }
     }
-});
+};
+
+// Additional global or helper functions can be added here

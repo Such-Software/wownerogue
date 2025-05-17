@@ -4,14 +4,15 @@ A blockchain-based roguelike dungeon crawler built on the Wownero network.
 
 ## Project Overview
 
-Wowngeon is a web-based roguelike game that integrates with the Wownero blockchain for a unique gaming experience. Players enter a randomly generated dungeon with the goal of escaping before the next block is discovered on the network.
+Wowngeon is a web-based roguelike game that integrates with the Wownero blockchain for a unique gaming experience. Players enter a randomly generated dungeon with the goal of escaping before the next block is discovered on the network. The player requests to enter (and optionally pay an entrance fee), and then waits for the next block to be mined. When the next block is found, the player is placed in the dungeon and must escape before the next block is found. If they fail to escape, they die and lose their entrance fee. There is a singular monster and treasure in the dungeon. If the monster catches the player, they die. If the player finds the treasure and manages to escape, they could win 3x or 5x instead of just 2x for escaping sans treasure. The game is designed to be played in a web browser, making it accessible to a wide audience.
+The game is built using Node.js for the backend, with Express and Socket.io for real-time communication. The frontend is developed using HTML5, CSS, and JavaScript, with ROT.js for rendering the dungeon and managing game mechanics. The Wownero blockchain is integrated via RPC calls to monitor block height and handle transactions.
 
 ### Key Features:
 
 - **Blockchain-linked gameplay**: Players enter when one block is found and must escape before the next block (approximately 5 minutes in Wownero)
 - **Permadeath mechanics**: If a player fails to escape before the next block is found, they die
 - **Random dungeons**: Each game features procedurally generated maps using ROT.js
-- **Monster AI**: Evade monsters as you navigate the dungeon
+- **Monster AI**: Evade monster as you navigate the dungeon
 - **Treasure hunting**: Find treasure for bonus rewards
 - **Wownero integration**: Players pay an entrance fee (10-100 WOW) and can win rewards
 

@@ -59,39 +59,19 @@
     border-right: 1px solid #444;
 }
 
-/* Firefox-specific fixes */
-@-moz-document url-prefix() {
-    .rotdis {
-        display: block !important;
-        position: relative;
-        height: 608px;
-        min-width: 800px;
-    }
-    
-    .rotdis canvas {
-        position: absolute !important;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        margin: auto;
-        width: auto !important;
-        height: auto !important;
-    }
-}
-
 /* Make sure rotdis is properly visible across all browsers */
 .rotdis {
     grid-area: game;
     background-color: #000;
     border: 2px solid #444;
-    display: flex !important;
+    display: flex !important; /* Using flex to center canvas */
     justify-content: center;
     align-items: center;
-    min-height: 608px;
-    width: 100%;
+    /* min-height: 608px; */ /* REMOVED to allow shrinking */
+    width: 100%; /* Ensure it takes full width of its grid area */
+    height: 100%; /* Ensure it takes full height of its grid area */
     position: relative;
-    overflow: hidden;
+    overflow: hidden; /* Important to clip canvas if it somehow overflows */
     z-index: 5;
 }
 
@@ -100,6 +80,9 @@
     image-rendering: pixelated;
     image-rendering: -moz-crisp-edges;
     image-rendering: crisp-edges;
+    max-width: 100%;  /* ADDED: Scale down to fit container width */
+    max-height: 100%; /* ADDED: Scale down to fit container height */
+    object-fit: contain; /* ADDED: Maintain aspect ratio when scaling */
 }
 
 /* Add debug overlay to see container bounds */

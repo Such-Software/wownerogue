@@ -231,62 +231,36 @@ io.on('connection', function(socket) {
   });
 
   // Handle player movement
-  socket.on('move', function(direction) {
-    console.log(`Player ${socket.id} moved: ${direction}`);
-    
-    // Find the active game
-    let game = activeGames.get(socket.id);
-    
-    if (!game) {
-        // Try fallback methods to find the game
-        console.log(`Game not found for ${socket.id}, trying client.id: ${socket.client.id}`);
-        game = activeGames.get(socket.client.id);
-    }
-    
-    if (!game) {
-        const mappedId = clientSocketMap.get(socket.id);
-        if (mappedId) {
-            console.log(`Game not found, trying mapped ID: ${mappedId}`);
-            game = activeGames.get(mappedId);
-        }
-    }
-    
-    if (game) {
-        let dx = 0, dy = 0;
-        
-        // Convert direction to dx,dy
-        switch(direction) {
-            case 'up': dy = -1; break;
-            case 'down': dy = 1; break;
-            case 'left': dx = -1; break;
-            case 'right': dx = 1; break;
-        }
-        
-        // Server still uses absolute coordinates internally
-        console.log(`Moving player ${dx},${dy} from (${game.player.x},${game.player.y})`);
-        const result = game.movePlayer(dx, dy);
-        console.log(`Move result: ${result.status}`);
-        
-        if (result.status === 'won') {
-            io.to(socket.id).emit('game_over', {
-                status: 'won', 
-                hasTreasure: game.player.hasTreasure
-            });
-        } else if (result.status === 'lost') {
-            io.to(socket.id).emit('game_over', {
-                status: 'lost', 
-                reason: result.reason
-            });
+  socket.on('player_move', function(moveData) { // Changed from 'move' to 'player_move' and added moveData
+    console.log(`Player move event received from ${socket.id}:`, moveData);
+    const currentUser = getUserBySocket(socket.id);
+
+    if (currentUser && currentUser.game && currentUser.game.gameState === 'active') {
+      if (typeof moveData.dx === 'number' && typeof moveData.dy === 'number') {
+        const game = currentUser.game;
+        const moveResult = game.movePlayer(moveData.dx, moveData.dy); // This should update player pos and FOV
+
+        if (moveResult && moveResult.status === 'moved') {
+          // Optional: Monster moves after player
+          // game.moveMonster(); 
+
+          const updatedGameState = game.getState(); // Get the new state
+          
+          // Log before sending to client for debugging
+          console.log(`Sending game_update to ${socket.id} after player move. Player:`, updatedGameState.player, "Visible tiles keys:", Object.keys(updatedGameState.visibleTiles || {}));
+
+          io.to(socket.id).emit('game_update', updatedGameState);
         } else {
-            // Get updated game state (now with relative coordinates)
-            const updatedState = game.getState();
-            
-            // Send updated game state back to client
-            console.log(`Sending updated game state to ${socket.id}`);
-            io.to(socket.id).emit('game_update', updatedState);
+          console.log(`Player move from ${socket.id} was invalid or resulted in no change.`);
+          // Optionally, send an update even for invalid moves if you want to provide feedback
+          // const currentGameState = game.getState();
+          // io.to(socket.id).emit('game_update', currentGameState);
         }
+      } else {
+        console.error(`Invalid moveData received from ${socket.id}:`, moveData);
+      }
     } else {
-        console.log(`No active game found for player ${socket.id}`);
+      console.log(`Player move event from ${socket.id} ignored: No active game found for user.`);
     }
   });
 
