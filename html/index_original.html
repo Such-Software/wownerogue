@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wowgue - A Wownero Roguelike</title>
+    <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    
+    <!-- First load socket.io -->
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    
+    <!-- THEN initialize the socket -->
+    <script>
+    // Create socket connection BEFORE loading game.js
+    window.socket = io();
+    </script>
+    
+    <!-- Only AFTER socket is initialized, load other scripts -->
+    <script src="js/jquery-3.4.1.min.js"></script>
+    <script src="js/rot.min.js"></script>
+    <script src="js/options.js"></script>
+    <script src="js/teletype.js"></script> <!-- Load teletype.js -->
+    
+    <!-- Use the original game.js with fixes -->
+    <script src="js/game.js"></script>
+    
+    <!-- Modular game files - keeping as backup for now -->
+    <!-- <script src="js/displayManager.js"></script>
+    <script src="js/screenManager.js"></script>
+    <script src="js/gameState.js"></script>
+    <script src="js/inputHandler.js"></script>
+    <script src="js/game_refactored.js"></script> -->
+</head>
+<body>
+    <div class="container">
+        <!-- Header area -->
+        <header class="banner">
+            <div id="staticbanner">
+                <span id="banner"></span><span id="bannercursor">|</span>
+            </div>
+        </header>
+        
+        <!-- Status area for block height -->
+        <div class="status">
+            <div id="blockHeight">Block Height: <span id="heightValue">Loading...</span></div>
+            <div id="connectionStatus">Status: <span id="statusValue">Connecting...</span></div>
+        </div>
+        
+        <!-- Game display -->
+        <div id="game-display" class="rotdis"></div>
+        
+        <!-- Chat messages area -->
+        <div class="chat-container">
+            <div id="messageBox">
+                <ul id="messages"></ul>
+            </div>
+        </div>
+        
+        <!-- Chat input in its own row -->
+        <div class="input-container">
+            <form id="chatForm" action="">
+                <input id="chatInput" autocomplete="off" placeholder="Type a command..." />
+                <button type="submit">Send</button>
+            </form>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move
+        </div>
+    </div>
+
+    <!-- Initialize teletype animation -->
+    <script>
+    $(function() {
+        $('#banner').teletype({
+            text: ["Welcome traveler...", "You have arrived at...", "The Wowngeon"],
+            typeDelay: 100,
+            backDelay: 50,
+            pause: 1500
+        });
+        
+        // $(\'#bannercursor\').blink({ // <<< COMMENT OUT THIS BLOCK
+        //     text: [\'|\', \' \'],
+        //     delay: 500
+        // });
+        
+        // After animations are complete, set static text
+        setTimeout(function() {
+            $('#banner, #bannercursor').fadeOut(500, function() {
+                $('#staticbanner').text("THE WOWNGEON");
+            });
+        }, 14000);
+    });
+    </script>
+
+    <!-- Global scroll helper function -->
+    <script>
+    function scrollChat() {
+        var messageBox = $('#messageBox');
+        messageBox.scrollTop(messageBox.prop("scrollHeight"));
+    }
+    </script>
+
+    <script>
+    $(function() {
+        // Socket event listeners
+        socket.on('connect', function() {
+            console.log("Connected with socket ID:", socket.id);
+            
+            // Tell server our client ID
+            socket.emit('register_client', {
+                clientId: socket.id,
+                userAgent: navigator.userAgent
+            });
+        });
+        
+        socket.on('welcome', function(msg) {
+            $('#messages').append($('<li>').text("Connected to server!"));
+            scrollChat();
+        });
+        
+        // Handle waiting status updates
+        socket.on('waiting_status', function(data) {
+            console.log("🕒 WAITING STATUS received:", data);
+            
+            if (data.status === 'waiting') {
+                $('#messages').append($('<li style="color:#ff0;">').text(data.message));
+                
+                // Show waiting screen
+                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                    Game.drawWaitingScreen();
+                }
+            }
+            scrollChat();
+        });
+        
+        socket.on('message', function(msg) {
+            $('#messages').append($('<li>').text(msg));
+            scrollChat();
+        });
+        
+        // Add or update the game_start handler
+        socket.on('game_start', function(data) {
+            console.log("🎮 Game start received with data:", data);
+            $('#messages').append($('<li class="game-start">').text("Starting game..."));
+            
+            if (typeof Game !== 'undefined' && Game.stopWaitingScreen) {
+                Game.stopWaitingScreen();
+            }
+            
+            if (!data) {
+                $('#messages').append($('<li class="error">').text("Error: No game data received from server."));
+                if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
+                return;
+            }
+            
+            try {
+                // Use the original game.js structure
+                var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles);
+                console.log("Game start result:", success ? "SUCCESS" : "FAILED");
+                
+                if (!success) {
+                    $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
+                    if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
+                } else {
+                    // Draw the initial game screen - the game draws itself after startGame()
+                    console.log("Game started successfully, initial screen should be drawn");
+                    
+                    // Shift focus to the game display area after successful game start
+                    $('#game-display').focus(); 
+                    updateFocusIndicator();
+                }
+                
+            } catch (err) {
+                console.error("Error starting game:", err);
+                $('#messages').append($('<li class="error">').text("Error: " + err.message));
+            }
+        });
+
+        // Game update handler
+        socket.on('game_update', function(data) {
+            // console.log("🎮 GAME UPDATE received:", data); // Reduced verbosity
+            
+            if (typeof Game !== 'undefined' && Game._gameActive) { // Use Game._gameActive instead of gameState
+                Game.updateGameState(data); // Call updateGameState directly on Game object
+            } else {
+                // console.log("Game not active or Game undefined, skipping game_update draw.");
+            }
+        });
+
+        // Update the chat form submission handler that processes the "enter" command
+
+        $('#chatForm').submit(function(e) {
+            e.preventDefault();
+            var msg = $('#chatInput').val().trim();
+            
+            // Don't send empty messages
+            if (!msg) return false;
+            
+            console.log("📝 SENDING CHAT:", msg);
+            socket.emit('chat message', msg);
+            $('#chatInput').val('');
+            
+            // If the message is "enter", show the waiting screen
+            // AND shift focus to game display if game is about to start
+            if (msg.toLowerCase() === 'enter') {
+                console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
+                
+                // Show waiting screen
+                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                    Game.drawWaitingScreen();
+                }
+                // Focus will be shifted in the 'game_start' handler after success
+            }
+            
+            return false;
+        });
+
+        // Set initial focus to chat input
+        $('#chatInput').focus();
+        updateFocusIndicator(); // Initial focus indicator update
+
+        // Add focus/blur listeners for visual indicator
+        $('#chatInput').on('focus', updateFocusIndicator).on('blur', updateFocusIndicator);
+        $('#game-display').on('focus', updateFocusIndicator).on('blur', updateFocusIndicator);
+
+        // Keyboard listener for game actions (WASD, Arrow Keys)
+        // Ensure this is attached to an element that can receive focus, like the game-display div.
+        // The game-display div needs a tabindex attribute to be focusable.
+        $('#game-display').attr('tabindex', '-1'); // Make it focusable
+
+        $(document).on('keydown', function(e) {
+            // console.log(`Keydown event: ${e.key}`, "Active element:", document.activeElement, "Game active?:", Game && Game.gameState ? Game.gameState.gameActive : "Game undefined");
+
+            if (document.activeElement === $('#game-display')[0]) {
+                // console.log("Game display has focus.");
+                if (Game && Game._gameActive) { // Use Game._gameActive
+                    // console.log("Game is active. Processing key:", e.key);
+                    let dx = 0;
+                    let dy = 0;
+                    let moved = false;
+
+                    switch(e.key) {
+                        case 'w': case 'ArrowUp':    dy = -1; moved = true; break;
+                        case 's': case 'ArrowDown':  dy = 1;  moved = true; break;
+                        case 'a': case 'ArrowLeft':  dx = -1; moved = true; break;
+                        case 'd': case 'ArrowRight': dx = 1;  moved = true; break;
+                    }
+
+                    if (moved) {
+                        console.log(`Attempting to move: dx=${dx}, dy=${dy}. Key: ${e.key}`);
+                        e.preventDefault(); // Prevent page scrolling
+                        // Emit movement to server instead of directly calling Game.movePlayer
+                        socket.emit('player_move', { dx: dx, dy: dy });
+                        console.log(`Emitted player_move: dx=${dx}, dy=${dy}`);
+                    } else {
+                        // console.log("Key pressed on game display, but not a movement key:", e.key);
+                    }
+                } else {
+                    console.log("Game display has focus, but Game is not active. Game object:", Game, "Game._gameActive:", Game && Game.gameState ? Game.gameState.gameActive : "N/A");
+                }
+            } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
+                // console.log("Enter pressed, focusing chat input.");
+                // If Enter is pressed and chat is not focused, focus chat
+                $('#chatInput').focus();
+                updateFocusIndicator();
+            } else {
+                // console.log("Keydown event, but game display not focused or not Enter key for chat focus. Active element:", document.activeElement);
+            }
+        });
+    });
+
+    // Function to update visual focus indicator
+    function updateFocusIndicator() {
+        var gameDisplay = $('#game-display');
+        var chatInput = $('#chatInput');
+
+        if (document.activeElement === gameDisplay[0]) {
+            gameDisplay.css('outline', '2px solid yellow'); // Or some other visual cue
+            chatInput.css('outline', 'none');
+            console.log("Focus: Game Display");
+        } else if (document.activeElement === chatInput[0]) {
+            chatInput.css('outline', '2px solid cyan'); // Or some other visual cue
+            gameDisplay.css('outline', 'none');
+            console.log("Focus: Chat Input");
+        } else {
+            gameDisplay.css('outline', 'none');
+            chatInput.css('outline', 'none');
+            console.log("Focus: None or Other");
+        }
+    }
+    </script>
+
+    <!-- Initialize the game when everything is ready -->
+    <script>
+        $(function() {
+            Game.init();
+        });
+    </script>
+
+    <!-- Block height update script -->
+    <script>
+    // Function to update block height display
+    function updateBlockHeight(height) {
+        $('#heightValue').text(height);
+    }
+    
+    // Listen for block updates from server
+    socket.on('blockheight', function(height) {
+        console.log(`📈 BLOCK HEIGHT: ${height}`);
+        updateBlockHeight(height);
+        $('#statusValue').text('Connected');
+        $('#statusValue').css('color', '#0f0');
+    });
+    
+    // Set a test value if no response
+    setTimeout(function() {
+        if ($('#heightValue').text() === 'Loading...') {
+            updateBlockHeight('---');
+            $('#statusValue').text('Waiting...');
+            $('#statusValue').css('color', '#ff0');
+        }
+    }, 5000);
+    </script>
+
+    <!-- Add browser detection info -->
+<div id="browser-info" style="position: fixed; right: 10px; top: 40px; background: rgba(0,0,0,0.7); color: #0f0; padding: 5px; font-family: monospace; font-size: 12px; z-index: 1000; display: none;">
+    <div>Browser: <span id="browser-name">checking...</span></div>
+    <div>Display: <span id="display-status">checking...</span></div>
+    <button onclick="document.getElementById('browser-info').style.display='none'" style="margin-top: 5px; background: #333; border: 1px solid #666; color: white; font-size: 10px; padding: 2px 4px;">
+        Close
+    </button>
+</div>
+
+<script>
+// Check browser and display status
+$(function() {
+    setTimeout(function() {
+        var browserInfo = document.getElementById('browser-info');
+        browserInfo.style.display = 'block';
+        
+        // Detect browser
+        var browserName = "Unknown";
+        if (navigator.userAgent.indexOf("Firefox") !== -1) {
+            browserName = "Firefox";
+        } else if (navigator.userAgent.indexOf("Chrome") !== -1) {
+            browserName = "Chrome/Chromium";
+        } else if (navigator.userAgent.indexOf("Safari") !== -1) {
+            browserName = "Safari";
+        } else if (navigator.userAgent.indexOf("Edge") !== -1) {
+            browserName = "Edge";
+        }
+        
+        document.getElementById('browser-name').textContent = browserName;
+        
+        // Check display status
+        var rotdis = document.querySelector('.rotdis');
+        var canvas = rotdis ? rotdis.querySelector('canvas') : null;
+        
+        if (canvas) {
+            document.getElementById('display-status').textContent = 
+                "OK (" + canvas.width + "x" + canvas.height + ")";
+            document.getElementById('display-status').style.color = "#0f0";
+        } else {
+            document.getElementById('display-status').textContent = "NOT FOUND";
+            document.getElementById('display-status').style.color = "#f00";
+        }
+        
+        // Hide after 10 seconds
+        setTimeout(function() {
+            browserInfo.style.display = 'none';
+        }, 10000);
+    }, 2000);
+});
+</script>
+
+<!-- Add ASCII Mode button at the top right -->
+<button id="toggle-mode" style="position: fixed; right: 10px; top: 10px; z-index: 1000; background: #333; color: white; padding: 5px; border: 1px solid #666; border-radius: 4px;">
+    Switch to ASCII Mode
+</button>
+
+<script>
+document.getElementById('toggle-mode').addEventListener('click', function() {
+    try {
+        var button = document.getElementById('toggle-mode');
+        // Display mode switching has been removed - ASCII and tile modes are now equivalent
+        console.log("Display mode switching is no longer needed - modes are equivalent");
+        button.textContent = 'Mode switching disabled';
+        button.disabled = true;
+    } catch (e) {
+        console.error("Error switching display mode:", e);
+    }
+});
+</script>
+
+<!-- Replace the queue_cancelled handler -->
+<script>
+// Handle queue cancellation
+socket.on('queue_cancelled', function() {
+    console.log("Queue cancelled, returning to welcome screen");
+    
+    if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) {
+        Game._drawWelcomeScreen();
+    } else {
+        console.error("Game or _drawWelcomeScreen not available");
+    }
+});
+</script>
+
+<!-- Add this before the closing </body> tag -->
+<script>
+// Game over handler
+socket.on('game_over', function(data) {
+    console.log("🎮 GAME OVER received:", data);
+    
+    // Update game state based on outcome
+    if (typeof Game !== 'undefined') {
+        if (data.status === 'won') {
+            // Show win message
+            $('#messages').append($('<li style="color:#0f0; font-weight:bold;">').text(
+                data.hasTreasure ? 
+                "YOU ESCAPED WITH THE TREASURE! YOU WON!" : 
+                "You escaped the dungeon alive!"
+            ));
+            
+            // Draw win screen
+            Game.drawWinScreen(data.hasTreasure);
+        } else {
+            // Show loss message
+            const reason = data.reason || "unknown";
+            let message = "You died in the dungeon!";
+            
+            if (reason === 'monster') {
+                message = "You were killed by the monster!";
+            } else if (reason === 'timeout') {
+                message = "You didn't escape before the next block was found!";
+            }
+            
+            $('#messages').append($('<li style="color:#f00; font-weight:bold;">').text(message));
+            
+            // Draw lose screen
+            if (Game && Game.drawLoseScreen) {
+                Game.drawLoseScreen(reason);
+            }
+        }
+        
+        // Set game as inactive to prevent further movement
+        if (Game) {
+            Game._gameActive = false;
+        }
+    }
+    
+    scrollChat();
+});
+</script>
+
+<!-- Initialize the Game object -->
+<script>
+$(document).ready(function() {
+    console.log("Initializing Game...");
+    if (typeof Game !== 'undefined') {
+        Game.init();
+    } else {
+        console.error("Game object not found!");
+    }
+});
+</script>
+
+</body>
+</html>

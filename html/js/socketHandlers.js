@@ -1,0 +1,172 @@
+/**
+ * Socket event handlers for the Wowngeon game
+ */
+const SocketHandlers = {
+    init: function() {
+        if (!window.socket) {
+            console.error("Socket not available!");
+            return;
+        }
+
+        this.registerEventHandlers();
+    },
+
+    registerEventHandlers: function() {
+        // Connection handlers
+        socket.on('connect', this.onConnect);
+        socket.on('welcome', this.onWelcome);
+        socket.on('message', this.onMessage);
+        
+        // Game state handlers
+        socket.on('waiting_status', this.onWaitingStatus);
+        socket.on('game_start', this.onGameStart);
+        socket.on('game_update', this.onGameUpdate);
+        socket.on('game_over', this.onGameOver);
+        socket.on('queue_cancelled', this.onQueueCancelled);
+        
+        // Block height handler
+        socket.on('blockheight', this.onBlockHeight);
+    },
+
+    onConnect: function() {
+        console.log("Connected with socket ID:", socket.id);
+        
+        // Tell server our client ID
+        socket.emit('register_client', {
+            clientId: socket.id,
+            userAgent: navigator.userAgent
+        });
+    },
+
+    onWelcome: function(msg) {
+        $('#messages').append($('<li>').text("Connected to server!"));
+        UI.scrollChat();
+    },
+
+    onMessage: function(msg) {
+        $('#messages').append($('<li>').text(msg));
+        UI.scrollChat();
+    },
+
+    onWaitingStatus: function(data) {
+        console.log("🕒 WAITING STATUS received:", data);
+        
+        if (data.status === 'waiting') {
+            $('#messages').append($('<li style="color:#ff0;">').text(data.message));
+            
+            // Show waiting screen
+            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                Game.drawWaitingScreen();
+            }
+        }
+        UI.scrollChat();
+    },
+
+    onGameStart: function(data) {
+        console.log("🎮 Game start received with data:", data);
+        $('#messages').append($('<li class="game-start">').text("Starting game..."));
+        
+        if (typeof Game !== 'undefined' && Game.stopWaitingScreen) {
+            Game.stopWaitingScreen();
+        }
+        
+        if (!data) {
+            $('#messages').append($('<li class="error">').text("Error: No game data received from server."));
+            if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
+            return;
+        }
+        
+        try {
+            // Use the original game.js structure
+            var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles);
+            console.log("Game start result:", success ? "SUCCESS" : "FAILED");
+            
+            if (!success) {
+                $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
+                if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
+            } else {
+                // Draw the initial game screen - the game draws itself after startGame()
+                console.log("Game started successfully, initial screen should be drawn");
+                
+                // Shift focus to the game display area after successful game start
+                $('#game-display').focus(); 
+                UI.updateFocusIndicator();
+            }
+            
+        } catch (err) {
+            console.error("Error starting game:", err);
+            $('#messages').append($('<li class="error">').text("Error: " + err.message));
+        }
+    },
+
+    onGameUpdate: function(data) {
+        if (typeof Game !== 'undefined' && Game._gameActive) {
+            Game.updateGameState(data);
+        }
+    },
+
+    onGameOver: function(data) {
+        console.log("🎮 GAME OVER received:", data);
+        
+        // Update game state based on outcome
+        if (typeof Game !== 'undefined') {
+            if (data.status === 'won') {
+                // Show win message
+                $('#messages').append($('<li style="color:#0f0; font-weight:bold;">').text(
+                    data.hasTreasure ? 
+                    "YOU ESCAPED WITH THE TREASURE! YOU WON!" : 
+                    "You escaped the dungeon alive!"
+                ));
+                
+                // Draw win screen
+                Game.drawWinScreen(data.hasTreasure);
+            } else {
+                // Show loss message
+                const reason = data.reason || "unknown";
+                let message = "You died in the dungeon!";
+                
+                if (reason === 'monster') {
+                    message = "You were killed by the monster!";
+                } else if (reason === 'timeout') {
+                    message = "You didn't escape before the next block was found!";
+                }
+                
+                $('#messages').append($('<li style="color:#f00; font-weight:bold;">').text(message));
+                
+                // Draw lose screen
+                if (Game && Game.drawLoseScreen) {
+                    Game.drawLoseScreen(reason);
+                }
+            }
+            
+            // Set game as inactive to prevent further movement
+            if (Game) {
+                Game._gameActive = false;
+            }
+        }
+        
+        UI.scrollChat();
+    },
+
+    onQueueCancelled: function() {
+        console.log("Queue cancelled, returning to welcome screen");
+        
+        if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) {
+            Game._drawWelcomeScreen();
+        } else {
+            console.error("Game or _drawWelcomeScreen not available");
+        }
+    },
+
+    onBlockHeight: function(height) {
+        console.log(`📈 BLOCK HEIGHT: ${height}`);
+        UI.updateBlockHeight(height);
+        $('#statusValue').text('Connected');
+        $('#statusValue').css('color', '#0f0');
+    }
+};
+
+// Initialize when DOM is ready
+$(function() {
+    SocketHandlers.init();
+});

@@ -1,85 +1,102 @@
 /**
- * InputHandler - Manages keyboard input and translates to game actions
+ * Input handlers for the Wowngeon game
  */
-var InputHandler = {
-    gameActive: false,
-    eventCallbacks: {},
-
+const InputHandler = {
     init: function() {
-        console.log("Initializing keyboard handler");
-        
-        const self = this;
-        window.addEventListener('keydown', function(e) {
-            self.handleKeyDown(e);
+        this.setupChatForm();
+        this.setupFocusHandlers();
+        this.setupKeyboardControls();
+        this.setupModeToggle();
+    },
+
+    setupChatForm: function() {
+        $('#chatForm').submit(function(e) {
+            e.preventDefault();
+            var msg = $('#chatInput').val().trim();
+            
+            // Don't send empty messages
+            if (!msg) return false;
+            
+            console.log("📝 SENDING CHAT:", msg);
+            socket.emit('chat message', msg);
+            $('#chatInput').val('');
+            
+            // If the message is "enter", show the waiting screen
+            if (msg.toLowerCase() === 'enter') {
+                console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
+                
+                // Show waiting screen
+                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                    Game.drawWaitingScreen();
+                }
+            }
+            
+            return false;
         });
-        
-        console.log("Keyboard handler initialized");
+
+        // Set initial focus to chat input
+        $('#chatInput').focus();
+        UI.updateFocusIndicator();
     },
 
-    setGameActive: function(active) {
-        this.gameActive = active;
+    setupFocusHandlers: function() {
+        // Add focus/blur listeners for visual indicator
+        $('#chatInput').on('focus', UI.updateFocusIndicator).on('blur', UI.updateFocusIndicator);
+        $('#game-display').on('focus', UI.updateFocusIndicator).on('blur', UI.updateFocusIndicator);
+
+        // Make game display focusable
+        $('#game-display').attr('tabindex', '-1');
     },
 
-    on: function(eventName, callback) {
-        if (!this.eventCallbacks[eventName]) {
-            this.eventCallbacks[eventName] = [];
-        }
-        this.eventCallbacks[eventName].push(callback);
+    setupKeyboardControls: function() {
+        $(document).on('keydown', function(e) {
+            if (document.activeElement === $('#game-display')[0]) {
+                if (Game && Game._gameActive) {
+                    let dx = 0;
+                    let dy = 0;
+                    let moved = false;
+
+                    switch(e.key) {
+                        case 'w': case 'ArrowUp':    dy = -1; moved = true; break;
+                        case 's': case 'ArrowDown':  dy = 1;  moved = true; break;
+                        case 'a': case 'ArrowLeft':  dx = -1; moved = true; break;
+                        case 'd': case 'ArrowRight': dx = 1;  moved = true; break;
+                    }
+
+                    if (moved) {
+                        console.log(`Attempting to move: dx=${dx}, dy=${dy}. Key: ${e.key}`);
+                        e.preventDefault(); // Prevent page scrolling
+                        socket.emit('player_move', { dx: dx, dy: dy });
+                        console.log(`Emitted player_move: dx=${dx}, dy=${dy}`);
+                    }
+                } else {
+                    console.log("Game display has focus, but Game is not active.");
+                }
+            } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
+                // If Enter is pressed and chat is not focused, focus chat
+                $('#chatInput').focus();
+                UI.updateFocusIndicator();
+            }
+        });
     },
 
-    emit: function(eventName, data) {
-        if (this.eventCallbacks[eventName]) {
-            this.eventCallbacks[eventName].forEach(function(callback) {
-                callback(data);
+    setupModeToggle: function() {
+        var toggleButton = document.getElementById('toggle-mode');
+        if (toggleButton) {
+            toggleButton.addEventListener('click', function() {
+                try {
+                    console.log("Display mode switching is no longer needed - modes are equivalent");
+                    toggleButton.textContent = 'Mode switching disabled';
+                    toggleButton.disabled = true;
+                } catch (e) {
+                    console.error("Error switching display mode:", e);
+                }
             });
-        }
-    },
-
-    handleKeyDown: function(e) {
-        if (!this.gameActive) {
-            return;
-        }
-
-        let direction = null;
-
-        switch (e.key) {
-            case 'ArrowUp':
-            case 'w':
-            case 'W':
-                direction = 'up';
-                break;
-                
-            case 'ArrowDown':
-            case 's':
-            case 'S':
-                direction = 'down';
-                break;
-                
-            case 'ArrowLeft':
-            case 'a':
-            case 'A':
-                direction = 'left';
-                break;
-                
-            case 'ArrowRight':
-            case 'd':
-            case 'D':
-                direction = 'right';
-                break;
-                
-            default:
-                return;
-        }
-
-        e.preventDefault();
-        console.log(`Key pressed: ${e.key}, sending direction: ${direction}`);
-        
-        // Emit movement event
-        this.emit('movement', direction);
-        
-        // Send to server via socket
-        if (window.socket && direction) {
-            window.socket.emit('move', direction);
         }
     }
 };
+
+// Initialize input handlers when DOM is ready
+$(function() {
+    InputHandler.init();
+});

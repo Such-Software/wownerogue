@@ -1,66 +1,7 @@
 const ROT = require('./rot.js');
-
-// Define the missing generateDungeon function
-function generateDungeon(width, height) {
-  // Create dungeon using ROT.js Map.Digger
-  const digger = new ROT.Map.Digger(width, height, {
-    roomWidth: [3, 9],
-    roomHeight: [3, 7],
-    corridorLength: [2, 6],
-    dugPercentage: 0.2
-  });
-  
-  // Initialize the empty map with walls (1)
-  const map = Array(height).fill().map(() => Array(width).fill(1));
-  
-  // Fill in floors (0) using digger's callback
-  digger.create((x, y, value) => {
-    // value: 0 = floor, 1 = wall
-    map[y][x] = value;
-  });
-  
-  // Get rooms that were created
-  const rooms = digger.getRooms();
-  
-  // Place entrance in the first room
-  const entranceRoom = rooms[0];
-  const entranceCenter = entranceRoom.getCenter();
-  const entrance = [entranceCenter[0], entranceCenter[1]];
-  
-  // Place exit in the last room
-  const exitRoom = rooms[rooms.length - 1];
-  const exitCenter = exitRoom.getCenter();
-  const exit = [exitCenter[0], exitCenter[1]];
-  
-  // Place treasure in a middle room (not first or last)
-  let treasureRoom;
-  if (rooms.length > 2) {
-    treasureRoom = rooms[Math.floor(rooms.length / 2)];
-  } else {
-    // Fallback if we have fewer than 3 rooms
-    treasureRoom = rooms[0];
-  }
-  const treasureCenter = treasureRoom.getCenter();
-  // Place treasure slightly off center to make it more interesting
-  const treasure = [
-    treasureCenter[0] + Math.floor(Math.random() * 3) - 1,
-    treasureCenter[1] + Math.floor(Math.random() * 3) - 1
-  ];
-  
-  // Ensure the treasure is on a floor tile
-  if (map[treasure[1]][treasure[0]] !== 0) {
-    treasure[0] = treasureCenter[0];
-    treasure[1] = treasureCenter[1];
-  }
-  
-  return {
-    map: map,
-    rooms: rooms, 
-    entrance: entrance,
-    exit: exit,
-    treasure: treasure
-  };
-}
+const Player = require('./player.js');
+const Monster = require('./monster.js');
+const DungeonGenerator = require('./dungeon.js');
 
 class Game {
   constructor(socketId, mapWidth, mapHeight) {
@@ -70,8 +11,8 @@ class Game {
     this.gameState = 'waiting'; // waiting, active, won, lost
     this.startBlock = null;
     this.dungeon = null;
-    this.player = { x: 0, y: 0, hasKey: false, hasTreasure: false };
-    this.monster = { x: 0, y: 0 };
+    this.player = new Player();
+    this.monster = new Monster();
     this.fee = 0; // Amount player paid
     this.visibleTiles = {}; // Will store visible tiles
     this.fov = null; // FOV calculator
@@ -79,20 +20,17 @@ class Game {
   }
   
   generateDungeon() {
-    const dungeon = generateDungeon(this.width, this.height);
-    this.dungeon = dungeon;
+    this.dungeon = DungeonGenerator.generate(this.width, this.height);
     
-    if (dungeon.entrance) {
-      this.player.x = dungeon.entrance[0];
-      this.player.y = dungeon.entrance[1];
+    if (this.dungeon.entrance) {
+      this.player.moveTo(this.dungeon.entrance[0], this.dungeon.entrance[1]);
     }
     
     // Place monster far from entrance
-    if (dungeon.rooms && dungeon.rooms.length > 2) {
-      const monsterRoom = dungeon.rooms[Math.floor(dungeon.rooms.length * 0.7)];
+    if (this.dungeon.rooms && this.dungeon.rooms.length > 2) {
+      const monsterRoom = this.dungeon.rooms[Math.floor(this.dungeon.rooms.length * 0.7)];
       const center = monsterRoom.getCenter();
-      this.monster.x = center[0];
-      this.monster.y = center[1];
+      this.monster.moveTo(center[0], center[1]);
     }
     
     // Initialize FOV calculator
@@ -142,28 +80,27 @@ class Game {
         this.dungeon.map[newY][newX] !== undefined && 
         this.dungeon.map[newY][newX] === 0) { // 0 is floor
       
-      this.player.x = newX;
-      this.player.y = newY;
+      this.player.moveTo(newX, newY);
       console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
       
       // Update FOV after moving
       this.updateFOV();
       
       // Check for game events like finding treasure or exit
-      if (this.dungeon.exit && newX === this.dungeon.exit[0] && newY === this.dungeon.exit[1]) {
+      if (this.dungeon.exit && this.player.isAt(this.dungeon.exit[0], this.dungeon.exit[1])) {
         // Handle win condition (e.g., escaped)
-        this.gameState = 'won'; // Or some other state
-        return { status: 'moved', event: 'escaped', player: this.player, visibleTiles: this.visibleTiles };
+        this.gameState = 'won';
+        return { status: 'moved', event: 'escaped', player: this.player.getState(), visibleTiles: this.visibleTiles };
       }
-      if (this.dungeon.treasure && newX === this.dungeon.treasure[0] && newY === this.dungeon.treasure[1] && !this.player.hasTreasure) {
+      if (this.dungeon.treasure && this.player.isAt(this.dungeon.treasure[0], this.dungeon.treasure[1]) && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
         // Remove treasure from dungeon so it won't be sent in future updates
         this.dungeon.treasure = null;
         console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
-        return { status: 'moved', event: 'treasure_found', player: this.player, visibleTiles: this.visibleTiles };
+        return { status: 'moved', event: 'treasure_found', player: this.player.getState(), visibleTiles: this.visibleTiles };
       }
       
-      return { status: 'moved', player: this.player, visibleTiles: this.visibleTiles };
+      return { status: 'moved', player: this.player.getState(), visibleTiles: this.visibleTiles };
     }
     
     console.log(`Player move to ${newX},${newY} for socket ${this.socketId} is invalid (wall or out of bounds).`);
@@ -171,55 +108,15 @@ class Game {
   }
   
   moveMonster() {
-    // Simple monster AI to move toward player
-    const dx = Math.sign(this.player.x - this.monster.x);
-    const dy = Math.sign(this.player.y - this.monster.y);
-    
-    // Try horizontal move
-    if (dx !== 0) {
-      if (this.dungeon.map[this.monster.y][this.monster.x + dx] === 0) {
-        this.monster.x += dx;
-        return;
-      }
-    }
-    
-    // Try vertical move
-    if (dy !== 0) {
-      if (this.dungeon.map[this.monster.y + dy][this.monster.x] === 0) {
-        this.monster.y += dy;
-        return;
-      }
-    }
-    
-    // Try random direction if direct path is blocked
-    const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
-    const shuffledDirs = ROT.RNG.shuffle(dirs.slice());
-    
-    for (const [dx, dy] of shuffledDirs) {
-      const nx = this.monster.x + dx;
-      const ny = this.monster.y + dy;
-      if (this.dungeon.map[ny] && this.dungeon.map[ny][nx] === 0) {
-        this.monster.x = nx;
-        this.monster.y = ny;
-        break;
-      }
-    }
+    this.monster.moveTowardPlayer(this.player, this.dungeon);
   }
   
   // Update the getState() method to include all entities with relative positions
   getState() {
-    // Calculate relative position of all entities from player's perspective
-    // const playerX = this.player.x; // Not needed if sending absolute visibleTiles
-    // const playerY = this.player.y; // Not needed if sending absolute visibleTiles
-    
-    // The client-side Game.js expects absolute coordinates for visibleTiles.
-    // So, no conversion to relative coordinates is needed here for visibleTiles.
-    // Just ensure this.visibleTiles is correctly populated by updateFOV.
-
     const state = {
       gameState: this.gameState,
-      player: { ...this.player }, // Send a copy of player object
-      monster: this.monster ? { ...this.monster } : null, // Send a copy if monster exists
+      player: this.player.getState(), // Use Player's getState method
+      monster: this.monster ? this.monster.getState() : null, // Use Monster's getState method
       visibleTiles: { ...this.visibleTiles }, // Send a copy of visible tiles
       entrance: this.dungeon ? this.dungeon.entrance : null,
       exit: this.dungeon ? this.dungeon.exit : null,
@@ -235,21 +132,9 @@ class Game {
 
 // Check if monster killed player
 function checkMonsterKill(player, monster) {
-    // Check for direct overlap - monster on same tile as player
-    if (monster.x === player.x && monster.y === player.y) {
-        return true; // Monster killed player
-    }
-    
-    // Check for adjacent tiles (optional - if you want 1-tile proximity kills)
-    const dx = Math.abs(monster.x - player.x);
-    const dy = Math.abs(monster.y - player.y);
-    
-    // If monster is adjacent (one tile away in any direction)
-    if ((dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)) {
-        return true; // Monster killed player
-    }
-    
-    return false; // Player is safe
+    // Use Monster's hasCaughtPlayer method
+    const monsterInstance = new Monster(monster.x, monster.y);
+    return monsterInstance.hasCaughtPlayer(player);
 }
 
 module.exports = Game;
