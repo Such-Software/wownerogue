@@ -19,7 +19,16 @@
     <script src="js/rot.min.js"></script>
     <script src="js/options.js"></script>
     <script src="js/teletype.js"></script> <!-- Load teletype.js -->
+    
+    <!-- Use the original game.js with fixes -->
     <script src="js/game.js"></script>
+    
+    <!-- Modular game files - keeping as backup for now -->
+    <!-- <script src="js/displayManager.js"></script>
+    <script src="js/screenManager.js"></script>
+    <script src="js/gameState.js"></script>
+    <script src="js/inputHandler.js"></script>
+    <script src="js/game_refactored.js"></script> -->
 </head>
 <body>
     <div class="container">
@@ -110,6 +119,21 @@
             scrollChat();
         });
         
+        // Handle waiting status updates
+        socket.on('waiting_status', function(data) {
+            console.log("🕒 WAITING STATUS received:", data);
+            
+            if (data.status === 'waiting') {
+                $('#messages').append($('<li style="color:#ff0;">').text(data.message));
+                
+                // Show waiting screen
+                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                    Game.drawWaitingScreen();
+                }
+            }
+            scrollChat();
+        });
+        
         socket.on('message', function(msg) {
             $('#messages').append($('<li>').text(msg));
             scrollChat();
@@ -120,31 +144,28 @@
             console.log("🎮 Game start received with data:", data);
             $('#messages').append($('<li class="game-start">').text("Starting game..."));
             
-            if (typeof Game !== 'undefined') {
+            if (typeof Game !== 'undefined' && Game.stopWaitingScreen) {
                 Game.stopWaitingScreen();
             }
             
             if (!data) {
                 $('#messages').append($('<li class="error">').text("Error: No game data received from server."));
-                if (typeof Game !== 'undefined') Game._drawWelcomeScreen(); 
+                if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
                 return;
             }
             
             try {
-                // Pass player, map, monsters, items, and initialVisibleTiles if available
-                var success = Game.startGame(
-                    data.player, 
-                    data.map, 
-                    data.monsters, 
-                    data.items,
-                    data.visibleTiles // Pass initial visible tiles from server
-                );
+                // Use the original game.js structure
+                var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles);
                 console.log("Game start result:", success ? "SUCCESS" : "FAILED");
                 
                 if (!success) {
                     $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
-                    if (typeof Game !== 'undefined') Game._drawWelcomeScreen(); 
+                    if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
                 } else {
+                    // Draw the initial game screen - the game draws itself after startGame()
+                    console.log("Game started successfully, initial screen should be drawn");
+                    
                     // Shift focus to the game display area after successful game start
                     $('#game-display').focus(); 
                     updateFocusIndicator();
@@ -160,20 +181,8 @@
         socket.on('game_update', function(data) {
             // console.log("🎮 GAME UPDATE received:", data); // Reduced verbosity
             
-            if (typeof Game !== 'undefined' && Game._gameActive) { // Ensure game is active
-                if (data.player) Game._player = data.player;
-                if (data.visibleTiles) {
-                    Game._visibleTiles = data.visibleTiles;
-                    Game._updateExploredTiles(); // Update explored based on new visibility
-                }
-                if (data.monster) Game._monster = data.monster; // Update monster data
-                if (data.items) Game._items = data.items; // Update items data
-                // Potentially update _entrance, _exit, _treasure if they are part of game_update
-                // Game._entrance = data.entrance;
-                // Game._exit = data.exit;
-                // Game._treasure = data.treasure;
-                
-                Game._drawGameScreen();
+            if (typeof Game !== 'undefined' && Game._gameActive) { // Use Game._gameActive instead of gameState
+                Game.updateGameState(data); // Call updateGameState directly on Game object
             } else {
                 // console.log("Game not active or Game undefined, skipping game_update draw.");
             }
@@ -198,7 +207,7 @@
                 console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
                 
                 // Show waiting screen
-                if (typeof Game !== 'undefined') {
+                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
                     Game.drawWaitingScreen();
                 }
                 // Focus will be shifted in the 'game_start' handler after success
@@ -221,11 +230,11 @@
         $('#game-display').attr('tabindex', '-1'); // Make it focusable
 
         $(document).on('keydown', function(e) {
-            // console.log(`Keydown event: ${e.key}`, "Active element:", document.activeElement, "Game active?:", Game ? Game._gameActive : "Game undefined");
+            // console.log(`Keydown event: ${e.key}`, "Active element:", document.activeElement, "Game active?:", Game && Game.gameState ? Game.gameState.gameActive : "Game undefined");
 
             if (document.activeElement === $('#game-display')[0]) {
                 // console.log("Game display has focus.");
-                if (Game && Game._gameActive) {
+                if (Game && Game._gameActive) { // Use Game._gameActive
                     // console.log("Game is active. Processing key:", e.key);
                     let dx = 0;
                     let dy = 0;
@@ -248,7 +257,7 @@
                         // console.log("Key pressed on game display, but not a movement key:", e.key);
                     }
                 } else {
-                    console.log("Game display has focus, but Game is not active. Game object:", Game, "Game._gameActive:", Game ? Game._gameActive : "N/A");
+                    console.log("Game display has focus, but Game is not active. Game object:", Game, "Game._gameActive:", Game && Game.gameState ? Game.gameState.gameActive : "N/A");
                 }
             } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
                 // console.log("Enter pressed, focusing chat input.");
@@ -374,22 +383,10 @@ $(function() {
 document.getElementById('toggle-mode').addEventListener('click', function() {
     try {
         var button = document.getElementById('toggle-mode');
-        // Check current mode and toggle accordingly
-        if (Game && Game._isTileMode) { // If currently in Tile Mode
-            console.log("Switching to ASCII mode...");
-            if (typeof Game.switchToAsciiMode === 'function') {
-                Game.switchToAsciiMode();
-                button.textContent = 'Switch to Tile Mode';
-            } else { console.error("Game.switchToAsciiMode is not defined"); }
-        } else if (Game) { // If currently in ASCII mode (or Game object exists and not in tile mode)
-            console.log("Switching to TILE mode...");
-            if (typeof Game.switchToTileMode === 'function') {
-                Game.switchToTileMode();
-                button.textContent = 'Switch to ASCII Mode';
-            } else { console.error("Game.switchToTileMode is not defined"); }
-        } else {
-            console.error("Game object not available to toggle mode.");
-        }
+        // Display mode switching has been removed - ASCII and tile modes are now equivalent
+        console.log("Display mode switching is no longer needed - modes are equivalent");
+        button.textContent = 'Mode switching disabled';
+        button.disabled = true;
     } catch (e) {
         console.error("Error switching display mode:", e);
     }
@@ -402,15 +399,10 @@ document.getElementById('toggle-mode').addEventListener('click', function() {
 socket.on('queue_cancelled', function() {
     console.log("Queue cancelled, returning to welcome screen");
     
-    if (typeof Game !== 'undefined') {
-        // Try different naming patterns for compatibility
-        if (typeof Game._drawWelcomeScreen === 'function') {
-            Game._drawWelcomeScreen();
-        } else if (typeof Game.drawWelcomeScreen === 'function') {
-            Game.drawWelcomeScreen();
-        } else {
-            console.error("Welcome screen function not found");
-        }
+    if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) {
+        Game._drawWelcomeScreen();
+    } else {
+        console.error("Game or _drawWelcomeScreen not available");
     }
 });
 </script>
@@ -447,14 +439,30 @@ socket.on('game_over', function(data) {
             $('#messages').append($('<li style="color:#f00; font-weight:bold;">').text(message));
             
             // Draw lose screen
-            Game.drawLoseScreen(reason);
+            if (Game && Game.drawLoseScreen) {
+                Game.drawLoseScreen(reason);
+            }
         }
         
         // Set game as inactive to prevent further movement
-        Game._gameActive = false;
+        if (Game) {
+            Game._gameActive = false;
+        }
     }
     
     scrollChat();
+});
+</script>
+
+<!-- Initialize the Game object -->
+<script>
+$(document).ready(function() {
+    console.log("Initializing Game...");
+    if (typeof Game !== 'undefined') {
+        Game.init();
+    } else {
+        console.error("Game object not found!");
+    }
 });
 </script>
 

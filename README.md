@@ -15,6 +15,8 @@ The game is built using Node.js for the backend, with Express and Socket.io for 
 - **Monster AI**: Evade monster as you navigate the dungeon
 - **Treasure hunting**: Find treasure for bonus rewards
 - **Wownero integration**: Players pay an entrance fee (10-100 WOW) and can win rewards
+- **Chat system**: Players can communicate in real-time during gameplay
+- **View other players' game states**: Spectate other players' dungeons in real-time
 
 ### Technology Stack:
 - Backend: Node.js with Express and Socket.io

@@ -131,7 +131,11 @@ function checkGamesTimeout(currentHeight) {
   activeGames.forEach((game, socketId) => {
     const user = getUserBySocket(socketId);
     
-    if (user && user.blockRec && currentHeight > user.blockRec + 1) {
+    // Player must escape before the next block after their start block
+    // If they started on block 2, they must escape before block 3 is found
+    if (user && user.blockRec && currentHeight > user.blockRec) {
+      console.log(`Game timeout for player ${socketId}: started on block ${user.blockRec}, current block ${currentHeight}`);
+      
       // Game has timed out - player didn't escape in time
       game.gameState = 'lost';
       io.to(socketId).emit('game_over', {
@@ -241,8 +245,41 @@ io.on('connection', function(socket) {
         const moveResult = game.movePlayer(moveData.dx, moveData.dy); // This should update player pos and FOV
 
         if (moveResult && moveResult.status === 'moved') {
-          // Optional: Monster moves after player
-          // game.moveMonster(); 
+          // Move monster after player moves
+          game.moveMonster(); 
+          
+          // Check if monster caught player
+          const GameModule = require('./game');
+          const checkMonsterKill = GameModule.checkMonsterKill || 
+            ((player, monster) => monster.x === player.x && monster.y === player.y);
+          
+          if (checkMonsterKill(game.player, game.monster)) {
+            game.gameState = 'lost';
+            io.to(socket.id).emit('game_over', {
+              status: 'lost',
+              reason: 'monster',
+              message: 'The monster caught you!'
+            });
+            activeGames.delete(socket.id);
+            return;
+          }
+          
+          // Check for treasure pickup
+          if (moveResult.event === 'treasure_found') {
+            io.to(socket.id).emit('message', 'You found the treasure!');
+          }
+          
+          // Check for escape
+          if (moveResult.event === 'escaped') {
+            game.gameState = 'won';
+            io.to(socket.id).emit('game_over', {
+              status: 'won',
+              reason: 'escaped',
+              message: 'Congratulations! You escaped the dungeon!'
+            });
+            activeGames.delete(socket.id);
+            return;
+          }
 
           const updatedGameState = game.getState(); // Get the new state
           

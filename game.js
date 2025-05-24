@@ -157,7 +157,9 @@ class Game {
       }
       if (this.dungeon.treasure && newX === this.dungeon.treasure[0] && newY === this.dungeon.treasure[1] && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
-        // Remove treasure from map or mark as collected
+        // Remove treasure from dungeon so it won't be sent in future updates
+        this.dungeon.treasure = null;
+        console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
         return { status: 'moved', event: 'treasure_found', player: this.player, visibleTiles: this.visibleTiles };
       }
       
@@ -214,19 +216,20 @@ class Game {
     // So, no conversion to relative coordinates is needed here for visibleTiles.
     // Just ensure this.visibleTiles is correctly populated by updateFOV.
 
-    // console.log("getState called. Player:", this.player, "Visible tiles keys:", Object.keys(this.visibleTiles || {}).length);
-
-    return {
+    const state = {
       gameState: this.gameState,
       player: { ...this.player }, // Send a copy of player object
       monster: this.monster ? { ...this.monster } : null, // Send a copy if monster exists
-      // items: { ...this.items }, // If you have items, send them too
       visibleTiles: { ...this.visibleTiles }, // Send a copy of visible tiles
-      // You might also want to send entrance/exit if they are always known or become known
-      // entrance: this.dungeon ? this.dungeon.entrance : null,
-      // exit: this.dungeon ? this.dungeon.exit : null,
-      // treasure: this.dungeon ? this.dungeon.treasure : null
+      entrance: this.dungeon ? this.dungeon.entrance : null,
+      exit: this.dungeon ? this.dungeon.exit : null,
+      treasure: this.dungeon ? this.dungeon.treasure : null,
     };
+
+    // Debug logging to verify entity data
+    console.log("🎮 getState() sending entities - Monster:", state.monster, "Entrance:", state.entrance, "Exit:", state.exit, "Treasure:", state.treasure);
+
+    return state;
   }
 }
 
@@ -250,3 +253,4 @@ function checkMonsterKill(player, monster) {
 }
 
 module.exports = Game;
+module.exports.checkMonsterKill = checkMonsterKill;

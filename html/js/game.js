@@ -11,7 +11,6 @@ var Game = {
     _display: null,
     _screenWidth: options.width,
     _screenHeight: options.height,
-    _isTileMode: false, // Determined after checking tileset
     _displayReady: false, // Flag to indicate if _display is initialized
     _player: null,
     defaultFg: "#FFF", // Define defaultFg here
@@ -28,15 +27,6 @@ var Game = {
         console.log("Game.init called. 'this' is Game:", this === Game);
         console.log("Is this.checkTileset a function?", typeof this.checkTileset);
 
-        if (typeof this.checkTileset !== 'function') {
-            console.error("CRITICAL: Game.checkTileset is not a function. Halting initialization.");
-            alert("Error: Game initialization failed (checkTileset not found). Please check game.js.");
-            return;
-        }
-
-        this.checkTileset(function(tilesetAvailable) {
-            console.log("Game.checkTileset callback. Tileset available: " + tilesetAvailable);
-            this._isTileMode = tilesetAvailable;
 
             var displayOptions = {
                 width: this._screenWidth,
@@ -44,8 +34,6 @@ var Game = {
                 forceSquareRatio: true, // Good for both modes generally
             };
 
-            if (this._isTileMode) {
-                console.log("Initializing display in TILE mode.");
                 displayOptions.layout = "tile";
                 displayOptions.bg = window.options.bg; // Should be "transparent"
                 displayOptions.fg = window.options.fg || "#FFF"; // Default foreground for text not in tileMap
@@ -54,18 +42,6 @@ var Game = {
                 displayOptions.tileSet = window.options.tileSet;
                 displayOptions.tileMap = window.options.tileMap;
                 displayOptions.tileColorize = false; // Render tiles as-is from the tileset
-            } else {
-                console.log("Initializing display in ASCII mode.");
-                displayOptions.layout = "rect";
-                displayOptions.bg = "#000000"; // Black background for ASCII
-                displayOptions.fg = window.options.fg || "#FFF"; // Default foreground
-                displayOptions.fontSize = 18; // Adjust as needed for your font/preference
-                // Ensure no tile-specific options are passed if they might cause errors
-                delete displayOptions.tileWidth;
-                delete displayOptions.tileHeight;
-                delete displayOptions.tileSet;
-                delete displayOptions.tileMap;
-            }
 
             try {
                 var gameDisplayContainer = document.getElementById("game-display");
@@ -90,47 +66,8 @@ var Game = {
                 alert("Failed to initialize game display. Error: " + e.message + ". Check console for details.");
                 this._displayReady = false; // Explicitly false on error
             }
-        }.bind(this)); // CRUCIAL: bind 'this' for the callback to refer to the Game object
-    },
-
-    checkTileset: function(callback) {
-        console.log("Game.checkTileset called to determine mode.");
-        // This function relies on options.js to have attempted loading the tileset
-        // and set window.tileSet, window.tileMap, and window.globalTileSetStatus.
-
-        // Give a very short moment for options.js to potentially finish initial load attempts.
-        setTimeout(function() {
-            if (window.globalTileSetStatus === "error") {
-                console.warn("Tileset loading previously failed (window.globalTileSetStatus is 'error'). Using ASCII mode.");
-                callback(false); // Tileset not available
-            } else if (window.tileSet && window.tileSet.complete && window.tileSet.naturalHeight !== 0 && window.tileMap && Object.keys(window.tileMap).length > 0) {
-                console.log("Tileset and tileMap appear to be loaded and valid. Using TILE mode.");
-                callback(true); // Tileset available
-            } else {
-                // If not immediately ready, and no definitive error, try waiting a bit longer.
-                // options.js has its own timeouts. This is a secondary check.
-                console.log("Tileset not immediately confirmed. Waiting up to 3 seconds for options.js to complete loading...");
-                let attempts = 0;
-                const maxAttempts = 6; // Try for 3 seconds (6 * 500ms)
-                const interval = setInterval(function() {
-                    attempts++;
-                    if (window.globalTileSetStatus === "error") {
-                        clearInterval(interval);
-                        console.warn("Tileset loading failed during interval check in Game.checkTileset. Using ASCII mode.");
-                        callback(false);
-                    } else if (window.tileSet && window.tileSet.complete && window.tileSet.naturalHeight !== 0 && window.tileMap && Object.keys(window.tileMap).length > 0) {
-                        clearInterval(interval);
-                        console.log("Tileset and tileMap confirmed after delay in Game.checkTileset. Using TILE mode.");
-                        callback(true);
-                    } else if (attempts >= maxAttempts) {
-                        clearInterval(interval);
-                        console.error("Tileset did not become available after extended wait in Game.checkTileset. Assuming not available. Using ASCII mode.");
-                        callback(false); // Assume not available
-                    }
-                }.bind(this), 500); // Check every 500ms
-            }
-        }.bind(this), 50); // Small initial delay for options.js to run
-    },
+        }, // Removed .bind(this) - not needed for object literal methods
+    
 
     _ensureDisplay: function() {
         if (!this._display || !this._displayReady) {
@@ -228,7 +165,12 @@ var Game = {
             console.log("Player initialized to:", this._player);
 
             this._monster = monsterData; // Assuming monsterData is structured correctly or null
-            this._item = itemData;       // Assuming itemData is structured correctly or null
+            this._items = itemData;      // Fixed: Use _items instead of _item
+            
+            // Initialize entrance, exit, treasure from the game data
+            this._entrance = null;
+            this._exit = null;
+            this._treasure = null;
 
             this._map = {};
             this._visibleTiles = {}; // Clear/initialize visible tiles
@@ -416,6 +358,20 @@ var Game = {
                 this._items = data.items; // Ensure this is _items, not _item
                 needsRedraw = true;
             }
+            
+            // Update entrance, exit, treasure
+            if (data.entrance !== undefined) {
+                this._entrance = data.entrance;
+                needsRedraw = true;
+            }
+            if (data.exit !== undefined) {
+                this._exit = data.exit;
+                needsRedraw = true;
+            }
+            if (data.treasure !== undefined) {
+                this._treasure = data.treasure;
+                needsRedraw = true;
+            }
 
             // Update visible tiles (most critical for movement feedback)
             if (data.visibleTiles && typeof data.visibleTiles === 'object' && Object.keys(data.visibleTiles).length > 0) {
@@ -484,40 +440,63 @@ var Game = {
                 if (this._visibleTiles[wy] && this._visibleTiles[wy][wx] !== undefined) {
                     tileType = this._visibleTiles[wy][wx];
                     baseFg = this.defaultFg; // Use this.defaultFg
-                    baseChar = (tileType === 1) ? '#' : (this._isTileMode ? "'" : ".");
+                    baseChar = (tileType === 1) ? '#' : "'"; // Fixed: Always use ' for floor
                 } else if (this._exploredTiles[wy] && this._exploredTiles[wy][wx] !== undefined) {
                     tileType = this._exploredTiles[wy][wx];
                     baseFg = this.defaultFg; // Use this.defaultFg
-                    baseChar = (tileType === 1) ? '#' : (this._isTileMode ? "'" : ".");
+                    baseChar = (tileType === 1) ? '#' : "'"; // Fixed: Always use ' for floor
                 }
                 charStack.push(baseChar);
                 fgStack.push(baseFg); 
                 bgStack.push(null);
 
                 // Items, Monsters, Player drawing logic
-                // Example for items (ensure _item and _isVisible are defined and work correctly)
-                if (this._item) { // Check if _item exists
-                    for (const itemKey in this._item) {
-                        if (this._item.hasOwnProperty(itemKey)) {
-                            const currentItem = this._item[itemKey];
+                // Render items (fix property name from _item to _items)
+                if (this._items) {
+                    for (const itemKey in this._items) {
+                        if (this._items.hasOwnProperty(itemKey)) {
+                            const currentItem = this._items[itemKey];
                             if (currentItem && currentItem.x === wx && currentItem.y === wy && this._isVisible(wx, wy)) {
-                                charStack.push('$'); // Assuming '$' for items
-                                fgStack.push(this.defaultFg); // Use this.defaultFg
+                                charStack.push('$');
+                                fgStack.push(this.defaultFg);
                                 bgStack.push(null);
                             }
                         }
                     }
                 }
                 
-                if (this._monster && this._monster.x === wx && this._monster.y === wy && this._isVisible(wx, wy)) {
-                    charStack.push('~'); 
-                    fgStack.push(this.defaultFg); // Use this.defaultFg
+                // Render entrance
+                if (this._entrance && this._entrance[0] === wx && this._entrance[1] === wy && this._isVisible(wx, wy)) {
+                    charStack.push('<');
+                    fgStack.push('#0f0'); // Green for entrance
                     bgStack.push(null);
                 }
                 
+                // Render exit
+                if (this._exit && this._exit[0] === wx && this._exit[1] === wy && this._isVisible(wx, wy)) {
+                    charStack.push('>');
+                    fgStack.push('#f0f'); // Magenta for exit
+                    bgStack.push(null);
+                }
+                
+                // Render treasure
+                if (this._treasure && this._treasure[0] === wx && this._treasure[1] === wy && this._isVisible(wx, wy)) {
+                    charStack.push('$');
+                    fgStack.push('#ff0'); // Yellow for treasure
+                    bgStack.push(null);
+                }
+                
+                // Render monster
+                if (this._monster && this._monster.x === wx && this._monster.y === wy && this._isVisible(wx, wy)) {
+                    charStack.push('~'); 
+                    fgStack.push('#f00'); // Red for monster
+                    bgStack.push(null);
+                }
+                
+                // Render player (always on top)
                 if (wx === playerWX && wy === playerWY) {
                     charStack.push('@'); 
-                    fgStack.push(this.defaultFg); // Use this.defaultFg
+                    fgStack.push(this.defaultFg);
                     bgStack.push(null);
                 }
                 

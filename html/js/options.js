@@ -23,46 +23,15 @@ tileSet.onload = function() {
 
 tileSet.onerror = function() {
     console.error("❌ Failed to load tileset image!");
-    alert("Tileset image failed to load. Game will attempt to use ASCII mode.");
     window.globalTileSetStatus = "error"; // Set a status for Game.js to check if needed
-    
-    // Force ASCII mode when tileset fails to load
-    // REMOVED: if (typeof Game !== 'undefined' && Game._display) {
-    // REMOVED:     Game.switchToAsciiMode();
-    // REMOVED: }
 };
 
 // Try different possible paths (to handle serving from different directories)
 tileSet.src = "tiles.png"; // Try default path first
 
-// Add fallback function if main path fails
-setTimeout(function() {
-    if (!tileSetLoaded) {
-        console.warn("Tileset not loaded yet, trying alternate paths...");
-        tileSet.src = "./tiles.png"; // Try with explicit relative path
-        
-        setTimeout(function() {
-            if (!tileSetLoaded) {
-                tileSet.src = "/tiles.png"; // Try from root
-                
-                setTimeout(function() {
-                    if (!tileSetLoaded && window.globalTileSetStatus !== "error") { // Check if error already handled
-                        console.error("Failed to load tileset after trying multiple paths");
-                        alert("Could not load tileset. Game will attempt to use ASCII mode.");
-                        window.globalTileSetStatus = "error"; // Set a status
-                        // REMOVED: if (typeof Game !== 'undefined' && Game._display) {
-                        // REMOVED:     Game.switchToAsciiMode();
-                        // REMOVED: }
-                    }
-                }, 1000);
-            }
-        }, 1000);
-    }
-}, 1000);
-
 var options = {
     layout: "tile",
-    bg: "transparent", // Black background instead of transparent for better visibility
+    bg: "transparent", 
     // Adjusted dimensions for ~800x600 display
     width: 25, // 25 tiles * 32px/tile = 800px
     height: 19, // 19 tiles * 32px/tile = 608px
