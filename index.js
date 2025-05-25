@@ -1,5 +1,5 @@
 const express = require('express');
-var app = express();
+var app = require('express')();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
 var rpc = require('./rpccalls.js');
@@ -28,8 +28,6 @@ function getUserBySocket(socketId) {
 
 const Game = require('./game');
 const activeGames = new Map(); // Maps socketId to Game objects
-const playerMoveTimestamps = new Map(); // Track last move time per player
-const MOVE_COOLDOWN = 100; // Minimum 100ms between moves on server side
 let lastBlockHeight = 0; // Track last block height
 const MIN_FEE = 10; // Minimum entrance fee in WOW
 const MAX_FEE = 100; // Maximum entrance fee in WOW
@@ -38,9 +36,9 @@ const DEBUG_MODE = true; // Set to false to disable debug mode
 let debugBlockHeight = 1;
 const clientSocketMap = new Map(); // To track client-to-server socket ID mappings
 
-app.use(express.static('../../html'));
+app.use(express.static('html'));
 app.get('/', function(req, res) {
-   res.sendFile('index.html', { root: '../../html' });
+   res.sendfile('index.html');
 });
 
 // Replace your existing block check interval with this conditional version
@@ -180,34 +178,40 @@ io.on('connection', function(socket) {
         'Welcome, to enter the dungeon type Enter, and you will be given a Wownero address, ' +
         'which you must send between 10-100 WOW to enter. The more you send, the more you can win.');
     }
-    // Update the 'enter' command handler to start game immediately for testing
+    // Update the 'enter' command handler to send waiting_status
     if (msg.toLowerCase() == 'enter') {
-        console.log(`Player ${socket.id} requested to enter the dungeon - STARTING IMMEDIATELY`);
+        console.log(`Player ${socket.id} requested to enter the dungeon`);
         
         // Use the updated user lookup function
         const currentUser = getUserBySocket(socket.id);
         
         if (currentUser) {
-            console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+            console.log(`Found user for socket ${socket.id}, adding to queue...`);
             
-            // Start game immediately for faster testing
-            try {
-                currentUser.blockRec = debugBlockHeight || lastBlockHeight || 1;
-                const game = currentUser.startGame(80, 40);
-                activeGames.set(socket.id, game);
+            // Add to waiting players queue
+            if (!WAITING_PLAYERS.some(p => p.serverId === socket.id)) {
+                WAITING_PLAYERS.push({
+                    serverId: socket.id,
+                    clientId: socket.id,
+                    user: currentUser,
+                    joinedAt: Date.now()
+                });
                 
-                const gameState = game.getState();
-                gameState.blockHeight = debugBlockHeight || lastBlockHeight || 1;
+                // Send waiting status data for display - THIS IS THE KEY PART
+                io.to(socket.id).emit('waiting_status', { 
+                    status: 'waiting',
+                    message: 'Waiting for the next block to be found...',
+                    position: WAITING_PLAYERS.length,
+                    currentBlock: debugBlockHeight || lastBlockHeight || 0,
+                    joinTime: Date.now()
+                });
                 
-                console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id}`);
-                io.to(socket.id).emit('game_start', gameState);
-                console.log(`Game started immediately for player ${socket.id}`);
-            } catch (error) {
-                console.error(`Error creating game:`, error);
-                io.to(socket.id).emit('message', 'Error starting game: ' + error.message);
+                console.log(`Added player to queue. Current queue: ${WAITING_PLAYERS.length} players`);
+            } else {
+                io.to(socket.id).emit('message', 'You are already in the queue. Please wait.');
             }
         } else {
-            io.to(socket.id).emit('message', 'Error: Could not start game. Please try again.');
+            io.to(socket.id).emit('message', 'Error: Could not add you to the game queue. Please try again.');
         }
     }
     // Add a handler for the 'cancel' command
@@ -236,18 +240,7 @@ io.on('connection', function(socket) {
     const currentUser = getUserBySocket(socket.id);
 
     if (currentUser && currentUser.game && currentUser.game.gameState === 'active') {
-      // Server-side movement throttling
-      const now = Date.now();
-      const lastMoveTime = playerMoveTimestamps.get(socket.id) || 0;
-      
-      if (now - lastMoveTime < MOVE_COOLDOWN) {
-        console.log(`Move from ${socket.id} throttled - too soon after last move (${now - lastMoveTime}ms)`);
-        return; // Ignore move if too soon
-      }
-      
       if (typeof moveData.dx === 'number' && typeof moveData.dy === 'number') {
-        playerMoveTimestamps.set(socket.id, now); // Update timestamp before processing
-        
         const game = currentUser.game;
         const moveResult = game.movePlayer(moveData.dx, moveData.dy); // This should update player pos and FOV
 
@@ -311,19 +304,6 @@ io.on('connection', function(socket) {
   // Handle disconnection
   socket.on('disconnect', function() {
     console.log('User disconnected', socket.client.id);
-    
-    // Clean up movement timestamps
-    playerMoveTimestamps.delete(socket.id);
-    
-    // Clean up active games
-    activeGames.delete(socket.id);
-    
-    // Remove from waiting players
-    const waitingIndex = WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
-    if (waitingIndex !== -1) {
-      WAITING_PLAYERS.splice(waitingIndex, 1);
-    }
-    
     user.removeUser(socket.client.id);
   });
 
@@ -440,14 +420,3 @@ function debugSocket(socketId, eventName, data) {
   console.log(`🔌 SOCKET DEBUG: Sending ${eventName} to ${socketId.substring(0, 8)}...`);
   console.log(`📦 PAYLOAD (first 300 chars): ${JSON.stringify(data).substring(0, 300)}...`);
 }
-
-// Add express middleware to parse JSON
-app.use(express.json());
-app.use(express.static('html'));
-
-// Debug endpoint to receive client-side debug info
-app.post('/debug', (req, res) => {
-  const debugData = req.body;
-  console.log('🎯 CLIENT DEBUG:', debugData.message || debugData);
-  res.json({ status: 'ok' });
-});

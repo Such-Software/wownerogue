@@ -30,19 +30,34 @@ const InputHandler = {
             if (!msg) return false;
             
             console.log("📝 SENDING CHAT:", msg);
-            socket.emit('chat message', msg);
-            $('#chatInput').val('');
             
-            // If the message is "enter", show the waiting screen
+            // If the message is "enter", always send it to server
+            // The server will handle queueing logic and timing
             if (msg.toLowerCase() === 'enter') {
-                console.log("🔑 'ENTER' COMMAND DETECTED - expecting game_start response");
+                console.log("🔑 'ENTER' COMMAND DETECTED - sending to server");
+                socket.emit('chat message', msg);
                 
-                // Show waiting screen
-                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-                    Game.drawWaitingScreen();
+                // Show appropriate screen based on current state
+                const isDebugMode = window.location.hostname === 'localhost' || 
+                                   window.location.hostname === '127.0.0.1' || 
+                                   window.location.protocol === 'file:';
+                
+                if (isDebugMode || ScreenManager.canEnterGame()) {
+                    console.log("✅ Can enter immediately - showing waiting screen");
+                    if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                        Game.drawWaitingScreen();
+                    }
+                } else {
+                    console.log("⏳ Will be queued - showing queue message");
+                    $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
+                    UI.scrollChat();
                 }
+            } else {
+                // Send other chat messages normally
+                socket.emit('chat message', msg);
             }
             
+            $('#chatInput').val('');
             return false;
         });
 
@@ -104,7 +119,35 @@ const InputHandler = {
                         }
                     }
                 } else {
-                    console.log("Game display has focus, but Game is not active.");
+                    // Game display has focus but game is not active (welcome screen)
+                    // Check for debug key 'D' to start immediately
+                    if (e.key === 'D' || e.key === 'd') {
+                        // Check if we're in debug mode (localhost)
+                        const isDebugMode = window.location.hostname === 'localhost' || 
+                                           window.location.hostname === '127.0.0.1' || 
+                                           window.location.protocol === 'file:';
+                        
+                        if (isDebugMode) {
+                            console.log("🔧 DEBUG: 'D' key pressed - starting game immediately");
+                            e.preventDefault();
+                            
+                            // Emit enter command to start game immediately
+                            socket.emit('chat message', 'enter');
+                            
+                            // Show waiting screen while game starts
+                            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                                Game.drawWaitingScreen();
+                            }
+                            
+                            // Add debug message to chat
+                            $('#messages').append($('<li style="color: #0f0;">').text("🔧 DEBUG: Starting game immediately..."));
+                            UI.scrollChat();
+                        } else {
+                            console.log("Debug key pressed but not in debug mode");
+                        }
+                    } else {
+                        console.log("Game display has focus, but Game is not active.");
+                    }
                 }
             } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
                 // If Enter is pressed and chat is not focused, focus chat

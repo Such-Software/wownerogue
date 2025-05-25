@@ -46,11 +46,11 @@ const SocketHandlers = {
             userAgent: navigator.userAgent
         });
         
-        // Auto-start game for faster testing
+        // Auto-start for testing (timeout issue has been fixed)
         setTimeout(() => {
             console.log("🚀 AUTO-STARTING GAME for faster testing");
             socket.emit('chat message', 'enter');
-        }, 500); // Small delay to ensure connection is fully established
+        }, 500);
     },
 
     onWelcome: function(msg) {

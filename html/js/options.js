@@ -1,33 +1,15 @@
 var tileSet = document.createElement("img");
 var tileSetLoaded = false;
 
-// More robust error handling
 tileSet.onload = function() {
-    console.log("✅ Tileset image loaded successfully!");
     tileSetLoaded = true;
-    
-    // Add visible verification on the page
-    var statusElem = document.createElement('div');
-    statusElem.style.position = 'fixed';
-    statusElem.style.bottom = '40px';
-    statusElem.style.right = '10px';
-    statusElem.style.background = 'rgba(0,255,0,0.5)';
-    statusElem.style.color = 'white';
-    statusElem.style.padding = '5px';
-    statusElem.style.fontSize = '12px';
-    statusElem.style.zIndex = '1000';
-    statusElem.textContent = '✓ Tileset loaded';
-    document.body.appendChild(statusElem);
-    setTimeout(() => statusElem.remove(), 5000);
 };
 
 tileSet.onerror = function() {
-    console.error("❌ Failed to load tileset image!");
-    window.globalTileSetStatus = "error"; // Set a status for Game.js to check if needed
+    console.error("Failed to load tileset image!");
 };
 
-// Try different possible paths (to handle serving from different directories)
-tileSet.src = "tiles.png"; // Try default path first
+tileSet.src = "tiles.png";
 
 var options = {
     layout: "tile",
@@ -130,17 +112,12 @@ var options = {
         "]": [832, 64],
         "{": [864, 64],
         "%": [896, 64],
-        "^": [928, 64], // Duplicate ^
+        "^": [928, 64],
         " ": [992, 64]
     }
 };
 
-// Update the tileset loading to properly set the global variables
-
-// Make sure the variables are properly set in the global scope
+// Make options globally available
 window.tileSet = tileSet;
 window.tileMap = options.tileMap;
-
-// Add logging to confirm they're set
-console.log("✅ Tileset assigned to window.tileSet:", !!window.tileSet);
-console.log("✅ TileMap assigned to window.tileMap:", !!window.tileMap, "with keys:", window.tileMap ? Object.keys(window.tileMap).length : 0);
+window.options = options;

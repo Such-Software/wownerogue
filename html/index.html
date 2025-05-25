@@ -19,8 +19,14 @@
     <script src="js/options.js"></script>
     <script src="js/teletype.js"></script>
     
-    <!-- Game modules -->
+    <!-- Modular game components (order matters for dependencies) -->
+    <script src="js/displayManager.js"></script>
+    <script src="js/screenManager.js"></script>
+    <script src="js/renderEngine.js"></script>
+    <script src="js/gameState.js"></script>
     <script src="js/game.js"></script>
+    
+    <!-- Other modules -->
     <script src="js/ui.js"></script>
     <script src="js/socketHandlers.js"></script>
     <script src="js/inputHandler.js"></script>
@@ -43,8 +49,8 @@
         <!-- Game display -->
         <div id="game-display" class="rotdis"></div>
         
-        <!-- Debug display area -->
-        <div id="debug-display" style="background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; font-size: 12px; padding: 10px; margin: 5px; border: 1px solid #333; max-height: 200px; overflow-y: auto;">
+        <!-- Debug display area (hidden in production) -->
+        <div id="debug-display" style="display: none; background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; font-size: 12px; padding: 10px; margin: 5px; border: 1px solid #333; max-height: 200px; overflow-y: auto;">
             <div><strong>Debug Information:</strong></div>
             <div id="debug-content">Ready...</div>
         </div>
@@ -78,11 +84,6 @@
             Close
         </button>
     </div>
-
-    <!-- Mode toggle button -->
-    <button id="toggle-mode" style="position: fixed; right: 10px; top: 10px; z-index: 1000; background: #333; color: white; padding: 5px; border: 1px solid #666; border-radius: 4px;">
-        Switch to ASCII Mode
-    </button>
 
     <!-- Initialize game when ready -->
     <script>
