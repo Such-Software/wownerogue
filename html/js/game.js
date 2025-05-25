@@ -16,10 +16,12 @@ var Game = {
     _maxLogMessages: 5,
 
     init: function() {
+        console.log("Game.init called - Modular version");
+        
         // Update screen dimensions from options
-        if (typeof window.options !== 'undefined') {
-            this._screenWidth = window.options.width || 25;
-            this._screenHeight = window.options.height || 19;
+        if (typeof options !== 'undefined') {
+            this._screenWidth = options.width || 25;
+            this._screenHeight = options.height || 19;
         }
         
         // Initialize all modules
@@ -31,8 +33,7 @@ var Game = {
         RenderEngine.init(this._screenWidth, this._screenHeight);
         GameState.init();
         
-        // Start block simulation and draw welcome screen
-        ScreenManager.startBlockSimulation();
+        // Draw welcome screen
         ScreenManager.drawWelcomeScreen();
         
         return true;
@@ -48,12 +49,38 @@ var Game = {
 
     startGame: function(playerData, mapData, monsterData, itemData, initialVisibleTiles) {
         if (!this._ensureDisplay()) {
+            console.error("Game: Cannot start game, display not ready.");
             return false;
         }
+        console.log("Game: startGame called. PlayerData:", playerData, "MapData:", mapData, "InitialVisibleTiles:", initialVisibleTiles);
 
         DisplayManager.clearDisplay();
+        
+        // Force clear all display caches and artifacts
+        if (typeof DisplayManager !== 'undefined' && DisplayManager.forceClearToBlack) {
+            console.log("✅ Force clearing display to prevent artifacts...");
+            DisplayManager.forceClearToBlack();
+        }
+        
+        // Stop the block simulation to prevent welcome screen from interfering
+        if (typeof ScreenManager !== 'undefined' && ScreenManager.stopBlockSimulation) {
+            console.log("✅ Stopping block simulation...");
+            ScreenManager.stopBlockSimulation();
+        }
+        
         try {
             GameState.setGameActive(true);
+
+            // Clear any previous game state but preserve what we need for initialization
+            console.log("✅ Clearing previous game state (but preserving server data)...");
+            GameState._exploredTiles = {};
+            // Don't clear _visibleTiles yet - let initializeMap handle it properly
+            GameState._map = {};
+            GameState._items = {};
+            GameState._monster = null;
+            GameState._entrance = null;
+            GameState._exit = null;
+            GameState._treasure = null;
 
             // Initialize player
             GameState.initializePlayer(playerData);
@@ -91,6 +118,7 @@ var Game = {
             }
 
             this._drawGameScreen();
+            console.log("Game started successfully and initial screen drawn.");
             return true;
 
         } catch (err) {
@@ -115,6 +143,7 @@ var Game = {
         
         // Redraw the game screen if any relevant data changed
         if (needsRedraw) {
+            console.log("Redrawing game screen due to game update.");
             this._drawGameScreen();
         }
     },
@@ -148,6 +177,15 @@ var Game = {
 
     stopWaitingScreen: function() {
         ScreenManager.stopWaitingScreen();
+    },
+
+    // Display mode switching - delegate to DisplayManager
+    switchToAsciiMode: function() {
+        DisplayManager.switchToAsciiMode();
+    },
+
+    switchToTileMode: function() {
+        DisplayManager.switchToTileMode();
     },
 
     // Player movement - delegate to GameState
@@ -204,6 +242,7 @@ var Game = {
 // Debug utility functions (keep as-is for compatibility)
 const GameDebug = {
     log: function(message) {
+        console.log(message);
         this.updateDebugDisplay(message);
         this.sendToServer(message);
     },

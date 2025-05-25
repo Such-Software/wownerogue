@@ -161,9 +161,14 @@ var GameState = {
     },
 
     computeFieldOfView: function() {
-        // Initialize FOV
+        // Initialize FOV with corrected wall detection callback
         var fov = new ROT.FOV.PreciseShadowcasting(function(x, y) {
-            return (this._map[y] && this._map[y][x] !== undefined) ? (this._map[y][x] === 0) : false;
+            // Return true if the tile is transparent (walkable), false if it blocks light
+            if (!this._map[y] || this._map[y][x] === undefined) {
+                return false; // Unknown tiles block light
+            }
+            // Tile type 0 = floor (transparent), 1 = wall (blocks light)
+            return this._map[y][x] === 0;
         }.bind(this));
 
         // If map was NOT built from initialVisibleTiles, compute FOV now
@@ -177,7 +182,8 @@ var GameState = {
             }.bind(this));
         }
         
-        this.updateExploredTiles();
+        // NOTE: Don't call updateExploredTiles() here on initial game load
+        // Explored tiles should only be updated when player moves, not on first FOV computation
         console.log("Initial FOV computed/processed. Visible tiles count:", Object.keys(this._visibleTiles).reduce((acc, yKey) => acc + Object.keys(this._visibleTiles[yKey]).length, 0));
     },
 
@@ -418,7 +424,7 @@ var GameState = {
             needsRedraw = true;
         }
 
-        if (data.treasure) {
+        if (data.treasure !== undefined) {
             this._treasure = data.treasure;
             needsRedraw = true;
         }

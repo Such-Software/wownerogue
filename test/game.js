@@ -61,11 +61,6 @@ class Game {
             // Store the actual tile type (0 for floor, 1 for wall) from the dungeon map
             if (this.dungeon && this.dungeon.map && this.dungeon.map[y] && this.dungeon.map[y][x] !== undefined) {
                 this.visibleTiles[y][x] = this.dungeon.map[y][x];
-                
-                // Debug log for specific problematic coordinates
-                if ((x === 36 && (y === 18 || y === 16)) || (x === 35 && (y === 18 || y === 16))) {
-                    console.log(`🔍 DEBUG FOV: (${x},${y}) - server map value: ${this.dungeon.map[y][x]}, sent to client: ${this.visibleTiles[y][x]}, visibility: ${visibility}`);
-                }
             } else {
                 // Should not happen if FOV is within map bounds, but as a fallback:
                 // this.visibleTiles[y][x] = 1; // Default to wall if outside known map
@@ -79,8 +74,16 @@ class Game {
     const newX = this.player.x + dx;
     const newY = this.player.y + dy;
     
-    // Simple debug output
-    console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
+    // Debug logging for movement validation
+    console.log(`[DEBUG] Move attempt: from (${this.player.x},${this.player.y}) to (${newX},${newY}) with dx=${dx},dy=${dy}`);
+    console.log(`[DEBUG] Map bounds: width=${this.width}, height=${this.height}`);
+    console.log(`[DEBUG] Dungeon exists: ${!!this.dungeon}`);
+    if (this.dungeon && this.dungeon.map) {
+      console.log(`[DEBUG] Map row ${newY} exists: ${!!this.dungeon.map[newY]}`);
+      if (this.dungeon.map[newY]) {
+        console.log(`[DEBUG] Map cell [${newY}][${newX}] value: ${this.dungeon.map[newY][newX]} (0=floor, 1=wall)`);
+      }
+    }
     
     // Check if the move is valid (not into a wall and within map bounds)
     if (this.dungeon && 
@@ -102,10 +105,8 @@ class Game {
       }
       if (this.dungeon.treasure && this.player.isAt(this.dungeon.treasure[0], this.dungeon.treasure[1]) && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
-        console.log(`🏆 TREASURE PICKUP: Player ${this.socketId} collected treasure at (${this.dungeon.treasure[0]}, ${this.dungeon.treasure[1]})`);
         // Remove treasure from dungeon so it won't be sent in future updates
         this.dungeon.treasure = null;
-        console.log(`🗑️ TREASURE REMOVED: dungeon.treasure is now null for player ${this.socketId}`);
         console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
         return { status: 'moved', event: 'treasure_found', player: this.player.getState(), visibleTiles: this.visibleTiles };
       }
@@ -114,8 +115,26 @@ class Game {
     }
     
     
+    console.log(`Player move to ${newX},${newY} for socket ${this.socketId} is invalid (wall or out of bounds).`);
     
-    console.log(`Move BLOCKED: ${newX},${newY} - cell value: ${this.dungeon && this.dungeon.map[newY] ? this.dungeon.map[newY][newX] : 'undefined'}`);
+    // Debug: Show map around player
+    console.log(`[DEBUG] Map around player position:`);
+    for (let y = this.player.y - 2; y <= this.player.y + 2; y++) {
+      let row = '';
+      for (let x = this.player.x - 2; x <= this.player.x + 2; x++) {
+        if (x === this.player.x && y === this.player.y) {
+          row += '@'; // Player position
+        } else if (x === newX && y === newY) {
+          row += 'X'; // Attempted move position
+        } else if (this.dungeon && this.dungeon.map[y] && this.dungeon.map[y][x] !== undefined) {
+          row += this.dungeon.map[y][x] === 0 ? '.' : '#';
+        } else {
+          row += '?'; // Out of bounds or undefined
+        }
+      }
+      console.log(`[DEBUG] Y=${y}: ${row}`);
+    }
+    
     return { status: 'invalid' };
   }
   
@@ -137,9 +156,6 @@ class Game {
 
     // Debug logging to verify entity data
     console.log("🎮 getState() sending entities - Monster:", state.monster, "Entrance:", state.entrance, "Exit:", state.exit, "Treasure:", state.treasure);
-    if (state.treasure === null) {
-      console.log("✅ TREASURE NULL: Confirmed treasure is null in getState() - treasure was picked up!");
-    }
 
     return state;
   }

@@ -17,6 +17,7 @@ const InputHandler = {
         this.setupChatForm();
         this.setupFocusHandlers();
         this.setupKeyboardControls();
+        this.setupClickHandlers();
         this.setupModeToggle();
         this._initialized = true;
     },
@@ -150,10 +151,67 @@ const InputHandler = {
                     }
                 }
             } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
-                // If Enter is pressed and chat is not focused, focus chat
-                $('#chatInput').focus();
-                UI.updateFocusIndicator();
+                // If Enter is pressed and chat is not focused
+                if (typeof Game !== 'undefined' && !Game._gameActive) {
+                    // On welcome screen - start the game
+                    console.log("🔑 Enter key pressed on welcome screen - starting game");
+                    e.preventDefault();
+                    
+                    const isDebugMode = window.location.hostname === 'localhost' || 
+                                       window.location.hostname === '127.0.0.1' || 
+                                       window.location.protocol === 'file:';
+                    
+                    socket.emit('chat message', 'enter');
+                    
+                    if (isDebugMode || ScreenManager.canEnterGame()) {
+                        console.log("✅ Can enter immediately - showing waiting screen");
+                        if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                            Game.drawWaitingScreen();
+                        }
+                    } else {
+                        console.log("⏳ Will be queued - showing queue message");
+                        $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
+                        UI.scrollChat();
+                    }
+                    
+                    // Add visual feedback to chat
+                    $('#messages').append($('<li style="color: #0f0;">').text("🔑 Game start requested..."));
+                    UI.scrollChat();
+                } else {
+                    // Game is active or in other state - focus chat
+                    $('#chatInput').focus();
+                    UI.updateFocusIndicator();
+                }
             }
+        });
+    },
+
+    setupClickHandlers: function() {
+        // Add click handling for the HTML START button
+        $('#startButton').click(function(e) {
+            console.log("🖱️ START button clicked - starting game");
+            
+            // Trigger the same logic as typing 'enter'
+            const isDebugMode = window.location.hostname === 'localhost' || 
+                               window.location.hostname === '127.0.0.1' || 
+                               window.location.protocol === 'file:';
+            
+            socket.emit('chat message', 'enter');
+            
+            if (isDebugMode || ScreenManager.canEnterGame()) {
+                console.log("✅ Can enter immediately - showing waiting screen");
+                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                    Game.drawWaitingScreen();
+                }
+            } else {
+                console.log("⏳ Will be queued - showing queue message");
+                $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
+                UI.scrollChat();
+            }
+            
+            // Add visual feedback to chat
+            $('#messages').append($('<li style="color: #0f0;">').text("🖱️ Game start requested..."));
+            UI.scrollChat();
         });
     },
 

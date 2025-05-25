@@ -59,21 +59,26 @@ var DisplayManager = {
             return false;
         }
         return true;
-    },
-
-    forceClearToBlack: function() {
+    },    forceClearToBlack: function() {
         if (!this.ensureDisplay()) {
             console.warn("DisplayManager.forceClearToBlack: Display not ready, aborting.");
             return;
         }
-
+        
         const display = this._display;
 
         // Step 1: Clear ROT.js's internal data cache and dirty flags
         display._data = {};
         display._dirty = {};
 
-        // Step 2: Directly clear the visual canvas to black
+        // Step 2: Force redraw entire screen with blank characters
+        for (let x = 0; x < this._screenWidth; x++) {
+            for (let y = 0; y < this._screenHeight; y++) {
+                display.draw(x, y, ' ', '#000', '#000');
+            }
+        }
+
+        // Step 3: Directly clear the visual canvas to black
         var canvas = display.getContainer();
         if (canvas && typeof canvas.getContext === 'function') {
             var ctx = canvas.getContext("2d");

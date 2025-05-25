@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wowngeon Fixes Test</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            background: #000; 
+            color: #0f0; 
+            padding: 20px; 
+        }
+        .test-result { 
+            margin: 10px 0; 
+            padding: 10px; 
+            border: 1px solid #333; 
+        }
+        .pass { border-color: #0f0; }
+        .fail { border-color: #f00; }
+        iframe { 
+            width: 100%; 
+            height: 600px; 
+            border: 1px solid #666; 
+            margin: 20px 0; 
+        }
+    </style>
+</head>
+<body>
+    <h1>🎮 Wowngeon Fixes Verification</h1>
+    
+    <div class="test-result">
+        <h2>🔧 Fix #1: START Button Visibility</h2>
+        <p><strong>Issue:</strong> START button was invisible (cut off in game display)</p>
+        <p><strong>Fix:</strong> Moved to HTML status area with proper styling</p>
+        <p><strong>Test:</strong> Check if START button is visible in the status area below</p>
+    </div>
+    
+    <div class="test-result">
+        <h2>⏱️ Fix #2: Auto-Entry Death Timing</h2>
+        <p><strong>Issue:</strong> Players died after 2+ blocks instead of 1 block in debug mode</p>
+        <p><strong>Fix:</strong> Set currentUser.blockRec = currentBlock + 1 for consistent timing</p>
+        <p><strong>Test:</strong> Use "enter" command and check death timing logs in console</p>
+    </div>
+    
+    <h2>🎯 Live Game Test</h2>
+    <iframe src="http://localhost:3000"></iframe>
+    
+    <div class="test-result">
+        <h3>📋 Test Instructions:</h3>
+        <ol>
+            <li><strong>START Button Test:</strong> Look for the green "🎮 START GAME" button in the status area (should be visible)</li>
+            <li><strong>Death Timing Test:</strong> Click START or type "enter" in chat, then check browser console for timing logs</li>
+            <li><strong>Expected Logs:</strong> Should see "🕒 AUTO-ENTRY: Player starts on block X, will die after block X+2"</li>
+        </ol>
+    </div>
+    
+    <script>
+        // Test the START button visibility
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                const iframe = document.querySelector('iframe');
+                if (iframe && iframe.contentDocument) {
+                    const startButton = iframe.contentDocument.getElementById('startButton');
+                    if (startButton) {
+                        console.log('✅ START button found in iframe');
+                        const styles = window.getComputedStyle(startButton);
+                        console.log('START button styles:', {
+                            display: styles.display,
+                            visibility: styles.visibility,
+                            background: styles.backgroundColor
+                        });
+                    } else {
+                        console.log('❌ START button not found in iframe');
+                    }
+                }
+            }, 2000);
+        });
+    </script>
+</body>
+</html>

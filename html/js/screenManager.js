@@ -3,6 +3,7 @@ var ScreenManager = {
     defaultFg: "#FFF",
     _currentBlockHeight: 0,
     _blockTimer: null,
+    _updateInterval: null,  // Track the update interval separately
     _waitingForBlock: false,
 
     init: function(screenWidth, screenHeight) {
@@ -10,6 +11,7 @@ var ScreenManager = {
         this._screenHeight = screenHeight;
         this._currentBlockHeight = 0;
         this._waitingForBlock = false;
+        this._updateInterval = null;  // Initialize update interval tracker
     },
 
     drawCenteredText: function(y, text, color) {
@@ -58,14 +60,24 @@ var ScreenManager = {
         y = this.drawCenteredText(y + 3, "Waiting for next block...", this.defaultFg);
         y = this.drawCenteredText(y + 1, `Block Height: ${this._currentBlockHeight}`, "#0f0");
         
-        if (this._waitingForBlock) {
-            y = this.drawCenteredText(y + 2, "Mining in progress...", "#ff0");
-        } else {
-            y = this.drawCenteredText(y + 2, "Type 'ENTER' to queue for game", this.defaultFg);
+        const isDebugMode = window.location.hostname === 'localhost' || 
+                           window.location.hostname === '127.0.0.1' || 
+                           window.location.protocol === 'file:';
+        
+        // Control HTML START button visibility
+        const startButton = document.getElementById('startButton');
+        if (startButton) {
+            if (this._waitingForBlock && !isDebugMode) {
+                startButton.style.display = 'none';
+                y = this.drawCenteredText(y + 2, "Mining in progress...", "#ff0");
+            } else {
+                startButton.style.display = 'block';
+                y = this.drawCenteredText(y + 2, "Press ENTER or click START to queue", "#0f0");
+            }
         }
         
         // Debug button (shown only in development)
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') {
+        if (isDebugMode) {
             this.drawCenteredText(y + 3, "[DEBUG: Press 'D' to start immediately]", "#666");
         }
         
@@ -79,42 +91,53 @@ var ScreenManager = {
         this._waitingForBlock = true;
         
         // Update welcome screen every second during mining
-        const updateInterval = setInterval(() => {
-            if (this._waitingForBlock) {
+        this._updateInterval = setInterval(() => {
+            if (this._waitingForBlock && !GameState.isGameActive()) {
                 this.drawWelcomeScreen();
             } else {
-                clearInterval(updateInterval);
+                if (this._updateInterval) {
+                    clearInterval(this._updateInterval);
+                    this._updateInterval = null;
+                }
             }
         }, 1000);
         
         // Simulate new block every 30 seconds
         this._blockTimer = setInterval(() => {
-            this._currentBlockHeight++;
-            this._waitingForBlock = false;
-            this.drawWelcomeScreen();
-            
-            // Show block found message briefly
-            setTimeout(() => {
-                if (!DisplayManager.ensureDisplay()) return;
-                let y = Math.floor(this._screenHeight / 2);
-                this.drawCenteredText(y, "🎉 NEW BLOCK FOUND! 🎉", "#0f0");
-                this.drawCenteredText(y + 1, "You may now enter the dungeon!", "#0f0");
+            if (!GameState.isGameActive()) {  // Only continue if game is not active
+                this._currentBlockHeight++;
+                this._waitingForBlock = false;
+                this.drawWelcomeScreen();
                 
-                // Allow entry for 5 seconds
+                // Show block found message briefly
                 setTimeout(() => {
-                    this._waitingForBlock = true;
-                    this.drawWelcomeScreen();
-                }, 5000);
-            }, 500);
-            
+                    if (!DisplayManager.ensureDisplay() || GameState.isGameActive()) return;
+                    let y = Math.floor(this._screenHeight / 2);
+                    this.drawCenteredText(y, "*** NEW BLOCK FOUND! ***", "#0f0");
+                    this.drawCenteredText(y + 1, "You may now enter the dungeon!", "#0f0");
+                    
+                    // Allow entry for 5 seconds
+                    setTimeout(() => {
+                        if (!GameState.isGameActive()) {
+                            this._waitingForBlock = true;
+                            this.drawWelcomeScreen();
+                        }
+                    }, 5000);
+                }, 500);
+            }
         }, 30000); // 30 second intervals
     },
 
     // Stop block simulation
     stopBlockSimulation: function() {
+        console.log("Stopping block simulation and clearing all intervals...");
         if (this._blockTimer) {
             clearInterval(this._blockTimer);
             this._blockTimer = null;
+        }
+        if (this._updateInterval) {
+            clearInterval(this._updateInterval);
+            this._updateInterval = null;
         }
         this._waitingForBlock = false;
     },

@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 var app = express();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
@@ -38,9 +39,11 @@ const DEBUG_MODE = true; // Set to false to disable debug mode
 let debugBlockHeight = 1;
 const clientSocketMap = new Map(); // To track client-to-server socket ID mappings
 
-app.use(express.static('../../html'));
+// Use absolute path to html directory to ensure static files are served correctly
+const htmlPath = path.join(__dirname, '../../html');
+app.use(express.static(htmlPath));
 app.get('/', function(req, res) {
-   res.sendFile('index.html', { root: '../../html' });
+   res.sendFile('index.html', { root: htmlPath });
 });
 
 // Replace your existing block check interval with this conditional version
@@ -89,7 +92,7 @@ if (DEBUG_MODE) {
   }, 5000);
 }
 
-// Start games for waiting players
+// Start games for waiting players (QUEUE ENTRY METHOD)
 function startGamesForWaiting(blockHeight) {
     console.log(`Starting games for ${WAITING_PLAYERS.length} waiting players at block height ${blockHeight}`);
   
@@ -102,7 +105,9 @@ function startGamesForWaiting(blockHeight) {
         const currentUser = getUserBySocket(serverId);
         
         if (currentUser) {
+            // For queue entry, player gets 3 blocks starting from their entry block
             currentUser.blockRec = blockHeight;
+            console.log(`🕒 QUEUE ENTRY: Player starts on block ${currentUser.blockRec}, will die after block ${currentUser.blockRec + 2}`);
             
             try {
                 const game = currentUser.startGame(80, 40);
@@ -135,8 +140,9 @@ function checkGamesTimeout(currentHeight) {
     
     // Player has 3 blocks to complete the dungeon
     // If they started on block 2, they must escape before block 5 is found
+    // Note: Auto-entry players start timing from next block for consistent behavior
     if (user && user.blockRec && currentHeight > user.blockRec + 2) {
-      console.log(`Game timeout for player ${socketId}: started on block ${user.blockRec}, current block ${currentHeight} (allowed until block ${user.blockRec + 2})`);
+      console.log(`💀 GAME TIMEOUT for player ${socketId}: started timing on block ${user.blockRec}, current block ${currentHeight} (died after block ${user.blockRec + 2})`);
       
       // Game has timed out - player didn't escape in time
       game.gameState = 'lost';
@@ -180,6 +186,11 @@ io.on('connection', function(socket) {
         'Welcome, to enter the dungeon type Enter, and you will be given a Wownero address, ' +
         'which you must send between 10-100 WOW to enter. The more you send, the more you can win.');
     }
+    // ====== GAME ENTRY HANDLERS ======
+    // There are two ways to enter a game:
+    // 1. QUEUE ENTRY: Type "enter" and wait for next block (players get 3 blocks from entry block)
+    // 2. AUTO ENTRY: Type "enter" and start immediately in debug mode (players get 3 blocks from next block)
+    
     // Update the 'enter' command handler to start game immediately for testing
     if (msg.toLowerCase() == 'enter') {
         console.log(`Player ${socket.id} requested to enter the dungeon - STARTING IMMEDIATELY`);
@@ -192,12 +203,17 @@ io.on('connection', function(socket) {
             
             // Start game immediately for faster testing
             try {
-                currentUser.blockRec = debugBlockHeight || lastBlockHeight || 1;
+                // For auto-entry in debug mode, give player 3 blocks starting from NEXT block
+                // This ensures consistent death timing regardless of entry method
+                const currentBlock = debugBlockHeight || lastBlockHeight || 1;
+                currentUser.blockRec = currentBlock + 1; // Start timing from NEXT block
+                console.log(`🕒 AUTO-ENTRY: Player starts on block ${currentUser.blockRec}, will die after block ${currentUser.blockRec + 2}`);
+                
                 const game = currentUser.startGame(80, 40);
                 activeGames.set(socket.id, game);
                 
                 const gameState = game.getState();
-                gameState.blockHeight = debugBlockHeight || lastBlockHeight || 1;
+                gameState.blockHeight = currentBlock;
                 
                 console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id}`);
                 io.to(socket.id).emit('game_start', gameState);

@@ -14,6 +14,9 @@ var RenderEngine = {
     drawGameScreen: function(gameState) {
         if (!DisplayManager.ensureDisplay()) return;
         
+        // Ensure we have a clean display first
+        DisplayManager.clearDisplay();
+        
         const display = DisplayManager.getDisplay();
         const player = gameState.player;
         const monster = gameState.monster;
@@ -21,8 +24,8 @@ var RenderEngine = {
         const entrance = gameState.entrance;
         const exit = gameState.exit;
         const treasure = gameState.treasure;
-        const visibleTiles = gameState.visibleTiles;
-        const exploredTiles = gameState.exploredTiles;
+        const visibleTiles = gameState.visibleTiles || {};
+        const exploredTiles = gameState.exploredTiles || {};
         const message = gameState.message;
         
         const playerWX = player.x;
@@ -51,7 +54,6 @@ var RenderEngine = {
                     tileType = visibleTiles[wy][wx];
                     baseFg = this.defaultFg;
                     
-                    // Fix: Handle all possible tile values explicitly and ensure they map to valid characters
                     if (tileType === 1) {
                         baseChar = '#'; // Wall
                     } else if (tileType === 0) {
@@ -60,11 +62,11 @@ var RenderEngine = {
                         baseChar = "'"; // Default to floor for safety
                         tileType = 0;
                     }
+                    
                 } else if (exploredTiles[wy] && exploredTiles[wy][wx] !== undefined) {
                     tileType = exploredTiles[wy][wx];
                     baseFg = this.defaultFg;
                     
-                    // Fix: Handle all possible tile values explicitly for explored tiles too
                     if (tileType === 1) {
                         baseChar = '#'; // Wall
                     } else if (tileType === 0) {
@@ -82,8 +84,15 @@ var RenderEngine = {
                 // Only add to stacks if we have a valid character
                 if (baseChar && baseChar !== ' ') {
                     charStack.push(baseChar);
-                    fgStack.push("transparent"); // Use transparent for all base tiles
-                    bgStack.push("transparent"); // Use transparent for all base tiles
+                    
+                    // Use black transparent overlay for explored tiles, normal colors for currently visible tiles
+                    if (this.isVisible(wx, wy, visibleTiles)) {
+                        fgStack.push("transparent"); // Currently visible - use normal tile colors
+                    } else {
+                        fgStack.push("rgba(0, 0, 0, 0.6)"); // Explored but not visible - use dark transparent overlay
+                    }
+                    
+                    bgStack.push("transparent"); // Always transparent background for terrain
                 }
 
                 // Render items

@@ -46,11 +46,7 @@ const SocketHandlers = {
             userAgent: navigator.userAgent
         });
         
-        // Auto-start for testing (timeout issue has been fixed)
-        setTimeout(() => {
-            console.log("🚀 AUTO-STARTING GAME for faster testing");
-            socket.emit('chat message', 'enter');
-        }, 500);
+        // Auto-start removed - user must manually start game
     },
 
     onWelcome: function(msg) {
@@ -79,6 +75,13 @@ const SocketHandlers = {
 
     onGameStart: function(data) {
         console.log("🎮 Game start received with data:", data);
+        console.log("🔍 DETAILED DATA CHECK:");
+        console.log("  - Player:", data?.player);
+        console.log("  - Map keys:", data?.map ? Object.keys(data.map).length : "NO MAP");
+        console.log("  - Monster:", data?.monster);
+        console.log("  - Items:", data?.items);
+        console.log("  - VisibleTiles keys:", data?.visibleTiles ? Object.keys(data.visibleTiles).length : "NO VISIBLE TILES");
+        
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
         if (typeof Game !== 'undefined' && Game.stopWaitingScreen) {
@@ -98,6 +101,7 @@ const SocketHandlers = {
             
             if (!success) {
                 $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
+                console.log("❌ GAME START FAILED - reverting to welcome screen");
                 if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
             } else {
                 // Draw the initial game screen - the game draws itself after startGame()
