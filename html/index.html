@@ -43,6 +43,12 @@
         <!-- Game display -->
         <div id="game-display" class="rotdis"></div>
         
+        <!-- Debug display area -->
+        <div id="debug-display" style="background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; font-size: 12px; padding: 10px; margin: 5px; border: 1px solid #333; max-height: 200px; overflow-y: auto;">
+            <div><strong>Debug Information:</strong></div>
+            <div id="debug-content">Ready...</div>
+        </div>
+        
         <!-- Chat messages area -->
         <div class="chat-container">
             <div id="messageBox">
@@ -81,11 +87,35 @@
     <!-- Initialize game when ready -->
     <script>
         $(document).ready(function() {
-            console.log("Initializing Game...");
+            console.log("Document ready - initializing modules...");
+            console.log("Socket available:", !!window.socket);
+            console.log("Game object available:", typeof Game !== 'undefined');
+            console.log("SocketHandlers available:", typeof SocketHandlers !== 'undefined');
+            console.log("UI available:", typeof UI !== 'undefined');
+            console.log("InputHandler available:", typeof InputHandler !== 'undefined');
+            
+            // Initialize Game
             if (typeof Game !== 'undefined') {
+                console.log("Initializing Game...");
                 Game.init();
             } else {
                 console.error("Game object not found!");
+            }
+            
+            // Initialize SocketHandlers (CRITICAL for receiving game_start events!)
+            if (typeof SocketHandlers !== 'undefined') {
+                console.log("Initializing SocketHandlers...");
+                SocketHandlers.init();
+            } else {
+                console.error("SocketHandlers object not found!");
+            }
+            
+            // Initialize InputHandler
+            if (typeof InputHandler !== 'undefined') {
+                console.log("Initializing InputHandler...");
+                InputHandler.init();
+            } else {
+                console.error("InputHandler object not found!");
             }
         });
     </script>

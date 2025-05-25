@@ -2,13 +2,22 @@
  * Socket event handlers for the Wowngeon game
  */
 const SocketHandlers = {
+    _initialized: false, // Flag to prevent multiple initializations
+    
     init: function() {
+        if (this._initialized) {
+            console.warn("SocketHandlers.init() called multiple times - ignoring duplicate call");
+            return;
+        }
+        
         if (!window.socket) {
             console.error("Socket not available!");
             return;
         }
 
+        console.log("SocketHandlers: Initializing for the first time...");
         this.registerEventHandlers();
+        this._initialized = true;
     },
 
     registerEventHandlers: function() {
@@ -36,6 +45,12 @@ const SocketHandlers = {
             clientId: socket.id,
             userAgent: navigator.userAgent
         });
+        
+        // Auto-start game for faster testing
+        setTimeout(() => {
+            console.log("🚀 AUTO-STARTING GAME for faster testing");
+            socket.emit('chat message', 'enter');
+        }, 500); // Small delay to ensure connection is fully established
     },
 
     onWelcome: function(msg) {
@@ -100,6 +115,25 @@ const SocketHandlers = {
     },
 
     onGameUpdate: function(data) {
+        // Debug log to see what data we're receiving
+        if (data.visibleTiles) {
+            const debugMsg = "🔍 SOCKET: Received game update with visibleTiles";
+            console.log(debugMsg);
+            if (window.GameDebug) window.GameDebug.updateDebugDisplay(debugMsg);
+            
+            // Check for specific coordinates that are problematic
+            if (data.visibleTiles[18] && (data.visibleTiles[18][36] !== undefined || data.visibleTiles[18][35] !== undefined)) {
+                const coordDebug = `🔍 SOCKET y=18: x=35: ${data.visibleTiles[18][35]}, x=36: ${data.visibleTiles[18][36]}`;
+                console.log(coordDebug);
+                if (window.GameDebug) window.GameDebug.updateDebugDisplay(coordDebug);
+            }
+            if (data.visibleTiles[16] && (data.visibleTiles[16][36] !== undefined || data.visibleTiles[16][35] !== undefined)) {
+                const coordDebug = `🔍 SOCKET y=16: x=35: ${data.visibleTiles[16][35]}, x=36: ${data.visibleTiles[16][36]}`;
+                console.log(coordDebug);
+                if (window.GameDebug) window.GameDebug.updateDebugDisplay(coordDebug);
+            }
+        }
+        
         if (typeof Game !== 'undefined' && Game._gameActive) {
             Game.updateGameState(data);
         }
@@ -166,7 +200,10 @@ const SocketHandlers = {
     }
 };
 
-// Initialize when DOM is ready
-$(function() {
-    SocketHandlers.init();
-});
+// Ensure SocketHandlers is available globally
+if (typeof window !== 'undefined') {
+    window.SocketHandlers = SocketHandlers;
+}
+
+// Note: SocketHandlers.init() is called from index.html after DOM ready
+// to ensure proper initialization order with other modules

@@ -104,6 +104,11 @@ const UI = {
     }
 };
 
+// Ensure UI is available globally
+if (typeof window !== 'undefined') {
+    window.UI = UI;
+}
+
 // Initialize UI components when DOM is ready
 $(function() {
     UI.initTeletype();

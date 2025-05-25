@@ -377,6 +377,19 @@ var Game = {
             if (data.visibleTiles && typeof data.visibleTiles === 'object' && Object.keys(data.visibleTiles).length > 0) {
                 console.log("Visible tiles updated. Number of rows:", Object.keys(data.visibleTiles).length);
                 this._visibleTiles = data.visibleTiles;
+                
+                // Debug log for specific problematic coordinates 
+                if (this._visibleTiles[18] && (this._visibleTiles[18][36] !== undefined || this._visibleTiles[18][35] !== undefined)) {
+                    const clientDebug = `🔍 CLIENT y=18: x=35: ${this._visibleTiles[18][35]}, x=36: ${this._visibleTiles[18][36]}`;
+                    console.log(clientDebug);
+                    if (window.GameDebug) window.GameDebug.updateDebugDisplay(clientDebug);
+                }
+                if (this._visibleTiles[16] && (this._visibleTiles[16][36] !== undefined || this._visibleTiles[16][35] !== undefined)) {
+                    const clientDebug = `🔍 CLIENT y=16: x=35: ${this._visibleTiles[16][35]}, x=36: ${this._visibleTiles[16][36]}`;
+                    console.log(clientDebug);
+                    if (window.GameDebug) window.GameDebug.updateDebugDisplay(clientDebug);
+                }
+                
                 this._updateExploredTiles(); // This is important for fog of war
                 needsRedraw = true;
             } else if (data.visibleTiles) {
@@ -441,10 +454,24 @@ var Game = {
                     tileType = this._visibleTiles[wy][wx];
                     baseFg = this.defaultFg; // Use this.defaultFg
                     baseChar = (tileType === 1) ? '#' : "'"; // Fixed: Always use ' for floor
+                    
+                    // Debug for specific coordinates
+                    if ((wx === 36 && (wy === 18 || wy === 16)) || (wx === 35 && (wy === 18 || wy === 16))) {
+                        const renderDebug = `🔍 RENDER: (${wx},${wy}) tileType:${tileType} char:'${baseChar}' _visibleTiles[${wy}][${wx}]:${this._visibleTiles[wy][wx]}`;
+                        console.log(renderDebug);
+                        if (window.GameDebug) window.GameDebug.updateDebugDisplay(renderDebug);
+                    }
                 } else if (this._exploredTiles[wy] && this._exploredTiles[wy][wx] !== undefined) {
                     tileType = this._exploredTiles[wy][wx];
                     baseFg = this.defaultFg; // Use this.defaultFg
                     baseChar = (tileType === 1) ? '#' : "'"; // Fixed: Always use ' for floor
+                    
+                    // Debug for specific coordinates in explored tiles
+                    if ((wx === 36 && (wy === 18 || wy === 16)) || (wx === 35 && (wy === 18 || wy === 16))) {
+                        const exploreDebug = `🔍 EXPLORED: (${wx},${wy}) tileType:${tileType} char:'${baseChar}' _exploredTiles[${wy}][${wx}]:${this._exploredTiles[wy][wx]}`;
+                        console.log(exploreDebug);
+                        if (window.GameDebug) window.GameDebug.updateDebugDisplay(exploreDebug);
+                    }
                 }
                 charStack.push(baseChar);
                 fgStack.push(baseFg); 
@@ -693,7 +720,67 @@ var Game = {
             }
             console.log(row);
         }
+    },
+
+    // Debugging function to test character mapping
+    debugTileMapping: function() {
+        const testValues = [0, 1, undefined, null];
+        for (const val of testValues) {
+            const char = (val === 1) ? '#' : "'";
+            const debugMsg = `Test mapping: value=${val} -> char='${char}'`;
+            console.log(debugMsg);
+            if (window.GameDebug) window.GameDebug.updateDebugDisplay(debugMsg);
+        }
+    },
+};
+
+// Debug utility functions
+const GameDebug = {
+    log: function(message) {
+        console.log(message);
+        this.updateDebugDisplay(message);
+        this.sendToServer(message);
+    },
+    
+    updateDebugDisplay: function(message) {
+        const debugContent = document.getElementById('debug-content');
+        if (debugContent) {
+            const timestamp = new Date().toLocaleTimeString();
+            debugContent.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            // Keep only last 10 debug messages
+            const lines = debugContent.children;
+            if (lines.length > 10) {
+                debugContent.removeChild(lines[0]);
+            }
+            // Auto-scroll to bottom
+            const debugDisplay = document.getElementById('debug-display');
+            debugDisplay.scrollTop = debugDisplay.scrollHeight;
+        }
+    },
+    
+    sendToServer: function(message) {
+        try {
+            fetch('/debug', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ message: message })
+            }).catch(err => {
+                // Silently fail if server unavailable
+            });
+        } catch (err) {
+            // Silently fail
+        }
     }
 };
+
+// Make it available globally
+window.GameDebug = GameDebug;
+
+// Ensure Game is available globally
+if (typeof window !== 'undefined') {
+    window.Game = Game;
+}
 
 // Additional global or helper functions can be added here

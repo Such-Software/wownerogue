@@ -61,6 +61,11 @@ class Game {
             // Store the actual tile type (0 for floor, 1 for wall) from the dungeon map
             if (this.dungeon && this.dungeon.map && this.dungeon.map[y] && this.dungeon.map[y][x] !== undefined) {
                 this.visibleTiles[y][x] = this.dungeon.map[y][x];
+                
+                // Debug log for specific problematic coordinates
+                if ((x === 36 && (y === 18 || y === 16)) || (x === 35 && (y === 18 || y === 16))) {
+                    console.log(`🔍 DEBUG FOV: (${x},${y}) - server map value: ${this.dungeon.map[y][x]}, sent to client: ${this.visibleTiles[y][x]}, visibility: ${visibility}`);
+                }
             } else {
                 // Should not happen if FOV is within map bounds, but as a fallback:
                 // this.visibleTiles[y][x] = 1; // Default to wall if outside known map
@@ -73,6 +78,9 @@ class Game {
   movePlayer(dx, dy) {
     const newX = this.player.x + dx;
     const newY = this.player.y + dy;
+    
+    // Simple debug output
+    console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
     
     // Check if the move is valid (not into a wall and within map bounds)
     if (this.dungeon && 
@@ -103,7 +111,9 @@ class Game {
       return { status: 'moved', player: this.player.getState(), visibleTiles: this.visibleTiles };
     }
     
-    console.log(`Player move to ${newX},${newY} for socket ${this.socketId} is invalid (wall or out of bounds).`);
+    
+    
+    console.log(`Move BLOCKED: ${newX},${newY} - cell value: ${this.dungeon && this.dungeon.map[newY] ? this.dungeon.map[newY][newX] : 'undefined'}`);
     return { status: 'invalid' };
   }
   

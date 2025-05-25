@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wowngeon Debug</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            background: #000; 
+            color: #0f0; 
+            padding: 20px; 
+        }
+        .module { 
+            margin: 10px 0; 
+            padding: 10px; 
+            border: 1px solid #333; 
+        }
+        .status-ok { color: #0f0; }
+        .status-error { color: #f00; }
+        .status-warning { color: #ff0; }
+    </style>
+</head>
+<body>
+    <h1>Wowngeon Module Debug</h1>
+    
+    <div id="socket-status" class="module">
+        <h3>Socket.io Status</h3>
+        <div id="socket-info">Loading...</div>
+    </div>
+    
+    <div id="modules-status" class="module">
+        <h3>Module Status</h3>
+        <div id="modules-info">Loading...</div>
+    </div>
+    
+    <div id="game-status" class="module">
+        <h3>Game Display Status</h3>
+        <div id="game-info">Loading...</div>
+    </div>
+    
+    <div id="console-log" class="module">
+        <h3>Console Messages</h3>
+        <div id="console-output"></div>
+    </div>
+
+    <!-- Socket.io -->
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    
+    <!-- Initialize socket -->
+    <script>
+        window.socket = io();
+    </script>
+    
+    <!-- Core libraries -->
+    <script src="js/jquery-3.4.1.min.js"></script>
+    <script src="js/rot.min.js"></script>
+    <script src="js/options.js"></script>
+    <script src="js/teletype.js"></script>
+    
+    <!-- Game modules -->
+    <script src="js/game.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/socketHandlers.js"></script>
+    <script src="js/inputHandler.js"></script>
+    
+    <script>
+        // Capture console messages
+        const consoleOutput = document.getElementById('console-output');
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        
+        function addToConsole(type, message) {
+            const div = document.createElement('div');
+            div.className = type === 'error' ? 'status-error' : 
+                           type === 'warn' ? 'status-warning' : 'status-ok';
+            div.textContent = `[${type.toUpperCase()}] ${message}`;
+            consoleOutput.appendChild(div);
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+        
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            addToConsole('log', args.join(' '));
+        };
+        
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            addToConsole('error', args.join(' '));
+        };
+        
+        console.warn = function(...args) {
+            originalWarn.apply(console, args);
+            addToConsole('warn', args.join(' '));
+        };
+        
+        $(document).ready(function() {
+            console.log("Debug page ready - checking module status...");
+            
+            // Check socket status
+            $('#socket-info').html(`
+                <div class="${window.socket ? 'status-ok' : 'status-error'}">
+                    Socket Available: ${!!window.socket}
+                </div>
+                <div class="${window.socket && window.socket.connected ? 'status-ok' : 'status-warning'}">
+                    Socket Connected: ${window.socket ? window.socket.connected : 'N/A'}
+                </div>
+            `);
+            
+            // Check modules
+            const modules = ['Game', 'UI', 'SocketHandlers', 'InputHandler'];
+            let moduleStatus = '';
+            modules.forEach(module => {
+                const available = typeof window[module] !== 'undefined';
+                const hasInit = available && typeof window[module].init === 'function';
+                moduleStatus += `
+                    <div class="${available ? 'status-ok' : 'status-error'}">
+                        ${module}: ${available ? 'Available' : 'Missing'}
+                        ${hasInit ? ' (has init)' : ''}
+                    </div>
+                `;
+            });
+            $('#modules-info').html(moduleStatus);
+            
+            // Check ROT.js
+            $('#game-info').html(`
+                <div class="${typeof ROT !== 'undefined' ? 'status-ok' : 'status-error'}">
+                    ROT.js Available: ${typeof ROT !== 'undefined'}
+                </div>
+                <div class="${typeof window.options !== 'undefined' ? 'status-ok' : 'status-error'}">
+                    Options Available: ${typeof window.options !== 'undefined'}
+                </div>
+                <div class="${document.getElementById('game-display') ? 'status-ok' : 'status-error'}">
+                    Game Display Container: ${!!document.getElementById('game-display')}
+                </div>
+            `);
+            
+            // Try to initialize modules
+            if (typeof Game !== 'undefined') {
+                console.log("Attempting to initialize Game...");
+                try {
+                    Game.init();
+                    console.log("Game.init() completed successfully");
+                } catch (e) {
+                    console.error("Game.init() failed:", e);
+                }
+            }
+            
+            if (typeof InputHandler !== 'undefined') {
+                console.log("Attempting to initialize InputHandler...");
+                try {
+                    InputHandler.init();
+                    console.log("InputHandler.init() completed successfully");
+                } catch (e) {
+                    console.error("InputHandler.init() failed:", e);
+                }
+            }
+            
+            // Socket event listeners
+            if (window.socket) {
+                window.socket.on('connect', function() {
+                    console.log('Socket connected successfully');
+                    $('#socket-info').append('<div class="status-ok">Socket connected event received</div>');
+                });
+                
+                window.socket.on('disconnect', function() {
+                    console.log('Socket disconnected');
+                    $('#socket-info').append('<div class="status-warning">Socket disconnected</div>');
+                });
+                
+                window.socket.on('welcome', function(data) {
+                    console.log('Welcome message received:', data);
+                });
+            }
+        });
+    </script>
+    
+    <!-- Add a minimal game display area for testing -->
+    <div id="game-display" style="width: 800px; height: 400px; border: 1px solid #333; margin: 20px 0;">
+        <!-- Game display will be created here -->
+    </div>
+</body>
+</html>

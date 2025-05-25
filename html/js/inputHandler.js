@@ -2,11 +2,23 @@
  * Input handlers for the Wowngeon game
  */
 const InputHandler = {
+    _lastMoveTime: 0,
+    _moveCooldown: 100, // Minimum 100ms between moves
+    _pendingMove: null,
+    _initialized: false, // Flag to prevent multiple initializations
+    
     init: function() {
+        if (this._initialized) {
+            console.warn("InputHandler.init() called multiple times - ignoring duplicate call");
+            return;
+        }
+        
+        console.log("InputHandler: Initializing for the first time...");
         this.setupChatForm();
         this.setupFocusHandlers();
         this.setupKeyboardControls();
         this.setupModeToggle();
+        this._initialized = true;
     },
 
     setupChatForm: function() {
@@ -49,6 +61,7 @@ const InputHandler = {
     },
 
     setupKeyboardControls: function() {
+        const self = this; // Store reference to InputHandler for use in event handler
         $(document).on('keydown', function(e) {
             if (document.activeElement === $('#game-display')[0]) {
                 if (Game && Game._gameActive) {
@@ -64,10 +77,31 @@ const InputHandler = {
                     }
 
                     if (moved) {
-                        console.log(`Attempting to move: dx=${dx}, dy=${dy}. Key: ${e.key}`);
+                        console.log(`🎹 KEYDOWN: dx=${dx}, dy=${dy}, key=${e.key}, time=${Date.now()}`);
                         e.preventDefault(); // Prevent page scrolling
-                        socket.emit('player_move', { dx: dx, dy: dy });
-                        console.log(`Emitted player_move: dx=${dx}, dy=${dy}`);
+                        
+                        // Implement movement throttling to prevent rapid-fire movement
+                        const now = Date.now();
+                        if (now - self._lastMoveTime >= self._moveCooldown) {
+                            // Send move immediately if enough time has passed
+                            socket.emit('player_move', { dx: dx, dy: dy });
+                            console.log(`✅ EMITTED player_move: dx=${dx}, dy=${dy}`);
+                            self._lastMoveTime = now;
+                            self._pendingMove = null;
+                        } else {
+                            // Queue the move to be sent after cooldown
+                            self._pendingMove = { dx: dx, dy: dy };
+                            const timeToWait = self._moveCooldown - (now - self._lastMoveTime);
+                            console.log(`⏳ QUEUED move: dx=${dx}, dy=${dy}, waiting ${timeToWait}ms`);
+                            setTimeout(() => {
+                                if (self._pendingMove) {
+                                    socket.emit('player_move', self._pendingMove);
+                                    console.log(`✅ EMITTED queued player_move: dx=${self._pendingMove.dx}, dy=${self._pendingMove.dy}`);
+                                    self._lastMoveTime = Date.now();
+                                    self._pendingMove = null;
+                                }
+                            }, timeToWait);
+                        }
                     }
                 } else {
                     console.log("Game display has focus, but Game is not active.");
@@ -96,7 +130,10 @@ const InputHandler = {
     }
 };
 
-// Initialize input handlers when DOM is ready
-$(function() {
-    InputHandler.init();
-});
+// Ensure InputHandler is available globally
+if (typeof window !== 'undefined') {
+    window.InputHandler = InputHandler;
+}
+
+// Note: InputHandler.init() is called from index.html after DOM ready
+// to ensure proper initialization order with other modules
