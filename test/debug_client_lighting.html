@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Client Lighting</title>
+    <style>
+        body { font-family: monospace; background: black; color: green; padding: 20px; }
+        .debug-box { border: 1px solid green; margin: 10px; padding: 10px; }
+        .lighting-tile { display: inline-block; width: 20px; height: 20px; margin: 1px; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1>Client-Side Lighting Debug</h1>
+    
+    <div class="debug-box">
+        <h3>Game State Lighting Data</h3>
+        <div id="lighting-status">No data received yet...</div>
+    </div>
+    
+    <div class="debug-box">
+        <h3>Lighting Visualization</h3>
+        <div id="lighting-grid"></div>
+    </div>
+    
+    <div class="debug-box">
+        <h3>Console Log</h3>
+        <div id="console-log" style="height: 300px; overflow-y: scroll; background: #111; padding: 10px;"></div>
+    </div>
+
+    <script src="html/js/jquery-3.4.1.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        
+        // Capture console logs
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const logDiv = document.getElementById('console-log');
+            const logEntry = document.createElement('div');
+            logEntry.textContent = new Date().toLocaleTimeString() + ': ' + args.join(' ');
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        };
+        
+        console.log("🔍 Debug client started");
+        
+        socket.on('connect', function() {
+            console.log('Connected with socket ID:', socket.id);
+            socket.emit('register_client', {
+                clientId: socket.id,
+                userAgent: navigator.userAgent
+            });
+        });
+        
+        socket.on('game_start', function(data) {
+            console.log('🎮 Game start received:', data);
+            
+            if (data.lighting) {
+                console.log('🔥 Initial lighting data received with', Object.keys(data.lighting).length, 'rows');
+                updateLightingDisplay(data.lighting);
+            }
+            
+            if (data.torches) {
+                console.log('🔦 Initial torch data received with', data.torches.length, 'torches');
+            }
+        });
+        
+        socket.on('game_update', function(data) {
+            console.log('🎲 Game update received');
+            
+            if (data.lighting) {
+                console.log('🔥 Lighting data in update with', Object.keys(data.lighting).length, 'rows');
+                updateLightingDisplay(data.lighting);
+                
+                // Show detailed lighting values for debugging
+                let sampleCount = 0;
+                for (const y in data.lighting) {
+                    for (const x in data.lighting[y]) {
+                        if (sampleCount < 5) {
+                            console.log(`   Sample lighting[${y}][${x}] = ${data.lighting[y][x]}`);
+                            sampleCount++;
+                        }
+                    }
+                }
+            } else {
+                console.log('⚠️ No lighting data in game update');
+            }
+            
+            if (data.torches) {
+                console.log('🔦 Torch data in update with', data.torches.length, 'torches');
+            }
+        });
+        
+        function updateLightingDisplay(lightingData) {
+            const statusDiv = document.getElementById('lighting-status');
+            const gridDiv = document.getElementById('lighting-grid');
+            
+            const rowCount = Object.keys(lightingData).length;
+            let tileCount = 0;
+            
+            for (const y in lightingData) {
+                tileCount += Object.keys(lightingData[y]).length;
+            }
+            
+            statusDiv.innerHTML = `
+                <strong>Lighting Data Received:</strong><br>
+                Rows: ${rowCount}<br>
+                Total tiles: ${tileCount}<br>
+                Sample data: ${JSON.stringify(Object.keys(lightingData).slice(0, 3).map(y => `y=${y}: ${Object.keys(lightingData[y]).length} tiles`))}<br>
+                Last updated: ${new Date().toLocaleTimeString()}
+            `;
+            
+            // Create a small visualization
+            gridDiv.innerHTML = '';
+            
+            // Get min/max coordinates for visualization
+            let minY = Infinity, maxY = -Infinity, minX = Infinity, maxX = -Infinity;
+            for (const y in lightingData) {
+                const yNum = parseInt(y);
+                minY = Math.min(minY, yNum);
+                maxY = Math.max(maxY, yNum);
+                for (const x in lightingData[y]) {
+                    const xNum = parseInt(x);
+                    minX = Math.min(minX, xNum);
+                    maxX = Math.max(maxX, xNum);
+                }
+            }
+            
+            // Create grid (limit size for display)
+            const displayMaxSize = 20;
+            const yRange = Math.min(maxY - minY + 1, displayMaxSize);
+            const xRange = Math.min(maxX - minX + 1, displayMaxSize);
+            
+            for (let y = minY; y < minY + yRange; y++) {
+                const rowDiv = document.createElement('div');
+                for (let x = minX; x < minX + xRange; x++) {
+                    const tileDiv = document.createElement('div');
+                    tileDiv.className = 'lighting-tile';
+                    
+                    if (lightingData[y] && lightingData[y][x] !== undefined) {
+                        const alpha = lightingData[y][x];
+                        tileDiv.style.backgroundColor = `rgba(255, 255, 0, ${1 - alpha})`;
+                        tileDiv.textContent = alpha.toFixed(2);
+                        tileDiv.title = `(${x},${y}) = ${alpha}`;
+                    } else {
+                        tileDiv.style.backgroundColor = 'gray';
+                        tileDiv.textContent = '?';
+                    }
+                    
+                    rowDiv.appendChild(tileDiv);
+                }
+                gridDiv.appendChild(rowDiv);
+            }
+        }
+        
+        // Auto-start game for testing
+        setTimeout(() => {
+            console.log('🎮 Auto-starting game...');
+            socket.emit('message', 'enter');
+        }, 1000);
+    </script>
+</body>
+</html>

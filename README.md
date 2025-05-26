@@ -15,10 +15,12 @@ The game is built using Node.js for the backend, with Express and Socket.io for 
 - **Random dungeons**: Each game features procedurally generated maps using ROT.js
 - **Monster AI**: Evade monster as you navigate the dungeon
 - **Treasure hunting**: Find treasure for bonus rewards
-- **Real-time multiplayer**: Multiple players can play simultaneously
-- **Chat system**: Players can communicate in real-time during gameplay
+- **Real-time multiplayer**: Multiple players can play simultaneously with efficient socket broadcasting
+- **Structured chat system**: Public chat broadcasts and private status updates with command separation
 - **Field of view**: Limited visibility adds challenge and atmosphere
 - **HTML START button**: Visible button in status area for game entry
+- **Auto-return system**: 30-second timeout returns players to title screen after game over
+- **Spectator-ready architecture**: Socket system designed for future spectator mode implementation
 
 ## Technology Stack
 
@@ -26,7 +28,27 @@ The game is built using Node.js for the backend, with Express and Socket.io for 
 - **Frontend**: HTML5, CSS, JavaScript with ROT.js for tile-based rendering
 - **Blockchain**: Wownero RPC integration for block monitoring
 - **Database**: SQLite for user data and game history
-- **Real-time Communication**: WebSocket connections via Socket.io
+- **Real-time Communication**: WebSocket connections via Socket.io with structured event broadcasting
+
+## Socket.io Real-Time Communication
+
+The game implements a sophisticated real-time communication system using Socket.io:
+
+### Broadcasting Strategy
+- **Block Height**: Broadcast to all clients every 5 seconds (not just on changes)
+- **Game Updates**: Player-specific with spectator support planned
+- **Chat Messages**: Public broadcasts vs private status updates
+- **Connection Status**: Immediate updates on connect/disconnect
+
+### Event Categories
+1. **Global Broadcasts** (`io.emit()`) - Block height, public chat
+2. **Player-Specific** (`io.to(socketId).emit()`) - Game updates, status messages
+3. **Future Spectator Support** - Multi-cast game updates to viewers
+
+### Production Scalability
+- Efficient event routing prevents unnecessary network traffic
+- Structured for adding spectator mode without performance impact
+- Clean separation between commands and actual chat messages
 
 ## Architecture
 
@@ -34,7 +56,7 @@ The project has been refactored into a clean, modular architecture with clear se
 
 ### Backend Structure (`src/backend/`)
 
-- **index.js** - Main server file handling HTTP requests, WebSocket connections, game lifecycle, and blockchain monitoring
+- **index.js** - Main server file handling HTTP requests, WebSocket connections, game lifecycle, blockchain monitoring, and structured socket event broadcasting
 - **game.js** - Game class with dungeon generation, player movement, monster AI, and field-of-view calculations
 - **user.js** - User registration, authentication, game association, and payment tracking
 - **player.js** - Player state management and movement logic
@@ -42,6 +64,12 @@ The project has been refactored into a clean, modular architecture with clear se
 - **dungeon.js** - Dungeon generation and map management
 - **dbcalls.js** - Database operations for user data and game history
 - **rpccalls.js** - Wownero blockchain RPC integration
+
+#### Socket Event Broadcasting (index.js)
+- **Helper Functions**: `sendGameUpdate()`, `broadcastBlockHeight()`, `sendStatusUpdate()`
+- **Event Types**: Global broadcasts, player-specific updates, status messages
+- **Spectator Ready**: Architecture supports future multi-cast to spectators
+- **Regular Broadcasting**: Block height sent every 5 seconds to all clients
 
 ### Frontend Structure (`html/`)
 
@@ -79,7 +107,87 @@ The project has been refactored into a clean, modular architecture with clear se
    - **socketHandlers.js** - WebSocket communication with initialization protection
    - **ui.js** - User interface management and chat functionality
 
+## Socket Event Architecture
+
+The game uses a structured socket.io event system designed for real-time multiplayer gameplay with future spectator support:
+
+### Event Broadcasting Strategy
+
+#### **Block Height Broadcasting** (All Clients)
+- `blockheight` - Broadcast to ALL connected clients every 5 seconds
+- Ensures all players stay synchronized with blockchain state
+- Immediate emission on client connection
+- Regular updates prevent clients from missing block changes
+
+#### **Game State Updates** (Player + Future Spectators)
+- `game_update` - Currently sent to active player only
+- **Future Goal**: Broadcast to spectators watching specific games
+- Structured for easy expansion to multi-viewer support
+- Contains player position, FOV, monster state, items
+
+#### **Chat System** (Broadcast vs Player-Specific)
+- `chat_broadcast` - PUBLIC chat messages sent to ALL clients
+- `status_update` - PRIVATE status messages sent to individual players
+- Commands (like "enter", "hello") trigger status updates, not chat broadcasts
+- Real chat messages include username, timestamp, and message content
+
+#### **Connection & Status Management**
+- `status_update` - Player-specific notifications (errors, confirmations, help)
+- `welcome` - Initial connection acknowledgment
+- `game_start` / `game_over` - Game lifecycle events
+- Connection status immediately broadcast on client connect
+
+### Socket Event Types
+
+```javascript
+// Broadcast Events (All Clients)
+io.emit('blockheight', blockHeight);
+io.emit('chat_broadcast', { username, message, timestamp });
+
+// Player-Specific Events  
+io.to(socketId).emit('status_update', { type, message, timestamp });
+io.to(socketId).emit('game_update', gameState);
+io.to(socketId).emit('game_start', gameState);
+io.to(socketId).emit('game_over', { status, reason, message });
+
+// Future Spectator Events (TODO)
+io.to(spectatorId).emit('spectator_update', { playerSocketId, gameState });
+```
+
+### Future Spectator System (Roadmap)
+
+The socket architecture is designed to support spectating with minimal changes:
+
+1. **Spectator Registration**: Players can request to watch active games
+2. **Multi-Cast Updates**: Game updates broadcast to player + all their spectators  
+3. **Spectator-Specific Events**: Special events for spectator UI (player info, game stats)
+4. **Spectator Chat**: Separate chat channels for spectators vs players
+5. **Spectator Limits**: Configurable limits on spectators per game
+
+### Real-Time Communication Goals
+
+- **Blockchain Sync**: All clients receive block updates every few seconds (not just on block changes)
+- **Scalable Game Updates**: Player actions broadcast efficiently to relevant viewers only
+- **Rich Chat System**: Distinction between commands/status and actual chat communication
+- **Spectator Ready**: Architecture supports adding spectator features without major refactoring
+
 ## Recent Major Improvements
+
+### 🔌 Socket Architecture Overhaul
+- **Implemented**: Structured event system for broadcast vs player-specific messages
+- **Features**: Block height broadcasting, chat system separation, spectator-ready design
+- **Helper Functions**: `sendGameUpdate()`, `broadcastBlockHeight()`, `sendStatusUpdate()`
+- **Result**: Clean separation of concerns and foundation for spectator mode
+
+### 💀 Death Logic Fix
+- **Fixed**: Players not dying at correct block timing in autostart/debug mode
+- **Solution**: Updated death logic to kill players the block after they enter
+- **Result**: Players die exactly when block advances after entry (block N+1 after entering on block N)
+
+### ⏰ Auto-Return to Title Screen
+- **Added**: 30-second timeout after game over (win/lose/timeout)
+- **Features**: Automatic return to welcome screen, proper game state reset
+- **Result**: Seamless game flow without manual intervention
 
 ### 🎯 Movement System Overhaul
 - **Fixed**: Players skipping over tiles in hallways
@@ -90,11 +198,6 @@ The project has been refactored into a clean, modular architecture with clear se
 - **Fixed**: START button invisible (cut off in game display area)
 - **Solution**: Moved to HTML status area with proper styling and visibility control
 - **Result**: Clearly visible green "🎮 START GAME" button
-
-### ⏱️ Auto-Entry Timing Fix
-- **Fixed**: Players dying after 2+ blocks instead of 1 block in debug mode
-- **Solution**: Fixed backend timing logic to set `currentUser.blockRec = currentBlock + 1`
-- **Result**: Consistent 3-block timing for all entry methods
 
 ### 🚀 Auto-Start System
 - **Added**: Immediate game start for development and testing

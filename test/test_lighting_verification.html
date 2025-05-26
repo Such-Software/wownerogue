@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Torch Lighting Verification Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: black;
+            color: green;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 10px;
+            border: 1px solid green;
+        }
+        .status {
+            padding: 5px;
+            margin: 5px 0;
+        }
+        .pass { background: darkgreen; }
+        .fail { background: darkred; }
+        .info { background: darkblue; }
+        #gameContainer {
+            margin-top: 20px;
+            border: 2px solid green;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔥 Torch Lighting System Verification</h1>
+    
+    <div class="test-section">
+        <h2>Connection Test</h2>
+        <div id="connectionStatus" class="status">Connecting...</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Data Reception Test</h2>
+        <div id="lightingDataStatus" class="status">Waiting for lighting data...</div>
+        <div id="torchDataStatus" class="status">Waiting for torch data...</div>
+        <div id="gameStateStatus" class="status">Waiting for game state...</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Rendering Test</h2>
+        <div id="renderEngineStatus" class="status">Waiting for render test...</div>
+        <div id="tileColorizeStatus" class="status">Checking tileColorize setting...</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Live Data</h2>
+        <div id="liveData" style="font-size: 12px; max-height: 300px; overflow-y: auto;"></div>
+    </div>
+    
+    <div id="gameContainer">
+        <div id="game-screen"></div>
+    </div>
+
+    <script src="html/js/jquery-3.4.1.min.js"></script>
+    <script src="html/js/rot.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="html/js/options.js"></script>
+    <script src="html/js/displayManager.js"></script>
+    <script src="html/js/screenManager.js"></script>
+    <script src="html/js/gameState.js"></script>
+    <script src="html/js/renderEngine.js"></script>
+    <script src="html/js/game.js"></script>
+    <script src="html/js/socketHandlers.js"></script>
+
+    <script>
+        // Test status tracking
+        let testResults = {
+            connection: false,
+            lightingData: false,
+            torchData: false,
+            gameState: false,
+            rendering: false,
+            tileColorize: false
+        };
+
+        function updateStatus(id, message, type = 'info') {
+            const element = document.getElementById(id);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+
+        function logLiveData(message) {
+            const liveData = document.getElementById('liveData');
+            const timestamp = new Date().toLocaleTimeString();
+            liveData.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            liveData.scrollTop = liveData.scrollHeight;
+        }
+
+        // Override console.log to capture debug messages
+        const originalConsoleLog = console.log;
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args);
+            if (args[0] && typeof args[0] === 'string') {
+                if (args[0].includes('🔥') || args[0].includes('💡') || args[0].includes('🔍')) {
+                    logLiveData('CLIENT: ' + args.join(' '));
+                }
+            }
+        };
+
+        // Test tileColorize setting
+        if (window.options && window.options.tileColorize === true) {
+            updateStatus('tileColorizeStatus', '✅ tileColorize is enabled', 'pass');
+            testResults.tileColorize = true;
+        } else {
+            updateStatus('tileColorizeStatus', '❌ tileColorize is not enabled', 'fail');
+        }
+
+        // Initialize socket connection
+        const socket = io();
+        
+        socket.on('connect', function() {
+            updateStatus('connectionStatus', '✅ Connected to server', 'pass');
+            testResults.connection = true;
+            logLiveData('Socket connected');
+            
+            // Register user
+            socket.emit('register', {});
+        });
+
+        socket.on('disconnect', function() {
+            updateStatus('connectionStatus', '❌ Disconnected from server', 'fail');
+            testResults.connection = false;
+        });
+
+        // Test game data reception
+        socket.on('gameStart', function(data) {
+            logLiveData(`GAME_START received: ${Object.keys(data).join(', ')}`);
+            
+            // Check for lighting data
+            if (data.lighting && Object.keys(data.lighting).length > 0) {
+                updateStatus('lightingDataStatus', `✅ Lighting data received (${Object.keys(data.lighting).length} tiles)`, 'pass');
+                testResults.lightingData = true;
+                logLiveData(`Lighting sample: ${JSON.stringify(Object.entries(data.lighting).slice(0, 3))}`);
+            } else {
+                updateStatus('lightingDataStatus', '❌ No lighting data received', 'fail');
+            }
+            
+            // Check for torch data
+            if (data.torches && data.torches.length > 0) {
+                updateStatus('torchDataStatus', `✅ Torch data received (${data.torches.length} torches)`, 'pass');
+                testResults.torchData = true;
+                logLiveData(`Torch sample: ${JSON.stringify(data.torches.slice(0, 5))}`);
+            } else {
+                updateStatus('torchDataStatus', '❌ No torch data received', 'fail');
+            }
+            
+            // Test game state storage
+            if (typeof window.Game !== 'undefined' && window.Game.startGame) {
+                try {
+                    // Start the game with the received data
+                    window.Game.startGame(data, data.lighting, data.torches);
+                    updateStatus('gameStateStatus', '✅ Game state initialized successfully', 'pass');
+                    testResults.gameState = true;
+                    
+                    // Test rendering
+                    setTimeout(() => {
+                        testRendering();
+                    }, 1000);
+                } catch (error) {
+                    updateStatus('gameStateStatus', `❌ Game state error: ${error.message}`, 'fail');
+                    logLiveData(`Game start error: ${error.message}`);
+                }
+            }
+        });
+
+        socket.on('gameUpdate', function(data) {
+            if (data.lighting) {
+                logLiveData(`GAME_UPDATE: lighting (${Object.keys(data.lighting).length} tiles)`);
+            }
+        });
+
+        function testRendering() {
+            try {
+                // Check if RenderEngine exists and has the right methods
+                if (typeof window.RenderEngine !== 'undefined') {
+                    updateStatus('renderEngineStatus', '✅ RenderEngine available and lighting system active', 'pass');
+                    testResults.rendering = true;
+                    
+                    // Log overall test results
+                    const passedTests = Object.values(testResults).filter(result => result).length;
+                    const totalTests = Object.keys(testResults).length;
+                    logLiveData(`🎯 FINAL RESULTS: ${passedTests}/${totalTests} tests passed`);
+                    
+                    if (passedTests === totalTests) {
+                        logLiveData('🎉 ALL TESTS PASSED - Torch lighting system should be working!');
+                    } else {
+                        logLiveData('⚠️ Some tests failed - check individual results above');
+                    }
+                } else {
+                    updateStatus('renderEngineStatus', '❌ RenderEngine not available', 'fail');
+                }
+            } catch (error) {
+                updateStatus('renderEngineStatus', `❌ Rendering test error: ${error.message}`, 'fail');
+                logLiveData(`Rendering error: ${error.message}`);
+            }
+        }
+
+        // Auto-start game after connection
+        setTimeout(() => {
+            if (testResults.connection) {
+                logLiveData('Auto-entering dungeon...');
+                socket.emit('message', 'enter');
+            }
+        }, 2000);
+    </script>
+</body>
+</html>

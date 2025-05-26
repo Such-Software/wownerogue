@@ -104,6 +104,8 @@ const SocketHandlers = {
         console.log("  - Monster:", data?.monster);
         console.log("  - Items:", data?.items);
         console.log("  - VisibleTiles keys:", data?.visibleTiles ? Object.keys(data.visibleTiles).length : "NO VISIBLE TILES");
+        console.log("  - Lighting keys:", data?.lighting ? Object.keys(data.lighting).length : "NO LIGHTING");
+        console.log("  - Torches:", data?.torches ? data.torches.length : "NO TORCHES (expected - lighting calculated server-side)");
         
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
@@ -118,8 +120,8 @@ const SocketHandlers = {
         }
         
         try {
-            // Use the original game.js structure
-            var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles);
+            // Pass all game data including lighting and torches
+            var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles, data.lighting, data.torches);
             console.log("Game start result:", success ? "SUCCESS" : "FAILED");
             
             if (!success) {
@@ -143,6 +145,22 @@ const SocketHandlers = {
 
     onGameUpdate: function(data) {
         // Debug log to see what data we're receiving
+        console.log("🎮 GAME UPDATE received with keys:", Object.keys(data));
+        
+        // Debug lighting data specifically
+        if (data.lighting && Object.keys(data.lighting).length > 0) {
+            console.log("🔥 GAME UPDATE: lighting data received with", Object.keys(data.lighting).length, "rows");
+        } else {
+            console.log("⚠️ GAME UPDATE: NO lighting data in update");
+        }
+        
+        // Debug torch data specifically  
+        if (data.torches && data.torches.length > 0) {
+            console.log("🔦 GAME UPDATE: torch data received with", data.torches.length, "torches");
+        } else {
+            console.log("ℹ️ GAME UPDATE: No torch data (expected - lighting calculated server-side)");
+        }
+        
         if (data.visibleTiles) {
             const debugMsg = "🔍 SOCKET: Received game update with visibleTiles";
             console.log(debugMsg);

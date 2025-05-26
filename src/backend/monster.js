@@ -27,10 +27,15 @@ class Monster {
         const dx = Math.sign(player.x - this.x);
         const dy = Math.sign(player.y - this.y);
         
+        // Check if a tile is passable (floor)
+        const isPassable = (tile) => {
+            return tile === "'1" || tile === "'2" || tile === 0; // Support both new and legacy floor types
+        };
+        
         // Try horizontal move first
         if (dx !== 0) {
             const newX = this.x + dx;
-            if (dungeon.map[this.y] && dungeon.map[this.y][newX] === 0) {
+            if (dungeon.map[this.y] && isPassable(dungeon.map[this.y][newX])) {
                 this.x = newX;
                 return;
             }
@@ -39,7 +44,7 @@ class Monster {
         // Try vertical move
         if (dy !== 0) {
             const newY = this.y + dy;
-            if (dungeon.map[newY] && dungeon.map[newY][this.x] === 0) {
+            if (dungeon.map[newY] && isPassable(dungeon.map[newY][this.x])) {
                 this.y = newY;
                 return;
             }
@@ -52,7 +57,7 @@ class Monster {
         for (const [dx, dy] of shuffledDirs) {
             const nx = this.x + dx;
             const ny = this.y + dy;
-            if (dungeon.map[ny] && dungeon.map[ny][nx] === 0) {
+            if (dungeon.map[ny] && isPassable(dungeon.map[ny][nx])) {
                 this.x = nx;
                 this.y = ny;
                 break;

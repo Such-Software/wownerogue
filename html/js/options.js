@@ -19,6 +19,7 @@ var options = {
     height: 19, // 19 tiles * 32px/tile = 608px
     tileWidth: 32, // Width of a single tile in pixels
     tileHeight: 32, // Height of a single tile in pixels
+    tileColorize: true, // Enable colorization for tile stacks
     tileSet: tileSet,
     
     // GAME CONFIGURATION - Change these to select different assets

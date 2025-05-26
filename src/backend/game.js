@@ -141,10 +141,11 @@ class Game {
       player: this.player.getState(), // Use Player's getState method
       monster: this.monster ? this.monster.getState() : null, // Use Monster's getState method
       visibleTiles: { ...this.visibleTiles }, // Send a copy of visible tiles
+      lighting: this.calculateLighting(), // Add lighting data
       entrance: this.dungeon ? this.dungeon.entrance : null,
       exit: this.dungeon ? this.dungeon.exit : null,
       treasure: this.dungeon ? this.dungeon.treasure : null,
-      torches: this.dungeon ? this.dungeon.torches : [], // Include torch positions
+      // Don't send torch positions - client doesn't need them since lighting is calculated server-side
     };
 
     // Debug logging to verify entity data
@@ -155,6 +156,67 @@ class Game {
 
     return state;
   }
+  
+  // Calculate lighting levels for all visible tiles based on distance from torches
+  calculateLighting() {
+    const lightingData = {};
+    
+    // Get torch positions from dungeon
+    const torches = this.dungeon?.torches || [];
+    console.log("🔥 calculateLighting() - torch positions:", torches);
+    
+    // For each visible tile, calculate the lighting level
+    for (const yKey in this.visibleTiles) {
+      const y = parseInt(yKey);
+      lightingData[y] = {};
+      
+      for (const xKey in this.visibleTiles[y]) {
+        const x = parseInt(xKey);
+        
+        // Calculate minimum distance to any torch
+        let minDistanceToTorch = Infinity;
+        
+        for (const torch of torches) {
+          const distance = Math.max(Math.abs(x - torch[0]), Math.abs(y - torch[1])); // Chebyshev distance (diagonal movement)
+          minDistanceToTorch = Math.min(minDistanceToTorch, distance);
+        }
+        
+        // Convert distance to alpha value for darkness overlay
+        let alpha = 0.0;
+        
+        if (minDistanceToTorch === 0) {
+          // On a torch - no darkness
+          alpha = 0.0;
+        } else if (minDistanceToTorch === 1) {
+          // Adjacent to torch - light darkness with flickering effect
+          alpha = 0.15 + Math.random() * 0.15; // 0.15-0.3
+        } else if (minDistanceToTorch === 2) {
+          // Two tiles away - moderate darkness with flickering
+          alpha = 0.3 + Math.random() * 0.2; // 0.3-0.5
+        } else if (minDistanceToTorch === 3) {
+          // Three tiles away - heavier darkness with flickering
+          alpha = 0.5 + Math.random() * 0.2; // 0.5-0.7
+        } else {
+          // Far from torches - scale up to maximum darkness with flickering
+          const maxDistance = 6; // Beyond this distance, maximum darkness
+          const scaledDistance = Math.min(minDistanceToTorch, maxDistance);
+          alpha = 0.7 + (scaledDistance - 3) / (maxDistance - 3) * 0.2; // 0.7-0.9
+        }
+        
+        // Clamp alpha to reasonable bounds
+        alpha = Math.max(0.0, Math.min(0.9, alpha));
+        
+        lightingData[y][x] = alpha;
+      }
+    }
+    
+    const lightingTileCount = Object.keys(lightingData).reduce((acc, yKey) => acc + Object.keys(lightingData[yKey]).length, 0);
+    console.log("💡 calculateLighting() - generated lighting for", lightingTileCount, "tiles");
+    console.log("💡 LIGHTING DATA SAMPLE:", JSON.stringify(lightingData).substring(0, 200));
+    
+    return lightingData;
+  }
+
 }
 
 // Check if monster killed player

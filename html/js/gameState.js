@@ -13,6 +13,8 @@ var GameState = {
     _message: null,
     _scheduler: null,
     _engine: null,
+    _lighting: {},
+    _torches: [],
 
     init: function() {
         this.reset();
@@ -30,6 +32,8 @@ var GameState = {
         this._exit = null;
         this._treasure = null;
         this._message = null;
+        this._lighting = {};
+        this._torches = [];
         
         if (this._scheduler) this._scheduler.clear();
         if (!this._scheduler) this._scheduler = new ROT.Scheduler.Simple();
@@ -249,6 +253,21 @@ var GameState = {
                 needsRedraw = true;
             }
 
+            // Update lighting and torch data
+            if (data.lighting !== undefined) {
+                console.log("🔥 BEFORE UPDATE: this._lighting has", this._lighting ? Object.keys(this._lighting).length : 0, "rows");
+                console.log("🔥 NEW DATA: data.lighting has", Object.keys(data.lighting).length, "rows");
+                console.log("🔥 LIGHTING DATA SAMPLE:", JSON.stringify(data.lighting).substring(0, 200));
+                this._lighting = data.lighting;
+                console.log("🔥 AFTER UPDATE: this._lighting has", this._lighting ? Object.keys(this._lighting).length : 0, "rows");
+                needsRedraw = true;
+            }
+            if (data.torches !== undefined) {
+                this._torches = data.torches;
+                needsRedraw = true;
+                console.log("🔦 GameState: Updated torch data with", data.torches.length, "torches");
+            }
+
             // Update visible tiles (most critical for movement feedback)
             if (data.visibleTiles && typeof data.visibleTiles === 'object' && Object.keys(data.visibleTiles).length > 0) {
                 console.log("Visible tiles updated. Number of rows:", Object.keys(data.visibleTiles).length);
@@ -305,20 +324,6 @@ var GameState = {
         }
     },
 
-    getGameStateForRender: function() {
-        return {
-            player: this._player,
-            monster: this._monster,
-            items: this._items,
-            entrance: this._entrance,
-            exit: this._exit,
-            treasure: this._treasure,
-            visibleTiles: this._visibleTiles,
-            exploredTiles: this._exploredTiles,
-            message: this._message
-        };
-    },
-
     // Debug functions
     debugPrintMap: function(screenWidth, screenHeight) {
         console.log("Current game map:");
@@ -338,7 +343,7 @@ var GameState = {
     debugTileMapping: function() {
         const testValues = [0, 1, undefined, null];
         for (const val of testValues) {
-            const char = (val === 1) ? '#' : "'";
+            const char = (val === 1) ? '#' : "\'";
             const debugMsg = `Test mapping: value=${val} -> char='${char}'`;
             console.log(debugMsg);
             if (window.GameDebug) window.GameDebug.updateDebugDisplay(debugMsg);
@@ -376,75 +381,18 @@ var GameState = {
         console.log("Visible tiles:", Object.keys(this._visibleTiles).length);
     },
 
-    // Update game state with new data from server
-    updateGameState: function(data) {
-        let needsRedraw = false;
-
-        if (data.player && (data.player.x !== this._player.x || data.player.y !== this._player.y)) {
-            this._player = data.player;
-            needsRedraw = true;
-        }
-
-        if (data.monster) {
-            this._monster = data.monster;
-            needsRedraw = true;
-        }
-
-        if (data.items) {
-            this._items = data.items;
-            needsRedraw = true;
-        }
-
-        if (data.map) {
-            this._map = data.map;
-            needsRedraw = true;
-        }
-
-        // Handle visibleTiles from server (this is the FOV data)
-        if (data.visibleTiles) {
-            this._visibleTiles = data.visibleTiles;
-            
-            // Update explored tiles with newly visible areas
-            for (const yKey in this._visibleTiles) {
-                const y = parseInt(yKey);
-                if (!this._exploredTiles[y]) this._exploredTiles[y] = {};
-                for (const xKey in this._visibleTiles[y]) {
-                    const x = parseInt(xKey);
-                    this._exploredTiles[y][x] = this._visibleTiles[y][x];
-                }
-            }
-            
-            // console.log("Updated visibleTiles from server, visible tile count:", 
-            //     Object.keys(this._visibleTiles).reduce((count, y) => count + Object.keys(this._visibleTiles[y]).length, 0));
-            needsRedraw = true;
-        }
-
-        if (data.entrance) {
-            this._entrance = data.entrance;
-            needsRedraw = true;
-        }
-
-        if (data.exit) {
-            this._exit = data.exit;
-            needsRedraw = true;
-        }
-
-        if (data.treasure !== undefined) {
-            this._treasure = data.treasure;
-            needsRedraw = true;
-        }
-
-        if (data.message) {
-            this._message = data.message;
-            needsRedraw = true;
-        }
-
-        return needsRedraw;
-    },
-
     // Get game state data for rendering
     getGameStateForRender: function() {
-        return {
+        // Debug: Log the actual lighting data being returned
+        console.log("🔍 getGameStateForRender() lighting check:", {
+            lightingExists: !!this._lighting,
+            lightingKeys: this._lighting ? Object.keys(this._lighting).length : 0,
+            lightingRef: this._lighting,
+            torchExists: !!this._torches,
+            torchCount: this._torches ? this._torches.length : 0
+        });
+        
+        const renderState = {
             map: this._map,
             player: this._player,
             monster: this._monster,
@@ -455,8 +403,13 @@ var GameState = {
             visibleTiles: this._visibleTiles,
             exploredTiles: this._exploredTiles,
             message: this._message,
-            gameActive: this._gameActive
+            gameActive: this._gameActive,
+            lighting: this._lighting,
+            torches: this._torches
         };
+        
+        console.log("🔍 getGameStateForRender() RETURNING lighting with", renderState.lighting ? Object.keys(renderState.lighting).length : 0, "keys");
+        return renderState;
     },
 
     // Move player and update game state
@@ -484,9 +437,6 @@ var GameState = {
         // Update player position
         this._player.x = newX;
         this._player.y = newY;
-
-        // Recompute field of view
-        this.computeFieldOfView();
 
         // console.log("Player moved to:", this._player.x, this._player.y);
         return true;

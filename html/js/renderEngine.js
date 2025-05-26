@@ -27,6 +27,7 @@ var RenderEngine = {
         const torches = gameState.torches || []; // New torch positions
         const visibleTiles = gameState.visibleTiles || {};
         const exploredTiles = gameState.exploredTiles || {};
+        const lighting = gameState.lighting || {}; // Lighting data from server
         const message = gameState.message;
         
         // Get configured tile types from options
@@ -55,6 +56,12 @@ var RenderEngine = {
                 let baseChar = ' ';
                 let baseFg = this.defaultFg;
                 let tileType;
+
+                // Debug log for a specific tile if needed - replace with actual test coordinates
+                // const wx_test = 10, wy_test = 10; // Example coordinates
+                // if (wx === wx_test && wy === wy_test) {
+                //     console.log(`RenderEngine DEBUG: Tile (${wx},${wy}) raw lighting data: ${lighting[wy] ? lighting[wy][wx] : 'N/A'}`);
+                // }
 
                 // Render base terrain
                 if (this.isVisible(wx, wy, visibleTiles)) {
@@ -106,11 +113,28 @@ var RenderEngine = {
                 if (baseChar && baseChar !== ' ') {
                     charStack.push(baseChar);
                     
-                    // Use black transparent overlay for explored tiles, normal colors for currently visible tiles
-                    if (this.isVisible(wx, wy, visibleTiles)) {
-                        fgStack.push("transparent"); // Currently visible - use normal tile colors
+                    // Get lighting information for this tile
+                    const lightingAlpha = (lighting[wy] && lighting[wy][wx]) ? lighting[wy][wx] : 0.0;
+                    
+                    // Apply lighting shadows for terrain
+                    const isCurrentlyVisible = this.isVisible(wx, wy, visibleTiles);
+
+                    // Added log to inspect lightingAlpha for visible, lit tiles
+                    if (isCurrentlyVisible && lightingAlpha > 0.01) { // Using 0.01 to catch small, non-zero alphas
+                        console.log(`RenderEngine TRACE: Tile (${wx},${wy}), Visible: ${isCurrentlyVisible}, lightingAlpha: ${lightingAlpha.toFixed(3)}, from: ${lighting[wy] ? lighting[wy][wx].toFixed(3) : 'N/A'}`);
+                    }
+
+                    if (isCurrentlyVisible) {
+                        if (lightingAlpha > 0) {
+                            // Apply torch shadow using foreground overlay
+                            fgStack.push(`rgba(0, 0, 0, ${Math.min(lightingAlpha, 0.8)})`);
+                        } else {
+                            // Normal tile with no shadow
+                            fgStack.push("transparent");
+                        }
                     } else {
-                        fgStack.push("rgba(0, 0, 0, 0.6)"); // Explored but not visible - use dark transparent overlay
+                        // Explored but not currently visible - apply darker shadow
+                        fgStack.push(`rgba(0, 0, 0, 0.7)`);
                     }
                     
                     bgStack.push("transparent"); // Always transparent background for terrain
@@ -123,7 +147,13 @@ var RenderEngine = {
                             const currentItem = items[itemKey];
                             if (currentItem && currentItem.x === wx && currentItem.y === wy && this.isVisible(wx, wy, visibleTiles)) {
                                 charStack.push('$');
-                                fgStack.push("transparent"); // Use transparent for now
+                                // Apply torch lighting to items
+                                const lightingAlpha = (lighting[wy] && lighting[wy][wx]) ? lighting[wy][wx] : 0.0;
+                                if (lightingAlpha > 0) {
+                                    fgStack.push(`rgba(0, 0, 0, ${Math.min(lightingAlpha, 0.8)})`);
+                                } else {
+                                    fgStack.push("transparent");
+                                }
                                 bgStack.push("transparent");
                             }
                         }
@@ -133,42 +163,68 @@ var RenderEngine = {
                 // Render entrance
                 if (entrance && entrance[0] === wx && entrance[1] === wy && this.isVisible(wx, wy, visibleTiles)) {
                     charStack.push('<');
-                    fgStack.push("transparent"); // Use transparent for now
+                    // Apply torch lighting to entrance
+                    const lightingAlpha = (lighting[wy] && lighting[wy][wx]) ? lighting[wy][wx] : 0.0;
+                    if (lightingAlpha > 0) {
+                        fgStack.push(`rgba(0, 0, 0, ${Math.min(lightingAlpha, 0.8)})`);
+                    } else {
+                        fgStack.push("transparent");
+                    }
                     bgStack.push("transparent");
                 }
                 
                 // Render exit
                 if (exit && exit[0] === wx && exit[1] === wy && this.isVisible(wx, wy, visibleTiles)) {
                     charStack.push('>');
-                    fgStack.push("transparent"); // Use transparent for now
+                    // Apply torch lighting to exit
+                    const lightingAlpha = (lighting[wy] && lighting[wy][wx]) ? lighting[wy][wx] : 0.0;
+                    if (lightingAlpha > 0) {
+                        fgStack.push(`rgba(0, 0, 0, ${Math.min(lightingAlpha, 0.8)})`);
+                    } else {
+                        fgStack.push("transparent");
+                    }
                     bgStack.push("transparent");
                 }
                 
                 // Render treasure
                 if (treasure && treasure[0] === wx && treasure[1] === wy && this.isVisible(wx, wy, visibleTiles)) {
                     charStack.push(treasureTile);
-                    fgStack.push("transparent"); // Use transparent for now
+                    // Apply torch lighting to treasure
+                    const lightingAlpha = (lighting[wy] && lighting[wy][wx]) ? lighting[wy][wx] : 0.0;
+                    if (lightingAlpha > 0) {
+                        fgStack.push(`rgba(0, 0, 0, ${Math.min(lightingAlpha, 0.8)})`);
+                    } else {
+                        fgStack.push("transparent");
+                    }
                     bgStack.push("transparent");
                 }
                 
                 // Render torches (check if this tile has a torch)
                 if (this.isVisible(wx, wy, visibleTiles) && visibleTiles[wy][wx] === 'torch') {
                     charStack.push(torchTile);
-                    fgStack.push("transparent"); // Use transparent for now
+                    // Don't apply shadows to torches since they're light sources
+                    fgStack.push("transparent");
                     bgStack.push("transparent");
                 }
                 
                 // Render monster
                 if (monster && monster.x === wx && monster.y === wy && this.isVisible(wx, wy, visibleTiles)) {
                     charStack.push(monsterTile); 
-                    fgStack.push("transparent"); // Use transparent for now
+                    // Apply torch lighting to monster
+                    const lightingAlpha = (lighting[wy] && lighting[wy][wx]) ? lighting[wy][wx] : 0.0;
+                    if (lightingAlpha > 0) {
+                        fgStack.push(`rgba(0, 0, 0, ${Math.min(lightingAlpha, 0.8)})`);
+                    } else {
+                        fgStack.push("transparent");
+                    }
                     bgStack.push("transparent");
                 }
                 
                 // Render player (always on top)
                 if (wx === playerWX && wy === playerWY) {
                     charStack.push(playerTile); 
-                    fgStack.push("transparent"); // Use transparent for now
+                    // Don't apply shadows to player - keep them clearly visible
+                    fgStack.push("transparent");
                     bgStack.push("transparent");
                 }
                 

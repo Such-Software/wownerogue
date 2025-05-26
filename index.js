@@ -1,11 +1,10 @@
 const express = require('express');
-const path = require('path');
-var app = express();
+var app = require('express')();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
-var rpc = require('./rpccalls.js');
-var db = require('./dbcalls.js');
-var user = require('./user');
+var rpc = require('./src/backend/rpccalls.js');
+var db = require('./src/backend/dbcalls.js');
+var user = require('./src/backend/user');
 
 // Function to get a user by socket ID
 // Enhance the getUserBySocket function to try both IDs
@@ -29,8 +28,6 @@ function getUserBySocket(socketId) {
 
 const Game = require('./game');
 const activeGames = new Map(); // Maps socketId to Game objects
-const playerMoveTimestamps = new Map(); // Track last move time per player
-const MOVE_COOLDOWN = 100; // Minimum 100ms between moves on server side
 let lastBlockHeight = 0; // Track last block height
 const MIN_FEE = 10; // Minimum entrance fee in WOW
 const MAX_FEE = 100; // Maximum entrance fee in WOW
@@ -39,25 +36,23 @@ const DEBUG_MODE = true; // Set to false to disable debug mode
 let debugBlockHeight = 1;
 const clientSocketMap = new Map(); // To track client-to-server socket ID mappings
 
-// Use absolute path to html directory to ensure static files are served correctly
-const htmlPath = path.join(__dirname, '../../html');
-app.use(express.static(htmlPath));
+app.use(express.static('html'));
 app.get('/', function(req, res) {
-   res.sendFile('index.html', { root: htmlPath });
+   res.sendfile('index.html');
 });
 
 // Replace your existing block check interval with this conditional version
 if (DEBUG_MODE) {
   console.log("🐛 DEBUG MODE ENABLED - Simulating blocks every 30 seconds");
   
-  // Initial debug block broadcast
-  broadcastBlockHeight(debugBlockHeight);
+  // Initial debug block
+  io.emit('blockheight', debugBlockHeight);
   
-  // Debug block height simulator - advances every 30 seconds
+  // Debug block height simulator
   setInterval(function() {
     debugBlockHeight++;
     console.log(`🐛 DEBUG: New simulated block: ${debugBlockHeight}`);
-    broadcastBlockHeight(debugBlockHeight);
+    io.emit('blockheight', debugBlockHeight);
     
     // Start games for waiting players
     startGamesForWaiting(debugBlockHeight);
@@ -66,13 +61,6 @@ if (DEBUG_MODE) {
     checkGamesTimeout(debugBlockHeight);
     
   }, 30000); // Every 30 seconds
-  
-  // Regular status broadcasting - sends current block height every 5 seconds
-  // This ensures all clients stay up-to-date even if they miss a block change
-  setInterval(function() {
-    broadcastBlockHeight(debugBlockHeight);
-  }, 5000); // Every 5 seconds
-  
 } else {
   // Your original block check code
   setInterval(function() {
@@ -99,7 +87,7 @@ if (DEBUG_MODE) {
   }, 5000);
 }
 
-// Start games for waiting players (QUEUE ENTRY METHOD)
+// Start games for waiting players
 function startGamesForWaiting(blockHeight) {
     console.log(`Starting games for ${WAITING_PLAYERS.length} waiting players at block height ${blockHeight}`);
   
@@ -112,9 +100,7 @@ function startGamesForWaiting(blockHeight) {
         const currentUser = getUserBySocket(serverId);
         
         if (currentUser) {
-            // For queue entry, player gets 3 blocks starting from their entry block
             currentUser.blockRec = blockHeight;
-            console.log(`🕒 QUEUE ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
             
             try {
                 const game = currentUser.startGame(80, 40);
@@ -145,11 +131,10 @@ function checkGamesTimeout(currentHeight) {
   activeGames.forEach((game, socketId) => {
     const user = getUserBySocket(socketId);
     
-    // Players die the block after they enter
-    // If they entered on block 1, they die when block 2 starts
-    // If they entered on block 2, they die when block 3 starts
-    if (user && user.blockRec && currentHeight > user.blockRec) {
-      console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
+    // Player has 3 blocks to complete the dungeon
+    // If they started on block 2, they must escape before block 5 is found
+    if (user && user.blockRec && currentHeight > user.blockRec + 2) {
+      console.log(`Game timeout for player ${socketId}: started on block ${user.blockRec}, current block ${currentHeight} (allowed until block ${user.blockRec + 2})`);
       
       // Game has timed out - player didn't escape in time
       game.gameState = 'lost';
@@ -162,57 +147,6 @@ function checkGamesTimeout(currentHeight) {
       activeGames.delete(socketId);
     }
   });
-}
-
-// ====== SOCKET EVENT BROADCASTING HELPERS ======
-// These functions abstract the broadcasting logic to support future features like spectating
-
-/**
- * Send game state update to player and any spectators
- * @param {string} playerSocketId - The socket ID of the player
- * @param {object} gameState - The game state to broadcast
- */
-function sendGameUpdate(playerSocketId, gameState) {
-    // Debug logging for lighting data in updates
-    console.log(`📡 sendGameUpdate to ${playerSocketId}:`);
-    console.log(`  - Lighting data: ${!!gameState.lighting} (${gameState.lighting ? Object.keys(gameState.lighting).length : 0} rows)`);
-    console.log(`  - Torch data: ${!!gameState.torches} (${gameState.torches ? gameState.torches.length : 0} torches)`);
-    
-    // Send to the player
-    io.to(playerSocketId).emit('game_update', gameState);
-    
-    // TODO: Future spectator support
-    // Get list of spectators for this game and broadcast to them too
-    // const spectators = getSpectatorsForPlayer(playerSocketId);
-    // spectators.forEach(spectatorId => {
-    //     io.to(spectatorId).emit('spectator_update', {
-    //         playerSocketId: playerSocketId,
-    //         gameState: gameState
-    //     });
-    // });
-}
-
-/**
- * Broadcast block height to all connected clients
- * @param {number} blockHeight - Current block height
- */
-function broadcastBlockHeight(blockHeight) {
-    console.log(`📡 Broadcasting block height ${blockHeight} to all clients`);
-    io.emit('blockheight', blockHeight);
-}
-
-/**
- * Send status update to a specific player
- * @param {string} socketId - The socket ID of the player
- * @param {string} type - Type of status (info, error, warning, etc.)
- * @param {string} message - The status message
- */
-function sendStatusUpdate(socketId, type, message) {
-    io.to(socketId).emit('status_update', {
-        type: type,
-        message: message,
-        timestamp: Date.now()
-    });
 }
 
 // Socket.io handlers
@@ -233,64 +167,52 @@ io.on('connection', function(socket) {
   // Insert into visitors DB
   db.insertVisitor(socket.client.id, socket.handshake.address, 0);
   
-  // Send welcome message and immediate status
+  // Send welcome message
   io.to(socket.client.id).emit('welcome', socket.client.id);
-  
-  // Send current block height immediately to new connections
-  const currentBlock = DEBUG_MODE ? debugBlockHeight : lastBlockHeight;
-  console.log(`📈 Sending current block height ${currentBlock} to new connection ${socket.id}`);
-  io.to(socket.id).emit('blockheight', currentBlock);
-  
-  // Send connection status update (player-specific)
-  sendStatusUpdate(socket.id, 'connection', 'Connected to Wowngeon server');
 
   socket.on('chat message', function(msg) {
     console.log('Message received:', msg);
     
-    // Handle game commands (player-specific responses)
     if (msg.toLowerCase() == 'hello') {
-      // Send status update to this player only
-      sendStatusUpdate(socket.id, 'help', 
+      io.to(`${socket.client.id}`).emit('message', 
         'Welcome, to enter the dungeon type Enter, and you will be given a Wownero address, ' +
         'which you must send between 10-100 WOW to enter. The more you send, the more you can win.');
-      return; // Don't broadcast commands as chat
     }
-    
-    // Handle game entry commands
+    // Update the 'enter' command handler to send waiting_status
     if (msg.toLowerCase() == 'enter') {
-        console.log(`Player ${socket.id} requested to enter the dungeon - STARTING IMMEDIATELY`);
+        console.log(`Player ${socket.id} requested to enter the dungeon`);
         
         // Use the updated user lookup function
         const currentUser = getUserBySocket(socket.id);
         
         if (currentUser) {
-            console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+            console.log(`Found user for socket ${socket.id}, adding to queue...`);
             
-            // Start game immediately for faster testing
-            try {
-                // For auto-entry in debug mode, player enters on current block
-                // They will die when the next block starts
-                const currentBlock = debugBlockHeight || lastBlockHeight || 1;
-                currentUser.blockRec = currentBlock; // Player enters on current block
-                console.log(`🕒 AUTO-ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+            // Add to waiting players queue
+            if (!WAITING_PLAYERS.some(p => p.serverId === socket.id)) {
+                WAITING_PLAYERS.push({
+                    serverId: socket.id,
+                    clientId: socket.id,
+                    user: currentUser,
+                    joinedAt: Date.now()
+                });
                 
-                const game = currentUser.startGame(80, 40);
-                activeGames.set(socket.id, game);
+                // Send waiting status data for display - THIS IS THE KEY PART
+                io.to(socket.id).emit('waiting_status', { 
+                    status: 'waiting',
+                    message: 'Waiting for the next block to be found...',
+                    position: WAITING_PLAYERS.length,
+                    currentBlock: debugBlockHeight || lastBlockHeight || 0,
+                    joinTime: Date.now()
+                });
                 
-                const gameState = game.getState();
-                gameState.blockHeight = currentBlock;
-                
-                console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id}`);
-                io.to(socket.id).emit('game_start', gameState);
-                console.log(`Game started immediately for player ${socket.id}`);
-            } catch (error) {
-                console.error(`Error creating game:`, error);
-                sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
+                console.log(`Added player to queue. Current queue: ${WAITING_PLAYERS.length} players`);
+            } else {
+                io.to(socket.id).emit('message', 'You are already in the queue. Please wait.');
             }
         } else {
-            sendStatusUpdate(socket.id, 'error', 'Error: Could not start game. Please try again.');
+            io.to(socket.id).emit('message', 'Error: Could not add you to the game queue. Please try again.');
         }
-        return; // Don't broadcast commands as chat
     }
     // Add a handler for the 'cancel' command
     else if (msg.toLowerCase() == 'cancel') {
@@ -299,32 +221,16 @@ io.on('connection', function(socket) {
         
         if (index !== -1) {
             WAITING_PLAYERS.splice(index, 1);
-            sendStatusUpdate(socket.id, 'info', 'You have left the queue.');
+            io.to(socket.id).emit('message', 'You have left the queue.');
             
             // Reset to welcome screen
             io.to(socket.id).emit('queue_cancelled');
         } else {
-            // Send status update to this player only
-            sendStatusUpdate(socket.id, 'error', 'You were not in the queue.');
+            io.to(socket.id).emit('message', 'You were not in the queue.');
         }
-        return; // Don't broadcast commands as chat
     }
-    
-    // For all other messages (actual chat), broadcast to all clients
     else {
-        console.log(`💬 Broadcasting chat message from ${socket.id}: "${msg}"`);
-        
-        // Get user info for chat display
-        const currentUser = getUserBySocket(socket.id);
-        const username = currentUser?.username || `User_${socket.id.substr(-4)}`;
-        
-        // Broadcast chat message to ALL clients
-        io.emit('chat_broadcast', {
-            username: username,
-            message: msg,
-            timestamp: Date.now(),
-            socketId: socket.id
-        });
+      io.emit('message', msg);
     }
   });
 
@@ -334,18 +240,7 @@ io.on('connection', function(socket) {
     const currentUser = getUserBySocket(socket.id);
 
     if (currentUser && currentUser.game && currentUser.game.gameState === 'active') {
-      // Server-side movement throttling
-      const now = Date.now();
-      const lastMoveTime = playerMoveTimestamps.get(socket.id) || 0;
-      
-      if (now - lastMoveTime < MOVE_COOLDOWN) {
-        console.log(`Move from ${socket.id} throttled - too soon after last move (${now - lastMoveTime}ms)`);
-        return; // Ignore move if too soon
-      }
-      
       if (typeof moveData.dx === 'number' && typeof moveData.dy === 'number') {
-        playerMoveTimestamps.set(socket.id, now); // Update timestamp before processing
-        
         const game = currentUser.game;
         const moveResult = game.movePlayer(moveData.dx, moveData.dy); // This should update player pos and FOV
 
@@ -388,32 +283,15 @@ io.on('connection', function(socket) {
 
           const updatedGameState = game.getState(); // Get the new state
           
-          // Debug logging for lighting data in game updates
-          console.log(`🔍 GAME UPDATE DEBUG for ${socket.id}:`);
-          console.log(`  - Player position: (${updatedGameState.player?.x}, ${updatedGameState.player?.y})`);
-          console.log(`  - Visible tiles keys: ${Object.keys(updatedGameState.visibleTiles || {}).length} rows`);
-          console.log(`  - Lighting data included: ${!!updatedGameState.lighting}`);
-          if (updatedGameState.lighting) {
-            const lightingTileCount = Object.keys(updatedGameState.lighting).reduce((acc, yKey) => 
-              acc + Object.keys(updatedGameState.lighting[yKey] || {}).length, 0);
-            console.log(`  - Lighting tiles count: ${lightingTileCount}`);
-          }
-          console.log(`  - Torch data included: ${!!updatedGameState.torches}`);
-          if (updatedGameState.torches) {
-            console.log(`  - Torch count: ${updatedGameState.torches.length}`);
-          }
-          
           // Log before sending to client for debugging
-          console.log(`Sending game_update to ${socket.id} after player move.`);
+          console.log(`Sending game_update to ${socket.id} after player move. Player:`, updatedGameState.player, "Visible tiles keys:", Object.keys(updatedGameState.visibleTiles || {}));
 
-          // Send game update to player (current implementation)
-          // TODO: In future, also broadcast to spectators of this game
-          sendGameUpdate(socket.id, updatedGameState);
+          io.to(socket.id).emit('game_update', updatedGameState);
         } else {
           console.log(`Player move from ${socket.id} was invalid or resulted in no change.`);
           // Optionally, send an update even for invalid moves if you want to provide feedback
           // const currentGameState = game.getState();
-          // sendGameUpdate(socket.id, currentGameState);
+          // io.to(socket.id).emit('game_update', currentGameState);
         }
       } else {
         console.error(`Invalid moveData received from ${socket.id}:`, moveData);
@@ -426,19 +304,6 @@ io.on('connection', function(socket) {
   // Handle disconnection
   socket.on('disconnect', function() {
     console.log('User disconnected', socket.client.id);
-    
-    // Clean up movement timestamps
-    playerMoveTimestamps.delete(socket.id);
-    
-    // Clean up active games
-    activeGames.delete(socket.id);
-    
-    // Remove from waiting players
-    const waitingIndex = WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
-    if (waitingIndex !== -1) {
-      WAITING_PLAYERS.splice(waitingIndex, 1);
-    }
-    
     user.removeUser(socket.client.id);
   });
 
@@ -555,14 +420,3 @@ function debugSocket(socketId, eventName, data) {
   console.log(`🔌 SOCKET DEBUG: Sending ${eventName} to ${socketId.substring(0, 8)}...`);
   console.log(`📦 PAYLOAD (first 300 chars): ${JSON.stringify(data).substring(0, 300)}...`);
 }
-
-// Add express middleware to parse JSON
-app.use(express.json());
-app.use(express.static('html'));
-
-// Debug endpoint to receive client-side debug info
-app.post('/debug', (req, res) => {
-  const debugData = req.body;
-  console.log('🎯 CLIENT DEBUG:', debugData.message || debugData);
-  res.json({ status: 'ok' });
-});

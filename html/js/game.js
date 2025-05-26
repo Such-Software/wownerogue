@@ -47,12 +47,14 @@ var Game = {
         return navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
     },
 
-    startGame: function(playerData, mapData, monsterData, itemData, initialVisibleTiles) {
+    startGame: function(playerData, mapData, monsterData, itemData, initialVisibleTiles, lightingData, torchData) {
         if (!this._ensureDisplay()) {
             console.error("Game: Cannot start game, display not ready.");
             return false;
         }
         console.log("Game: startGame called. PlayerData:", playerData, "MapData:", mapData, "InitialVisibleTiles:", initialVisibleTiles);
+        console.log("🔥 LIGHTING DATA received in startGame:", lightingData);
+        console.log("🔦 TORCH DATA received in startGame:", torchData);
 
         DisplayManager.clearDisplay();
         
@@ -91,6 +93,16 @@ var Game = {
             GameState._entrance = null;
             GameState._exit = null;
             GameState._treasure = null;
+
+            // Initialize lighting and torch data
+            if (lightingData) {
+                GameState._lighting = lightingData;
+                console.log("🔥 GameState: Lighting data stored with", Object.keys(lightingData).length, "rows");
+            }
+            if (torchData) {
+                GameState._torches = torchData;
+                console.log("🔦 GameState: Torch data stored with", torchData.length, "torches");
+            }
 
             // Initialize map and validate player position
             GameState.initializeMap(mapData, initialVisibleTiles, this._screenWidth, this._screenHeight);
@@ -155,6 +167,15 @@ var Game = {
     _drawGameScreen: function() {
         if (!this._ensureDisplay()) return;
         const gameState = GameState.getGameStateForRender();
+        
+        // Debug: Verify lighting data is included in render state
+        console.log("🎨 _drawGameScreen() passing lighting data:", {
+            hasLighting: !!gameState.lighting,
+            lightingKeys: gameState.lighting ? Object.keys(gameState.lighting).length : 0,
+            hasTorches: !!gameState.torches,
+            torchCount: gameState.torches ? gameState.torches.length : 0
+        });
+        
         RenderEngine.drawGameScreen(gameState);
     },
 
