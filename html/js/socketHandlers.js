@@ -25,6 +25,8 @@ const SocketHandlers = {
         socket.on('connect', this.onConnect);
         socket.on('welcome', this.onWelcome);
         socket.on('message', this.onMessage);
+        socket.on('status_update', this.onStatusUpdate);
+        socket.on('chat_broadcast', this.onChatBroadcast);
         
         // Game state handlers
         socket.on('waiting_status', this.onWaitingStatus);
@@ -33,7 +35,7 @@ const SocketHandlers = {
         socket.on('game_over', this.onGameOver);
         socket.on('queue_cancelled', this.onQueueCancelled);
         
-        // Block height handler
+        // Block height handler (broadcast to all clients)
         socket.on('blockheight', this.onBlockHeight);
     },
 
@@ -56,6 +58,27 @@ const SocketHandlers = {
 
     onMessage: function(msg) {
         $('#messages').append($('<li>').text(msg));
+        UI.scrollChat();
+    },
+
+    onStatusUpdate: function(data) {
+        // Handle player-specific status updates
+        console.log("📨 STATUS UPDATE received:", data);
+        
+        // Display status message with appropriate styling
+        const statusClass = data.type === 'error' ? 'error' : 'status';
+        $('#messages').append($(`<li class="${statusClass}">`).text(data.message));
+        UI.scrollChat();
+    },
+
+    onChatBroadcast: function(data) {
+        // Handle chat messages broadcast to all players
+        console.log("💬 CHAT BROADCAST received:", data);
+        
+        const timestamp = new Date(data.timestamp || Date.now()).toLocaleTimeString();
+        const chatMsg = `[${timestamp}] ${data.username || 'Anonymous'}: ${data.message}`;
+        
+        $('#messages').append($('<li class="chat">').text(chatMsg));
         UI.scrollChat();
     },
 
@@ -181,6 +204,28 @@ const SocketHandlers = {
             if (Game) {
                 Game._gameActive = false;
             }
+            
+            // Auto-return to title screen after 30 seconds
+            console.log("⏰ Setting 30-second timer to return to title screen...");
+            setTimeout(() => {
+                console.log("⏰ 30 seconds elapsed - returning to title screen");
+                $('#messages').append($('<li style="color:#888;">').text("Returning to title screen..."));
+                UI.scrollChat();
+                
+                // Return to welcome screen
+                if (Game && Game._drawWelcomeScreen) {
+                    Game._drawWelcomeScreen();
+                }
+                
+                // Reset game state
+                if (typeof GameState !== 'undefined') {
+                    GameState.reset();
+                }
+                
+                // Focus chat for new commands
+                $('#chatInput').focus();
+                UI.updateFocusIndicator();
+            }, 30000); // 30 seconds
         }
         
         UI.scrollChat();

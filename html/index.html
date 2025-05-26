@@ -98,29 +98,41 @@
             console.log("UI available:", typeof UI !== 'undefined');
             console.log("InputHandler available:", typeof InputHandler !== 'undefined');
             
-            // Initialize Game
-            if (typeof Game !== 'undefined') {
-                console.log("Initializing Game...");
-                Game.init();
-            } else {
-                console.error("Game object not found!");
-            }
-            
-            // Initialize SocketHandlers (CRITICAL for receiving game_start events!)
-            if (typeof SocketHandlers !== 'undefined') {
-                console.log("Initializing SocketHandlers...");
-                SocketHandlers.init();
-            } else {
-                console.error("SocketHandlers object not found!");
-            }
-            
-            // Initialize InputHandler
-            if (typeof InputHandler !== 'undefined') {
-                console.log("Initializing InputHandler...");
-                InputHandler.init();
-            } else {
-                console.error("InputHandler object not found!");
-            }
+            // Small delay to ensure all modules are fully loaded
+            setTimeout(function() {
+                // Initialize Game first
+                if (typeof Game !== 'undefined') {
+                    console.log("Initializing Game...");
+                    const gameInitResult = Game.init();
+                    console.log("Game initialization result:", gameInitResult);
+                    
+                    // Ensure welcome screen is shown after a brief delay
+                    setTimeout(function() {
+                        if (gameInitResult && typeof ScreenManager !== 'undefined' && ScreenManager.drawWelcomeScreen) {
+                            console.log("Ensuring welcome screen is drawn...");
+                            ScreenManager.drawWelcomeScreen();
+                        }
+                    }, 50);
+                } else {
+                    console.error("Game object not found!");
+                }
+                
+                // Initialize SocketHandlers (CRITICAL for receiving game_start events!)
+                if (typeof SocketHandlers !== 'undefined') {
+                    console.log("Initializing SocketHandlers...");
+                    SocketHandlers.init();
+                } else {
+                    console.error("SocketHandlers object not found!");
+                }
+                
+                // Initialize InputHandler
+                if (typeof InputHandler !== 'undefined') {
+                    console.log("Initializing InputHandler...");
+                    InputHandler.init();
+                } else {
+                    console.error("InputHandler object not found!");
+                }
+            }, 100); // 100ms delay to ensure everything is loaded
         });
     </script>
 </body>
