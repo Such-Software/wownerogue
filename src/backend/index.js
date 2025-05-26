@@ -31,6 +31,29 @@ const Game = require('./game');
 const activeGames = new Map(); // Maps socketId to Game objects
 const playerMoveTimestamps = new Map(); // Track last move time per player
 const MOVE_COOLDOWN = 100; // Minimum 100ms between moves on server side
+
+/**
+ * Create a new game for a user and register it in activeGames
+ * @param {User} user - The user object
+ * @param {string} gameType - 'standard' or 'legacy'
+ * @param {object} options - Additional game options
+ */
+function createGameForUser(user, gameType = 'standard', options = {}) {
+    let game;
+    
+    if (gameType === 'legacy') {
+        game = Game.createLegacyGame(user.id, user, options);
+    } else {
+        game = Game.createStandardGame(user.id, user, options);
+    }
+    
+    // Register the game with the user and in activeGames
+    user.joinGame(game);
+    activeGames.set(user.id, game);
+    
+    console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id}`);
+    return game;
+}
 let lastBlockHeight = 0; // Track last block height
 const MIN_FEE = 10; // Minimum entrance fee in WOW
 const MAX_FEE = 100; // Maximum entrance fee in WOW
@@ -117,8 +140,7 @@ function startGamesForWaiting(blockHeight) {
             console.log(`🕒 QUEUE ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
             
             try {
-                const game = currentUser.startGame(80, 40);
-                activeGames.set(serverId, game);
+                const game = createGameForUser(currentUser, 'standard');
                 
                 const gameState = game.getState();
                 gameState.blockHeight = blockHeight;
@@ -274,8 +296,7 @@ io.on('connection', function(socket) {
                 currentUser.blockRec = currentBlock; // Player enters on current block
                 console.log(`🕒 AUTO-ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
                 
-                const game = currentUser.startGame(80, 40);
-                activeGames.set(socket.id, game);
+                const game = createGameForUser(currentUser, 'standard');
                 
                 const gameState = game.getState();
                 gameState.blockHeight = currentBlock;
@@ -329,11 +350,12 @@ io.on('connection', function(socket) {
   });
 
   // Handle player movement
-  socket.on('player_move', function(moveData) { // Changed from 'move' to 'player_move' and added moveData
+  socket.on('player_move', function(moveData) {
     console.log(`Player move event received from ${socket.id}:`, moveData);
     const currentUser = getUserBySocket(socket.id);
+    const game = activeGames.get(socket.id);
 
-    if (currentUser && currentUser.game && currentUser.game.gameState === 'active') {
+    if (currentUser && game && game.gameState === 'active') {
       // Server-side movement throttling
       const now = Date.now();
       const lastMoveTime = playerMoveTimestamps.get(socket.id) || 0;
@@ -346,7 +368,6 @@ io.on('connection', function(socket) {
       if (typeof moveData.dx === 'number' && typeof moveData.dy === 'number') {
         playerMoveTimestamps.set(socket.id, now); // Update timestamp before processing
         
-        const game = currentUser.game;
         const moveResult = game.movePlayer(moveData.dx, moveData.dy); // This should update player pos and FOV
 
         if (moveResult && moveResult.status === 'moved') {
@@ -360,6 +381,7 @@ io.on('connection', function(socket) {
           
           if (checkMonsterKill(game.player, game.monster)) {
             game.gameState = 'lost';
+            game.endGame('lost', { score: 0, reason: 'monster' });
             io.to(socket.id).emit('game_over', {
               status: 'lost',
               reason: 'monster',
@@ -377,10 +399,17 @@ io.on('connection', function(socket) {
           // Check for escape
           if (moveResult.event === 'escaped') {
             game.gameState = 'won';
+            const score = game.player.hasTreasure ? 100 : 50; // Bonus for treasure
+            game.endGame('won', { 
+              score: score, 
+              reason: 'escaped',
+              treasuresFound: game.player.hasTreasure ? 1 : 0 
+            });
             io.to(socket.id).emit('game_over', {
               status: 'won',
               reason: 'escaped',
-              message: 'Congratulations! You escaped the dungeon!'
+              message: 'Congratulations! You escaped the dungeon!',
+              score: score
             });
             activeGames.delete(socket.id);
             return;
@@ -511,7 +540,7 @@ function startGameForPlayer(socketId, blockHeight) {
   
   try {
     // Create a new game
-    const game = currentUser.startGame(25, 19); 
+    const game = createGameForUser(currentUser, 'legacy'); 
     if (!game) {
       console.error("Game creation failed");
       return;

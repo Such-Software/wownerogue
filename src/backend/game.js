@@ -1,29 +1,96 @@
+const { v4: uuidv4 } = require('uuid');
 const ROT = require('./rot.js');
 const Player = require('./player.js');
 const Monster = require('./monster.js');
 const DungeonGenerator = require('./dungeon.js');
+const LightingAndFov = require('./lightingAndFov.js');
 
 class Game {
-  constructor(socketId, mapWidth, mapHeight, gameConfig = {}) {
+  /**
+   * Create a new game instance
+   * @param {string} socketId - Socket ID of the player
+   * @param {User} user - User object for statistics tracking
+   * @param {object} gameOptions - Optional game configuration overrides
+   */
+  constructor(socketId, user, gameOptions = {}) {
+    this.user = user;
+    this.id = uuidv4();
     this.socketId = socketId;
-    this.width = mapWidth || 25; // Reduced default size to match client display
-    this.height = mapHeight || 19; // Reduced default size to match client display
-    this.gameState = 'waiting'; // waiting, active, won, lost
-    this.startBlock = null;
+    this.players = {};
+    this.monsters = {};
     this.dungeon = null;
+
+    // Get default configuration from DungeonGenerator
+    const dungeonConfig = DungeonGenerator.getConfig();
+    
+    // Determine dimensions - use provided options or defaults
+    const width = gameOptions.width || dungeonConfig.DEFAULT_WIDTH;
+    const height = gameOptions.height || dungeonConfig.DEFAULT_HEIGHT;
+    
+    // Merge game configuration
+    this.gameConfig = {
+      width: width,
+      height: height,
+      // Dungeon generation options (can be overridden by gameOptions)
+      floorVariation: gameOptions.floorVariation !== undefined ? gameOptions.floorVariation : dungeonConfig.FLOOR_VARIATION,
+      torchEnabled: gameOptions.torchEnabled !== undefined ? gameOptions.torchEnabled : dungeonConfig.TORCH_ENABLED,
+      torchDensity: gameOptions.torchDensity !== undefined ? gameOptions.torchDensity : dungeonConfig.TORCH_DENSITY,
+      primaryFloor: gameOptions.primaryFloor || dungeonConfig.PRIMARY_FLOOR,
+      secondaryFloor: gameOptions.secondaryFloor || dungeonConfig.SECONDARY_FLOOR,
+      torchTile: gameOptions.torchTile || dungeonConfig.TORCH_TILE,
+      // Other game options
+      ...gameOptions
+    };
+
+    console.log(`[Game Constructor] Creating game for user ${user.id} (socket: ${socketId})`);
+    console.log(`[Game Constructor] Dimensions: ${width}x${height}`);
+    console.log(`[Game Constructor] Game config:`, JSON.stringify(this.gameConfig, null, 2));
+
+    this.initializeGame();
+  }
+
+  /**
+   * Static factory method to create a game with standard dimensions
+   */
+  static createStandardGame(socketId, user, options = {}) {
+    return new Game(socketId, user, options);
+  }
+
+  /**
+   * Static factory method to create a legacy-sized game
+   */
+  static createLegacyGame(socketId, user, options = {}) {
+    const dungeonConfig = DungeonGenerator.getConfig();
+    const legacyOptions = {
+      width: dungeonConfig.LEGACY_WIDTH,
+      height: dungeonConfig.LEGACY_HEIGHT,
+      ...options
+    };
+    return new Game(socketId, user, legacyOptions);
+  }
+
+  initializeGame() {
+    console.log(`[Game.initializeGame] Initializing game with config:`, JSON.stringify(this.gameConfig, null, 2));
+    if (typeof this.gameConfig.width === 'undefined' || typeof this.gameConfig.height === 'undefined') {
+      console.error("[Game.initializeGame] CRITICAL: Width or Height is undefined in gameConfig!", this.gameConfig);
+      throw new Error(`Invalid game dimensions: width=${this.gameConfig.width}, height=${this.gameConfig.height}`);
+    }
+
+    // Set game dimensions from config
+    this.width = this.gameConfig.width;
+    this.height = this.gameConfig.height;
+    
+    // Initialize game state
+    this.gameState = 'waiting';
+    this.startBlock = null;
     this.player = new Player();
     this.monster = new Monster();
-    this.fee = 0; // Amount player paid
-    this.visibleTiles = {}; // Will store visible tiles
-    this.fov = null; // FOV calculator
-    this.gameConfig = gameConfig; // Store game configuration
-    this.generateDungeon();
-  }
-  
-  generateDungeon() {
-    // Pass game configuration to dungeon generator
-    this.dungeon = DungeonGenerator.generate(this.width, this.height, this.gameConfig);
+    this.fee = 0;
+
+    // Generate dungeon with the provided dimensions and config
+    this.dungeon = DungeonGenerator.generate(this.gameConfig.width, this.gameConfig.height, this.gameConfig);
     
+    // Place player at entrance
     if (this.dungeon.entrance) {
       this.player.moveTo(this.dungeon.entrance[0], this.dungeon.entrance[1]);
     }
@@ -34,63 +101,28 @@ class Game {
       const center = monsterRoom.getCenter();
       this.monster.moveTo(center[0], center[1]);
     }
-    
-    // Initialize FOV calculator - need to check for multiple floor types now
-    this.fov = new ROT.FOV.PreciseShadowcasting(
-      (x, y) => {
-        // Return true if the tile is transparent (can see through it)
-        if (!this.dungeon.map[y] || this.dungeon.map[y][x] === undefined) return false;
-        const tile = this.dungeon.map[y][x];
-        // Check if it's any type of floor tile (primary or secondary)
-        const primaryFloor = this.gameConfig.primaryFloor || "'1";
-        const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
-        return tile === primaryFloor || tile === secondaryFloor;
-      }
-    );
-    
-    // Calculate initial FOV
-    this.updateFOV();
+
+    // Initialize lighting and FOV
+    this.lightingAndFov = new LightingAndFov(this.dungeon.map, this.dungeon.torches);
+    this._fovInstance = LightingAndFov.initializeFOV(this.dungeon.map, this.gameConfig);
+    const fovRadius = this.gameConfig.fovRadius || 10; 
+    this.visibleTiles = LightingAndFov.updateFOV(this._fovInstance, this.player, this.dungeon.map, fovRadius);
     
     // Set game state to active
     this.gameState = 'active';
   }
   
   updateFOV() {
-    // Reset visible tiles
-    this.visibleTiles = {};
-    
-    // Calculate new visible tiles
-    this.fov.compute(this.player.x, this.player.y, 10, (x, y, r, visibility) => { // Added r and visibility params
-        if (visibility > 0) { // Only add if tile is actually visible
-            if (!this.visibleTiles[y]) {
-                this.visibleTiles[y] = {};
-            }
-            // Store the actual tile type (0 for floor, 1 for wall) from the dungeon map
-            if (this.dungeon && this.dungeon.map && this.dungeon.map[y] && this.dungeon.map[y][x] !== undefined) {
-                this.visibleTiles[y][x] = this.dungeon.map[y][x];
-                
-                // Debug log for specific problematic coordinates
-                if ((x === 36 && (y === 18 || y === 16)) || (x === 35 && (y === 18 || y === 16))) {
-                    console.log(`🔍 DEBUG FOV: (${x},${y}) - server map value: ${this.dungeon.map[y][x]}, sent to client: ${this.visibleTiles[y][x]}, visibility: ${visibility}`);
-                }
-            } else {
-                // Should not happen if FOV is within map bounds, but as a fallback:
-                // this.visibleTiles[y][x] = 1; // Default to wall if outside known map
-            }
-        }
-    });
-    // console.log("FOV updated. Player:", this.player.x, this.player.y, "Visible tiles count:", Object.keys(this.visibleTiles).reduce((acc, k) => acc + Object.keys(this.visibleTiles[k]).length, 0));
+    this.visibleTiles = LightingAndFov.updateFOV(this._fovInstance, this.player, this.dungeon.map, 10);
   }
   
   movePlayer(dx, dy) {
     const newX = this.player.x + dx;
     const newY = this.player.y + dy;
     
-    // Simple debug output
     console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
     
     // Check if the move is valid (not into a wall and within map bounds)
-    // Updated to handle new floor tile types
     const primaryFloor = this.gameConfig.primaryFloor || "'1";
     const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
     
@@ -107,14 +139,12 @@ class Game {
       
       // Check for game events like finding treasure or exit
       if (this.dungeon.exit && this.player.isAt(this.dungeon.exit[0], this.dungeon.exit[1])) {
-        // Handle win condition (e.g., escaped)
         this.gameState = 'won';
         return { status: 'moved', event: 'escaped', player: this.player.getState(), visibleTiles: this.visibleTiles };
       }
       if (this.dungeon.treasure && this.player.isAt(this.dungeon.treasure[0], this.dungeon.treasure[1]) && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
         console.log(`🏆 TREASURE PICKUP: Player ${this.socketId} collected treasure at (${this.dungeon.treasure[0]}, ${this.dungeon.treasure[1]})`);
-        // Remove treasure from dungeon so it won't be sent in future updates
         this.dungeon.treasure = null;
         console.log(`🗑️ TREASURE REMOVED: dungeon.treasure is now null for player ${this.socketId}`);
         console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
@@ -124,8 +154,6 @@ class Game {
       return { status: 'moved', player: this.player.getState(), visibleTiles: this.visibleTiles };
     }
     
-    
-    
     console.log(`Move BLOCKED: ${newX},${newY} - cell value: ${this.dungeon && this.dungeon.map[newY] ? this.dungeon.map[newY][newX] : 'undefined'}`);
     return { status: 'invalid' };
   }
@@ -134,7 +162,6 @@ class Game {
     this.monster.moveTowardPlayer(this.player, this.dungeon);
   }
   
-  // Update the getState() method to include all entities with relative positions
   getState() {
     const state = {
       gameState: this.gameState,
@@ -145,20 +172,7 @@ class Game {
       entrance: this.dungeon ? this.dungeon.entrance : null,
       exit: this.dungeon ? this.dungeon.exit : null,
       treasure: this.dungeon ? this.dungeon.treasure : null,
-      // Torches array is not sent; client uses visibleTiles to identify torch locations
     };
-
-    // Debug: Check if known torch locations are correctly identified in visibleTiles
-    if (this.dungeon && this.dungeon.torches && this.dungeon.torches.length > 0) {
-      const firstFewTorches = this.dungeon.torches.slice(0, Math.min(5, this.dungeon.torches.length));
-      for (const torchPos of firstFewTorches) {
-        const tx = torchPos[0];
-        const ty = torchPos[1];
-        if (state.visibleTiles[ty] && state.visibleTiles[ty][tx] !== undefined) {
-          console.log(`[Game.getState DEBUG] Visible torch at (${tx},${ty}). TileType in visibleTiles: ${state.visibleTiles[ty][tx]}`);
-        }
-      }
-    }
 
     console.log("🎮 getState() sending entities - Monster:", state.monster, "Entrance:", state.entrance, "Exit:", state.exit, "Treasure:", state.treasure);
     if (state.treasure === null) {
@@ -168,80 +182,27 @@ class Game {
     return state;
   }
   
-  // Calculate lighting levels for all visible tiles based on distance from torches
   calculateLighting() {
-    const lightingData = {};
-    const playerX = this.player.x;
-    const playerY = this.player.y;
-    const maxTorchInfluenceRadius = 10 + 6; // Player FOV radius + max light distance
-    const allTorches = this.dungeon?.torches || [];
-    const nearbyTorches = allTorches.filter(torch => {
-      const distToPlayer = Math.max(Math.abs(torch[0] - playerX), Math.abs(torch[1] - playerY));
-      return distToPlayer < maxTorchInfluenceRadius;
-    });
-
-    console.log(`[CalculateLighting] Player at (${playerX},${playerY}). Found ${allTorches.length} total torches. Nearby torches (radius ${maxTorchInfluenceRadius}): ${nearbyTorches.length}`);
-
-    let sampleAlpha1 = -1, sampleAlpha2 = -1, sampleAlpha3 = -1; // For logging flicker
-
-    for (const yKey in this.visibleTiles) {
-      const y = parseInt(yKey);
-      lightingData[y] = {};
-      
-      for (const xKey in this.visibleTiles[y]) {
-        const x = parseInt(xKey);
-        
-        let minDistanceToTorch = Infinity;
-        if (nearbyTorches.length === 0) {
-            minDistanceToTorch = maxTorchInfluenceRadius; // Effectively max darkness if no torches nearby
-        } else {
-            for (const torch of nearbyTorches) {
-              const distance = Math.max(Math.abs(x - torch[0]), Math.abs(y - torch[1]));
-              minDistanceToTorch = Math.min(minDistanceToTorch, distance);
-            }
-        }
-        
-        let alpha = 0.0;
-        
-        if (minDistanceToTorch === 0) {
-          alpha = 0.0;
-        } else if (minDistanceToTorch === 1) {
-          // alpha = 0.15 + Math.random() * 0.15; // 0.15-0.3
-          alpha = Math.random() < 0.5 ? 0.05 : 0.35; // TEST: More extreme flicker
-          if (sampleAlpha1 < 0) sampleAlpha1 = alpha;
-        } else if (minDistanceToTorch === 2) {
-          // alpha = 0.3 + Math.random() * 0.2; // 0.3-0.5
-          alpha = Math.random() < 0.5 ? 0.2 : 0.6; // TEST: More extreme flicker
-          if (sampleAlpha2 < 0) sampleAlpha2 = alpha;
-        } else if (minDistanceToTorch === 3) {
-          // alpha = 0.5 + Math.random() * 0.2; // 0.5-0.7
-          alpha = Math.random() < 0.5 ? 0.4 : 0.8; // TEST: More extreme flicker
-          if (sampleAlpha3 < 0) sampleAlpha3 = alpha;
-        } else {
-          const maxDistance = 6;
-          const scaledDistance = Math.min(minDistanceToTorch, maxDistance);
-          // Ensure non-flickering part is also somewhat dark if far
-          if (minDistanceToTorch >= maxDistance) {
-            alpha = 0.9; // Max darkness for distant tiles
-          } else {
-            // Gradual darkness for tiles between distance 3 and maxDistance (6)
-            // This part should not flicker as much, providing a stable falloff
-            alpha = 0.7 + ((scaledDistance - 3) / (maxDistance - 3)) * 0.2; // 0.7-0.9
-          }
-        }
-        
-        alpha = Math.max(0.0, Math.min(0.9, alpha));
-        lightingData[y][x] = alpha;
-      }
-    }
-    
-    // const lightingTileCount = Object.keys(lightingData).reduce((acc, yKey) => acc + Object.keys(lightingData[yKey]).length, 0);
-    // console.log(`💡 calculateLighting() - generated lighting for ${lightingTileCount} tiles.`);
-    console.log(`💡 Flicker samples (dist 1,2,3): ${sampleAlpha1.toFixed(3)}, ${sampleAlpha2.toFixed(3)}, ${sampleAlpha3.toFixed(3)}`);
-
-    return lightingData;
+    return LightingAndFov.calculateLighting(
+      this.player, 
+      this.dungeon?.torches || [], 
+      this.visibleTiles, 
+      10
+    );
   }
 
+  /**
+   * End this game and update user statistics
+   * @param {string} result - 'won', 'lost', or 'abandoned'
+   * @param {object} gameStats - Additional statistics
+   */
+  endGame(result, gameStats = {}) {
+    if (this.user) {
+      const score = gameStats.score || 0;
+      this.user.endGame(result, score, gameStats);
+    }
+    this.gameState = 'ended';
+  }
 }
 
 module.exports = Game;

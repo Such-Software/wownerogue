@@ -1,80 +1,99 @@
-const Game = require('./game'); // Add this import at the top
+const Game = require('./game'); // Ensure Game is required
 
-// Global users registry
+// User class definition
+class User {
+    constructor(id, address) {
+        this.id = id; // This is the socket.id
+        this.address = address;
+        this.currentGame = null; // Reference to current game instance
+        this.blockRec = 0; // Block record for game entry timing
+        this.clientId = null; // To store socket.client.id if different
+        
+        // User statistics
+        this.stats = {
+            gamesPlayed: 0,
+            gamesWon: 0,
+            gamesLost: 0,
+            totalPlayTime: 0,
+            highestScore: 0,
+            treasuresFound: 0,
+            monstersDefeated: 0
+        };
+        
+        // Add user to the registry upon creation
+        userRegistry.set(id, this);
+        console.log(`User created and registered: ${id}`);
+    }
+
+    /**
+     * Start tracking a new game for this user.
+     * @param {Game} gameInstance - The game instance this user is playing
+     */
+    joinGame(gameInstance) {
+        this.currentGame = gameInstance;
+        this.stats.gamesPlayed++;
+        console.log(`[User.joinGame] User ${this.id} joined game ${gameInstance.id}. Total games played: ${this.stats.gamesPlayed}`);
+    }
+
+    /**
+     * Game ended - update user statistics
+     * @param {string} result - 'won', 'lost', or 'abandoned'
+     * @param {number} score - Final score
+     * @param {object} gameStats - Additional game statistics
+     */
+    endGame(result, score = 0, gameStats = {}) {
+        if (this.currentGame) {
+            this.currentGame = null;
+            
+            // Update statistics
+            if (result === 'won') {
+                this.stats.gamesWon++;
+            } else if (result === 'lost') {
+                this.stats.gamesLost++;
+            }
+            
+            if (score > this.stats.highestScore) {
+                this.stats.highestScore = score;
+            }
+            
+            if (gameStats.treasuresFound) {
+                this.stats.treasuresFound += gameStats.treasuresFound;
+            }
+            
+            if (gameStats.monstersDefeated) {
+                this.stats.monstersDefeated += gameStats.monstersDefeated;
+            }
+            
+            console.log(`[User.endGame] User ${this.id} game ended: ${result}. Score: ${score}. Stats: ${JSON.stringify(this.stats)}`);
+        }
+    }
+
+    /**
+     * Get user statistics
+     */
+    getStats() {
+        return { ...this.stats };
+    }
+
+    /**
+     * Get user's current game status
+     */
+    isInGame() {
+        return this.currentGame !== null;
+    }
+
+    // ... other User methods ...
+}
+
+// User registry (maps socketId to User objects)
 const userRegistry = new Map();
 
-function User(socketid, ip) {
-    this.id = null;
-    this.socketid = socketid;
-    this.ip = ip;
-    this.nick = null;
-    this.receiveAddy = "";
-    this.payoutAddy = "";
-    this.blockRec = null;
-    this.map = null;
-    this.player = false;
-    this.won = false;
-    this.game = null; // Reference to current game
-    this.paymentAmount = 0;
-    this.paymentVerified = false;
-    
-    // Auto-register in the registry
-    userRegistry.set(socketid, this);
-    console.log(`User registered with socket ID: ${socketid}`);
-}
-
-// Add lookup function
-function getUserBySocketId(socketId) {
-    const user = userRegistry.get(socketId);
-    console.log(`Looking up user ${socketId}: ${user ? "FOUND" : "NOT FOUND"}`);
-    return user;
-}
-
-// Add function to remove user
-function removeUser(socketId) {
-    const removed = userRegistry.delete(socketId);
-    console.log(`User ${socketId} removed: ${removed ? "YES" : "NO"}`);
-    return removed;
-}
-
-// Get all users as array
-function getAllUsers() {
-    return Array.from(userRegistry.values());
-}
-
-// Add this method to your User function/class
-User.prototype.startGame = function(width, height, gameConfig = {}) {
-    console.log(`Creating new game for user ${this.socketid} with dimensions ${width}x${height}`);
-    
-    // Default game configuration - can be customized per user/game
-    const defaultConfig = {
-        playerType: "@",          // Options: "@", "@2"
-        treasureType: "$W",       // Options: "$W" (Wownero), "$M" (Monero), "$B" (Bitcoin), "$" (Regular)
-        monsterType: "~",         // Options: "~", "~2"
-        primaryFloor: "'1",       // Main floor tile (99% of floors)
-        secondaryFloor: "'2",     // Alt floor tile (1% of floors)
-        floorVariation: 0.01,     // Percentage of secondary floor tiles (0.01 = 1%)
-        torchEnabled: true,       // Enable/disable torch placement
-        torchDensity: 0.15,       // Percentage of wall tiles that get torches (0.15 = 15%)
-        torchTile: "torch"        // Torch tile identifier
-    };
-    
-    const config = { ...defaultConfig, ...gameConfig };
-    
-    try {
-        this.game = new Game(this.socketid, width, height, config);
-        return this.game;
-    } catch (err) {
-        console.error("Error creating game:", err);
-        return null;
-    }
-};
-
-// Rest of your existing code...
-
+// ... (rest of the file, e.g., getUserBySocketId, removeUser, module.exports)
+// Ensure these functions and module.exports are correctly placed relative to the class definition.
+// For example:
 module.exports = {
-    User: User,
-    getUserBySocketId: getUserBySocketId,
-    removeUser: removeUser,
-    getAllUsers: getAllUsers
+    User,
+    getUserBySocketId: (socketId) => userRegistry.get(socketId),
+    removeUser: (socketId) => userRegistry.delete(socketId),
+    getAllUsers: () => Array.from(userRegistry.values()) // If you need to iterate over users
 };

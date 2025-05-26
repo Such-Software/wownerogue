@@ -1,28 +1,64 @@
 const ROT = require('./rot.js');
 
+// ========================================
+// DUNGEON CONFIGURATION SECTION
+// ========================================
+// Edit these values to customize dungeon generation
+const DUNGEON_CONFIGS = {
+    // Default dungeon dimensions
+    DEFAULT_WIDTH: 80,
+    DEFAULT_HEIGHT: 40,
+    
+    // Legacy smaller dungeon size (for compatibility)
+    LEGACY_WIDTH: 25,
+    LEGACY_HEIGHT: 19,
+    
+    // Dungeon generation settings
+    ROOM_WIDTH_RANGE: [3, 9],
+    ROOM_HEIGHT_RANGE: [3, 7],
+    CORRIDOR_LENGTH_RANGE: [2, 6],
+    DUG_PERCENTAGE: 0.2,
+    
+    // Lighting and appearance
+    TORCH_DENSITY: 0.2,        // 20% chance for torches on wall tiles adjacent to floors
+    TORCH_ENABLED: true,       // Set to false to disable torches completely
+    FLOOR_VARIATION: 0.01,     // Chance for secondary floor tiles (visual variety)
+    
+    // Tile symbols
+    PRIMARY_FLOOR: "'1",
+    SECONDARY_FLOOR: "'2", 
+    WALL_TILE: "#",
+    TORCH_TILE: "torch"
+};
+
 /**
  * Dungeon generation utilities
  */
 class DungeonGenerator {
+    // Get the configuration object (allows external access)
+    static getConfig() {
+        return { ...DUNGEON_CONFIGS };
+    }
+    
     static generate(width, height, options = {}) {
-        // Default options for dungeon generation
         const defaultOptions = {
-            floorVariation: 0.01,      // 1% secondary floor tiles
-            torchEnabled: true,         // Enable torch placement
-            torchDensity: 0.05,        // Default: 5% of wall tiles get torches (comment updated)
-            primaryFloor: "'1",        // Primary floor tile
-            secondaryFloor: "'2",      // Secondary floor tile
-            torchTile: "torch"         // Torch tile type
+            floorVariation: DUNGEON_CONFIGS.FLOOR_VARIATION,
+            torchEnabled: DUNGEON_CONFIGS.TORCH_ENABLED,
+            torchDensity: DUNGEON_CONFIGS.TORCH_DENSITY,
+            primaryFloor: DUNGEON_CONFIGS.PRIMARY_FLOOR,
+            secondaryFloor: DUNGEON_CONFIGS.SECONDARY_FLOOR,
+            torchTile: DUNGEON_CONFIGS.TORCH_TILE
         };
         
         const config = { ...defaultOptions, ...options };
-        
+        console.log(`[DungeonGenerator] Generating dungeon with effective torchDensity: ${config.torchDensity}`); // Log effective torchDensity
+
         // Create dungeon using ROT.js Map.Digger
         const digger = new ROT.Map.Digger(width, height, {
-            roomWidth: [3, 9],
-            roomHeight: [3, 7],
-            corridorLength: [2, 6],
-            dugPercentage: 0.2
+            roomWidth: DUNGEON_CONFIGS.ROOM_WIDTH_RANGE,
+            roomHeight: DUNGEON_CONFIGS.ROOM_HEIGHT_RANGE,
+            corridorLength: DUNGEON_CONFIGS.CORRIDOR_LENGTH_RANGE,
+            dugPercentage: DUNGEON_CONFIGS.DUG_PERCENTAGE
         });
         
         // Initialize the empty map with walls (1)
@@ -84,11 +120,23 @@ class DungeonGenerator {
     
     // Enhanced map creation with floor variations and torch placement
     static enhanceMapWithVariations(basicMap, config) {
-        const height = basicMap.length;
-        const width = basicMap[0].length;
-        const enhancedMap = Array(height).fill().map(() => Array(width).fill(null));
+        const enhancedMap = basicMap.map(row => row.slice()); // Create a deep copy
+        const { primaryFloor, secondaryFloor, floorVariation, torchEnabled, torchDensity, torchTile } = config;
+
+        if (typeof primaryFloor === 'undefined' || typeof secondaryFloor === 'undefined' || typeof floorVariation === 'undefined' || typeof torchEnabled === 'undefined' || typeof torchDensity === 'undefined' || typeof torchTile === 'undefined') {
+            console.error("[DungeonGenerator.enhanceMapWithVariations] Critical config missing:", config);
+            // Fallback or throw error if essential configs are still missing despite defaults
+            // This indicates a problem upstream if defaults didn't propagate or were explicitly undefined.
+        }
+
         let placedTorchesCount = 0; // Counter for torches placed in this function
         
+        // Log the torchDensity being used for this map generation pass
+        console.log(`[DungeonGenerator.enhanceMapWithVariations] Starting enhancement with torchDensity: ${config.torchDensity}`);
+
+        const height = basicMap.length; // Use basicMap's dimensions
+        const width = basicMap[0].length; // Use basicMap's dimensions
+
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const cell = basicMap[y][x];
@@ -130,12 +178,22 @@ class DungeonGenerator {
             return nx >= 0 && nx < width && ny >= 0 && ny < height && map[ny][nx] === 0;
         });
         
-        return adjacentToFloor && Math.random() < torchDensity;
+        const randomValue = Math.random();
+        const shouldPlace = adjacentToFloor && randomValue < torchDensity;
+        
+        return shouldPlace;
     }
     
     // Get positions of all torches for client-side rendering
     static getTorchPositions(enhancedMap, config) {
         const torches = [];
+        const { torchTile } = config; // Ensure config is used here
+
+        if (typeof torchTile === 'undefined') {
+            console.error("[DungeonGenerator.getTorchPositions] torchTile config missing:", config);
+            return torches; // Or handle error appropriately
+        }
+
         const height = enhancedMap.length;
         const width = enhancedMap[0].length;
         console.log(`[DungeonGenerator.getTorchPositions] Searching for torch tile '${config.torchTile}' in a ${width}x${height} map.`);
