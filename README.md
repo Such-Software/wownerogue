@@ -18,8 +18,6 @@ The game is built using Node.js for the backend, with Express and Socket.io for 
 - **Real-time multiplayer**: Multiple players can play simultaneously with efficient socket broadcasting
 - **Structured chat system**: Public chat broadcasts and private status updates with command separation
 - **Field of view**: Limited visibility adds challenge and atmosphere
-- **HTML START button**: Visible button in status area for game entry
-- **Auto-return system**: 30-second timeout returns players to title screen after game over
 - **Spectator-ready architecture**: Socket system designed for future spectator mode implementation
 
 ## Technology Stack
@@ -52,24 +50,31 @@ The game implements a sophisticated real-time communication system using Socket.
 
 ## Architecture
 
-The project has been refactored into a clean, modular architecture with clear separation of concerns:
+The project uses a clean, modular architecture with clear separation of concerns:
 
 ### Backend Structure (`src/backend/`)
 
-- **index.js** - Main server file handling HTTP requests, WebSocket connections, game lifecycle, blockchain monitoring, and structured socket event broadcasting
-- **game.js** - Game class with dungeon generation, player movement, monster AI, and field-of-view calculations
-- **user.js** - User registration, authentication, game association, and payment tracking
+The backend has been refactored into focused modules for maintainability and scalability:
+
+- **index.js** - Main server orchestrator (69 lines) coordinating all modules
+- **socketHandlers.js** - Complete socket event processing system (400+ lines)
+- **broadcastManager.js** - Centralized communication and broadcasting management
+- **debugManager.js** - Debug mode and development utilities with production separation
+- **game.js** - Game class with factory methods and proper configuration integration
+- **user.js** - User management class with statistics tracking
+- **dungeon.js** - Dungeon generation with centralized configuration system
+- **lightingAndFov.js** - Field of view calculations and lighting system
 - **player.js** - Player state management and movement logic
 - **monster.js** - Monster AI and behavior
-- **dungeon.js** - Dungeon generation and map management
 - **dbcalls.js** - Database operations for user data and game history
 - **rpccalls.js** - Wownero blockchain RPC integration
 
-#### Socket Event Broadcasting (index.js)
-- **Helper Functions**: `sendGameUpdate()`, `broadcastBlockHeight()`, `sendStatusUpdate()`
-- **Event Types**: Global broadcasts, player-specific updates, status messages
-- **Spectator Ready**: Architecture supports future multi-cast to spectators
-- **Regular Broadcasting**: Block height sent every 5 seconds to all clients
+#### Modular Architecture Benefits
+- **Single Responsibility**: Each module has one clear purpose
+- **Dependency Injection**: Modules receive dependencies cleanly
+- **Future-Ready**: Easy to add features like spectator mode
+- **Debug/Production Split**: Development and production logic properly separated
+- **Maintainable**: 600-line monolith reduced to focused 69-line orchestrator
 
 ### Frontend Structure (`html/`)
 
@@ -81,10 +86,9 @@ The project has been refactored into a clean, modular architecture with clear se
    - Tile-based rendering system
 
 2. **ScreenManager.js** - Screen State Management
-   - Welcome screen with block simulation (30-second intervals)
+   - Welcome screen with block simulation
    - Win/lose screens and waiting screens
    - Centered text drawing utilities
-   - HTML START button visibility control
 
 3. **RenderEngine.js** - Game Rendering Engine
    - Game screen rendering and object drawing
@@ -94,8 +98,7 @@ The project has been refactored into a clean, modular architecture with clear se
 4. **GameState.js** - Game State Management
    - Player, map, monster, item data management
    - Game state updates and validation
-   - Field of view computation fixes
-   - Player movement logic
+   - Field of view computation and player movement logic
 
 5. **game.js** - Main Game Controller
    - Coordinates all modules with clean APIs
@@ -103,39 +106,35 @@ The project has been refactored into a clean, modular architecture with clear se
    - Handles game initialization and flow
 
 6. **Additional Modules**:
-   - **inputHandler.js** - Keyboard/mouse input with movement throttling and HTML button handling
+   - **inputHandler.js** - Keyboard/mouse input with movement throttling
    - **socketHandlers.js** - WebSocket communication with initialization protection
    - **ui.js** - User interface management and chat functionality
 
 ## Socket Event Architecture
 
-The game uses a structured socket.io event system designed for real-time multiplayer gameplay with future spectator support:
+The game uses a sophisticated socket.io event system designed for real-time multiplayer gameplay with future spectator support:
 
 ### Event Broadcasting Strategy
 
 #### **Block Height Broadcasting** (All Clients)
-- `blockheight` - Broadcast to ALL connected clients every 5 seconds
+- `blockheight` - Broadcast to ALL connected clients regularly
 - Ensures all players stay synchronized with blockchain state
 - Immediate emission on client connection
-- Regular updates prevent clients from missing block changes
 
 #### **Game State Updates** (Player + Future Spectators)
 - `game_update` - Currently sent to active player only
 - **Future Goal**: Broadcast to spectators watching specific games
-- Structured for easy expansion to multi-viewer support
 - Contains player position, FOV, monster state, items
 
 #### **Chat System** (Broadcast vs Player-Specific)
 - `chat_broadcast` - PUBLIC chat messages sent to ALL clients
 - `status_update` - PRIVATE status messages sent to individual players
-- Commands (like "enter", "hello") trigger status updates, not chat broadcasts
-- Real chat messages include username, timestamp, and message content
+- Commands trigger status updates, real chat includes username and timestamp
 
 #### **Connection & Status Management**
 - `status_update` - Player-specific notifications (errors, confirmations, help)
 - `welcome` - Initial connection acknowledgment
 - `game_start` / `game_over` - Game lifecycle events
-- Connection status immediately broadcast on client connect
 
 ### Socket Event Types
 
@@ -150,64 +149,19 @@ io.to(socketId).emit('game_update', gameState);
 io.to(socketId).emit('game_start', gameState);
 io.to(socketId).emit('game_over', { status, reason, message });
 
-// Future Spectator Events (TODO)
+// Future Spectator Events (Planned)
 io.to(spectatorId).emit('spectator_update', { playerSocketId, gameState });
 ```
 
 ### Future Spectator System (Roadmap)
 
-The socket architecture is designed to support spectating with minimal changes:
+The architecture supports adding spectator features with minimal changes:
 
 1. **Spectator Registration**: Players can request to watch active games
 2. **Multi-Cast Updates**: Game updates broadcast to player + all their spectators  
-3. **Spectator-Specific Events**: Special events for spectator UI (player info, game stats)
+3. **Spectator-Specific Events**: Special events for spectator UI
 4. **Spectator Chat**: Separate chat channels for spectators vs players
 5. **Spectator Limits**: Configurable limits on spectators per game
-
-### Real-Time Communication Goals
-
-- **Blockchain Sync**: All clients receive block updates every few seconds (not just on block changes)
-- **Scalable Game Updates**: Player actions broadcast efficiently to relevant viewers only
-- **Rich Chat System**: Distinction between commands/status and actual chat communication
-- **Spectator Ready**: Architecture supports adding spectator features without major refactoring
-
-## Recent Major Improvements
-
-### 🔌 Socket Architecture Overhaul
-- **Implemented**: Structured event system for broadcast vs player-specific messages
-- **Features**: Block height broadcasting, chat system separation, spectator-ready design
-- **Helper Functions**: `sendGameUpdate()`, `broadcastBlockHeight()`, `sendStatusUpdate()`
-- **Result**: Clean separation of concerns and foundation for spectator mode
-
-### 💀 Death Logic Fix
-- **Fixed**: Players not dying at correct block timing in autostart/debug mode
-- **Solution**: Updated death logic to kill players the block after they enter
-- **Result**: Players die exactly when block advances after entry (block N+1 after entering on block N)
-
-### ⏰ Auto-Return to Title Screen
-- **Added**: 30-second timeout after game over (win/lose/timeout)
-- **Features**: Automatic return to welcome screen, proper game state reset
-- **Result**: Seamless game flow without manual intervention
-
-### 🎯 Movement System Overhaul
-- **Fixed**: Players skipping over tiles in hallways
-- **Solution**: Added movement throttling (100ms) and prevented duplicate event handlers
-- **Result**: Precise one-tile-per-keypress movement
-
-### 🎮 START Button Fix
-- **Fixed**: START button invisible (cut off in game display area)
-- **Solution**: Moved to HTML status area with proper styling and visibility control
-- **Result**: Clearly visible green "🎮 START GAME" button
-
-### 🚀 Auto-Start System
-- **Added**: Immediate game start for development and testing
-- **Features**: Debug mode detection, 'D' key shortcut, proper SocketHandlers initialization
-- **Result**: Games start instantly in debug mode for faster development
-
-### 🏗️ Modular Architecture
-- **Completed**: Broke down 786-line monolithic game.js into focused modules
-- **Benefits**: Better maintainability, reusability, clean APIs, separation of concerns
-- **Result**: Much cleaner and more maintainable codebase
 
 ## Installation & Setup
 
@@ -232,12 +186,12 @@ The socket architecture is designed to support spectating with minimal changes:
 4. **Access the game**:
    - Open your browser to `http://localhost:3000`
    - In debug mode (localhost), press 'D' to start immediately
-   - In production mode, wait for block simulation and click "🎮 START GAME"
+   - In production mode, wait for block progression and enter the dungeon
 
 ## Game Controls
 
 - **WASD** or **Arrow Keys**: Move player
-- **Enter** or **START Button**: Enter dungeon (when available)
+- **Enter**: Enter dungeon (when available)
 - **D Key**: Debug instant start (localhost only)
 - **Chat**: Type commands and communicate with other players
 
@@ -246,39 +200,43 @@ The socket architecture is designed to support spectating with minimal changes:
 When running locally (localhost/127.0.0.1), the game includes debug features:
 
 - **Immediate Start**: Press 'D' to bypass block timing
-- **Debug Logs**: Enhanced console logging with timing information  
-- **Block Simulation**: 30-second intervals instead of real Wownero blocks
+- **Enhanced Logging**: Detailed console logging with timing information  
+- **Block Simulation**: Fast intervals instead of real Wownero blocks
 - **Auto-Entry**: Instant game start for testing
 
 ## File Structure
 
 ```
 wowngeon/
-├── README.md                    # This file
-├── src/backend/                 # Backend server code
-│   ├── index.js                # Main server file
-│   ├── game.js                 # Game logic and mechanics
-│   ├── user.js                 # User management
-│   ├── player.js               # Player state management
-│   ├── monster.js              # Monster AI
-│   ├── dungeon.js              # Dungeon generation
-│   ├── dbcalls.js              # Database operations
-│   └── rpccalls.js             # Blockchain RPC calls
-├── html/                       # Frontend web interface
-│   ├── index.html              # Main game page
-│   ├── js/                     # Modular JavaScript
-│   │   ├── displayManager.js   # Display management
-│   │   ├── screenManager.js    # Screen states
-│   │   ├── renderEngine.js     # Game rendering
-│   │   ├── gameState.js        # Game state management
-│   │   ├── game.js             # Main game controller
-│   │   ├── inputHandler.js     # Input handling
-│   │   ├── socketHandlers.js   # WebSocket communication
-│   │   ├── ui.js               # User interface
-│   │   └── options.js          # Game configuration
-│   ├── styles/                 # CSS styling
-│   └── tiles.png               # Game tile graphics
-└── test/                       # Test files
+├── README.md                      # Project documentation
+├── src/backend/                   # Backend server code
+│   ├── index.js                  # Main server orchestrator (69 lines)
+│   ├── socketHandlers.js         # Socket event processing (400+ lines)
+│   ├── broadcastManager.js       # Communication management
+│   ├── debugManager.js           # Debug/production mode handling
+│   ├── game.js                   # Game logic with factory methods
+│   ├── user.js                   # User management class
+│   ├── dungeon.js                # Dungeon generation system
+│   ├── lightingAndFov.js         # Field of view calculations
+│   ├── player.js                 # Player state management
+│   ├── monster.js                # Monster AI
+│   ├── dbcalls.js                # Database operations
+│   └── rpccalls.js               # Blockchain RPC calls
+├── html/                         # Frontend web interface
+│   ├── index.html                # Main game page
+│   ├── js/                       # Modular JavaScript
+│   │   ├── displayManager.js     # Display management
+│   │   ├── screenManager.js      # Screen states
+│   │   ├── renderEngine.js       # Game rendering
+│   │   ├── gameState.js          # Game state management
+│   │   ├── game.js               # Main game controller
+│   │   ├── inputHandler.js       # Input handling
+│   │   ├── socketHandlers.js     # WebSocket communication
+│   │   ├── ui.js                 # User interface
+│   │   └── options.js            # Game configuration
+│   ├── styles/                   # CSS styling
+│   └── tiles.png                 # Game tile graphics
+└── test/                         # Test files
 ```
 
 ## Contributing
