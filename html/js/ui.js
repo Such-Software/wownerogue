@@ -45,7 +45,7 @@ const UI = {
         // After animations are complete, set static text
         setTimeout(function() {
             $('#banner, #bannercursor').fadeOut(500, function() {
-                $('#staticbanner').text("THE WOWNGEON");
+                $('#staticbanner').text("WOWGUE - A Wownero Roguelike").fadeIn(500);
             });
         }, 14000);
     },

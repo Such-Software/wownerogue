@@ -141,7 +141,9 @@ var GameState = {
             for (let y_scan = 0; y_scan < screenHeight; y_scan++) {
                 if (this._map[y_scan]) {
                     for (let x_scan = 0; x_scan < screenWidth; x_scan++) {
-                        if (this._map[y_scan][x_scan] === 0) { // Find first floor tile
+                        const tile = this._map[y_scan][x_scan];
+                        // Check for both legacy (0) and new ("'1", "'2") floor tiles
+                        if (tile === 0 || tile === "'1" || tile === "'2") {
                             this._player.x = x_scan;
                             this._player.y = y_scan;
                             console.warn(`Player moved to fallback position: (${this._player.x}, ${this._player.y})`);
@@ -167,8 +169,9 @@ var GameState = {
             if (!this._map[y] || this._map[y][x] === undefined) {
                 return false; // Unknown tiles block light
             }
-            // Tile type 0 = floor (transparent), 1 = wall (blocks light)
-            return this._map[y][x] === 0;
+            const tile = this._map[y][x];
+            // Check for both legacy (0) and new ("'1", "'2") floor tiles
+            return tile === 0 || tile === "'1" || tile === "'2";
         }.bind(this));
 
         // If map was NOT built from initialVisibleTiles, compute FOV now
@@ -355,7 +358,9 @@ var GameState = {
         this._visibleTiles = {};
 
         const fov = new ROT.FOV.PreciseShadowcasting(function(x, y) {
-            return this._map[y] && this._map[y][x] === 0; // 0 = passable, 1 = wall
+            const tile = this._map[y] && this._map[y][x];
+            // Check for both legacy (0) and new ("'1", "'2") floor tiles
+            return tile === 0 || tile === "'1" || tile === "'2";
         }.bind(this));
 
         fov.compute(this._player.x, this._player.y, 6, function(x, y, r, visibility) {

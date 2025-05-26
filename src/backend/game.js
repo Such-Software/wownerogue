@@ -4,7 +4,7 @@ const Monster = require('./monster.js');
 const DungeonGenerator = require('./dungeon.js');
 
 class Game {
-  constructor(socketId, mapWidth, mapHeight) {
+  constructor(socketId, mapWidth, mapHeight, gameConfig = {}) {
     this.socketId = socketId;
     this.width = mapWidth || 25; // Reduced default size to match client display
     this.height = mapHeight || 19; // Reduced default size to match client display
@@ -16,11 +16,13 @@ class Game {
     this.fee = 0; // Amount player paid
     this.visibleTiles = {}; // Will store visible tiles
     this.fov = null; // FOV calculator
+    this.gameConfig = gameConfig; // Store game configuration
     this.generateDungeon();
   }
   
   generateDungeon() {
-    this.dungeon = DungeonGenerator.generate(this.width, this.height);
+    // Pass game configuration to dungeon generator
+    this.dungeon = DungeonGenerator.generate(this.width, this.height, this.gameConfig);
     
     if (this.dungeon.entrance) {
       this.player.moveTo(this.dungeon.entrance[0], this.dungeon.entrance[1]);
@@ -33,11 +35,16 @@ class Game {
       this.monster.moveTo(center[0], center[1]);
     }
     
-    // Initialize FOV calculator
+    // Initialize FOV calculator - need to check for multiple floor types now
     this.fov = new ROT.FOV.PreciseShadowcasting(
       (x, y) => {
         // Return true if the tile is transparent (can see through it)
-        return this.dungeon.map[y] && this.dungeon.map[y][x] === 0;
+        if (!this.dungeon.map[y] || this.dungeon.map[y][x] === undefined) return false;
+        const tile = this.dungeon.map[y][x];
+        // Check if it's any type of floor tile (primary or secondary)
+        const primaryFloor = this.gameConfig.primaryFloor || "'1";
+        const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
+        return tile === primaryFloor || tile === secondaryFloor;
       }
     );
     
@@ -83,10 +90,14 @@ class Game {
     console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
     
     // Check if the move is valid (not into a wall and within map bounds)
+    // Updated to handle new floor tile types
+    const primaryFloor = this.gameConfig.primaryFloor || "'1";
+    const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
+    
     if (this.dungeon && 
         this.dungeon.map[newY] && 
         this.dungeon.map[newY][newX] !== undefined && 
-        this.dungeon.map[newY][newX] === 0) { // 0 is floor
+        (this.dungeon.map[newY][newX] === primaryFloor || this.dungeon.map[newY][newX] === secondaryFloor)) {
       
       this.player.moveTo(newX, newY);
       console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
@@ -133,6 +144,7 @@ class Game {
       entrance: this.dungeon ? this.dungeon.entrance : null,
       exit: this.dungeon ? this.dungeon.exit : null,
       treasure: this.dungeon ? this.dungeon.treasure : null,
+      torches: this.dungeon ? this.dungeon.torches : [], // Include torch positions
     };
 
     // Debug logging to verify entity data

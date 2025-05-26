@@ -20,16 +20,39 @@ var options = {
     tileWidth: 32, // Width of a single tile in pixels
     tileHeight: 32, // Height of a single tile in pixels
     tileSet: tileSet,
+    
+    // GAME CONFIGURATION - Change these to select different assets
+    gameConfig: {
+        playerType: "@",      // Options: "@", "@2"
+        treasureType: "$W",   // Options: "$W" (Wownero), "$M" (Monero), "$B" (Bitcoin), "$" (Regular)
+        monsterType: "~",     // Options: "~", "~2"
+        
+        // Floor tile configuration
+        primaryFloor: "'1",   // Main floor tile (99% of floors)
+        secondaryFloor: "'2", // Alt floor tile (1% of floors)
+        floorVariation: 0.01, // Percentage of secondary floor tiles (0.01 = 1%)
+        
+        // Torch configuration
+        torchEnabled: true,   // Enable/disable torch placement
+        torchDensity: 0.15,   // Percentage of wall tiles that get torches (0.15 = 15%)
+        torchTile: "torch"    // Torch tile identifier
+    },
     tileMap: {
         // Keep your existing tile mappings
-        "'": [0, 0],  // Floor
+        "'1": [0, 0],  // Floor
         ">": [32, 0],  // Exit
         "@": [64, 0],  // Player
         "~": [96, 0], // Monster
+        "$W": [960, 0], // Wownero Treasure
+        "$M": [992, 0], // Monero Treasure
+        "'2": [1024, 0], // Alt floor
         "<": [0, 32],   // Entrance
         "=": [32, 32],  // Monster Entrance
         "#": [64, 32], // Wall
-        "$": [96, 32], // Treasure
+        "$B": [96, 32], // Bitcoin Treasure
+        "@2": [960, 32], // Player Alt
+        "~2": [992, 32], // Monster Alt
+        "torch": [1024, 32], // Torch
         // ... include all other necessary character mappings ...
         "a": [128, 0],
         "b": [160, 0],
@@ -109,11 +132,13 @@ var options = {
         "^": [736, 64],
         ")": [768, 64],
         "[": [800, 64],
-        "]": [832, 64],
+        "$": [832, 64],   // remap to regular dollar sign
         "{": [864, 64],
         "%": [896, 64],
         "^": [928, 64],
-        " ": [992, 64]
+        "\'": [960, 64],  // New quotes mapping
+        "\"": [992, 64],
+        " ": [1024, 64]
     }
 };
 
@@ -121,3 +146,33 @@ var options = {
 window.tileSet = tileSet;
 window.tileMap = options.tileMap;
 window.options = options;
+
+// Helper functions to get configured tile types
+window.GameTiles = {
+    getPlayerTile: function() {
+        return options.gameConfig.playerType;
+    },
+    
+    getTreasureTile: function() {
+        return options.gameConfig.treasureType;
+    },
+    
+    getMonsterTile: function() {
+        return options.gameConfig.monsterType;
+    },
+    
+    getFloorTile: function(useVariation = false) {
+        if (useVariation && Math.random() < options.gameConfig.floorVariation) {
+            return options.gameConfig.secondaryFloor;
+        }
+        return options.gameConfig.primaryFloor;
+    },
+    
+    getTorchTile: function() {
+        return options.gameConfig.torchTile;
+    },
+    
+    shouldPlaceTorch: function() {
+        return options.gameConfig.torchEnabled && Math.random() < options.gameConfig.torchDensity;
+    }
+};

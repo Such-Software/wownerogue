@@ -24,9 +24,16 @@ var RenderEngine = {
         const entrance = gameState.entrance;
         const exit = gameState.exit;
         const treasure = gameState.treasure;
+        const torches = gameState.torches || []; // New torch positions
         const visibleTiles = gameState.visibleTiles || {};
         const exploredTiles = gameState.exploredTiles || {};
         const message = gameState.message;
+        
+        // Get configured tile types from options
+        const playerTile = window.GameTiles ? window.GameTiles.getPlayerTile() : '@';
+        const treasureTile = window.GameTiles ? window.GameTiles.getTreasureTile() : '$W';
+        const monsterTile = window.GameTiles ? window.GameTiles.getMonsterTile() : '~';
+        const torchTile = window.GameTiles ? window.GameTiles.getTorchTile() : 'torch';
         
         const playerWX = player.x;
         const playerWY = player.y;
@@ -54,26 +61,40 @@ var RenderEngine = {
                     tileType = visibleTiles[wy][wx];
                     baseFg = this.defaultFg;
                     
-                    if (tileType === 1) {
+                    // Handle new string-based tile system
+                    if (tileType === '#') {
                         baseChar = '#'; // Wall
+                    } else if (tileType === "'1" || tileType === "'2") {
+                        baseChar = tileType; // Use the specific floor tile type
+                    } else if (tileType === 'torch') {
+                        baseChar = '#'; // Torch tiles are walls with torches on top
+                    } else if (tileType === 1) {
+                        baseChar = '#'; // Legacy wall support
                     } else if (tileType === 0) {
-                        baseChar = "'"; // Floor
+                        baseChar = "'1"; // Legacy floor support - use primary floor
                     } else {
-                        baseChar = "'"; // Default to floor for safety
-                        tileType = 0;
+                        // Use the tile type directly if it's a string
+                        baseChar = tileType || "'1"; // Default to primary floor for safety
                     }
                     
                 } else if (exploredTiles[wy] && exploredTiles[wy][wx] !== undefined) {
                     tileType = exploredTiles[wy][wx];
                     baseFg = this.defaultFg;
                     
-                    if (tileType === 1) {
+                    // Handle new string-based tile system for explored tiles
+                    if (tileType === '#') {
                         baseChar = '#'; // Wall
+                    } else if (tileType === "'1" || tileType === "'2") {
+                        baseChar = tileType; // Use the specific floor tile type
+                    } else if (tileType === 'torch') {
+                        baseChar = '#'; // Torch tiles are walls with torches on top
+                    } else if (tileType === 1) {
+                        baseChar = '#'; // Legacy wall support
                     } else if (tileType === 0) {
-                        baseChar = "'"; // Floor
+                        baseChar = "'1"; // Legacy floor support - use primary floor
                     } else {
-                        baseChar = "'"; // Default to floor for safety
-                        tileType = 0;
+                        // Use the tile type directly if it's a string
+                        baseChar = tileType || "'1"; // Default to primary floor for safety
                     }
                 } else {
                     // No visible or explored tile - render empty space
@@ -125,21 +146,28 @@ var RenderEngine = {
                 
                 // Render treasure
                 if (treasure && treasure[0] === wx && treasure[1] === wy && this.isVisible(wx, wy, visibleTiles)) {
-                    charStack.push('$');
+                    charStack.push(treasureTile);
+                    fgStack.push("transparent"); // Use transparent for now
+                    bgStack.push("transparent");
+                }
+                
+                // Render torches (check if this tile has a torch)
+                if (this.isVisible(wx, wy, visibleTiles) && visibleTiles[wy][wx] === 'torch') {
+                    charStack.push(torchTile);
                     fgStack.push("transparent"); // Use transparent for now
                     bgStack.push("transparent");
                 }
                 
                 // Render monster
                 if (monster && monster.x === wx && monster.y === wy && this.isVisible(wx, wy, visibleTiles)) {
-                    charStack.push('~'); 
+                    charStack.push(monsterTile); 
                     fgStack.push("transparent"); // Use transparent for now
                     bgStack.push("transparent");
                 }
                 
                 // Render player (always on top)
                 if (wx === playerWX && wy === playerWY) {
-                    charStack.push('@'); 
+                    charStack.push(playerTile); 
                     fgStack.push("transparent"); // Use transparent for now
                     bgStack.push("transparent");
                 }
@@ -152,7 +180,8 @@ var RenderEngine = {
                     // Validate characters are in tileMap
                     for (let i = 0; i < charStack.length; i++) {
                         if (!charStack[i] || (window.options?.tileMap && !window.options.tileMap.hasOwnProperty(charStack[i]))) {
-                            charStack[i] = "'";
+                            // Default to primary floor if tile not found
+                            charStack[i] = "'1";
                         }
                         if (!fgStack[i]) fgStack[i] = "transparent";
                         if (!bgStack[i]) bgStack[i] = "transparent";

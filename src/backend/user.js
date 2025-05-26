@@ -43,10 +43,26 @@ function getAllUsers() {
 }
 
 // Add this method to your User function/class
-User.prototype.startGame = function(width, height) {
+User.prototype.startGame = function(width, height, gameConfig = {}) {
     console.log(`Creating new game for user ${this.socketid} with dimensions ${width}x${height}`);
+    
+    // Default game configuration - can be customized per user/game
+    const defaultConfig = {
+        playerType: "@",          // Options: "@", "@2"
+        treasureType: "$W",       // Options: "$W" (Wownero), "$M" (Monero), "$B" (Bitcoin), "$" (Regular)
+        monsterType: "~",         // Options: "~", "~2"
+        primaryFloor: "'1",       // Main floor tile (99% of floors)
+        secondaryFloor: "'2",     // Alt floor tile (1% of floors)
+        floorVariation: 0.01,     // Percentage of secondary floor tiles (0.01 = 1%)
+        torchEnabled: true,       // Enable/disable torch placement
+        torchDensity: 0.15,       // Percentage of wall tiles that get torches (0.15 = 15%)
+        torchTile: "torch"        // Torch tile identifier
+    };
+    
+    const config = { ...defaultConfig, ...gameConfig };
+    
     try {
-        this.game = new Game(this.socketid, width, height);
+        this.game = new Game(this.socketid, width, height, config);
         return this.game;
     } catch (err) {
         console.error("Error creating game:", err);
