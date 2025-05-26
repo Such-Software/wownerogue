@@ -9,7 +9,7 @@ class DungeonGenerator {
         const defaultOptions = {
             floorVariation: 0.01,      // 1% secondary floor tiles
             torchEnabled: true,         // Enable torch placement
-            torchDensity: 0.15,        // 15% of wall tiles get torches
+            torchDensity: 0.05,        // Default: 5% of wall tiles get torches (comment updated)
             primaryFloor: "'1",        // Primary floor tile
             secondaryFloor: "'2",      // Secondary floor tile
             torchTile: "torch"         // Torch tile type
@@ -87,6 +87,7 @@ class DungeonGenerator {
         const height = basicMap.length;
         const width = basicMap[0].length;
         const enhancedMap = Array(height).fill().map(() => Array(width).fill(null));
+        let placedTorchesCount = 0; // Counter for torches placed in this function
         
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -103,13 +104,14 @@ class DungeonGenerator {
                     // Wall tile - maybe add a torch
                     if (config.torchEnabled && this.shouldPlaceTorch(basicMap, x, y, config.torchDensity)) {
                         enhancedMap[y][x] = config.torchTile;
+                        placedTorchesCount++; // Increment if a torch is placed
                     } else {
                         enhancedMap[y][x] = '#'; // Regular wall
                     }
                 }
             }
         }
-        
+        console.log(`[DungeonGenerator.enhanceMapWithVariations] Placed ${placedTorchesCount} torches during map enhancement.`);
         return enhancedMap;
     }
     
@@ -136,6 +138,7 @@ class DungeonGenerator {
         const torches = [];
         const height = enhancedMap.length;
         const width = enhancedMap[0].length;
+        console.log(`[DungeonGenerator.getTorchPositions] Searching for torch tile '${config.torchTile}' in a ${width}x${height} map.`);
         
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -144,7 +147,7 @@ class DungeonGenerator {
                 }
             }
         }
-        
+        console.log(`[DungeonGenerator.getTorchPositions] Found ${torches.length} torches. Positions: ${JSON.stringify(torches)}`);
         return torches;
     }
 
@@ -161,14 +164,6 @@ class DungeonGenerator {
         
         const randomRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
         return randomRoom.getCenter();
-    }
-
-    static isFloorTile(map, x, y) {
-        return map[y] && map[y][x] === 0;
-    }
-
-    static isWallTile(map, x, y) {
-        return map[y] && map[y][x] === 1;
     }
 }
 
