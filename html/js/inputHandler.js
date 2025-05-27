@@ -189,24 +189,14 @@ const InputHandler = {
     setupClickHandlers: function() {
         // Add click handling for the HTML START button
         $('#startButton').click(function(e) {
-            console.log("🖱️ START button clicked - starting game");
+            console.log("🖱️ START button clicked - auto-starting game");
             
-            // Trigger the same logic as typing 'enter'
-            const isDebugMode = window.location.hostname === 'localhost' || 
-                               window.location.hostname === '127.0.0.1' || 
-                               window.location.protocol === 'file:';
+            // Use the new auto_start event for immediate entry
+            socket.emit('auto_start');
             
-            socket.emit('chat message', 'enter');
-            
-            if (isDebugMode || ScreenManager.canEnterGame()) {
-                console.log("✅ Can enter immediately - showing waiting screen");
-                if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-                    Game.drawWaitingScreen();
-                }
-            } else {
-                console.log("⏳ Will be queued - showing queue message");
-                $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
-                UI.scrollChat();
+            console.log("✅ Auto-start requested - showing waiting screen");
+            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                Game.drawWaitingScreen();
             }
             
             // Add visual feedback to chat

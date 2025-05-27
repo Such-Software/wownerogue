@@ -51,6 +51,7 @@ class SocketHandlers {
         socket.on('disconnect', () => this.handleDisconnect(socket));
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
         socket.on('register_client', (data) => this.handleRegisterClient(socket, data));
+        socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
     }
 
     /**
@@ -65,12 +66,12 @@ class SocketHandlers {
         switch (command) {
             case 'hello':
                 this.broadcastManager.sendStatusUpdate(socket.id, 'help', 
-                    'Welcome, to enter the dungeon type Enter, and you will be given a Wownero address, ' +
-                    'which you must send between 10-100 WOW to enter. The more you send, the more you can win.');
+                    'Welcome! Type "enter" to join the queue for the next block, or use the START button for immediate entry. ' +
+                    'You must send between 10-100 WOW to enter. The more you send, the more you can win.');
                 return;
                 
             case 'enter':
-                this.handleGameEntry(socket);
+                this.handleGameQueue(socket);
                 return;
                 
             case 'cancel':
@@ -111,6 +112,94 @@ class SocketHandlers {
             console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id}`);
             this.io.to(socket.id).emit('game_start', gameState);
             console.log(`Game started immediately for player ${socket.id}`);
+        } catch (error) {
+            console.error(`Error creating game:`, error);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
+        }
+    }
+
+    /**
+     * Handle game queue request (typing "enter")
+     */
+    handleGameQueue(socket) {
+        console.log(`Player ${socket.id} requested to enter the dungeon - ADDING TO QUEUE`);
+        
+        const currentUser = this.getUserBySocket(socket.id);
+        if (!currentUser) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error: Could not add to queue. Please try again.');
+            return;
+        }
+
+        // Check if already waiting
+        const existingIndex = this.WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
+        if (existingIndex !== -1) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'You are already in the queue!');
+            return;
+        }
+
+        // Check if already in a game
+        if (this.activeGames.has(socket.id)) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You are already in a game!');
+            return;
+        }
+
+        // Add to waiting queue
+        this.WAITING_PLAYERS.push({
+            serverId: socket.id,
+            clientId: currentUser.clientId,
+            entryTime: Date.now()
+        });
+
+        const currentBlock = this.debugManager.getCurrentBlockHeight();
+        const nextBlock = currentBlock + 1;
+        
+        this.broadcastManager.sendStatusUpdate(socket.id, 'queue', 
+            `Added to queue! You will enter when block ${nextBlock} is found. Current block: ${currentBlock}`);
+        
+        console.log(`🕒 QUEUE ENTRY: Player ${socket.id} queued for block ${nextBlock}. Queue length: ${this.WAITING_PLAYERS.length}`);
+    }
+
+    /**
+     * Handle auto start request (start button)
+     */
+    handleAutoStart(socket) {
+        console.log(`Player ${socket.id} requested auto-start via start button - STARTING IMMEDIATELY`);
+        
+        const currentUser = this.getUserBySocket(socket.id);
+        if (!currentUser) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error: Could not start game. Please try again.');
+            return;
+        }
+
+        // Check if already in a game
+        if (this.activeGames.has(socket.id)) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You are already in a game!');
+            return;
+        }
+
+        // Remove from waiting queue if present
+        const waitingIndex = this.WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
+        if (waitingIndex !== -1) {
+            this.WAITING_PLAYERS.splice(waitingIndex, 1);
+            console.log(`🚀 AUTO-START: Removed ${socket.id} from waiting queue for immediate start`);
+        }
+
+        console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+        
+        try {
+            // For auto-entry, player enters on current block
+            const currentBlock = this.debugManager.getCurrentBlockHeight();
+            currentUser.blockRec = currentBlock;
+            console.log(`🕒 AUTO-START: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+            
+            const game = this.createGameForUser(currentUser, 'standard');
+            
+            const gameState = game.getState();
+            gameState.blockHeight = currentBlock;
+            
+            console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id} (AUTO-START)`);
+            this.io.to(socket.id).emit('game_start', gameState);
+            console.log(`Game started immediately for player ${socket.id} via auto-start`);
         } catch (error) {
             console.error(`Error creating game:`, error);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
