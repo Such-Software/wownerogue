@@ -45,8 +45,8 @@ const InputHandler = {
                 
                 if (isDebugMode || ScreenManager.canEnterGame()) {
                     console.log("✅ Can enter immediately - showing waiting screen");
-                    if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-                        Game.drawWaitingScreen();
+                    if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                        ScreenManager.drawWaitingScreen();
                     }
                 } else {
                     console.log("⏳ Will be queued - showing queue message");
@@ -136,8 +136,8 @@ const InputHandler = {
                             socket.emit('chat message', 'enter');
                             
                             // Show waiting screen while game starts
-                            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-                                Game.drawWaitingScreen();
+                            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                                ScreenManager.drawWaitingScreen();
                             }
                             
                             // Add debug message to chat
@@ -145,6 +145,13 @@ const InputHandler = {
                             UI.scrollChat();
                         } else {
                             console.log("Debug key pressed but not in debug mode");
+                        }
+                    } else if (e.key === 'A' || e.key === 'a') {
+                        // Toggle animation on waiting screen
+                        console.log("🎬 'A' key pressed - toggling animation");
+                        e.preventDefault();
+                        if (typeof ScreenManager !== 'undefined') {
+                            ScreenManager.toggleAnimation();
                         }
                     } else {
                         console.log("Game display has focus, but Game is not active.");
@@ -165,8 +172,8 @@ const InputHandler = {
                     
                     if (isDebugMode || ScreenManager.canEnterGame()) {
                         console.log("✅ Can enter immediately - showing waiting screen");
-                        if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-                            Game.drawWaitingScreen();
+                        if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                            ScreenManager.drawWaitingScreen();
                         }
                     } else {
                         console.log("⏳ Will be queued - showing queue message");
@@ -195,12 +202,30 @@ const InputHandler = {
             socket.emit('auto_start');
             
             console.log("✅ Auto-start requested - showing waiting screen");
-            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-                Game.drawWaitingScreen();
+            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                ScreenManager.drawWaitingScreen();
             }
             
             // Add visual feedback to chat
             $('#messages').append($('<li style="color: #0f0;">').text("🖱️ Game start requested..."));
+            UI.scrollChat();
+        });
+        
+        // Add click handling for the animation toggle button
+        $('#animationToggleButton').click(function(e) {
+            console.log("🎬 Animation toggle button clicked");
+            
+            if (typeof ScreenManager !== 'undefined' && ScreenManager.toggleAnimation) {
+                ScreenManager.toggleAnimation();
+                // Redraw the waiting screen to reflect the change
+                if (typeof ScreenManager.drawWaitingScreen === 'function') {
+                    ScreenManager.drawWaitingScreen();
+                }
+            }
+            
+            // Add visual feedback to chat
+            const status = ScreenManager._animationEnabled ? "enabled" : "disabled";
+            $('#messages').append($('<li style="color: #aa0;">').text(`🎬 Animation ${status}`));
             UI.scrollChat();
         });
     },
