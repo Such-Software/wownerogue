@@ -52,22 +52,34 @@ The game implements a sophisticated real-time communication system using Socket.
 
 The project uses a clean, modular architecture with clear separation of concerns:
 
-### Backend Structure (`src/backend/`)
+### Backend Structure (`src/`)
 
-The backend has been refactored into focused modules for maintainability and scalability:
+The backend has been refactored into focused modules organized by domain for maintainability and scalability:
 
+#### **Main Orchestrator**
 - **index.js** - Main server orchestrator (69 lines) coordinating all modules
-- **socketHandlers.js** - Complete socket event processing system (400+ lines)
-- **broadcastManager.js** - Centralized communication and broadcasting management
-- **debugManager.js** - Debug mode and development utilities with production separation
+
+#### **Game Logic (`src/game/`)**
 - **game.js** - Game class with factory methods and proper configuration integration
-- **user.js** - User management class with statistics tracking
 - **dungeon.js** - Dungeon generation with centralized configuration system
-- **lightingAndFov.js** - Field of view calculations and lighting system
 - **player.js** - Player state management and movement logic
 - **monster.js** - Monster AI and behavior
+- **lightingAndFov.js** - Field of view calculations and lighting system
+- **rot.js** & **rot.min.js** - ROT.js library for roguelike mechanics
+
+#### **Network Communication (`src/network/`)**
+- **socketHandlers.js** - Complete socket event processing system (400+ lines)
+- **broadcastManager.js** - Centralized communication and broadcasting management
+
+#### **Database Operations (`src/db/`)**
 - **dbcalls.js** - Database operations for user data and game history
+- **user.js** - User management class with statistics tracking
+
+#### **Blockchain Integration (`src/rpc/`)**
 - **rpccalls.js** - Wownero blockchain RPC integration
+
+#### **Development Tools (`src/debug/`)**
+- **debugManager.js** - Debug mode and development utilities with production separation
 
 #### Modular Architecture Benefits
 - **Single Responsibility**: Each module has one clear purpose
@@ -173,13 +185,13 @@ The architecture supports adding spectator features with minimal changes:
 
 2. **Install dependencies**:
    ```bash
-   cd src/backend
+   cd src
    npm install
    ```
 
 3. **Start the backend server**:
    ```bash
-   cd src/backend
+   cd src
    node index.js
    ```
 
@@ -209,19 +221,27 @@ When running locally (localhost/127.0.0.1), the game includes debug features:
 ```
 wowngeon/
 ├── README.md                      # Project documentation
-├── src/backend/                   # Backend server code
+├── src/                           # Backend server code
 │   ├── index.js                  # Main server orchestrator (69 lines)
-│   ├── socketHandlers.js         # Socket event processing (400+ lines)
-│   ├── broadcastManager.js       # Communication management
-│   ├── debugManager.js           # Debug/production mode handling
-│   ├── game.js                   # Game logic with factory methods
-│   ├── user.js                   # User management class
-│   ├── dungeon.js                # Dungeon generation system
-│   ├── lightingAndFov.js         # Field of view calculations
-│   ├── player.js                 # Player state management
-│   ├── monster.js                # Monster AI
-│   ├── dbcalls.js                # Database operations
-│   └── rpccalls.js               # Blockchain RPC calls
+│   ├── package.json              # Node.js dependencies
+│   ├── game/                     # Game logic and mechanics
+│   │   ├── game.js               # Game class with factory methods
+│   │   ├── dungeon.js            # Dungeon generation system
+│   │   ├── player.js             # Player state management
+│   │   ├── monster.js            # Monster AI
+│   │   ├── lightingAndFov.js     # Field of view calculations
+│   │   ├── rot.js                # ROT.js library
+│   │   └── rot.min.js            # ROT.js minified
+│   ├── network/                  # Network communication
+│   │   ├── socketHandlers.js     # Socket event processing (400+ lines)
+│   │   └── broadcastManager.js   # Communication management
+│   ├── db/                       # Database operations
+│   │   ├── dbcalls.js            # Database operations
+│   │   └── user.js               # User management class
+│   ├── rpc/                      # Blockchain integration
+│   │   └── rpccalls.js           # Blockchain RPC calls
+│   └── debug/                    # Development tools
+│       └── debugManager.js       # Debug/production mode handling
 ├── html/                         # Frontend web interface
 │   ├── index.html                # Main game page
 │   ├── js/                       # Modular JavaScript

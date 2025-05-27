@@ -1,4 +1,4 @@
-const Game = require('./game'); // Ensure Game is required
+const Game = require('../game/game'); // Ensure Game is required
 
 // User class definition
 class User {

@@ -4,7 +4,7 @@
  * Keeps debug/development code separate from production logic
  */
 
-const rpc = require('./rpccalls.js');
+const rpc = require('../rpc/rpccalls.js');
 
 class DebugManager {
     constructor(broadcastManager) {

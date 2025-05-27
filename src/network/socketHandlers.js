@@ -3,8 +3,8 @@
  * Handles all socket.io event processing for the Wowngeon game server
  */
 
-const user = require('./user');
-const Game = require('./game');
+const user = require('../db/user');
+const Game = require('../game/game');
 
 class SocketHandlers {
     constructor(io, activeGames, broadcastManager, debugManager) {

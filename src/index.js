@@ -3,12 +3,12 @@ const path = require('path');
 var app = express();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
-var db = require('./dbcalls.js');
+var db = require('./db/dbcalls.js');
 
 // Import modular components
-const BroadcastManager = require('./broadcastManager');
-const DebugManager = require('./debugManager');
-const SocketHandlers = require('./socketHandlers');
+const BroadcastManager = require('./network/broadcastManager');
+const DebugManager = require('./debug/debugManager');
+const SocketHandlers = require('./network/socketHandlers');
 
 // Initialize modular components
 const broadcastManager = new BroadcastManager(io);
@@ -16,7 +16,7 @@ const debugManager = new DebugManager(broadcastManager);
 const activeGames = new Map(); // Maps socketId to Game objects
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager);
 // Configure static file serving
-const htmlPath = path.join(__dirname, '../../html');
+const htmlPath = path.join(__dirname, '../html');
 app.use(express.static(htmlPath));
 app.use(express.json()); // Parse JSON for API endpoints
 
@@ -50,7 +50,7 @@ io.on('connection', function(socket) {
 // Debug function for registered users
 function debugRegisteredUsers() {
     console.log("📊 REGISTERED USERS DEBUG:");
-    const allUsers = require('./user').getAllUsers();
+    const allUsers = require('./db/user').getAllUsers();
     console.log(`Total registered users: ${allUsers.length}`);
     allUsers.forEach(user => {
         console.log(`  - User ID: ${user.id}, Socket: ${user.socketId}, Client: ${user.clientId}`);
