@@ -26,7 +26,7 @@ var options = {
     gameConfig: {
         playerType: "@",      // Options: "@", "@2"
         treasureType: "$W",   // Options: "$W" (Wownero), "$M" (Monero), "$B" (Bitcoin), "$" (Regular)
-        monsterType: "~",     // Options: "~", "~2"
+        monsterType: "~2",     // Options: "~", "~2"
         
         // Floor tile configuration
         primaryFloor: "'1",   // Main floor tile (99% of floors)

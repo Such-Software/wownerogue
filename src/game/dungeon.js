@@ -6,8 +6,8 @@ const ROT = require('./rot.js');
 // Edit these values to customize dungeon generation
 const DUNGEON_CONFIGS = {
     // Default dungeon dimensions
-    DEFAULT_WIDTH: 80,
-    DEFAULT_HEIGHT: 40,
+    DEFAULT_WIDTH: 40,
+    DEFAULT_HEIGHT: 20,
     
     // Legacy smaller dungeon size (for compatibility)
     LEGACY_WIDTH: 25,
@@ -20,7 +20,7 @@ const DUNGEON_CONFIGS = {
     DUG_PERCENTAGE: 0.2,
     
     // Lighting and appearance
-    TORCH_DENSITY: 0.2,        // 20% chance for torches on wall tiles adjacent to floors
+    TORCH_DENSITY: 0.1,        // 20% chance for torches on wall tiles adjacent to floors
     TORCH_ENABLED: true,       // Set to false to disable torches completely
     FLOOR_VARIATION: 0.01,     // Chance for secondary floor tiles (visual variety)
     
