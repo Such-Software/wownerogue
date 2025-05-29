@@ -27,7 +27,9 @@ app.get('/', function(req, res) {
 
 // Debug endpoint to receive client-side debug info
 app.post('/debug', (req, res) => {
-  console.log('📝 CLIENT DEBUG INFO:', req.body);
+  if (debugManager.CONSOLE_LOGGING) {
+    console.log('📝 CLIENT DEBUG INFO:', req.body);
+  }
   res.json({ received: true, timestamp: Date.now() });
 });
 
@@ -49,13 +51,15 @@ io.on('connection', function(socket) {
 
 // Debug function for registered users
 function debugRegisteredUsers() {
-    console.log("📊 REGISTERED USERS DEBUG:");
-    const allUsers = require('./db/user').getAllUsers();
-    console.log(`Total registered users: ${allUsers.length}`);
-    allUsers.forEach(user => {
-        console.log(`  - User ID: ${user.id}, Socket: ${user.socketId}, Client: ${user.clientId}`);
-    });
-    console.log(`Active games: ${activeGames.size}`);
+    if (debugManager.CONSOLE_LOGGING) {
+        console.log("📊 REGISTERED USERS DEBUG:");
+        const allUsers = require('./db/user').getAllUsers();
+        console.log(`Total registered users: ${allUsers.length}`);
+        allUsers.forEach(user => {
+            console.log(`  - User ID: ${user.id}, Socket: ${user.socketId}, Client: ${user.clientId}`);
+        });
+        console.log(`Active games: ${activeGames.size}`);
+    }
 }
 
 // Regular debug logging

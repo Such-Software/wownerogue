@@ -5,15 +5,50 @@
  */
 
 const rpc = require('../rpc/rpccalls.js');
+const packageConfig = require('../package.json');
 
 class DebugManager {
     constructor(broadcastManager) {
         this.broadcastManager = broadcastManager;
-        this.DEBUG_MODE = true; // Set to false to disable debug mode
+        
+        // Environment-based configuration
+        const nodeEnv = process.env.NODE_ENV || 'production';
+        this.IS_PRODUCTION = nodeEnv === 'production';
+        this.IS_DEBUG = nodeEnv === 'debug';
+        this.IS_DEVELOPMENT = nodeEnv === 'development';
+        
+        // Debug mode is enabled in development or debug environments
+        this.DEBUG_MODE = this.IS_DEBUG || this.IS_DEVELOPMENT;
+        
+        // Configuration from package.json
+        const config = this.IS_PRODUCTION ? packageConfig.config.production : packageConfig.config.debug;
+        this.CONSOLE_LOGGING = config.console_logging || this.DEBUG_MODE;
+        this.DEBUG_HOTKEYS = config.debug_hotkeys || this.DEBUG_MODE;
+        this.SIMULATED_BLOCKS = config.simulated_blocks || this.DEBUG_MODE;
+        
         this.debugBlockHeight = 1;
         this.debugInterval = null;
         this.statusInterval = null;
         this.lastProductionBlockHeight = 0;
+        
+        // Log configuration on startup
+        this.logConfig();
+    }
+
+    // ====== CONFIGURATION LOGGING ======
+
+    /**
+     * Log current configuration settings
+     */
+    logConfig() {
+        if (this.CONSOLE_LOGGING) {
+            console.log("🔧 DEBUG MANAGER CONFIGURATION:");
+            console.log(`  NODE_ENV: ${process.env.NODE_ENV || 'production'}`);
+            console.log(`  DEBUG_MODE: ${this.DEBUG_MODE}`);
+            console.log(`  CONSOLE_LOGGING: ${this.CONSOLE_LOGGING}`);
+            console.log(`  DEBUG_HOTKEYS: ${this.DEBUG_HOTKEYS}`);
+            console.log(`  SIMULATED_BLOCKS: ${this.SIMULATED_BLOCKS}`);
+        }
     }
 
     // ====== INITIALIZATION ======
@@ -22,7 +57,7 @@ class DebugManager {
      * Initialize debug mode or production mode
      */
     initialize() {
-        if (this.DEBUG_MODE) {
+        if (this.DEBUG_MODE && this.SIMULATED_BLOCKS) {
             this.initializeDebugMode();
         } else {
             this.initializeProductionMode();
@@ -33,7 +68,9 @@ class DebugManager {
      * Initialize debug mode with simulated blocks
      */
     initializeDebugMode() {
-        console.log("🐛 DEBUG MODE ENABLED - Simulating blocks every 30 seconds");
+        if (this.CONSOLE_LOGGING) {
+            console.log("🐛 DEBUG MODE ENABLED - Simulating blocks every 30 seconds");
+        }
         
         // Initial debug block broadcast
         this.broadcastManager.broadcastBlockHeight(this.debugBlockHeight);
@@ -41,7 +78,9 @@ class DebugManager {
         // Debug block height simulator - advances every 30 seconds
         this.debugInterval = setInterval(() => {
             this.debugBlockHeight++;
-            console.log(`🐛 DEBUG: New simulated block: ${this.debugBlockHeight}`);
+            if (this.CONSOLE_LOGGING) {
+                console.log(`🐛 DEBUG: New simulated block: ${this.debugBlockHeight}`);
+            }
             this.broadcastManager.broadcastBlockHeight(this.debugBlockHeight);
             
             // Notify listeners about new block
@@ -60,13 +99,17 @@ class DebugManager {
      * Initialize production mode with real blockchain calls
      */
     initializeProductionMode() {
-        console.log("🚀 PRODUCTION MODE ENABLED - Using real blockchain RPC calls");
+        if (this.CONSOLE_LOGGING) {
+            console.log("🚀 PRODUCTION MODE ENABLED - Using real blockchain RPC calls");
+        }
         
         // Real blockchain monitoring
         this.debugInterval = setInterval(() => {
             rpc.daemonCall("get_block_count", "", (result) => {
                 if (!result || !result.result || !result.result.count) {
-                    console.log("❌ Failed to get block count from daemon");
+                    if (this.CONSOLE_LOGGING) {
+                        console.log("❌ Failed to get block count from daemon");
+                    }
                     return;
                 }
                 
@@ -75,7 +118,9 @@ class DebugManager {
                 
                 // If new block found
                 if (currentHeight > this.lastProductionBlockHeight) {
-                    console.log(`⛏️ New block found: ${currentHeight}`);
+                    if (this.CONSOLE_LOGGING) {
+                        console.log(`⛏️ New block found: ${currentHeight}`);
+                    }
                     this.broadcastManager.broadcastBlockHeight(currentHeight);
                     
                     // Notify listeners about new block
@@ -107,8 +152,11 @@ class DebugManager {
     setDebugBlockHeight(height) {
         if (this.DEBUG_MODE) {
             this.debugBlockHeight = height;
-            this.broadcastManager.broadcastBlockHeight(this.debugBlockHeight);
-        } else {
+            if (this.CONSOLE_LOGGING) {
+                console.log(`🐛 DEBUG: Block height set to: ${height}`);
+            }
+            this.broadcastManager.broadcastBlockHeight(height);
+        } else if (this.CONSOLE_LOGGING) {
             console.warn("Cannot set debug block height in production mode");
         }
     }
@@ -119,10 +167,12 @@ class DebugManager {
     advanceDebugBlock() {
         if (this.DEBUG_MODE) {
             this.debugBlockHeight++;
-            console.log(`🐛 DEBUG: Manually advanced block to: ${this.debugBlockHeight}`);
+            if (this.CONSOLE_LOGGING) {
+                console.log(`🐛 DEBUG: Manually advanced block to: ${this.debugBlockHeight}`);
+            }
             this.broadcastManager.broadcastBlockHeight(this.debugBlockHeight);
             this.onNewBlock(this.debugBlockHeight);
-        } else {
+        } else if (this.CONSOLE_LOGGING) {
             console.warn("Cannot advance debug block in production mode");
         }
     }
@@ -136,7 +186,9 @@ class DebugManager {
      */
     onNewBlock(blockHeight) {
         // This method can be overridden or have callbacks registered
-        console.log(`📦 New block detected: ${blockHeight}`);
+        if (this.CONSOLE_LOGGING) {
+            console.log(`📦 New block detected: ${blockHeight}`);
+        }
         
         // Call registered callbacks
         if (this.newBlockCallbacks) {
@@ -144,7 +196,9 @@ class DebugManager {
                 try {
                     callback(blockHeight);
                 } catch (error) {
-                    console.error("Error in new block callback:", error);
+                    if (this.CONSOLE_LOGGING) {
+                        console.error("Error in new block callback:", error);
+                    }
                 }
             });
         }
@@ -184,13 +238,15 @@ class DebugManager {
      * @param {object} data - Event data
      */
     debugSocket(socketId, eventName, data) {
-        const shortSocketId = socketId.substring(0, 8);
-        console.log(`🔌 SOCKET DEBUG: Sending ${eventName} to ${shortSocketId}...`);
-        
-        // Limit payload logging to prevent console spam
-        const dataStr = JSON.stringify(data);
-        const shortDataStr = dataStr.length > 300 ? dataStr.substring(0, 300) + "..." : dataStr;
-        console.log(`📦 PAYLOAD: ${shortDataStr}`);
+        if (this.CONSOLE_LOGGING) {
+            const shortSocketId = socketId.substring(0, 8);
+            console.log(`🔌 SOCKET DEBUG: Sending ${eventName} to ${shortSocketId}...`);
+            
+            // Limit payload logging to prevent console spam
+            const dataStr = JSON.stringify(data);
+            const shortDataStr = dataStr.length > 300 ? dataStr.substring(0, 300) + "..." : dataStr;
+            console.log(`📦 PAYLOAD: ${shortDataStr}`);
+        }
     }
 
     // ====== CLEANUP ======
@@ -209,7 +265,9 @@ class DebugManager {
             this.statusInterval = null;
         }
         
-        console.log("🧹 Debug manager cleaned up");
+        if (this.CONSOLE_LOGGING) {
+            console.log("🧹 Debug manager cleaned up");
+        }
     }
 
     /**
@@ -217,7 +275,9 @@ class DebugManager {
      * @param {boolean} enabled - Whether to enable debug mode
      */
     setDebugMode(enabled) {
-        console.log(`🔄 Switching debug mode to: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+        if (this.CONSOLE_LOGGING) {
+            console.log(`🔄 Switching debug mode to: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+        }
         this.cleanup();
         this.DEBUG_MODE = enabled;
         this.initialize();

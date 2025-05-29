@@ -120,9 +120,9 @@ var RenderEngine = {
                     const isCurrentlyVisible = this.isVisible(wx, wy, visibleTiles);
 
                     // Added log to inspect lightingAlpha for visible, lit tiles
-                    if (isCurrentlyVisible && lightingAlpha > 0.01) { // Using 0.01 to catch small, non-zero alphas
-                        console.log(`RenderEngine TRACE: Tile (${wx},${wy}), Visible: ${isCurrentlyVisible}, lightingAlpha: ${lightingAlpha.toFixed(3)}, from: ${lighting[wy] ? lighting[wy][wx].toFixed(3) : 'N/A'}`);
-                    }
+                    // if (isCurrentlyVisible && lightingAlpha > 0.01) { // Using 0.01 to catch small, non-zero alphas
+                    //     console.log(`RenderEngine TRACE: Tile (${wx},${wy}), Visible: ${isCurrentlyVisible}, lightingAlpha: ${lightingAlpha.toFixed(3)}, from: ${lighting[wy] ? lighting[wy][wx].toFixed(3) : 'N/A'}`);
+                    // }
 
                     if (isCurrentlyVisible) {
                         if (lightingAlpha > 0) {

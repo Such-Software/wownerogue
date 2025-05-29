@@ -4,8 +4,24 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "NODE_ENV=production node index.js",
+    "dev": "NODE_ENV=development node index.js",
+    "debug": "NODE_ENV=debug node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "config": {
+    "debug": {
+      "enabled": false,
+      "console_logging": false,
+      "debug_hotkeys": false,
+      "simulated_blocks": false
+    },
+    "production": {
+      "enabled": true,
+      "console_logging": false,
+      "debug_hotkeys": false,
+      "simulated_blocks": false
+    }
   },
   "author": "jw",
   "license": "ISC",

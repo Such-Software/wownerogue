@@ -1,6 +1,9 @@
 var axios = require('axios');
 var request = require('request');
 
+// Environment-based console logging control
+const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+
 /*List of RPC calls
 Daemon -
 Get blockheight: "get_block_count"
@@ -33,7 +36,9 @@ function daemonCall(method, params, callback, io) {
         json: body
     }, function (error, res, body) {
         if (error) {
-            console.log("Daemon connection error:", error.message);
+            if (CONSOLE_LOGGING) {
+                console.log("Daemon connection error:", error.message);
+            }
             callback(null);
             return;
         }

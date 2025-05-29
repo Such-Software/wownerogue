@@ -70,20 +70,7 @@ class Monster {
         if (!player) return false;
 
         // Check for direct overlap - monster on same tile as player
-        if (this.x === player.x && this.y === player.y) {
-            return true;
-        }
-        
-        // Check for adjacent tiles (optional - if you want 1-tile proximity kills)
-        const dx = Math.abs(this.x - player.x);
-        const dy = Math.abs(this.y - player.y);
-        
-        // If monster is adjacent (one tile away in any direction)
-        if ((dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)) {
-            return true;
-        }
-        
-        return false;
+        return this.x === player.x && this.y === player.y;
     }
 
     // Get monster state as object

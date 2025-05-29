@@ -1,5 +1,8 @@
 const { Client } = require('pg');
 
+// Environment-based console logging control
+const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+
 const client = new Client({
    user: 'postgres',
    host: 'localhost',
@@ -21,7 +24,11 @@ function initializeDatabase() {
     `;
     
     client.query(createTableQuery)
-        .then(() => console.log("Database initialized"))
+        .then(() => {
+            if (CONSOLE_LOGGING) {
+                console.log("Database initialized");
+            }
+        })
         .catch(err => console.error("Database initialization error:", err));
 }
 
@@ -43,7 +50,9 @@ function insertVisitor(socketid, ip, cookie) {
         
         // If table doesn't exist yet, try to initialize again
         if (res.rows[0].to_regclass === null) {
-            console.log("Table 'visitors' doesn't exist yet, creating it now...");
+            if (CONSOLE_LOGGING) {
+                console.log("Table 'visitors' doesn't exist yet, creating it now...");
+            }
             initializeDatabase();
             return;
         }
@@ -51,11 +60,15 @@ function insertVisitor(socketid, ip, cookie) {
         // Insert the visitor
         client.query(insertVisitorText, values, (err, res) => {
             if (err) {
-                console.log(err.stack);
+                console.error("Database insert error:", err.stack);
             } else if (res.rows && res.rows[0]) {
-                console.log("Visitor inserted:", res.rows[0]);
+                if (CONSOLE_LOGGING) {
+                    console.log("Visitor inserted:", res.rows[0]);
+                }
             } else {
-                console.log("Visitor inserted");
+                if (CONSOLE_LOGGING) {
+                    console.log("Visitor inserted");
+                }
             }
         });
     });

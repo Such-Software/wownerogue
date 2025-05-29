@@ -6,7 +6,6 @@ const SocketHandlers = {
     
     init: function() {
         if (this._initialized) {
-            console.warn("SocketHandlers.init() called multiple times - ignoring duplicate call");
             return;
         }
         
@@ -15,7 +14,6 @@ const SocketHandlers = {
             return;
         }
 
-        console.log("SocketHandlers: Initializing for the first time...");
         this.registerEventHandlers();
         this._initialized = true;
     },
@@ -40,7 +38,6 @@ const SocketHandlers = {
     },
 
     onConnect: function() {
-        console.log("Connected with socket ID:", socket.id);
         
         // Tell server our client ID
         socket.emit('register_client', {
@@ -63,7 +60,6 @@ const SocketHandlers = {
 
     onStatusUpdate: function(data) {
         // Handle player-specific status updates
-        console.log("📨 STATUS UPDATE received:", data);
         
         // Display status message with appropriate styling
         const statusClass = data.type === 'error' ? 'error' : 'status';
@@ -73,7 +69,6 @@ const SocketHandlers = {
 
     onChatBroadcast: function(data) {
         // Handle chat messages broadcast to all players
-        console.log("💬 CHAT BROADCAST received:", data);
         
         const timestamp = new Date(data.timestamp || Date.now()).toLocaleTimeString();
         const chatMsg = `[${timestamp}] ${data.username || 'Anonymous'}: ${data.message}`;
@@ -83,7 +78,6 @@ const SocketHandlers = {
     },
 
     onWaitingStatus: function(data) {
-        console.log("🕒 WAITING STATUS received:", data);
         
         if (data.status === 'waiting') {
             $('#messages').append($('<li style="color:#ff0;">').text(data.message));
@@ -97,15 +91,6 @@ const SocketHandlers = {
     },
 
     onGameStart: function(data) {
-        console.log("🎮 Game start received with data:", data);
-        console.log("🔍 DETAILED DATA CHECK:");
-        console.log("  - Player:", data?.player);
-        console.log("  - Map keys:", data?.map ? Object.keys(data.map).length : "NO MAP");
-        console.log("  - Monster:", data?.monster);
-        console.log("  - Items:", data?.items);
-        console.log("  - VisibleTiles keys:", data?.visibleTiles ? Object.keys(data.visibleTiles).length : "NO VISIBLE TILES");
-        console.log("  - Lighting keys:", data?.lighting ? Object.keys(data.lighting).length : "NO LIGHTING");
-        console.log("  - Torches:", data?.torches ? data.torches.length : "NO TORCHES (expected - lighting calculated server-side)");
         
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
@@ -122,16 +107,11 @@ const SocketHandlers = {
         try {
             // Pass all game data including lighting and torches
             var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles, data.lighting, data.torches);
-            console.log("Game start result:", success ? "SUCCESS" : "FAILED");
             
             if (!success) {
                 $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
-                console.log("❌ GAME START FAILED - reverting to welcome screen");
                 if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
             } else {
-                // Draw the initial game screen - the game draws itself after startGame()
-                console.log("Game started successfully, initial screen should be drawn");
-                
                 // Shift focus to the game display area after successful game start
                 $('#game-display').focus(); 
                 UI.updateFocusIndicator();
@@ -144,39 +124,9 @@ const SocketHandlers = {
     },
 
     onGameUpdate: function(data) {
-        // Debug log to see what data we're receiving
-        console.log("🎮 GAME UPDATE received with keys:", Object.keys(data));
-        
-        // Debug lighting data specifically
-        if (data.lighting && Object.keys(data.lighting).length > 0) {
-            console.log("🔥 GAME UPDATE: lighting data received with", Object.keys(data.lighting).length, "rows");
-        } else {
-            console.log("⚠️ GAME UPDATE: NO lighting data in update");
-        }
-        
-        // Debug torch data specifically  
-        if (data.torches && data.torches.length > 0) {
-            console.log("🔦 GAME UPDATE: torch data received with", data.torches.length, "torches");
-        } else {
-            console.log("ℹ️ GAME UPDATE: No torch data (expected - lighting calculated server-side)");
-        }
         
         if (data.visibleTiles) {
-            const debugMsg = "🔍 SOCKET: Received game update with visibleTiles";
-            console.log(debugMsg);
-            if (window.GameDebug) window.GameDebug.updateDebugDisplay(debugMsg);
-            
-            // Check for specific coordinates that are problematic
-            if (data.visibleTiles[18] && (data.visibleTiles[18][36] !== undefined || data.visibleTiles[18][35] !== undefined)) {
-                const coordDebug = `🔍 SOCKET y=18: x=35: ${data.visibleTiles[18][35]}, x=36: ${data.visibleTiles[18][36]}`;
-                console.log(coordDebug);
-                if (window.GameDebug) window.GameDebug.updateDebugDisplay(coordDebug);
-            }
-            if (data.visibleTiles[16] && (data.visibleTiles[16][36] !== undefined || data.visibleTiles[16][35] !== undefined)) {
-                const coordDebug = `🔍 SOCKET y=16: x=35: ${data.visibleTiles[16][35]}, x=36: ${data.visibleTiles[16][36]}`;
-                console.log(coordDebug);
-                if (window.GameDebug) window.GameDebug.updateDebugDisplay(coordDebug);
-            }
+            if (window.GameDebug) window.GameDebug.updateDebugDisplay("SOCKET: Received game update with visibleTiles");
         }
         
         if (typeof Game !== 'undefined' && Game._gameActive) {
@@ -185,7 +135,6 @@ const SocketHandlers = {
     },
 
     onGameOver: function(data) {
-        console.log("🎮 GAME OVER received:", data);
         
         // Update game state based on outcome
         if (typeof Game !== 'undefined') {
@@ -224,9 +173,7 @@ const SocketHandlers = {
             }
             
             // Auto-return to title screen after 30 seconds
-            console.log("⏰ Setting 30-second timer to return to title screen...");
             setTimeout(() => {
-                console.log("⏰ 30 seconds elapsed - returning to title screen");
                 $('#messages').append($('<li style="color:#888;">').text("Returning to title screen..."));
                 UI.scrollChat();
                 
@@ -250,7 +197,6 @@ const SocketHandlers = {
     },
 
     onQueueCancelled: function() {
-        console.log("Queue cancelled, returning to welcome screen");
         
         if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) {
             Game._drawWelcomeScreen();
@@ -260,7 +206,6 @@ const SocketHandlers = {
     },
 
     onBlockHeight: function(height) {
-        console.log(`📈 BLOCK HEIGHT: ${height}`);
         UI.updateBlockHeight(height);
         $('#statusValue').text('Connected');
         $('#statusValue').css('color', '#0f0');

@@ -22,16 +22,20 @@ class SocketHandlers {
      * Initialize socket event handlers for a new connection
      */
     handleConnection(socket) {
-        console.log('A user connected');
-        console.log(socket.client.id);
-        console.log(socket.handshake.address);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log('A user connected');
+            console.log(socket.client.id);
+            console.log(socket.handshake.address);
+        }
         
         // Create and register user
         new user.User(socket.id, socket.handshake.address);
         const newUser = this.getUserBySocket(socket.id);
         if (newUser) {
             newUser.clientId = socket.client.id;
-            console.log(`User created with both socket.id (${socket.id}) and socket.client.id (${socket.client.id})`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`User created with both socket.id (${socket.id}) and socket.client.id (${socket.client.id})`);
+            }
         }
         
         // Send welcome and current status
@@ -39,7 +43,9 @@ class SocketHandlers {
         
         // Send current block height
         const currentBlock = this.debugManager.getCurrentBlockHeight();
-        console.log(`📈 Sending current block height ${currentBlock} to new connection ${socket.id}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`📈 Sending current block height ${currentBlock} to new connection ${socket.id}`);
+        }
         this.io.to(socket.id).emit('blockheight', currentBlock);
         
         // Send connection status
@@ -58,7 +64,9 @@ class SocketHandlers {
      * Handle chat messages and game commands
      */
     handleChatMessage(socket, msg) {
-        console.log('Message received:', msg);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log('Message received:', msg);
+        }
         
         const command = msg.toLowerCase();
         
@@ -88,7 +96,9 @@ class SocketHandlers {
      * Handle game entry request
      */
     handleGameEntry(socket) {
-        console.log(`Player ${socket.id} requested to enter the dungeon - STARTING IMMEDIATELY`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Player ${socket.id} requested to enter the dungeon - STARTING IMMEDIATELY`);
+        }
         
         const currentUser = this.getUserBySocket(socket.id);
         if (!currentUser) {
@@ -96,22 +106,30 @@ class SocketHandlers {
             return;
         }
 
-        console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+        }
         
         try {
             // For auto-entry in debug mode, player enters on current block
             const currentBlock = this.debugManager.getCurrentBlockHeight();
             currentUser.blockRec = currentBlock;
-            console.log(`🕒 AUTO-ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`🕒 AUTO-ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+            }
             
             const game = this.createGameForUser(currentUser, 'standard');
             
             const gameState = game.getState();
             gameState.blockHeight = currentBlock;
             
-            console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id}`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id}`);
+            }
             this.io.to(socket.id).emit('game_start', gameState);
-            console.log(`Game started immediately for player ${socket.id}`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Game started immediately for player ${socket.id}`);
+            }
         } catch (error) {
             console.error(`Error creating game:`, error);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
@@ -122,7 +140,9 @@ class SocketHandlers {
      * Handle game queue request (typing "enter")
      */
     handleGameQueue(socket) {
-        console.log(`Player ${socket.id} requested to enter the dungeon - ADDING TO QUEUE`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Player ${socket.id} requested to enter the dungeon - ADDING TO QUEUE`);
+        }
         
         const currentUser = this.getUserBySocket(socket.id);
         if (!currentUser) {
@@ -156,14 +176,18 @@ class SocketHandlers {
         this.broadcastManager.sendStatusUpdate(socket.id, 'queue', 
             `Added to queue! You will enter when block ${nextBlock} is found. Current block: ${currentBlock}`);
         
-        console.log(`🕒 QUEUE ENTRY: Player ${socket.id} queued for block ${nextBlock}. Queue length: ${this.WAITING_PLAYERS.length}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`🕒 QUEUE ENTRY: Player ${socket.id} queued for block ${nextBlock}. Queue length: ${this.WAITING_PLAYERS.length}`);
+        }
     }
 
     /**
      * Handle auto start request (start button)
      */
     handleAutoStart(socket) {
-        console.log(`Player ${socket.id} requested auto-start via start button - STARTING IMMEDIATELY`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Player ${socket.id} requested auto-start via start button - STARTING IMMEDIATELY`);
+        }
         
         const currentUser = this.getUserBySocket(socket.id);
         if (!currentUser) {
@@ -181,25 +205,35 @@ class SocketHandlers {
         const waitingIndex = this.WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
         if (waitingIndex !== -1) {
             this.WAITING_PLAYERS.splice(waitingIndex, 1);
-            console.log(`🚀 AUTO-START: Removed ${socket.id} from waiting queue for immediate start`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`🚀 AUTO-START: Removed ${socket.id} from waiting queue for immediate start`);
+            }
         }
 
-        console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Found user for socket ${socket.id}, starting game immediately...`);
+        }
         
         try {
             // For auto-entry, player enters on current block
             const currentBlock = this.debugManager.getCurrentBlockHeight();
             currentUser.blockRec = currentBlock;
-            console.log(`🕒 AUTO-START: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`🕒 AUTO-START: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+            }
             
             const game = this.createGameForUser(currentUser, 'standard');
             
             const gameState = game.getState();
             gameState.blockHeight = currentBlock;
             
-            console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id} (AUTO-START)`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id} (AUTO-START)`);
+            }
             this.io.to(socket.id).emit('game_start', gameState);
-            console.log(`Game started immediately for player ${socket.id} via auto-start`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Game started immediately for player ${socket.id} via auto-start`);
+            }
         } catch (error) {
             console.error(`Error creating game:`, error);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
@@ -225,7 +259,9 @@ class SocketHandlers {
      * Handle chat broadcast to all clients
      */
     handleChatBroadcast(socket, msg) {
-        console.log(`💬 Broadcasting chat message from ${socket.id}: "${msg}"`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`💬 Broadcasting chat message from ${socket.id}: "${msg}"`);
+        }
         
         const currentUser = this.getUserBySocket(socket.id);
         const username = currentUser?.username || `User_${socket.id.substr(-4)}`;
@@ -242,12 +278,16 @@ class SocketHandlers {
      * Handle player movement
      */
     handlePlayerMove(socket, moveData) {
-        console.log(`Player move event received from ${socket.id}:`, moveData);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Player move event received from ${socket.id}:`, moveData);
+        }
         const currentUser = this.getUserBySocket(socket.id);
         const game = this.activeGames.get(socket.id);
 
         if (!currentUser || !game || game.gameState !== 'active') {
-            console.log(`Player move event from ${socket.id} ignored: No active game found for user.`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Player move event from ${socket.id} ignored: No active game found for user.`);
+            }
             return;
         }
 
@@ -256,7 +296,9 @@ class SocketHandlers {
         const lastMoveTime = this.playerMoveTimestamps.get(socket.id) || 0;
         
         if (now - lastMoveTime < this.MOVE_COOLDOWN) {
-            console.log(`Move from ${socket.id} throttled - too soon after last move (${now - lastMoveTime}ms)`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Move from ${socket.id} throttled - too soon after last move (${now - lastMoveTime}ms)`);
+            }
             return;
         }
         
@@ -269,7 +311,9 @@ class SocketHandlers {
         const moveResult = game.movePlayer(moveData.dx, moveData.dy);
 
         if (!moveResult || moveResult.status !== 'moved') {
-            console.log(`Player move from ${socket.id} was invalid or resulted in no change.`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Player move from ${socket.id} was invalid or resulted in no change.`);
+            }
             return;
         }
 
@@ -326,7 +370,9 @@ class SocketHandlers {
      * Handle client disconnection
      */
     handleDisconnect(socket) {
-        console.log('User disconnected', socket.client.id);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log('User disconnected', socket.client.id);
+        }
         
         // Clean up movement timestamps
         this.playerMoveTimestamps.delete(socket.id);
@@ -347,7 +393,9 @@ class SocketHandlers {
      * Handle debug ping
      */
     handleDebugPing(socket, data) {
-        console.log(`Debug ping received from ${socket.client.id}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Debug ping received from ${socket.client.id}`);
+        }
         socket.emit('debug_pong', {
             message: "Hello from server!",
             clientTime: data.time,
@@ -360,7 +408,9 @@ class SocketHandlers {
      * Handle client registration
      */
     handleRegisterClient(socket, data) {
-        console.log(`Client registered: ${socket.id} (server) <-> ${data.clientId} (client)`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Client registered: ${socket.id} (server) <-> ${data.clientId} (client)`);
+        }
         
         this.clientSocketMap.set(data.clientId, socket.id);
         this.clientSocketMap.set(socket.id, data.clientId);
@@ -378,17 +428,23 @@ class SocketHandlers {
      * Get user by socket ID with fallback mapping
      */
     getUserBySocket(socketId) {
-        console.log(`Looking up user with socketId: ${socketId}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Looking up user with socketId: ${socketId}`);
+        }
         
         let foundUser = user.getUserBySocketId(socketId);
         
         if (!foundUser && this.clientSocketMap.has(socketId)) {
             const mappedId = this.clientSocketMap.get(socketId);
-            console.log(`Socket ID ${socketId} not found directly, trying mapped ID: ${mappedId}`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Socket ID ${socketId} not found directly, trying mapped ID: ${mappedId}`);
+            }
             foundUser = user.getUserBySocketId(mappedId);
         }
         
-        console.log(`User lookup result for ${socketId}: ${foundUser ? "FOUND" : "NOT FOUND"}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`User lookup result for ${socketId}: ${foundUser ? "FOUND" : "NOT FOUND"}`);
+        }
         return foundUser;
     }
 
@@ -407,7 +463,9 @@ class SocketHandlers {
         user.joinGame(game);
         this.activeGames.set(user.id, game);
         
-        console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id}`);
+        }
         return game;
     }
 
@@ -422,20 +480,22 @@ class SocketHandlers {
      * Log game update debug information
      */
     logGameUpdate(socketId, gameState) {
-        console.log(`🔍 GAME UPDATE DEBUG for ${socketId}:`);
-        console.log(`  - Player position: (${gameState.player?.x}, ${gameState.player?.y})`);
-        console.log(`  - Visible tiles keys: ${Object.keys(gameState.visibleTiles || {}).length} rows`);
-        console.log(`  - Lighting data included: ${!!gameState.lighting}`);
-        if (gameState.lighting) {
-            const lightingTileCount = Object.keys(gameState.lighting).reduce((acc, yKey) => 
-                acc + Object.keys(gameState.lighting[yKey] || {}).length, 0);
-            console.log(`  - Lighting tiles count: ${lightingTileCount}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`🔍 GAME UPDATE DEBUG for ${socketId}:`);
+            console.log(`  - Player position: (${gameState.player?.x}, ${gameState.player?.y})`);
+            console.log(`  - Visible tiles keys: ${Object.keys(gameState.visibleTiles || {}).length} rows`);
+            console.log(`  - Lighting data included: ${!!gameState.lighting}`);
+            if (gameState.lighting) {
+                const lightingTileCount = Object.keys(gameState.lighting).reduce((acc, yKey) => 
+                    acc + Object.keys(gameState.lighting[yKey] || {}).length, 0);
+                console.log(`  - Lighting tiles count: ${lightingTileCount}`);
+            }
+            console.log(`  - Torch data included: ${!!gameState.torches}`);
+            if (gameState.torches) {
+                console.log(`  - Torch count: ${gameState.torches.length}`);
+            }
+            console.log(`Sending game_update to ${socketId} after player move.`);
         }
-        console.log(`  - Torch data included: ${!!gameState.torches}`);
-        if (gameState.torches) {
-            console.log(`  - Torch count: ${gameState.torches.length}`);
-        }
-        console.log(`Sending game_update to ${socketId} after player move.`);
     }
 
     // Queue management methods (for future block-based game entry)
@@ -444,19 +504,25 @@ class SocketHandlers {
      * Start games for waiting players when a new block is found
      */
     startGamesForWaiting(blockHeight) {
-        console.log(`Starting games for ${this.WAITING_PLAYERS.length} waiting players at block height ${blockHeight}`);
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Starting games for ${this.WAITING_PLAYERS.length} waiting players at block height ${blockHeight}`);
+        }
       
         while (this.WAITING_PLAYERS.length > 0) {
             const playerEntry = this.WAITING_PLAYERS.shift();
             const serverId = playerEntry.serverId;
             
-            console.log(`Processing player: server=${serverId}`);
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`Processing player: server=${serverId}`);
+            }
             
             const currentUser = this.getUserBySocket(serverId);
             
             if (currentUser) {
                 currentUser.blockRec = blockHeight;
-                console.log(`🕒 QUEUE ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`🕒 QUEUE ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
+                }
                 
                 try {
                     const game = this.createGameForUser(currentUser, 'standard');
@@ -464,9 +530,13 @@ class SocketHandlers {
                     const gameState = game.getState();
                     gameState.blockHeight = blockHeight;
                     
-                    console.log(`🎮 SENDING GAME_START to ${serverId}`);
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`🎮 SENDING GAME_START to ${serverId}`);
+                    }
                     this.io.to(serverId).emit('game_start', gameState);
-                    console.log(`Game started for player ${serverId}`);
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`Game started for player ${serverId}`);
+                    }
                 } catch (error) {
                     console.error(`Error creating game:`, error);
                     this.io.to(serverId).emit('message', 'Error starting game: ' + error.message);
@@ -486,7 +556,9 @@ class SocketHandlers {
             const user = this.getUserBySocket(socketId);
             
             if (user && user.blockRec && currentHeight > user.blockRec) {
-                console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
+                }
                 
                 game.gameState = 'lost';
                 this.io.to(socketId).emit('game_over', {

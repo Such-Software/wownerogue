@@ -88,39 +88,52 @@ The backend has been refactored into focused modules organized by domain for mai
 - **Debug/Production Split**: Development and production logic properly separated
 - **Maintainable**: 600-line monolith reduced to focused 69-line orchestrator
 
-### Frontend Structure (`html/`)
+### Frontend Structure (`html/js/`)
 
-#### Modular JavaScript Architecture:
+The frontend has been reorganized into a logical directory structure for better maintainability:
 
-1. **DisplayManager.js** - Display & Canvas Management
-   - ROT.Display initialization and setup
-   - Display state management and clearing
-   - Tile-based rendering system
+#### **Organized JavaScript Architecture:**
 
-2. **ScreenManager.js** - Screen State Management
-   - Welcome screen with block simulation
-   - Win/lose screens and waiting screens
-   - Centered text drawing utilities
+**Core Game Logic (`core/`)**
+- **game.js** - Main Game Controller coordinating all modules with clean APIs
+- **gameState.js** - Game State Management (player, map, monster, item data)
+- **options.js** - Game configuration and settings
 
-3. **RenderEngine.js** - Game Rendering Engine
-   - Game screen rendering and object drawing
-   - Field of view rendering and visibility checks
-   - Drawing game objects (player, monsters, items, terrain)
+**Display & Rendering (`display/`)**
+- **displayManager.js** - Display & Canvas Management (ROT.Display initialization)
+- **screenManager.js** - Screen State Management (welcome, win/lose, waiting screens)
+- **renderEngine.js** - Game Rendering Engine (FOV rendering, drawing game objects)
+- **waitingScreenAnimator.js** - Animated waiting screens during block progression
 
-4. **GameState.js** - Game State Management
-   - Player, map, monster, item data management
-   - Game state updates and validation
-   - Field of view computation and player movement logic
+**User Interface (`ui/`)**
+- **ui.js** - User interface management and chat functionality
+- **teletype.js** - Typewriter-style text effects
 
-5. **game.js** - Main Game Controller
-   - Coordinates all modules with clean APIs
-   - Provides backward-compatible interface
-   - Handles game initialization and flow
+**Input Handling (`input/`)**
+- **inputHandler.js** - Keyboard/mouse input with movement throttling
 
-6. **Additional Modules**:
-   - **inputHandler.js** - Keyboard/mouse input with movement throttling
-   - **socketHandlers.js** - WebSocket communication with initialization protection
-   - **ui.js** - User interface management and chat functionality
+**Network Communication (`network/`)**
+- **socketHandlers.js** - WebSocket communication with initialization protection
+
+**External Libraries (`lib/`)**
+- **jquery-3.4.1.min.js** - jQuery library
+- **rot.js** & **rot.min.js** - ROT.js library for roguelike mechanics
+
+## Recent Updates & Production Readiness
+
+### Console Logging Cleanup
+- **Backend**: Implemented conditional logging using `process.env.NODE_ENV` checks
+- **Frontend**: Removed verbose console.log statements while preserving error logging
+- **Production Ready**: Clean console output in production mode controlled by environment variables
+
+### Monster Collision Fix
+- **Exact Tile Collision**: Fixed monster kill logic to only trigger when monster and player occupy the exact same tile
+- **Removed Adjacent Kills**: Players are no longer killed when monsters are merely adjacent
+
+### Code Organization
+- **Frontend Restructure**: Organized JavaScript files into logical directories (`core/`, `display/`, `ui/`, `input/`, `network/`, `lib/`)
+- **Better Maintainability**: Clear separation of concerns with modular file structure
+- **Updated HTML**: Both `index.html` and `debug.html` updated to reference new file paths
 
 ## Socket Event Architecture
 
@@ -228,7 +241,7 @@ wowngeon/
 │   │   ├── game.js               # Game class with factory methods
 │   │   ├── dungeon.js            # Dungeon generation system
 │   │   ├── player.js             # Player state management
-│   │   ├── monster.js            # Monster AI
+│   │   ├── monster.js            # Monster AI with exact collision detection
 │   │   ├── lightingAndFov.js     # Field of view calculations
 │   │   ├── rot.js                # ROT.js library
 │   │   └── rot.min.js            # ROT.js minified
@@ -244,16 +257,28 @@ wowngeon/
 │       └── debugManager.js       # Debug/production mode handling
 ├── html/                         # Frontend web interface
 │   ├── index.html                # Main game page
-│   ├── js/                       # Modular JavaScript
-│   │   ├── displayManager.js     # Display management
-│   │   ├── screenManager.js      # Screen states
-│   │   ├── renderEngine.js       # Game rendering
-│   │   ├── gameState.js          # Game state management
-│   │   ├── game.js               # Main game controller
-│   │   ├── inputHandler.js       # Input handling
-│   │   ├── socketHandlers.js     # WebSocket communication
-│   │   ├── ui.js                 # User interface
-│   │   └── options.js            # Game configuration
+│   ├── debug.html                # Debug testing page
+│   ├── js/                       # Organized JavaScript modules
+│   │   ├── core/                 # Core game logic
+│   │   │   ├── game.js           # Main game controller
+│   │   │   ├── gameState.js      # Game state management
+│   │   │   └── options.js        # Game configuration
+│   │   ├── display/              # Display and rendering
+│   │   │   ├── displayManager.js # Display management
+│   │   │   ├── screenManager.js  # Screen states
+│   │   │   ├── renderEngine.js   # Game rendering
+│   │   │   └── waitingScreenAnimator.js # Animated screens
+│   │   ├── ui/                   # User interface
+│   │   │   ├── ui.js             # UI management
+│   │   │   └── teletype.js       # Text effects
+│   │   ├── input/                # Input handling
+│   │   │   └── inputHandler.js   # Keyboard/mouse input
+│   │   ├── network/              # Network communication
+│   │   │   └── socketHandlers.js # WebSocket communication
+│   │   └── lib/                  # External libraries
+│   │       ├── jquery-3.4.1.min.js
+│   │       ├── rot.js
+│   │       └── rot.min.js
 │   ├── styles/                   # CSS styling
 │   └── tiles.png                 # Game tile graphics
 └── test/                         # Test files

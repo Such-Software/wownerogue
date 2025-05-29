@@ -1,5 +1,8 @@
 const ROT = require('./rot.js');
 
+// Environment-based console logging control
+const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+
 // ========================================
 // DUNGEON CONFIGURATION SECTION
 // ========================================
@@ -51,7 +54,9 @@ class DungeonGenerator {
         };
         
         const config = { ...defaultOptions, ...options };
-        console.log(`[DungeonGenerator] Generating dungeon with effective torchDensity: ${config.torchDensity}`); // Log effective torchDensity
+        if (CONSOLE_LOGGING) {
+            console.log(`[DungeonGenerator] Generating dungeon with effective torchDensity: ${config.torchDensity}`);
+        }
 
         // Create dungeon using ROT.js Map.Digger
         const digger = new ROT.Map.Digger(width, height, {
@@ -132,7 +137,9 @@ class DungeonGenerator {
         let placedTorchesCount = 0; // Counter for torches placed in this function
         
         // Log the torchDensity being used for this map generation pass
-        console.log(`[DungeonGenerator.enhanceMapWithVariations] Starting enhancement with torchDensity: ${config.torchDensity}`);
+        if (CONSOLE_LOGGING) {
+            console.log(`[DungeonGenerator.enhanceMapWithVariations] Starting enhancement with torchDensity: ${config.torchDensity}`);
+        }
 
         const height = basicMap.length; // Use basicMap's dimensions
         const width = basicMap[0].length; // Use basicMap's dimensions
@@ -159,7 +166,9 @@ class DungeonGenerator {
                 }
             }
         }
-        console.log(`[DungeonGenerator.enhanceMapWithVariations] Placed ${placedTorchesCount} torches during map enhancement.`);
+        if (CONSOLE_LOGGING) {
+            console.log(`[DungeonGenerator.enhanceMapWithVariations] Placed ${placedTorchesCount} torches during map enhancement.`);
+        }
         return enhancedMap;
     }
     
@@ -196,7 +205,9 @@ class DungeonGenerator {
 
         const height = enhancedMap.length;
         const width = enhancedMap[0].length;
-        console.log(`[DungeonGenerator.getTorchPositions] Searching for torch tile '${config.torchTile}' in a ${width}x${height} map.`);
+        if (CONSOLE_LOGGING) {
+            console.log(`[DungeonGenerator.getTorchPositions] Searching for torch tile '${config.torchTile}' in a ${width}x${height} map.`);
+        }
         
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -205,7 +216,9 @@ class DungeonGenerator {
                 }
             }
         }
-        console.log(`[DungeonGenerator.getTorchPositions] Found ${torches.length} torches. Positions: ${JSON.stringify(torches)}`);
+        if (CONSOLE_LOGGING) {
+            console.log(`[DungeonGenerator.getTorchPositions] Found ${torches.length} torches. Positions: ${JSON.stringify(torches)}`);
+        }
         return torches;
     }
 

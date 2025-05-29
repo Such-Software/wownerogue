@@ -3,7 +3,7 @@
 if (typeof window !== 'undefined' && !window.socket) {
     window.socket = {
         emit: function(event, data) {
-            console.log("[Mock Socket] Would emit:", event, data);
+            // Mock socket emit - removed debug logging
         }
     };
 }
@@ -16,8 +16,6 @@ var Game = {
     _maxLogMessages: 5,
 
     init: function() {
-        console.log("Game.init called - Modular version");
-        
         // Update screen dimensions from options
         if (typeof options !== 'undefined') {
             this._screenWidth = options.width || 25;
@@ -52,21 +50,16 @@ var Game = {
             console.error("Game: Cannot start game, display not ready.");
             return false;
         }
-        console.log("Game: startGame called. PlayerData:", playerData, "MapData:", mapData, "InitialVisibleTiles:", initialVisibleTiles);
-        console.log("🔥 LIGHTING DATA received in startGame:", lightingData);
-        console.log("🔦 TORCH DATA received in startGame:", torchData);
 
         DisplayManager.clearDisplay();
         
         // Force clear all display caches and artifacts
         if (typeof DisplayManager !== 'undefined' && DisplayManager.forceClearToBlack) {
-            console.log("✅ Force clearing display to prevent artifacts...");
             DisplayManager.forceClearToBlack();
         }
         
         // Stop the block simulation to prevent welcome screen from interfering
         if (typeof ScreenManager !== 'undefined' && ScreenManager.stopBlockSimulation) {
-            console.log("✅ Stopping block simulation...");
             ScreenManager.stopBlockSimulation();
         }
         
@@ -74,7 +67,6 @@ var Game = {
             GameState.setGameActive(true);
 
             // Clear any previous game state but preserve what we need for initialization
-            console.log("✅ Clearing previous game state (but preserving server data)...");
             GameState._exploredTiles = {};
             // Don't clear _visibleTiles yet - let initializeMap handle it properly
             GameState._map = {};
@@ -97,11 +89,9 @@ var Game = {
             // Initialize lighting and torch data
             if (lightingData) {
                 GameState._lighting = lightingData;
-                console.log("🔥 GameState: Lighting data stored with", Object.keys(lightingData).length, "rows");
             }
             if (torchData) {
                 GameState._torches = torchData;
-                console.log("🔦 GameState: Torch data stored with", torchData.length, "torches");
             }
 
             // Initialize map and validate player position
@@ -122,7 +112,6 @@ var Game = {
 
             GameState._scheduler.add(GameState._player, true);
 
-            console.log("Player coordinates before drawing game screen:", GameState._player.x, GameState._player.y);
             if (!GameState._map[GameState._player.y] || GameState._map[GameState._player.y][GameState._player.x] === undefined) {
                 console.error(`Player position (${GameState._player.x}, ${GameState._player.y}) is STILL invalid before drawing. Map issue?`);
                 ScreenManager.drawCenteredText(10, "Error: Player invalid for draw!");
@@ -130,7 +119,6 @@ var Game = {
             }
 
             this._drawGameScreen();
-            console.log("Game started successfully and initial screen drawn.");
             return true;
 
         } catch (err) {
@@ -155,7 +143,6 @@ var Game = {
         
         // Redraw the game screen if any relevant data changed
         if (needsRedraw) {
-            console.log("Redrawing game screen due to game update.");
             this._drawGameScreen();
         }
     },
@@ -167,14 +154,6 @@ var Game = {
     _drawGameScreen: function() {
         if (!this._ensureDisplay()) return;
         const gameState = GameState.getGameStateForRender();
-        
-        // Debug: Verify lighting data is included in render state
-        console.log("🎨 _drawGameScreen() passing lighting data:", {
-            hasLighting: !!gameState.lighting,
-            lightingKeys: gameState.lighting ? Object.keys(gameState.lighting).length : 0,
-            hasTorches: !!gameState.torches,
-            torchCount: gameState.torches ? gameState.torches.length : 0
-        });
         
         RenderEngine.drawGameScreen(gameState);
     },

@@ -21,15 +21,12 @@ const UI = {
         if (document.activeElement === gameDisplay[0]) {
             gameDisplay.css('outline', '2px solid yellow');
             chatInput.css('outline', 'none');
-            console.log("Focus: Game Display");
         } else if (document.activeElement === chatInput[0]) {
             chatInput.css('outline', '2px solid cyan');
             gameDisplay.css('outline', 'none');
-            console.log("Focus: Chat Input");
         } else {
             gameDisplay.css('outline', 'none');
             chatInput.css('outline', 'none');
-            console.log("Focus: None or Other");
         }
     },
 

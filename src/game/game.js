@@ -5,6 +5,9 @@ const Monster = require('./monster.js');
 const DungeonGenerator = require('./dungeon.js');
 const LightingAndFov = require('./lightingAndFov.js');
 
+// Environment-based console logging control
+const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+
 class Game {
   /**
    * Create a new game instance
@@ -42,9 +45,11 @@ class Game {
       ...gameOptions
     };
 
-    console.log(`[Game Constructor] Creating game for user ${user.id} (socket: ${socketId})`);
-    console.log(`[Game Constructor] Dimensions: ${width}x${height}`);
-    console.log(`[Game Constructor] Game config:`, JSON.stringify(this.gameConfig, null, 2));
+    if (CONSOLE_LOGGING) {
+      console.log(`[Game Constructor] Creating game for user ${user.id} (socket: ${socketId})`);
+      console.log(`[Game Constructor] Dimensions: ${width}x${height}`);
+      console.log(`[Game Constructor] Game config:`, JSON.stringify(this.gameConfig, null, 2));
+    }
 
     this.initializeGame();
   }
@@ -70,7 +75,9 @@ class Game {
   }
 
   initializeGame() {
-    console.log(`[Game.initializeGame] Initializing game with config:`, JSON.stringify(this.gameConfig, null, 2));
+    if (CONSOLE_LOGGING) {
+      console.log(`[Game.initializeGame] Initializing game with config:`, JSON.stringify(this.gameConfig, null, 2));
+    }
     if (typeof this.gameConfig.width === 'undefined' || typeof this.gameConfig.height === 'undefined') {
       console.error("[Game.initializeGame] CRITICAL: Width or Height is undefined in gameConfig!", this.gameConfig);
       throw new Error(`Invalid game dimensions: width=${this.gameConfig.width}, height=${this.gameConfig.height}`);
@@ -120,7 +127,9 @@ class Game {
     const newX = this.player.x + dx;
     const newY = this.player.y + dy;
     
-    console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
+    if (CONSOLE_LOGGING) {
+      console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
+    }
     
     // Check if the move is valid (not into a wall and within map bounds)
     const primaryFloor = this.gameConfig.primaryFloor || "'1";
@@ -132,7 +141,9 @@ class Game {
         (this.dungeon.map[newY][newX] === primaryFloor || this.dungeon.map[newY][newX] === secondaryFloor)) {
       
       this.player.moveTo(newX, newY);
-      console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
+      if (CONSOLE_LOGGING) {
+        console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
+      }
       
       // Update FOV after moving
       this.updateFOV();
@@ -144,17 +155,23 @@ class Game {
       }
       if (this.dungeon.treasure && this.player.isAt(this.dungeon.treasure[0], this.dungeon.treasure[1]) && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
-        console.log(`🏆 TREASURE PICKUP: Player ${this.socketId} collected treasure at (${this.dungeon.treasure[0]}, ${this.dungeon.treasure[1]})`);
+        if (CONSOLE_LOGGING) {
+          console.log(`🏆 TREASURE PICKUP: Player ${this.socketId} collected treasure at (${this.dungeon.treasure[0]}, ${this.dungeon.treasure[1]})`);
+        }
         this.dungeon.treasure = null;
-        console.log(`🗑️ TREASURE REMOVED: dungeon.treasure is now null for player ${this.socketId}`);
-        console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
+        if (CONSOLE_LOGGING) {
+          console.log(`🗑️ TREASURE REMOVED: dungeon.treasure is now null for player ${this.socketId}`);
+          console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
+        }
         return { status: 'moved', event: 'treasure_found', player: this.player.getState(), visibleTiles: this.visibleTiles };
       }
       
       return { status: 'moved', player: this.player.getState(), visibleTiles: this.visibleTiles };
     }
     
-    console.log(`Move BLOCKED: ${newX},${newY} - cell value: ${this.dungeon && this.dungeon.map[newY] ? this.dungeon.map[newY][newX] : 'undefined'}`);
+    if (CONSOLE_LOGGING) {
+      console.log(`Move BLOCKED: ${newX},${newY} - cell value: ${this.dungeon && this.dungeon.map[newY] ? this.dungeon.map[newY][newX] : 'undefined'}`);
+    }
     return { status: 'invalid' };
   }
   
@@ -174,9 +191,11 @@ class Game {
       treasure: this.dungeon ? this.dungeon.treasure : null,
     };
 
-    console.log("🎮 getState() sending entities - Monster:", state.monster, "Entrance:", state.entrance, "Exit:", state.exit, "Treasure:", state.treasure);
-    if (state.treasure === null) {
-      console.log("✅ TREASURE NULL: Confirmed treasure is null in getState() - treasure was picked up!");
+    if (CONSOLE_LOGGING) {
+      console.log("🎮 getState() sending entities - Monster:", state.monster, "Entrance:", state.entrance, "Exit:", state.exit, "Treasure:", state.treasure);
+      if (state.treasure === null) {
+        console.log("✅ TREASURE NULL: Confirmed treasure is null in getState() - treasure was picked up!");
+      }
     }
 
     return state;

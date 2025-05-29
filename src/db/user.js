@@ -1,5 +1,8 @@
 const Game = require('../game/game'); // Ensure Game is required
 
+// Environment-based console logging control
+const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+
 // User class definition
 class User {
     constructor(id, address) {
@@ -22,7 +25,9 @@ class User {
         
         // Add user to the registry upon creation
         userRegistry.set(id, this);
-        console.log(`User created and registered: ${id}`);
+        if (CONSOLE_LOGGING) {
+            console.log(`User created and registered: ${id}`);
+        }
     }
 
     /**
@@ -32,7 +37,9 @@ class User {
     joinGame(gameInstance) {
         this.currentGame = gameInstance;
         this.stats.gamesPlayed++;
-        console.log(`[User.joinGame] User ${this.id} joined game ${gameInstance.id}. Total games played: ${this.stats.gamesPlayed}`);
+        if (CONSOLE_LOGGING) {
+            console.log(`[User.joinGame] User ${this.id} joined game ${gameInstance.id}. Total games played: ${this.stats.gamesPlayed}`);
+        }
     }
 
     /**
@@ -64,7 +71,9 @@ class User {
                 this.stats.monstersDefeated += gameStats.monstersDefeated;
             }
             
-            console.log(`[User.endGame] User ${this.id} game ended: ${result}. Score: ${score}. Stats: ${JSON.stringify(this.stats)}`);
+            if (CONSOLE_LOGGING) {
+                console.log(`[User.endGame] User ${this.id} game ended: ${result}. Score: ${score}. Stats: ${JSON.stringify(this.stats)}`);
+            }
         }
     }
 

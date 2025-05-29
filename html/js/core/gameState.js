@@ -68,7 +68,6 @@ var GameState = {
 
         // Try to initialize from mapData.tiles
         if (mapData && mapData.tiles && typeof mapData.tiles === 'object' && Object.keys(mapData.tiles).length > 0) {
-            console.log("Initializing map from mapData.tiles:", mapData.tiles);
             for (var yKey in mapData.tiles) {
                 const y = parseInt(yKey);
                 this._map[y] = {};
@@ -78,11 +77,9 @@ var GameState = {
                 }
             }
             mapInitialized = true;
-            console.log("Game map initialized from mapData.tiles:", this._map);
         } 
         // Try array-based mapData
         else if (mapData && Array.isArray(mapData) && mapData.length > 0) {
-            console.warn("Received array-based mapData, attempting to convert.");
             for (let y = 0; y < mapData.length; y++) {
                 this._map[y] = {};
                 if (mapData[y] && Array.isArray(mapData[y])) {
@@ -92,11 +89,9 @@ var GameState = {
                 }
             }
             mapInitialized = true;
-            console.log("Game map initialized from array-based mapData:", this._map);
         } 
         // Try initialVisibleTiles
         else if (initialVisibleTiles && typeof initialVisibleTiles === 'object' && Object.keys(initialVisibleTiles).length > 0) {
-            console.log("Initializing _visibleTiles from server-sent initialVisibleTiles and inferring _map for FOV.");
             this._visibleTiles = JSON.parse(JSON.stringify(initialVisibleTiles)); // Deep copy
 
             for (const yKey in this._visibleTiles) {
@@ -108,8 +103,6 @@ var GameState = {
                 }
             }
             mapInitialized = true;
-            console.log("Game map partially initialized for FOV from initialVisibleTiles:", this._map);
-            console.log("_visibleTiles set directly from initialVisibleTiles:", this._visibleTiles);
         }
 
         // Create default map if nothing worked
@@ -131,7 +124,6 @@ var GameState = {
                     this._map[this._player.y][this._player.x] = 0; // Force floor
                 }
             }
-            console.log("Default game map created. Player position:", this._player.x, this._player.y);
         }
 
         return mapInitialized;
@@ -150,7 +142,6 @@ var GameState = {
                         if (tile === 0 || tile === "'1" || tile === "'2") {
                             this._player.x = x_scan;
                             this._player.y = y_scan;
-                            console.warn(`Player moved to fallback position: (${this._player.x}, ${this._player.y})`);
                             foundFallback = true; 
                             break;
                         }
@@ -191,7 +182,6 @@ var GameState = {
         
         // NOTE: Don't call updateExploredTiles() here on initial game load
         // Explored tiles should only be updated when player moves, not on first FOV computation
-        console.log("Initial FOV computed/processed. Visible tiles count:", Object.keys(this._visibleTiles).reduce((acc, yKey) => acc + Object.keys(this._visibleTiles[yKey]).length, 0));
     },
 
     updateExploredTiles: function() {
@@ -207,8 +197,6 @@ var GameState = {
     },
 
     updateGameState: function(data) {
-        console.log("🎲 GameState.updateGameState received data:", data);
-        
         if (!this._gameActive) {
             console.warn("GameState.updateGameState called, but game is not active. Ignoring update.");
             return false;
@@ -255,33 +243,25 @@ var GameState = {
 
             // Update lighting and torch data
             if (data.lighting !== undefined) {
-                console.log("🔥 BEFORE UPDATE: this._lighting has", this._lighting ? Object.keys(this._lighting).length : 0, "rows");
-                console.log("🔥 NEW DATA: data.lighting has", Object.keys(data.lighting).length, "rows");
-                console.log("🔥 LIGHTING DATA SAMPLE:", JSON.stringify(data.lighting).substring(0, 200));
                 this._lighting = data.lighting;
-                console.log("🔥 AFTER UPDATE: this._lighting has", this._lighting ? Object.keys(this._lighting).length : 0, "rows");
                 needsRedraw = true;
             }
             if (data.torches !== undefined) {
                 this._torches = data.torches;
                 needsRedraw = true;
-                console.log("🔦 GameState: Updated torch data with", data.torches.length, "torches");
             }
 
             // Update visible tiles (most critical for movement feedback)
             if (data.visibleTiles && typeof data.visibleTiles === 'object' && Object.keys(data.visibleTiles).length > 0) {
-                console.log("Visible tiles updated. Number of rows:", Object.keys(data.visibleTiles).length);
                 this._visibleTiles = data.visibleTiles;
                 
                 // Debug log for specific problematic coordinates 
                 if (this._visibleTiles[18] && (this._visibleTiles[18][36] !== undefined || this._visibleTiles[18][35] !== undefined)) {
                     const clientDebug = `🔍 CLIENT y=18: x=35: ${this._visibleTiles[18][35]}, x=36: ${this._visibleTiles[18][36]}`;
-                    console.log(clientDebug);
                     if (window.GameDebug) window.GameDebug.updateDebugDisplay(clientDebug);
                 }
                 if (this._visibleTiles[16] && (this._visibleTiles[16][36] !== undefined || this._visibleTiles[16][35] !== undefined)) {
                     const clientDebug = `🔍 CLIENT y=16: x=35: ${this._visibleTiles[16][35]}, x=36: ${this._visibleTiles[16][36]}`;
-                    console.log(clientDebug);
                     if (window.GameDebug) window.GameDebug.updateDebugDisplay(clientDebug);
                 }
                 
@@ -313,19 +293,18 @@ var GameState = {
             // Move the player
             this._player.x = newX;
             this._player.y = newY;
-            console.log("Player moved to:", this._player.x, this._player.y);
             
             // Update visibility and redraw
             this.updateExploredTiles();
             return true;
         } else {
-            console.log("Move blocked by wall or invalid map data at:", newX, newY);
             return false;
         }
     },
 
-    // Debug functions
+    // Debug functions  
     debugPrintMap: function(screenWidth, screenHeight) {
+        // Map debugging - preserve console.log for debug function
         console.log("Current game map:");
         for (let y = 0; y < screenHeight; y++) {
             let row = "";
@@ -341,6 +320,7 @@ var GameState = {
     },
 
     debugTileMapping: function() {
+        // Tile mapping debugging - preserve console.log for debug function
         const testValues = [0, 1, undefined, null];
         for (const val of testValues) {
             const char = (val === 1) ? '#' : "\'";
@@ -357,7 +337,8 @@ var GameState = {
             return;
         }
 
-        console.log("⚠️  LOCAL FOV COMPUTATION (should only be used for testing without server)");
+        // Warning for local FOV computation (keep for debugging)
+        // console.log("⚠️  LOCAL FOV COMPUTATION (should only be used for testing without server)");
         
         const oldVisibleTiles = JSON.parse(JSON.stringify(this._visibleTiles));
         this._visibleTiles = {};
@@ -376,22 +357,10 @@ var GameState = {
             if (!this._exploredTiles[y]) this._exploredTiles[y] = {};
             this._exploredTiles[y][x] = this._map[y] && this._map[y][x] !== undefined ? this._map[y][x] : 0;
         }.bind(this));
-
-        console.log("FOV computed for player at:", this._player.x, this._player.y);
-        console.log("Visible tiles:", Object.keys(this._visibleTiles).length);
     },
 
     // Get game state data for rendering
     getGameStateForRender: function() {
-        // Debug: Log the actual lighting data being returned
-        console.log("🔍 getGameStateForRender() lighting check:", {
-            lightingExists: !!this._lighting,
-            lightingKeys: this._lighting ? Object.keys(this._lighting).length : 0,
-            lightingRef: this._lighting,
-            torchExists: !!this._torches,
-            torchCount: this._torches ? this._torches.length : 0
-        });
-        
         const renderState = {
             map: this._map,
             player: this._player,
@@ -408,7 +377,6 @@ var GameState = {
             torches: this._torches
         };
         
-        console.log("🔍 getGameStateForRender() RETURNING lighting with", renderState.lighting ? Object.keys(renderState.lighting).length : 0, "keys");
         return renderState;
     },
 

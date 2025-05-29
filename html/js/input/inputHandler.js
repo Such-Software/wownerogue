@@ -9,11 +9,9 @@ const InputHandler = {
     
     init: function() {
         if (this._initialized) {
-            console.warn("InputHandler.init() called multiple times - ignoring duplicate call");
             return;
         }
         
-        console.log("InputHandler: Initializing for the first time...");
         this.setupChatForm();
         this.setupFocusHandlers();
         this.setupKeyboardControls();
@@ -30,12 +28,9 @@ const InputHandler = {
             // Don't send empty messages
             if (!msg) return false;
             
-            console.log("📝 SENDING CHAT:", msg);
-            
             // If the message is "enter", always send it to server
             // The server will handle queueing logic and timing
             if (msg.toLowerCase() === 'enter') {
-                console.log("🔑 'ENTER' COMMAND DETECTED - sending to server");
                 socket.emit('chat message', msg);
                 
                 // Show appropriate screen based on current state
@@ -44,12 +39,10 @@ const InputHandler = {
                                    window.location.protocol === 'file:';
                 
                 if (isDebugMode || ScreenManager.canEnterGame()) {
-                    console.log("✅ Can enter immediately - showing waiting screen");
                     if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
                         ScreenManager.drawWaitingScreen();
                     }
                 } else {
-                    console.log("⏳ Will be queued - showing queue message");
                     $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
                     UI.scrollChat();
                 }
@@ -93,7 +86,6 @@ const InputHandler = {
                     }
 
                     if (moved) {
-                        console.log(`🎹 KEYDOWN: dx=${dx}, dy=${dy}, key=${e.key}, time=${Date.now()}`);
                         e.preventDefault(); // Prevent page scrolling
                         
                         // Implement movement throttling to prevent rapid-fire movement
@@ -101,18 +93,15 @@ const InputHandler = {
                         if (now - self._lastMoveTime >= self._moveCooldown) {
                             // Send move immediately if enough time has passed
                             socket.emit('player_move', { dx: dx, dy: dy });
-                            console.log(`✅ EMITTED player_move: dx=${dx}, dy=${dy}`);
                             self._lastMoveTime = now;
                             self._pendingMove = null;
                         } else {
                             // Queue the move to be sent after cooldown
                             self._pendingMove = { dx: dx, dy: dy };
                             const timeToWait = self._moveCooldown - (now - self._lastMoveTime);
-                            console.log(`⏳ QUEUED move: dx=${dx}, dy=${dy}, waiting ${timeToWait}ms`);
                             setTimeout(() => {
                                 if (self._pendingMove) {
                                     socket.emit('player_move', self._pendingMove);
-                                    console.log(`✅ EMITTED queued player_move: dx=${self._pendingMove.dx}, dy=${self._pendingMove.dy}`);
                                     self._lastMoveTime = Date.now();
                                     self._pendingMove = null;
                                 }
@@ -121,47 +110,19 @@ const InputHandler = {
                     }
                 } else {
                     // Game display has focus but game is not active (welcome screen)
-                    // Check for debug key 'D' to start immediately
-                    if (e.key === 'D' || e.key === 'd') {
-                        // Check if we're in debug mode (localhost)
-                        const isDebugMode = window.location.hostname === 'localhost' || 
-                                           window.location.hostname === '127.0.0.1' || 
-                                           window.location.protocol === 'file:';
-                        
-                        if (isDebugMode) {
-                            console.log("🔧 DEBUG: 'D' key pressed - starting game immediately");
-                            e.preventDefault();
-                            
-                            // Emit enter command to start game immediately
-                            socket.emit('chat message', 'enter');
-                            
-                            // Show waiting screen while game starts
-                            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                                ScreenManager.drawWaitingScreen();
-                            }
-                            
-                            // Add debug message to chat
-                            $('#messages').append($('<li style="color: #0f0;">').text("🔧 DEBUG: Starting game immediately..."));
-                            UI.scrollChat();
-                        } else {
-                            console.log("Debug key pressed but not in debug mode");
-                        }
-                    } else if (e.key === 'A' || e.key === 'a') {
+                    // Only handle animation toggle
+                    if (e.key === 'A' || e.key === 'a') {
                         // Toggle animation on waiting screen
-                        console.log("🎬 'A' key pressed - toggling animation");
                         e.preventDefault();
                         if (typeof ScreenManager !== 'undefined') {
                             ScreenManager.toggleAnimation();
                         }
-                    } else {
-                        console.log("Game display has focus, but Game is not active.");
                     }
                 }
             } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
                 // If Enter is pressed and chat is not focused
                 if (typeof Game !== 'undefined' && !Game._gameActive) {
                     // On welcome screen - start the game
-                    console.log("🔑 Enter key pressed on welcome screen - starting game");
                     e.preventDefault();
                     
                     const isDebugMode = window.location.hostname === 'localhost' || 
@@ -171,12 +132,10 @@ const InputHandler = {
                     socket.emit('chat message', 'enter');
                     
                     if (isDebugMode || ScreenManager.canEnterGame()) {
-                        console.log("✅ Can enter immediately - showing waiting screen");
                         if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
                             ScreenManager.drawWaitingScreen();
                         }
                     } else {
-                        console.log("⏳ Will be queued - showing queue message");
                         $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
                         UI.scrollChat();
                     }
@@ -196,12 +155,10 @@ const InputHandler = {
     setupClickHandlers: function() {
         // Add click handling for the HTML START button
         $('#startButton').click(function(e) {
-            console.log("🖱️ START button clicked - auto-starting game");
             
             // Use the new auto_start event for immediate entry
             socket.emit('auto_start');
             
-            console.log("✅ Auto-start requested - showing waiting screen");
             if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
                 ScreenManager.drawWaitingScreen();
             }
@@ -213,7 +170,6 @@ const InputHandler = {
         
         // Add click handling for the animation toggle button
         $('#animationToggleButton').click(function(e) {
-            console.log("🎬 Animation toggle button clicked");
             
             if (typeof ScreenManager !== 'undefined' && ScreenManager.toggleAnimation) {
                 ScreenManager.toggleAnimation();
@@ -235,7 +191,6 @@ const InputHandler = {
         if (toggleButton) {
             toggleButton.addEventListener('click', function() {
                 try {
-                    console.log("Display mode switching is no longer needed - modes are equivalent");
                     toggleButton.textContent = 'Mode switching disabled';
                     toggleButton.disabled = true;
                 } catch (e) {

@@ -115,13 +115,10 @@ var ScreenManager = {
         // Hide animation button on welcome screen
         this.hideAnimationButton();
         
-        // Debug button (shown only in development)
+        // Debug mode detection (for future use)
         const isDebugMode = window.location.hostname === 'localhost' || 
                            window.location.hostname === '127.0.0.1' || 
                            window.location.protocol === 'file:';
-        if (isDebugMode) {
-            this.drawCenteredText(this._screenHeight - 3, "[DEBUG: Press D]");
-        }
     },
 
 
@@ -135,7 +132,6 @@ var ScreenManager = {
 
     // Start simulated block mining (30 second intervals)
     startBlockSimulation: function() {
-        console.log("Starting block simulation...");
         this._currentBlockHeight = Math.floor(Math.random() * 1000000) + 3200000; // Realistic Wownero block height
         this._waitingForBlock = true;
         
@@ -179,7 +175,6 @@ var ScreenManager = {
 
     // Stop block simulation
     stopBlockSimulation: function() {
-        console.log("Stopping block simulation and clearing all intervals...");
         if (this._blockTimer) {
             clearInterval(this._blockTimer);
             this._blockTimer = null;
@@ -238,8 +233,6 @@ var ScreenManager = {
         const animationEnabled = (typeof WaitingScreenAnimator !== 'undefined') ? 
             WaitingScreenAnimator.isAnimationEnabled() : false;
         
-        console.log("🎬 Drawing waiting screen, animation enabled:", animationEnabled);
-        
         // Delegate to WaitingScreenAnimator with proper parameters
         if (typeof WaitingScreenAnimator !== 'undefined') {
             if (animationEnabled) {
@@ -286,9 +279,9 @@ var ScreenManager = {
             const animationEnabled = (typeof WaitingScreenAnimator !== 'undefined') ? 
                 WaitingScreenAnimator.isAnimationEnabled() : false;
             animButton.textContent = animationEnabled ? '🎬 DISABLE ANIMATION' : '🎬 ENABLE ANIMATION';
-            console.log("✅ Animation button shown:", animButton.textContent);
         } else {
-            console.warn("❌ Animation button element not found!");
+            // Animation button element not found - non-critical warning
+            // console.warn("❌ Animation button element not found!");
         }
     },
 
@@ -303,14 +296,13 @@ var ScreenManager = {
         let animButton = document.getElementById('animationToggleButton');
         
         if (!animButton) {
-            console.warn("🔧 Animation button not found, checking if it exists in DOM...");
-            // Try to find it by class or create it if missing
+            // Animation button not found - create or handle missing button
             const statusDiv = document.querySelector('.status');
             if (statusDiv) {
                 const existingButtons = statusDiv.querySelectorAll('button');
-                console.log("Found buttons in status div:", existingButtons.length);
+                // Check existing buttons for debugging
                 for (let btn of existingButtons) {
-                    console.log("Button:", btn.id, btn.textContent);
+                    // Button discovery for debugging
                 }
             }
             return false;
