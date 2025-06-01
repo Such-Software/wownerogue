@@ -33,6 +33,10 @@ const SocketHandlers = {
         socket.on('game_over', this.onGameOver);
         socket.on('queue_cancelled', this.onQueueCancelled);
         
+        // Payment/Address handlers
+        socket.on('address_detected', this.onAddressDetected);
+        socket.on('address_confirmed', this.onAddressConfirmed);
+        
         // Block height handler (broadcast to all clients)
         socket.on('blockheight', this.onBlockHeight);
     },
@@ -209,6 +213,62 @@ const SocketHandlers = {
         UI.updateBlockHeight(height);
         $('#statusValue').text('Connected');
         $('#statusValue').css('color', '#0f0');
+    },
+
+    onAddressDetected: function(data) {
+        // Handle address detection confirmation request
+        console.log('Address detected:', data);
+        
+        // Display the confirmation message with styling
+        const confirmationHtml = `
+            <div class="address-confirmation" style="
+                background: #ffe066; 
+                color: #333; 
+                padding: 10px; 
+                margin: 5px 0; 
+                border-radius: 4px;
+                border-left: 4px solid #f0ad4e;
+            ">
+                <strong>🔍 ADDRESS DETECTED</strong><br>
+                <strong>Type:</strong> ${data.type}<br>
+                <strong>Address:</strong> <code style="word-break: break-all; font-size: 11px;">${data.address}</code><br><br>
+                <strong style="color: #d9534f;">⚠️ WARNING: Verify this is YOUR address!</strong><br>
+                <strong style="color: #d9534f;">⚠️ Clipboard viruses can change addresses!</strong><br><br>
+                Type <strong>"confirm"</strong> to set as payout address or <strong>"cancel"</strong> to reject.
+            </div>
+        `;
+        
+        $('#messages').append($(confirmationHtml));
+        UI.scrollChat();
+        
+        // Focus chat input for easy confirmation
+        setTimeout(() => {
+            $('#chatInput').focus();
+        }, 100);
+    },
+
+    onAddressConfirmed: function(data) {
+        // Handle successful address confirmation
+        console.log('Address confirmed:', data);
+        
+        const confirmationHtml = `
+            <div class="address-confirmed" style="
+                background: #d4edda; 
+                color: #155724; 
+                padding: 10px; 
+                margin: 5px 0; 
+                border-radius: 4px;
+                border-left: 4px solid #28a745;
+            ">
+                <strong>✅ PAYOUT ADDRESS CONFIRMED</strong><br>
+                <strong>Type:</strong> ${data.type}<br>
+                <strong>Address:</strong> <code style="word-break: break-all; font-size: 11px;">${data.address}</code><br><br>
+                Future winnings will be sent to this address.
+            </div>
+        `;
+        
+        $('#messages').append($(confirmationHtml));
+        UI.scrollChat();
     }
 };
 

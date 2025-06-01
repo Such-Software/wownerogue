@@ -53,6 +53,41 @@
             </button>
         </div>
         
+        <!-- Payment System UI -->
+        <div id="payment-ui" class="payment-section" style="display: none; background: rgba(0,50,0,0.9); border: 2px solid #0f0; padding: 10px; margin: 5px; color: #0f0;">
+            <div class="payment-header">
+                <strong>🎮 Game Mode Selection</strong>
+                <button id="close-payment" style="float: right; background: #500; color: #f00; border: 1px solid #f00; padding: 2px 6px;">✕</button>
+            </div>
+            
+            <div class="game-modes" style="margin: 10px 0;">
+                <div class="mode-option" data-mode="FREE" style="padding: 8px; margin: 5px 0; border: 1px solid #555; cursor: pointer;">
+                    <strong>🆓 FREE PLAY</strong> - No cost, no rewards
+                </div>
+                <div class="mode-option" data-mode="PAID_SINGLE" style="padding: 8px; margin: 5px 0; border: 1px solid #555; cursor: pointer;">
+                    <strong>💰 PAID SINGLE</strong> - 0.005 XMR per game, 2x payout for escape, 3x with treasure
+                </div>
+                <div class="mode-option" data-mode="PAID_CREDITS" style="padding: 8px; margin: 5px 0; border: 1px solid #555; cursor: pointer;">
+                    <strong>🎫 CREDITS PACKAGE</strong> - 0.03 XMR for 10 games, no payouts
+                </div>
+            </div>
+            
+            <div id="credits-display" style="margin: 10px 0; display: none;">
+                <strong>Credits remaining: <span id="credits-count">0</span></strong>
+            </div>
+            
+            <div id="payment-details" style="display: none; margin: 10px 0;">
+                <div><strong>Payment Required:</strong></div>
+                <div>Amount: <span id="payment-amount">0</span> XMR</div>
+                <div>Address: <input id="payment-address" type="text" readonly style="width: 100%; background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px;"></div>
+                <div style="margin: 10px 0;">
+                    <button id="copy-address" style="background: #050; color: #0f0; border: 1px solid #0f0; padding: 5px 10px;">📋 Copy Address</button>
+                    <button id="check-payment" style="background: #005; color: #0f0; border: 1px solid #0f0; padding: 5px 10px;">🔄 Check Payment</button>
+                </div>
+                <div id="payment-status" style="margin: 10px 0; font-weight: bold;"></div>
+            </div>
+        </div>
+        
         <!-- Game display -->
         <div id="game-display" class="rotdis"></div>
         

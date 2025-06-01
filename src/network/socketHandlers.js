@@ -7,11 +7,12 @@ const user = require('../db/user');
 const Game = require('../game/game');
 
 class SocketHandlers {
-    constructor(io, activeGames, broadcastManager, debugManager) {
+    constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null) {
         this.io = io;
         this.activeGames = activeGames;
         this.broadcastManager = broadcastManager;
         this.debugManager = debugManager;
+        this.gameModeManager = gameModeManager;
         this.playerMoveTimestamps = new Map();
         this.clientSocketMap = new Map();
         this.MOVE_COOLDOWN = 100; // Minimum 100ms between moves
@@ -58,6 +59,11 @@ class SocketHandlers {
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
         socket.on('register_client', (data) => this.handleRegisterClient(socket, data));
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
+        
+        // Payment system handlers
+        socket.on('request_payment', (data) => this.handlePaymentRequest(socket, data));
+        socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
+        socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
     }
 
     /**
@@ -70,12 +76,19 @@ class SocketHandlers {
         
         const command = msg.toLowerCase();
         
+        // Check for XMR/WOW address in the message
+        const xmrAddressMatch = this.detectXMRAddress(msg);
+        if (xmrAddressMatch) {
+            this.handleAddressDetection(socket, xmrAddressMatch);
+            return;
+        }
+        
         // Handle game commands
         switch (command) {
             case 'hello':
                 this.broadcastManager.sendStatusUpdate(socket.id, 'help', 
                     'Welcome! Type "enter" to join the queue for the next block, or use the START button for immediate entry. ' +
-                    'You must send between 10-100 WOW to enter. The more you send, the more you can win.');
+                    'Paste your XMR/WOW address in chat to set your payout address.');
                 return;
                 
             case 'enter':
@@ -83,7 +96,23 @@ class SocketHandlers {
                 return;
                 
             case 'cancel':
+                // Check if this is for address confirmation
+                if (this.pendingAddresses && this.pendingAddresses.has(socket.id)) {
+                    this.handleAddressConfirmation(socket, false);
+                    return;
+                }
+                // Otherwise handle queue cancellation
                 this.handleCancelEntry(socket);
+                return;
+                
+            case 'confirm':
+                this.handleAddressConfirmation(socket, true);
+                return;
+                
+            case 'address':
+            case 'payout':
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                    'Please paste your XMR/WOW address directly in chat. The system will automatically detect and confirm it.');
                 return;
                 
             default:
@@ -184,9 +213,9 @@ class SocketHandlers {
     /**
      * Handle auto start request (start button)
      */
-    handleAutoStart(socket) {
+    async handleAutoStart(socket) {
         if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Player ${socket.id} requested auto-start via start button - STARTING IMMEDIATELY`);
+            console.log(`Player ${socket.id} requested auto-start via start button`);
         }
         
         const currentUser = this.getUserBySocket(socket.id);
@@ -199,6 +228,30 @@ class SocketHandlers {
         if (this.activeGames.has(socket.id)) {
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You are already in a game!');
             return;
+        }
+
+        // Check if payment system is available and validate eligibility
+        if (this.gameModeManager) {
+            try {
+                const eligibility = await this.gameModeManager.canUserStartGame(socket.id);
+                
+                if (!eligibility.allowed) {
+                    // Send payment requirement to client
+                    this.io.to(socket.id).emit('payment_required', {
+                        reason: eligibility.reason,
+                        action: eligibility.action,
+                        gameMode: this.gameModeManager.gameMode
+                    });
+                    return;
+                }
+                
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`✅ Payment validated for ${socket.id}: ${eligibility.reason}`);
+                }
+            } catch (error) {
+                console.error('Error checking payment eligibility:', error);
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Payment system error. Playing in FREE mode.');
+            }
         }
 
         // Remove from waiting queue if present
@@ -231,6 +284,16 @@ class SocketHandlers {
                 console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id} (AUTO-START)`);
             }
             this.io.to(socket.id).emit('game_start', gameState);
+            
+            // Register game with payment system if available
+            if (this.gameModeManager) {
+                try {
+                    await this.gameModeManager.startGame(socket.id, game.id);
+                } catch (error) {
+                    console.error('Error registering game with payment system:', error);
+                }
+            }
+            
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log(`Game started immediately for player ${socket.id} via auto-start`);
             }
@@ -347,7 +410,7 @@ class SocketHandlers {
     /**
      * Handle game over scenarios
      */
-    handleGameOver(socket, game, status, reason, message, score = 0) {
+    async handleGameOver(socket, game, status, reason, message, score = 0) {
         game.gameState = status;
         const gameStats = { 
             score: score, 
@@ -356,11 +419,31 @@ class SocketHandlers {
         };
         game.endGame(status, gameStats);
         
+        // Process game completion with payment system
+        let payoutInfo = null;
+        if (this.gameModeManager) {
+            try {
+                payoutInfo = await this.gameModeManager.completeGame(
+                    socket.id, 
+                    game.id, 
+                    status === 'won', 
+                    game.player.hasTreasure || false
+                );
+                
+                if (this.debugManager.CONSOLE_LOGGING && payoutInfo) {
+                    console.log(`💰 Payout processed for ${socket.id}:`, payoutInfo);
+                }
+            } catch (error) {
+                console.error('Error processing game completion:', error);
+            }
+        }
+        
         this.io.to(socket.id).emit('game_over', {
             status: status,
             reason: reason,
             message: message,
-            score: score
+            score: score,
+            payout: payoutInfo
         });
         
         this.activeGames.delete(socket.id);
@@ -561,15 +644,207 @@ class SocketHandlers {
                 }
                 
                 game.gameState = 'lost';
-                this.io.to(socketId).emit('game_over', {
-                    status: 'lost',
-                    reason: 'timeout',
-                    message: 'You didn\'t escape before the block time limit!'
-                });
-                
-                this.activeGames.delete(socketId);
+                this.handleGameOver(socket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
             }
         });
+    }
+
+    // ====== PAYMENT SYSTEM HANDLERS ======
+
+    /**
+     * Handle payment request from client
+     */
+    async handlePaymentRequest(socket, data) {
+        if (!this.gameModeManager) {
+            this.io.to(socket.id).emit('payment_error', { 
+                error: 'Payment system not available' 
+            });
+            return;
+        }
+
+        try {
+            const { gameMode } = data;
+            const payment = await this.gameModeManager.moneroPayService.createPaymentRequest(socket.id, gameMode);
+            
+            this.io.to(socket.id).emit('payment_created', {
+                paymentId: payment.id,
+                address: payment.address,
+                amount: payment.amount,
+                confirmations: payment.confirmations,
+                gameMode: gameMode
+            });
+            
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`💳 Payment request created for ${socket.id}: ${payment.amount} XMR`);
+            }
+        } catch (error) {
+            console.error('Error creating payment request:', error);
+            this.io.to(socket.id).emit('payment_error', { 
+                error: error.message 
+            });
+        }
+    }
+
+    /**
+     * Handle payment status check from client
+     */
+    async handleCheckPaymentStatus(socket, data) {
+        if (!this.gameModeManager) {
+            this.io.to(socket.id).emit('payment_error', { 
+                error: 'Payment system not available' 
+            });
+            return;
+        }
+
+        try {
+            const { paymentId } = data;
+            const status = await this.gameModeManager.moneroPayService.checkPaymentStatus(paymentId);
+            
+            this.io.to(socket.id).emit('payment_status', status);
+            
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`💳 Payment status checked for ${socket.id}: ${status.status}`);
+            }
+        } catch (error) {
+            console.error('Error checking payment status:', error);
+            this.io.to(socket.id).emit('payment_error', { 
+                error: error.message 
+            });
+        }
+    }
+
+    /**
+     * Handle get user credits request
+     */
+    async handleGetUserCredits(socket) {
+        if (!this.gameModeManager) {
+            this.io.to(socket.id).emit('credits_info', { credits: 0 });
+            return;
+        }
+
+        try {
+            const credits = await this.gameModeManager.getUserCredits(socket.id);
+            
+            this.io.to(socket.id).emit('credits_info', { credits });
+            
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`💰 Credits checked for ${socket.id}: ${credits}`);
+            }
+        } catch (error) {
+            console.error('Error getting user credits:', error);
+            this.io.to(socket.id).emit('credits_info', { credits: 0 });
+        }
+    }
+
+    // ====== ADDRESS DETECTION SYSTEM ======
+
+    /**
+     * Detect XMR/WOW address in chat message using regex
+     */
+    detectXMRAddress(message) {
+        // XMR mainnet addresses start with 4, 8, A, or B and are 95 characters  
+        // WOW addresses start with W and are 97 characters
+        const xmrRegex = /\b[48AB][1-9A-HJ-NP-Za-km-z]{94}\b/;
+        const wowRegex = /\bW[1-9A-HJ-NP-Za-km-z]{96}\b/;
+        
+        const xmrMatch = message.match(xmrRegex);
+        const wowMatch = message.match(wowRegex);
+        
+        if (xmrMatch) {
+            return { address: xmrMatch[0], type: 'XMR' };
+        }
+        if (wowMatch) {
+            return { address: wowMatch[0], type: 'WOW' };
+        }
+        
+        return null;
+    }
+
+    /**
+     * Handle detected address and confirm with user
+     */
+    async handleAddressDetection(socket, addressMatch) {
+        const { address, type } = addressMatch;
+        
+        // Store pending address for confirmation
+        if (!this.pendingAddresses) {
+            this.pendingAddresses = new Map();
+        }
+        
+        this.pendingAddresses.set(socket.id, {
+            address: address,
+            type: type,
+            timestamp: Date.now()
+        });
+
+        // Send confirmation request to user
+        this.io.to(socket.id).emit('address_detected', {
+            address: address,
+            type: type,
+            message: `⚠️  DETECTED ${type} ADDRESS: ${address}\n\n` +
+                    `⚠️  WARNING: Please verify this is YOUR address before confirming!\n` +
+                    `⚠️  Clipboard viruses can change addresses - double check carefully!\n\n` +
+                    `Type "confirm" to set this as your payout address, or "cancel" to reject.`,
+            confirmationRequired: true
+        });
+
+        // Auto-expire pending address after 5 minutes
+        setTimeout(() => {
+            if (this.pendingAddresses && this.pendingAddresses.has(socket.id)) {
+                this.pendingAddresses.delete(socket.id);
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                    'Address confirmation expired. Please paste your address again if needed.');
+            }
+        }, 300000); // 5 minutes
+
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`💰 Address detected for ${socket.id}: ${type} ${address}`);
+        }
+    }
+
+    /**
+     * Handle address confirmation
+     */
+    async handleAddressConfirmation(socket, confirmed) {
+        if (!this.pendingAddresses || !this.pendingAddresses.has(socket.id)) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                'No pending address to confirm. Please paste your address first.');
+            return;
+        }
+
+        const pendingAddress = this.pendingAddresses.get(socket.id);
+        this.pendingAddresses.delete(socket.id);
+
+        if (!confirmed) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                'Address rejected. Paste a new address if you want to set a payout address.');
+            return;
+        }
+
+        // Save address to payment system
+        if (this.gameModeManager) {
+            try {
+                await this.gameModeManager.setUserPayoutAddress(socket.id, pendingAddress.address);
+                
+                this.io.to(socket.id).emit('address_confirmed', {
+                    address: pendingAddress.address,
+                    type: pendingAddress.type,
+                    message: `✅ Payout address confirmed: ${pendingAddress.address}\n\n` +
+                            `Future winnings will be sent to this address.`
+                });
+
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`✅ Address confirmed for ${socket.id}: ${pendingAddress.address}`);
+                }
+            } catch (error) {
+                console.error('Error saving payout address:', error);
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                    'Error saving address. Please try again.');
+            }
+        } else {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                `Address noted: ${pendingAddress.address} (Payment system not active)`);
+        }
     }
 }
 
