@@ -5,7 +5,7 @@
 
 const axios = require('axios');
 
-const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+const CONSOLE_LOGGING = true; // Temporarily enable for debugging
 
 class RPCService {
     constructor() {
@@ -127,7 +127,7 @@ class RPCService {
      */
     async getBlockHeight() {
         try {
-            const result = await this.makeRPCCall('get_block_count');
+            const result = await this.makeRPCCall('getblockcount');
             const blockHeight = result.count;
             
             if (blockHeight !== this.lastBlockHeight) {
@@ -166,7 +166,7 @@ class RPCService {
     async getNetworkInfo() {
         try {
             const [blockCount, networkInfo] = await Promise.all([
-                this.makeRPCCall('get_block_count'),
+                this.makeRPCCall('getblockcount'),
                 this.makeRPCCall('get_info')
             ]);
 
@@ -203,7 +203,7 @@ class RPCService {
             await axios.post(`${this.primaryEndpoint}/json_rpc`, {
                 jsonrpc: '2.0',
                 id: '0',
-                method: 'get_block_count'
+                method: 'getblockcount'
             }, { timeout: 5000 });
             checks.primary.status = 'healthy';
             checks.primary.responseTime = Date.now() - start;
@@ -219,7 +219,7 @@ class RPCService {
                 await axios.post(`${this.fallbackEndpoint}/json_rpc`, {
                     jsonrpc: '2.0',
                     id: '0',
-                    method: 'get_block_count'
+                    method: 'getblockcount'
                 }, { timeout: 5000 });
                 checks.fallback.status = 'healthy';
                 checks.fallback.responseTime = Date.now() - start;

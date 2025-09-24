@@ -103,36 +103,55 @@ class DebugManager {
             console.log("🚀 PRODUCTION MODE ENABLED - Using real blockchain RPC calls");
         }
         
-        // Real blockchain monitoring
-        this.debugInterval = setInterval(() => {
-            rpc.daemonCall("get_block_count", "", (result) => {
-                if (!result || !result.result || !result.result.count) {
+        // Initialize RPC service if available
+        const RpcService = require('../rpc/rpcService');
+        this.rpcService = new RpcService();
+        
+        // Real blockchain monitoring with new RPC service
+        this.debugInterval = setInterval(async () => {
+            try {
+                const currentHeight = await this.rpcService.getBlockHeight();
+                
+                if (!currentHeight) {
                     if (this.CONSOLE_LOGGING) {
                         console.log("❌ Failed to get block count from daemon");
                     }
                     return;
                 }
                 
-                const currentHeight = result.result.count;
-                rpc.lastBlock.setHeight(currentHeight);
+                // Always broadcast current height to keep clients updated
+                this.broadcastManager.broadcastBlockHeight(currentHeight);
                 
                 // If new block found
                 if (currentHeight > this.lastProductionBlockHeight) {
                     if (this.CONSOLE_LOGGING) {
                         console.log(`⛏️ New block found: ${currentHeight}`);
                     }
-                    this.broadcastManager.broadcastBlockHeight(currentHeight);
                     
                     // Notify listeners about new block
                     this.onNewBlock(currentHeight);
                     
                     this.lastProductionBlockHeight = currentHeight;
-                } else {
-                    // Still broadcast current height for status updates
-                    this.broadcastManager.broadcastBlockHeight(currentHeight);
                 }
-            });
-        }, 5000); // Every 5 seconds
+            } catch (error) {
+                if (this.CONSOLE_LOGGING) {
+                    console.error("❌ RPC Error:", error.message);
+                }
+                
+                // Fallback to legacy RPC if new service fails
+                rpc.daemonCall("get_block_count", "", (result) => {
+                    if (result && result.result && result.result.count) {
+                        const currentHeight = result.result.count;
+                        this.broadcastManager.broadcastBlockHeight(currentHeight);
+                        
+                        if (currentHeight > this.lastProductionBlockHeight) {
+                            this.onNewBlock(currentHeight);
+                            this.lastProductionBlockHeight = currentHeight;
+                        }
+                    }
+                });
+            }
+        }, 2000); // Every 2 seconds as specified in .env
     }
 
     // ====== BLOCK HEIGHT MANAGEMENT ======

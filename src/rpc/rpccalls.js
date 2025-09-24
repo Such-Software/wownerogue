@@ -24,7 +24,15 @@ var lastBlock = {
     hash: 0,
     setHeight: function(newHeight) {this.height = newHeight}
 }
-var daemonURL = 'http://localhost:34568/json_rpc';
+
+// Use environment variable for daemon URL, fallback to localhost for backward compatibility
+var daemonURL = process.env.PRIMARY_RPC_ENDPOINT ? 
+    process.env.PRIMARY_RPC_ENDPOINT + '/json_rpc' : 
+    'http://localhost:34568/json_rpc';
+
+if (CONSOLE_LOGGING) {
+    console.log(`🔗 Legacy RPC service using URL: ${daemonURL}`);
+}
 
 function daemonCall(method, params, callback, io) {
     // Real blockchain call (now used for all cases)

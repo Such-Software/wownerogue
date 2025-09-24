@@ -10,7 +10,7 @@ require('dotenv').config();
 
 // Import payment system components
 const DatabaseManager = require('./db/databaseManager');
-const MoneroPayService = require('./payments/moneroPayService');
+const WalletRPCService = require('./payments/walletRPCService');
 const GameModeManager = require('./game/gameModeManager');
 const RpcService = require('./rpc/rpcService');
 
@@ -19,17 +19,19 @@ const BroadcastManager = require('./network/broadcastManager');
 const DebugManager = require('./debug/debugManager');
 const SocketHandlers = require('./network/socketHandlers');
 
-// Initialize payment system components
-const databaseManager = new DatabaseManager();
-const rpcService = new RpcService();
-const moneroPayService = new MoneroPayService(databaseManager, rpcService);
-const gameModeManager = new GameModeManager(databaseManager, moneroPayService);
-
-// Initialize modular components
+// Initialize modular components first
 const broadcastManager = new BroadcastManager(io);
 const debugManager = new DebugManager(broadcastManager);
+
+// Initialize payment system components (debugManager is now available)
+const databaseManager = new DatabaseManager();
+const rpcService = new RpcService();
+const walletRPCService = new WalletRPCService(debugManager);
+const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager);
+
+// Initialize remaining components
 const activeGames = new Map(); // Maps socketId to Game objects
-const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager);
+const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
 app.use(express.static(htmlPath));
@@ -56,7 +58,7 @@ app.post('/api/payment/create', async (req, res) => {
       return res.status(400).json({ error: 'Missing userId or gameMode' });
     }
 
-    const payment = await moneroPayService.createPaymentRequest(userId, gameMode);
+    const payment = await walletRPCService.createPaymentRequest(userId, gameMode);
     res.json(payment);
   } catch (error) {
     console.error('Error creating payment:', error);
@@ -66,7 +68,7 @@ app.post('/api/payment/create', async (req, res) => {
 
 app.post('/api/payment/callback', async (req, res) => {
   try {
-    const result = await moneroPayService.processCallback(req.body);
+    const result = await walletRPCService.processCallback(req.body);
     res.json({ status: 'success', result });
   } catch (error) {
     console.error('Error processing callback:', error);
@@ -76,7 +78,7 @@ app.post('/api/payment/callback', async (req, res) => {
 
 app.get('/api/payment/status/:paymentId', async (req, res) => {
   try {
-    const status = await moneroPayService.checkPaymentStatus(req.params.paymentId);
+    const status = await walletRPCService.checkPaymentStatus(req.params.paymentId);
     res.json(status);
   } catch (error) {
     console.error('Error checking payment status:', error);
@@ -122,7 +124,12 @@ debugManager.onNewBlockCallback((blockHeight) => {
 // Initialize payment system
 async function initializePaymentSystem() {
     try {
-        console.log('🔄 Initializing payment system...');
+        console.log('🔧 Initializing payment system...');
+        const walletInitialized = await walletRPCService.initialize();
+        if (!walletInitialized) {
+            console.log('⚠️ Wallet RPC not available - falling back to FREE mode');
+            process.env.GAME_MODE = 'FREE';
+        }
         
         // Initialize database connection and run migrations
         await databaseManager.initialize();
@@ -131,10 +138,6 @@ async function initializePaymentSystem() {
         // Test RPC service connectivity
         const rpcHealth = await rpcService.healthCheck();
         console.log(`✅ RPC Service: ${rpcHealth.healthy ? 'Connected' : 'Warning - using fallback'}`);
-        
-        // Initialize MoneroPay service
-        await moneroPayService.initialize();
-        console.log('✅ MoneroPay service initialized');
         
         console.log('🚀 Payment system ready!');
         return true;
@@ -187,7 +190,7 @@ async function startServer() {
         if (paymentSystemReady) {
             setInterval(async () => {
                 try {
-                    await moneroPayService.processBatchPayouts();
+                    await walletRPCService.processBatchPayouts();
                 } catch (error) {
                     console.error('Error in batch payout processing:', error);
                 }

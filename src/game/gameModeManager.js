@@ -4,9 +4,10 @@
  */
 
 class GameModeManager {
-    constructor(databaseManager, moneroPayService) {
+    constructor(databaseManager, walletRPCService, debugManager) {
         this.db = databaseManager;
-        this.moneroPayService = moneroPayService;
+        this.walletService = walletRPCService; // Changed from moneroPayService
+        this.debugManager = debugManager;
         this.gameMode = process.env.GAME_MODE || 'FREE';
         this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
         this.singleGamePrice = parseInt(process.env.SINGLE_GAME_PRICE) || 5000000000; // 0.005 XMR
@@ -184,7 +185,7 @@ class GameModeManager {
                 }
                 
                 // Create payout record
-                await this.moneroPayService.createPayout(
+                await this.walletService.processPayout(
                     game.user_id,
                     gameId,
                     game.payout_address,
@@ -229,25 +230,44 @@ class GameModeManager {
             switch (paymentType) {
                 case 'single_game':
                     amount = this.singleGamePrice;
-                    description = `Wowgue single game entry (${this.cryptoType})`;
+                    description = `Wowngeon single game entry (${this.cryptoType})`;
                     break;
                     
                 case 'credits_package':
                     amount = this.creditsPackagePrice;
-                    description = `Wowgue 10 credits package (${this.cryptoType})`;
+                    description = `Wowngeon 10 credits package (${this.cryptoType})`;
                     break;
                     
                 default:
                     throw new Error('Invalid payment type');
             }
             
-            return await this.moneroPayService.createPaymentRequest(
-                user.id,
-                socketId,
-                paymentType,
+            // Create payment request using wallet RPC with correct parameters
+            const paymentResult = await this.walletService.createPaymentRequest(
                 amount,
-                description
+                description,
+                user.id,
+                socketId
             );
+
+            if (!paymentResult.success) {
+                throw new Error(paymentResult.error || 'Failed to create payment address');
+            }
+
+            // Store payment info in database
+            await this.db.query(`
+                INSERT INTO payments (user_id, subaddress, expected_amount, payment_type, status, created_at)
+                VALUES ($1, $2, $3, $4, 'pending', NOW())
+            `, [user.id, paymentResult.address, amount, paymentType]);
+            
+            return {
+                id: paymentResult.id,
+                address: paymentResult.address,
+                amount: amount,
+                amountFormatted: (amount / 1e12).toFixed(4), // Convert from atomic units
+                currency: this.cryptoType,
+                expiresAt: paymentResult.expiresAt
+            };
             
         } catch (error) {
             console.error('❌ Error creating payment request:', error.message);
@@ -359,6 +379,77 @@ class GameModeManager {
                 payouts: this.gameMode === 'PAID_SINGLE'
             }
         };
+    }
+
+    /**
+     * Complete a game (called from socket handlers when game ends)
+     * @param {string} socketId - Player's socket ID
+     * @param {string} gameId - Game UUID
+     * @param {boolean} won - Whether the player won (escaped)
+     * @param {boolean} treasureFound - Whether treasure was found
+     * @returns {object} payout / completion info
+     */
+    async completeGame(socketId, gameId, won, treasureFound) {
+        // For FREE mode we just return basic info
+        if (this.gameMode === 'FREE') {
+            return { success: true, mode: 'FREE', payout: null };
+        }
+
+        try {
+            // Update/record game completion in DB (simplified; reuse processGameCompletion if schema matches)
+            // If a games table exists with at least id & user reference, mark completion.
+            try {
+                await this.db.query(`
+                    UPDATE games SET status = $1, treasure_found = $2, completed_at = NOW()
+                    WHERE id = $3
+                `, [won ? 'won' : 'lost', treasureFound, gameId]);
+            } catch (e) {
+                // Non-fatal if games table differs during early dev.
+                if (process.env.NODE_ENV === 'development') {
+                    console.warn('Game completion update warning:', e.message);
+                }
+            }
+
+            // Handle payouts only in PAID_SINGLE mode and only on win (escaped)
+            if (this.gameMode === 'PAID_SINGLE' && won) {
+                // Derive payout multiplier
+                const multiplier = treasureFound ? 3 : 2;
+                const payoutAmount = this.singleGamePrice * multiplier;
+
+                // Look up user record for payout address
+                const userResult = await this.db.query(`SELECT * FROM users WHERE socket_id = $1 LIMIT 1`, [socketId]);
+                const userRow = userResult.rows[0];
+                if (userRow && userRow.payout_address) {
+                    try {
+                        await this.walletService.processPayout(
+                            userRow.id,
+                            gameId,
+                            userRow.payout_address,
+                            payoutAmount
+                        );
+                        return {
+                            success: true,
+                            mode: this.gameMode,
+                            payout: {
+                                amount: payoutAmount,
+                                multiplier,
+                                treasure: treasureFound
+                            }
+                        };
+                    } catch (payoutErr) {
+                        console.error('❌ Error creating payout:', payoutErr.message);
+                        return { success: true, mode: this.gameMode, payout: null, payoutError: payoutErr.message };
+                    }
+                }
+                return { success: true, mode: this.gameMode, payout: null, reason: 'No payout address' };
+            }
+
+            // Credits mode: decrement nothing here (already handled start). Optionally could award stats.
+            return { success: true, mode: this.gameMode, payout: null };
+        } catch (err) {
+            console.error('❌ completeGame error:', err.message);
+            return { success: false, error: err.message };
+        }
     }
 }
 

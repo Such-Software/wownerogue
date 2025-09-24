@@ -210,13 +210,40 @@ var WaitingScreenAnimator = {
             const bg = ["transparent", "transparent"];
             display.draw(anim.playerX, anim.playerY, ch, fg, bg);
             
-            // Light footsteps behind player
-            if (anim.phase === 'enter' || anim.phase === 'escape') {
-                const footstepX = anim.playerX - 1;
-                if (footstepX >= roomStartX && footstepX <= roomEndX) {
-                    const footstepGlow = Math.max(0, Math.sin(time / 400) * 0.2);
-                    const floorTile = GameTiles.getFloorTile();
-                    display.draw(footstepX, anim.playerY, floorTile, `rgba(150, 200, 255, ${footstepGlow})`, "transparent");
+            // Bright ethereal footsteps / halo around player to indicate "primed" status
+            if (anim.phase === 'enter' || anim.phase === 'escape' || anim.phase === 'chase') {
+                const ringPulse = 0.35 + Math.sin(time / 250) * 0.25; // stronger, faster pulse
+                const innerPulse = 0.15 + Math.sin(time / 180 + 1.2) * 0.15;
+                const ringColor = (alpha) => `rgba(180, 230, 255, ${alpha})`;
+                const floorTile = GameTiles.getFloorTile();
+
+                // 8-way surrounding ring
+                const ringOffsets = [
+                    {dx: -1, dy: 0}, {dx: 1, dy: 0}, {dx: 0, dy: -1}, {dx: 0, dy: 1}, // cardinal
+                    {dx: -1, dy: -1}, {dx: 1, dy: -1}, {dx: -1, dy: 1}, {dx: 1, dy: 1} // diagonal
+                ];
+                for (let i = 0; i < ringOffsets.length; i++) {
+                    const rx = anim.playerX + ringOffsets[i].dx;
+                    const ry = anim.playerY + ringOffsets[i].dy;
+                    if (rx >= roomStartX && rx <= roomEndX && ry >= roomStartY && ry <= roomEndY) {
+                        // subtle variation per tile
+                        const phaseShift = (i / ringOffsets.length) * Math.PI * 2;
+                        const alpha = (ringPulse * 0.6) + Math.sin(time / 300 + phaseShift) * 0.15;
+                        display.draw(rx, ry, floorTile, ringColor(Math.max(0, alpha)), 'transparent');
+                    }
+                }
+
+                // Trailing footprint path (a few tiles behind)
+                for (let trail = 1; trail <= 3; trail++) {
+                    const tx = anim.playerX - trail;
+                    const ty = anim.playerY;
+                    if (tx >= roomStartX && tx <= roomEndX && ty >= roomStartY && ty <= roomEndY) {
+                        const decay = Math.max(0, 0.5 - trail * 0.15);
+                        const alpha = innerPulse * decay;
+                        if (alpha > 0.03) {
+                            display.draw(tx, ty, floorTile, `rgba(120, 200, 255, ${alpha})`, 'transparent');
+                        }
+                    }
                 }
             }
         }

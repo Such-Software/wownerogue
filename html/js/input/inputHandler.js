@@ -33,19 +33,13 @@ const InputHandler = {
             if (msg.toLowerCase() === 'enter') {
                 socket.emit('chat message', msg);
                 
-                // Show appropriate screen based on current state
-                const isDebugMode = window.location.hostname === 'localhost' || 
-                                   window.location.hostname === '127.0.0.1' || 
-                                   window.location.protocol === 'file:';
+                // Don't automatically switch to waiting screen - let the server control screen state
+                // The server will send appropriate events (payment_created, waiting_status, etc.)
+                // to control what the user sees
                 
-                if (isDebugMode || ScreenManager.canEnterGame()) {
-                    if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                        ScreenManager.drawWaitingScreen();
-                    }
-                } else {
-                    $('#messages').append($('<li style="color: #ff0;">').text("* You have been added to the queue! Game will start after next block."));
-                    UI.scrollChat();
-                }
+                // Add visual feedback that request was sent
+                $('#messages').append($('<li style="color: #0f0;">').text("🔑 Processing game entry request..."));
+                UI.scrollChat();
             } else {
                 // Send other chat messages normally
                 socket.emit('chat message', msg);

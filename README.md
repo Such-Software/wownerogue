@@ -32,7 +32,7 @@ Wowngeon is a web-based roguelike game that integrates with Monero (XMR) and Wow
 - Security warnings about clipboard viruses
 - Two-step confirmation process for safety
 
-### 💳 **MoneroPay Integration**
+### 💳 **Wallet-RPC Integration**
 - Subaddress generation for payments
 - Real-time payment monitoring
 - Automated payment confirmations
@@ -48,14 +48,14 @@ Wowngeon is a web-based roguelike game that integrates with Monero (XMR) and Wow
 
 ### **Backend Payment Infrastructure**
 - **Database Manager**: PostgreSQL connection pooling, migrations, health checks
-- **MoneroPay Service**: Payment requests, status monitoring, batch payout processing
+- **Wallet RPC Service**: Direct wallet integration, payment monitoring, batch payout processing
 - **RPC Service**: Blockchain communication with automatic failover between endpoints
 - **Game Mode Manager**: Payment validation, credit management, user eligibility checking
 
 ### **Payment Database Schema**
 - **Users Table**: User profiles, payout addresses, game statistics
 - **Games Table**: Game records with outcomes, payments, and rewards
-- **Payments Table**: MoneroPay payment tracking with status updates
+- **Payments Table**: Direct wallet payment tracking with status updates
 - **Payouts Table**: Batch payout management with transaction records
 
 ### **Address Detection System**
@@ -69,7 +69,7 @@ Wowngeon is a web-based roguelike game that integrates with Monero (XMR) and Wow
 ### Payment Management
 - `POST /api/payment/create` - Create new payment request for single games
 - `GET /api/payment/status/:paymentId` - Check payment status
-- `POST /api/payment/callback` - MoneroPay webhook for payment confirmations
+- `POST /api/payment/callback` - Wallet RPC webhook for payment confirmations
 
 ### User Management  
 - `GET /api/user/credits/:userId` - Check user's remaining credits
@@ -85,7 +85,7 @@ Wowngeon is a web-based roguelike game that integrates with Monero (XMR) and Wow
 ### Prerequisites
 - Node.js 16+ with npm
 - PostgreSQL 12+ database
-- MoneroPay service access (optional, will fallback to FREE mode)
+- Wallet-RPC service access (optional, will fallback to FREE mode)
 
 ### Installation Steps
 
@@ -103,7 +103,7 @@ Wowngeon is a web-based roguelike game that integrates with Monero (XMR) and Wow
 3. **Environment Configuration**:
    ```bash
    cp .env.example .env
-   # Edit .env with your database and MoneroPay credentials
+   # Edit .env with your database and Wallet-RPC credentials
    ```
 
 4. **Database Setup**:
@@ -136,9 +136,10 @@ PAID_CREDITS_PRICE=0.05
 # Database Configuration  
 DATABASE_URL=postgresql://username:password@localhost:5432/wowngeon
 
-# MoneroPay Configuration
-MONEROPAY_URL=https://api.moneropay.eu
-MONEROPAY_API_KEY=your_api_key
+# Wallet RPC Configuration
+PRIMARY_WALLET_ENDPOINT=http://127.0.0.1:34570
+WALLET_RPC_USER=your_rpc_user
+WALLET_RPC_PASSWORD=your_rpc_password
 
 # Crypto RPC Configuration
 PRIMARY_RPC_URL=http://localhost:18081
@@ -149,7 +150,7 @@ FALLBACK_RPC_URL=http://backup-node:18081
 
 ### PAID_SINGLE Mode
 1. User requests to play paid game
-2. System generates MoneroPay payment request  
+2. System generates Wallet-RPC payment request  
 3. User completes payment (0.005 XMR default)
 4. Game starts after payment confirmation
 5. Automatic 2x or 3x payout on successful escape
@@ -195,14 +196,14 @@ Test suite covers:
 
 ### Security Considerations
 - Database credentials should use environment variables
-- MoneroPay API keys must be kept secure
+- Wallet-RPC credentials must be kept secure
 - RPC endpoints should be trusted nodes only
 - Consider rate limiting on payment endpoints
 
 ### Monitoring & Logging
 - Payment processing events logged for audit trails
 - Database health checks with automatic failover
-- MoneroPay webhook validation and processing
+- Wallet-RPC webhook validation and processing
 - Graceful degradation logs when payment systems unavailable
 
 ### Scalability Features
@@ -224,7 +225,7 @@ wowngeon/
 │   ├── db/                       # Database management
 │   │   └── databaseManager.js    # Connection pooling & migrations
 │   ├── payments/                 # Payment system
-│   │   └── moneroPayService.js   # MoneroPay integration
+│   │   └── walletRPCService.js   # Wallet-RPC integration
 │   ├── rpc/                      # Blockchain integration
 │   │   └── rpcService.js         # RPC with failover
 │   ├── game/                     # Game logic
@@ -243,7 +244,7 @@ wowngeon/
 - Complete payment system infrastructure
 - Three-tier game mode implementation  
 - PostgreSQL database with migration system
-- MoneroPay integration with webhook processing
+- Direct wallet-RPC integration with payment monitoring
 - RPC failover system for blockchain reliability
 - XMR/WOW address detection via chat regex
 - Comprehensive test suite with 100% pass rate
@@ -251,7 +252,7 @@ wowngeon/
 
 ### 🔄 Next Steps
 - Database connection testing with production credentials
-- MoneroPay integration testing with live service
+- Wallet-RPC integration testing with local wallet
 - End-to-end payment flow validation
 - Frontend payment UI testing and refinement
 

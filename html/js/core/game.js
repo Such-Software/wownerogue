@@ -14,6 +14,8 @@ var Game = {
     _inputEnabled: true,
     _messageLog: [],
     _maxLogMessages: 5,
+    _unconfirmedPayment: false,
+    _unconfirmedPaymentInfo: null,
 
     init: function() {
         // Update screen dimensions from options
@@ -147,6 +149,89 @@ var Game = {
         }
     },
 
+    // Legacy alias (some handlers referenced updateGame previously)
+    updateGame: function(data) {
+        return this.updateGameState(data);
+    },
+
+    // Handle game over event from server
+    endGame: function(data) {
+        try {
+            GameState.setGameActive(false);
+            // Decide which screen to draw
+            if (data && data.reason === 'monster') {
+                if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('monster');
+            } else if (data && data.reason === 'escaped') {
+                if (ScreenManager.drawWinScreen) ScreenManager.drawWinScreen(data.treasure || false);
+            } else if (data && data.reason === 'timeout') {
+                if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('timeout');
+            } else {
+                if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('other');
+            }
+
+            // After short delay, allow user to return to title with Enter/start
+            const score = data && typeof data.score === 'number' ? data.score : 0;
+            const treasure = !!(data && data.treasure);
+
+            // Display score / treasure info overlay
+            if (ScreenManager && ScreenManager.drawCenteredText && DisplayManager.ensureDisplay()) {
+                const baseY = Math.floor(ScreenManager._screenHeight / 2) + 5;
+                ScreenManager.drawCenteredText(baseY, `Score: ${score}`);
+                if (treasure) {
+                    ScreenManager.drawCenteredText(baseY + 1, 'You secured the treasure!');
+                }
+            }
+
+            // Debounce + delayed activation of restart
+            this._awaitingRestart = false;
+            const activateDelay = 800; // ms before we accept Enter
+            const autoReturnDelay = 10000; // auto return after 10s
+
+            // Show hint after activation delay
+            setTimeout(() => {
+                this._awaitingRestart = true;
+                if (ScreenManager && ScreenManager.drawCenteredText && DisplayManager.ensureDisplay()) {
+                    const y = ScreenManager._screenHeight - 2;
+                    const fullHint = 'Press Enter to return to title';
+                    const shortHint = 'Press Enter';
+                    const maxLen = ScreenManager._screenWidth - 2; // leave small margin
+                    const hint = fullHint.length > maxLen ? shortHint : fullHint;
+                    ScreenManager.drawCenteredText(y, hint);
+                }
+            }, activateDelay);
+
+            // Auto return timer
+            clearTimeout(this._autoReturnTimer);
+            this._autoReturnTimer = setTimeout(() => {
+                if (this._awaitingRestart) {
+                    this._awaitingRestart = false;
+                    if (ScreenManager && ScreenManager.drawWelcomeScreen) {
+                        ScreenManager.drawWelcomeScreen();
+                    }
+                }
+            }, autoReturnDelay);
+
+            // One-time listener setup
+            if (!this._restartListenerAttached) {
+                this._restartListenerAttached = true;
+                document.addEventListener('keydown', (e) => {
+                    if (!this._awaitingRestart) return;
+                    if (e.key === 'Enter') {
+                        this._awaitingRestart = false;
+                        clearTimeout(this._autoReturnTimer);
+                        if (ScreenManager && ScreenManager.drawWelcomeScreen) {
+                            ScreenManager.drawWelcomeScreen();
+                        }
+                        const chatInput = document.getElementById('chatInput');
+                        if (chatInput) chatInput.focus();
+                    }
+                });
+            }
+        } catch (err) {
+            console.error('Error handling endGame:', err);
+        }
+    },
+
     clearDisplay: function() {
         DisplayManager.clearDisplay();
     },
@@ -173,6 +258,19 @@ var Game = {
 
     drawWaitingScreen: function() {
         ScreenManager.drawWaitingScreen();
+        // Overlay unconfirmed payment badge if present
+        if (this._unconfirmedPayment && typeof ScreenManager !== 'undefined' && DisplayManager.ensureDisplay()) {
+            const display = DisplayManager.getDisplay();
+            const badgeText = 'Unconfirmed (mempool)';
+            const xStart = Math.max(1, Math.floor((this._screenWidth - badgeText.length) / 2));
+            const y = 1; // top line inside border
+            for (let i = 0; i < badgeText.length; i++) {
+                display.draw(xStart + i, y, badgeText[i], 'rgba(180,230,255,0.9)', 'transparent');
+            }
+            // Small pulsing dot
+            const pulse = 0.4 + Math.sin(Date.now()/300)*0.4;
+            display.draw(xStart - 2, y, '●', `rgba(120,200,255,${pulse})`, 'transparent');
+        }
     },
 
     stopWaitingScreen: function() {
@@ -237,6 +335,17 @@ var Game = {
     get _exploredTiles() {
         return GameState._exploredTiles;
     }
+};
+
+// Payment state helpers
+Game._pendingPaymentDetected = function(info) {
+    this._unconfirmedPayment = true;
+    this._unconfirmedPaymentInfo = info || {};
+};
+
+Game._pendingPaymentConfirmed = function() {
+    this._unconfirmedPayment = false;
+    this._unconfirmedPaymentInfo = null;
 };
 
 // Debug utility functions (keep as-is for compatibility)

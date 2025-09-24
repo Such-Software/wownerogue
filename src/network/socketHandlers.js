@@ -7,12 +7,13 @@ const user = require('../db/user');
 const Game = require('../game/game');
 
 class SocketHandlers {
-    constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null) {
+    constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null, walletService = null) {
         this.io = io;
         this.activeGames = activeGames;
         this.broadcastManager = broadcastManager;
         this.debugManager = debugManager;
         this.gameModeManager = gameModeManager;
+        this.walletService = walletService;
         this.playerMoveTimestamps = new Map();
         this.clientSocketMap = new Map();
         this.MOVE_COOLDOWN = 100; // Minimum 100ms between moves
@@ -115,6 +116,11 @@ class SocketHandlers {
                     'Please paste your XMR/WOW address directly in chat. The system will automatically detect and confirm it.');
                 return;
                 
+            case 'payment':
+            case 'pay':
+                this.handlePaymentCommand(socket);
+                return;
+                
             default:
                 // Broadcast as chat message to all clients
                 this.handleChatBroadcast(socket, msg);
@@ -168,9 +174,9 @@ class SocketHandlers {
     /**
      * Handle game queue request (typing "enter")
      */
-    handleGameQueue(socket) {
+    async handleGameQueue(socket) {
         if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Player ${socket.id} requested to enter the dungeon - ADDING TO QUEUE`);
+            console.log(`Player ${socket.id} requested to enter the dungeon`);
         }
         
         const currentUser = this.getUserBySocket(socket.id);
@@ -192,11 +198,47 @@ class SocketHandlers {
             return;
         }
 
-        // Add to waiting queue
+        // Check payment eligibility if payment system is available
+        if (this.gameModeManager) {
+            try {
+                const eligibility = await this.gameModeManager.canUserStartGame(socket.id);
+                
+                if (!eligibility.allowed) {
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`❌ Payment required for ${socket.id}: ${eligibility.reason}`);
+                    }
+                    
+                    // Create payment request immediately instead of asking user to type 'payment'
+                    await this.createAndShowPaymentRequest(socket);
+                    return;
+                }
+                
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`✅ Payment validated for ${socket.id}: ${eligibility.reason}`);
+                }
+            } catch (error) {
+                console.error('Error checking payment eligibility:', error);
+                
+                // In paid mode, don't add to queue if payment check fails
+                if (this.gameModeManager.gameMode !== 'FREE') {
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                        'Payment system error. Please try again or contact support.');
+                    return;
+                }
+                
+                // Only in FREE mode, continue to queue on payment system errors
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment system unavailable. Playing in FREE mode.');
+            }
+        }
+
+        // Add to waiting queue (in free mode or already authorized paid mode)
         this.WAITING_PLAYERS.push({
             serverId: socket.id,
             clientId: currentUser.clientId,
-            entryTime: Date.now()
+            entryTime: Date.now(),
+            // For paid modes, this path only executes if payment already confirmed (canUserStartGame returned allowed)
+            requiresConfirmation: false,
+            confirmed: true
         });
 
         const currentBlock = this.debugManager.getCurrentBlockHeight();
@@ -218,90 +260,14 @@ class SocketHandlers {
             console.log(`Player ${socket.id} requested auto-start via start button`);
         }
         
-        const currentUser = this.getUserBySocket(socket.id);
-        if (!currentUser) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error: Could not start game. Please try again.');
-            return;
-        }
-
-        // Check if already in a game
-        if (this.activeGames.has(socket.id)) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You are already in a game!');
-            return;
-        }
-
-        // Check if payment system is available and validate eligibility
-        if (this.gameModeManager) {
-            try {
-                const eligibility = await this.gameModeManager.canUserStartGame(socket.id);
-                
-                if (!eligibility.allowed) {
-                    // Send payment requirement to client
-                    this.io.to(socket.id).emit('payment_required', {
-                        reason: eligibility.reason,
-                        action: eligibility.action,
-                        gameMode: this.gameModeManager.gameMode
-                    });
-                    return;
-                }
-                
-                if (this.debugManager.CONSOLE_LOGGING) {
-                    console.log(`✅ Payment validated for ${socket.id}: ${eligibility.reason}`);
-                }
-            } catch (error) {
-                console.error('Error checking payment eligibility:', error);
-                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Payment system error. Playing in FREE mode.');
-            }
-        }
-
-        // Remove from waiting queue if present
-        const waitingIndex = this.WAITING_PLAYERS.findIndex(p => p.serverId === socket.id);
-        if (waitingIndex !== -1) {
-            this.WAITING_PLAYERS.splice(waitingIndex, 1);
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`🚀 AUTO-START: Removed ${socket.id} from waiting queue for immediate start`);
-            }
-        }
-
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Found user for socket ${socket.id}, starting game immediately...`);
-        }
-        
-        try {
-            // For auto-entry, player enters on current block
-            const currentBlock = this.debugManager.getCurrentBlockHeight();
-            currentUser.blockRec = currentBlock;
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`🕒 AUTO-START: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
-            }
-            
-            const game = this.createGameForUser(currentUser, 'standard');
-            
-            const gameState = game.getState();
-            gameState.blockHeight = currentBlock;
-            
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`🎮 SENDING IMMEDIATE GAME_START to ${socket.id} (AUTO-START)`);
-            }
-            this.io.to(socket.id).emit('game_start', gameState);
-            
-            // Register game with payment system if available
-            if (this.gameModeManager) {
-                try {
-                    await this.gameModeManager.startGame(socket.id, game.id);
-                } catch (error) {
-                    console.error('Error registering game with payment system:', error);
-                }
-            }
-            
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`Game started immediately for player ${socket.id} via auto-start`);
-            }
-        } catch (error) {
-            console.error(`Error creating game:`, error);
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
-        }
+        // Use the same logic as handleGameQueue for consistency
+        // This ensures both START GAME button and typing 'enter' behave the same way
+        await this.handleGameQueue(socket);
     }
+
+    /**
+     * Handle entry cancellation
+     */
 
     /**
      * Handle cancel entry request
@@ -380,6 +346,23 @@ class SocketHandlers {
             return;
         }
 
+        // Persist move count if DB available
+        if (this.gameModeManager && this.gameModeManager.db) {
+            const db = this.gameModeManager.db;
+            db.query(`
+                UPDATE games SET moves_made = moves_made + 1
+                WHERE socket_id = $1 AND dungeon_seed = $2
+            `, [socket.id, game.id]).catch(err => {
+                if (this.debugManager.CONSOLE_LOGGING) console.warn('moves_made update failed:', err.message);
+            });
+        }
+
+        // Check collision if player moved onto monster BEFORE monster reacts
+        if (this.checkMonsterKill(game.player, game.monster)) {
+            this.handleGameOver(socket, game, 'lost', 'monster', 'The monster caught you!');
+            return;
+        }
+
         // Move monster after player moves
         game.moveMonster();
         
@@ -443,8 +426,20 @@ class SocketHandlers {
             reason: reason,
             message: message,
             score: score,
-            payout: payoutInfo
+            payout: payoutInfo,
+            treasure: game.player.hasTreasure || false
         });
+
+        // Persist completion details if DB available
+        if (this.gameModeManager && this.gameModeManager.db) {
+            const db = this.gameModeManager.db;
+            const outcome = reason === 'escaped' ? 'escaped' : (reason === 'monster' ? 'caught_by_monster' : reason);
+            db.query(`
+                UPDATE games SET status = $1, outcome = $2, treasure_found = $3, completed_at = NOW()
+                WHERE dungeon_seed = $4 AND socket_id = $5
+            `, [status, outcome, game.player.hasTreasure, game.id, socket.id])
+            .catch(err => console.error('Game completion update failed:', err.message));
+        }
         
         this.activeGames.delete(socket.id);
     }
@@ -456,6 +451,9 @@ class SocketHandlers {
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log('User disconnected', socket.client.id);
         }
+        
+        // Clean up payment monitoring
+        this.stopPaymentMonitoring(socket.id);
         
         // Clean up movement timestamps
         this.playerMoveTimestamps.delete(socket.id);
@@ -545,6 +543,19 @@ class SocketHandlers {
         
         user.joinGame(game);
         this.activeGames.set(user.id, game);
+
+        // Insert a DB record for this game (best effort)
+        if (this.gameModeManager && this.gameModeManager.db) {
+            const db = this.gameModeManager.db;
+            const gameMode = this.gameModeManager.gameMode || 'FREE';
+            const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
+            const socketId = user.id; // user.id is the socket id string
+            db.query(`
+                INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
+                VALUES ((SELECT id FROM users WHERE socket_id = $1), $1, $2, 'active', $3, $4, NOW())
+            `, [socketId, gameMode, blockHeight, game.id])
+            .catch(err => console.error('Game insert failed:', err.message));
+        }
         
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id}`);
@@ -591,6 +602,8 @@ class SocketHandlers {
             console.log(`Starting games for ${this.WAITING_PLAYERS.length} waiting players at block height ${blockHeight}`);
         }
       
+        // We may skip some entries if they are not yet confirmed (paid mode, mempool only)
+        const remainingQueue = [];
         while (this.WAITING_PLAYERS.length > 0) {
             const playerEntry = this.WAITING_PLAYERS.shift();
             const serverId = playerEntry.serverId;
@@ -602,6 +615,14 @@ class SocketHandlers {
             const currentUser = this.getUserBySocket(serverId);
             
             if (currentUser) {
+                // If this entry requires confirmation and is not confirmed yet, keep it in queue
+                if (playerEntry.requiresConfirmation && !playerEntry.confirmed) {
+                    remainingQueue.push(playerEntry); // re-queue for next block
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`⏳ Skipping unconfirmed paid entry for ${serverId}, still waiting for confirmation.`);
+                    }
+                    continue;
+                }
                 currentUser.blockRec = blockHeight;
                 if (this.debugManager.CONSOLE_LOGGING) {
                     console.log(`🕒 QUEUE ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
@@ -628,6 +649,10 @@ class SocketHandlers {
                 console.error(`User not found for socket ${serverId}`);
                 this.io.to(serverId).emit('message', 'Error: User not found');
             }
+        }
+        // Put back any remaining (unconfirmed) entries
+        if (remainingQueue.length > 0) {
+            this.WAITING_PLAYERS = remainingQueue.concat(this.WAITING_PLAYERS);
         }
     }
 
@@ -664,18 +689,18 @@ class SocketHandlers {
 
         try {
             const { gameMode } = data;
-            const payment = await this.gameModeManager.moneroPayService.createPaymentRequest(socket.id, gameMode);
+            // Use gameModeManager to create payment request with proper amount
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, gameMode);
             
             this.io.to(socket.id).emit('payment_created', {
-                paymentId: payment.id,
-                address: payment.address,
-                amount: payment.amount,
-                confirmations: payment.confirmations,
+                paymentId: paymentRequest.id,
+                address: paymentRequest.address,
+                amount: paymentRequest.amount,
                 gameMode: gameMode
             });
             
             if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`💳 Payment request created for ${socket.id}: ${payment.amount} XMR`);
+                console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount} atomic units`);
             }
         } catch (error) {
             console.error('Error creating payment request:', error);
@@ -697,13 +722,13 @@ class SocketHandlers {
         }
 
         try {
-            const { paymentId } = data;
-            const status = await this.gameModeManager.moneroPayService.checkPaymentStatus(paymentId);
+            const { address } = data;
+            const status = await this.walletService.checkPaymentStatus(address);
             
             this.io.to(socket.id).emit('payment_status', status);
             
             if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`💳 Payment status checked for ${socket.id}: ${status.status}`);
+                console.log(`💳 Payment status checked for ${socket.id}: ${status.complete ? 'complete' : 'pending'}`);
             }
         } catch (error) {
             console.error('Error checking payment status:', error);
@@ -844,6 +869,331 @@ class SocketHandlers {
         } else {
             this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
                 `Address noted: ${pendingAddress.address} (Payment system not active)`);
+        }
+    }
+
+    /**
+     * Create payment request immediately when user types 'enter' in paid mode
+     * User stays on welcome screen until payment is detected
+     */
+    async createAndShowPaymentRequest(socket) {
+        try {
+            const currentUser = this.getUserBySocket(socket.id);
+            if (!currentUser) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                    'Error: Could not process payment request. Please try again.');
+                return;
+            }
+
+            // Get game mode information
+            const gameMode = this.gameModeManager.gameMode;
+            const cryptoType = this.gameModeManager.cryptoType;
+
+            // Determine payment type and amount based on game mode
+            let paymentType, amount, description;
+            
+            if (gameMode === 'PAID_SINGLE') {
+                paymentType = 'single_game';
+                amount = this.gameModeManager.singleGamePrice;
+                description = 'Single game entry';
+            } else if (gameMode === 'PAID_CREDITS') {
+                paymentType = 'credits_package';
+                amount = this.gameModeManager.creditsPackagePrice;
+                description = '10 game credits package';
+            } else {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                    'Invalid game mode configuration.');
+                return;
+            }
+
+            // Create payment request
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType);
+            
+            // Convert atomic units to human readable amount
+            const humanAmount = (amount / 1000000000000).toFixed(3);
+            
+            // Send payment information to client (for UI)
+            this.io.to(socket.id).emit('payment_created', {
+                paymentId: paymentRequest.id,
+                address: paymentRequest.address,
+                amount: paymentRequest.amount,
+                paymentType: paymentType,
+                gameMode: gameMode,
+                cryptoType: cryptoType,
+                humanAmount: humanAmount,
+                description: description,
+                expiresAt: paymentRequest.expiresAt
+            });
+
+            // Send status message to chat with payment details
+            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', 
+                `💳 PAYMENT REQUIRED (${description})\n\n` +
+                `Amount: ${humanAmount} ${cryptoType}\n` +
+                `Address: ${paymentRequest.address}\n\n` +
+                `⚠️  Send EXACTLY ${humanAmount} ${cryptoType} to the address above.\n` +
+                `🔄 You will be added to the game queue once payment is detected in mempool.\n` +
+                `⏰ Payment expires in 30 minutes.`);
+
+            // Start monitoring the payment address
+            this.walletService.startPaymentMonitoring(
+                paymentRequest.address,
+                async (status) => {
+                    if (status.in_mempool && !status.confirmed) {
+                        // Payment detected in mempool - add to queue
+                        socket.emit('payment_detected', {
+                            message: 'Payment detected! Adding you to the game queue...',
+                            amount: status.amount,
+                            confirmations: 0
+                        });
+                        
+                        // Add user to waiting queue (requires confirmation before starting)
+                        this.WAITING_PLAYERS.push({
+                            serverId: socket.id,
+                            clientId: currentUser.clientId,
+                            entryTime: Date.now(),
+                            paymentId: paymentRequest.id,
+                            requiresConfirmation: true,
+                            confirmed: false
+                        });
+                        
+                        // Show waiting screen
+                        socket.emit('queue_joined', {
+                            position: this.WAITING_PLAYERS.length,
+                            message: 'Payment received! Waiting for next block to start game...'
+                        });
+                        
+                    } else if (status.confirmed) {
+                        // Payment confirmed - game can start
+                        socket.emit('payment_confirmed', {
+                            message: 'Payment confirmed!',
+                            confirmations: status.confirmations
+                        });
+                        // Mark any existing waiting queue entry as confirmed
+                        const entry = this.WAITING_PLAYERS.find(p => p.serverId === socket.id);
+                        if (entry) {
+                            entry.confirmed = true;
+                        }
+                    }
+                },
+                2000 // Check every 2 seconds
+            );
+
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`💳 Payment request created for ${socket.id}: ${humanAmount} ${cryptoType} (${paymentType})`);
+                console.log(`👀 Started monitoring address: ${paymentRequest.address}`);
+            }
+
+        } catch (error) {
+            console.error('Error creating payment request:', error);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                'Failed to create payment request. Please try again or contact support.');
+        }
+    }
+
+    /**
+     * Start monitoring a payment address for incoming payments
+     */
+    startPaymentMonitoring(socketId, paymentRequest) {
+        if (!this.paymentMonitors) {
+            this.paymentMonitors = new Map();
+        }
+
+        // Clear any existing monitor for this user
+        this.stopPaymentMonitoring(socketId);
+
+        const monitor = {
+            paymentId: paymentRequest.id,
+            address: paymentRequest.address,
+            socketId: socketId,
+            startTime: Date.now(),
+            interval: setInterval(async () => {
+                try {
+                    const status = await this.walletService.checkPaymentStatus(paymentRequest.address);
+                    
+                    if (status.confirmed || status.in_mempool) {
+                        // Payment detected! 
+                        this.handlePaymentDetected(socketId, paymentRequest, status);
+                    }
+                } catch (error) {
+                    console.error(`Error checking payment status for ${socketId}:`, error);
+                }
+            }, 5000) // Check every 5 seconds
+        };
+
+        this.paymentMonitors.set(socketId, monitor);
+
+        // Auto-expire after 30 minutes
+        setTimeout(() => {
+            this.stopPaymentMonitoring(socketId);
+            this.broadcastManager.sendStatusUpdate(socketId, 'warning', 
+                'Payment request expired. Type \'enter\' again to create a new payment request.');
+        }, 30 * 60 * 1000); // 30 minutes
+    }
+
+    /**
+     * Stop monitoring a payment address
+     */
+    stopPaymentMonitoring(socketId) {
+        if (this.paymentMonitors && this.paymentMonitors.has(socketId)) {
+            const monitor = this.paymentMonitors.get(socketId);
+            clearInterval(monitor.interval);
+            this.paymentMonitors.delete(socketId);
+            
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`🛑 Stopped payment monitoring for ${socketId}`);
+            }
+        }
+    }
+
+    /**
+     * Handle payment detection - add user to queue
+     */
+    async handlePaymentDetected(socketId, paymentRequest, paymentStatus) {
+        this.stopPaymentMonitoring(socketId);
+
+        const currentUser = this.getUserBySocket(socketId);
+        if (!currentUser) {
+            console.error(`Payment detected but user not found: ${socketId}`);
+            return;
+        }
+
+        // Check if user is already in queue or game
+        const existingIndex = this.WAITING_PLAYERS.findIndex(p => p.serverId === socketId);
+        if (existingIndex !== -1) {
+            this.broadcastManager.sendStatusUpdate(socketId, 'info', 'Payment confirmed, you are already in the queue!');
+            return;
+        }
+
+        if (this.activeGames.has(socketId)) {
+            this.broadcastManager.sendStatusUpdate(socketId, 'info', 'Payment confirmed, but you are already in a game!');
+            return;
+        }
+
+        // Add to waiting queue. If only mempool detected, require confirmation.
+        this.WAITING_PLAYERS.push({
+            serverId: socketId,
+            clientId: currentUser.clientId,
+            entryTime: Date.now(),
+            paymentId: paymentRequest.id,
+            requiresConfirmation: paymentStatus.in_mempool && !paymentStatus.confirmed,
+            confirmed: paymentStatus.confirmed
+        });
+
+        const currentBlock = this.debugManager.getCurrentBlockHeight();
+        const nextBlock = currentBlock + 1;
+        
+        if (paymentStatus.in_mempool && !paymentStatus.confirmed) {
+            // Payment in mempool but not confirmed yet
+            this.broadcastManager.sendStatusUpdate(socketId, 'success', 
+                `💰 PAYMENT DETECTED IN MEMPOOL!\n\n` +
+                `✅ You have been added to the game queue.\n` +
+                `🕒 Your game will start when block ${nextBlock} is found.\n` +
+                `📦 Current block: ${currentBlock}`);
+            this.broadcastManager.sendStatusUpdate(socketId, 'info', 'Waiting for block confirmation before starting...');
+        } else if (paymentStatus.confirmed) {
+            // Payment already confirmed
+            this.broadcastManager.sendStatusUpdate(socketId, 'success', 
+                `💰 PAYMENT CONFIRMED!\n\n` +
+                `✅ You have been added to the game queue.\n` +
+                `🕒 Your game will start when block ${nextBlock} is found.\n` +
+                `📦 Current block: ${currentBlock}`);
+        }
+
+        // Send user to waiting screen
+        this.io.to(socketId).emit('payment_confirmed', {
+            paymentId: paymentRequest.id,
+            status: paymentStatus,
+            nextBlock: nextBlock,
+            currentBlock: currentBlock
+        });
+
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`💰 Payment detected for ${socketId}: Added to queue for block ${nextBlock}`);
+        }
+    }
+
+    /**
+     * Handle payment command - create payment request for user
+     */
+    async handlePaymentCommand(socket) {
+        if (!this.gameModeManager) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                'Payment system is not available. Server is running in FREE mode.');
+            return;
+        }
+
+        try {
+            const currentUser = this.getUserBySocket(socket.id);
+            if (!currentUser) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                    'Error: Could not process payment request. Please try again.');
+                return;
+            }
+
+            // Get game mode information
+            const gameMode = this.gameModeManager.gameMode;
+            const cryptoType = this.gameModeManager.cryptoType;
+
+            if (gameMode === 'FREE') {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                    'Server is in FREE mode - no payment required to play!');
+                return;
+            }
+
+            // Determine payment type and amount based on game mode
+            let paymentType, amount, description;
+            
+            if (gameMode === 'PAID_SINGLE') {
+                paymentType = 'single_game';
+                amount = this.gameModeManager.singleGamePrice;
+                description = `Single game entry (${cryptoType})`;
+            } else if (gameMode === 'PAID_CREDITS') {
+                paymentType = 'credits_package';
+                amount = this.gameModeManager.creditsPackagePrice;
+                description = `10 game credits package (${cryptoType})`;
+            } else {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                    'Invalid game mode configuration.');
+                return;
+            }
+
+            // Create payment request
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType);
+            
+            // Convert atomic units to human readable amount
+            const humanAmount = (amount / 1000000000000).toFixed(3);
+            
+            // Send payment information to client
+            this.io.to(socket.id).emit('payment_created', {
+                paymentId: paymentRequest.id,
+                address: paymentRequest.address,
+                amount: paymentRequest.amount,
+                paymentType: paymentType,
+                gameMode: gameMode,
+                cryptoType: cryptoType,
+                humanAmount: humanAmount,
+                description: description,
+                expiresAt: paymentRequest.expiresAt
+            });
+
+            // Send status message to chat
+            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', 
+                `💳 Payment Request Created!\n\n` +
+                `Amount: ${humanAmount} ${cryptoType}\n` +
+                `Type: ${description}\n` +
+                `Address: ${paymentRequest.address}\n\n` +
+                `⚠️  Send the EXACT amount to the address above.\n` +
+                `⏰ Payment will expire in 30 minutes.\n` +
+                `🔄 Your game will start automatically after payment confirmation.`);
+
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`💳 Payment request created for ${socket.id}: ${humanAmount} ${cryptoType} (${paymentType})`);
+            }
+
+        } catch (error) {
+            console.error('Error creating payment request:', error);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                'Failed to create payment request. Please try again or contact support.');
         }
     }
 }

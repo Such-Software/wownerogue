@@ -2,7 +2,7 @@
  * Socket event handlers for the Wowngeon game
  */
 const SocketHandlers = {
-    _initialized: false, // Flag to prevent multiple initializations
+    _initialized: false,
     
     init: function() {
         if (this._initialized) {
@@ -28,6 +28,7 @@ const SocketHandlers = {
         
         // Game state handlers
         socket.on('waiting_status', this.onWaitingStatus);
+        socket.on('queue_joined', this.onQueueJoined);
         socket.on('game_start', this.onGameStart);
         socket.on('game_update', this.onGameUpdate);
         socket.on('game_over', this.onGameOver);
@@ -36,20 +37,19 @@ const SocketHandlers = {
         // Payment/Address handlers
         socket.on('address_detected', this.onAddressDetected);
         socket.on('address_confirmed', this.onAddressConfirmed);
+        socket.on('payment_created', this.onPaymentCreated);
+        socket.on('payment_confirmed', this.onPaymentConfirmed);
+    socket.on('payment_detected', this.onPaymentDetected);
         
-        // Block height handler (broadcast to all clients)
+        // Block height handler
         socket.on('blockheight', this.onBlockHeight);
     },
 
     onConnect: function() {
-        
-        // Tell server our client ID
         socket.emit('register_client', {
             clientId: socket.id,
             userAgent: navigator.userAgent
         });
-        
-        // Auto-start removed - user must manually start game
     },
 
     onWelcome: function(msg) {
@@ -63,30 +63,31 @@ const SocketHandlers = {
     },
 
     onStatusUpdate: function(data) {
-        // Handle player-specific status updates
-        
-        // Display status message with appropriate styling
         const statusClass = data.type === 'error' ? 'error' : 'status';
-        $('#messages').append($(`<li class="${statusClass}">`).text(data.message));
+        const statusColor = data.type === 'error' ? '#f00' : 
+                           data.type === 'warning' ? '#ff0' : 
+                           data.type === 'success' ? '#0f0' : 
+                           data.type === 'payment' ? '#0af' : '#fff';
+        
+        $('#messages').append($('<li class="' + statusClass + '" style="color: ' + statusColor + '; white-space: pre-line;">').text(data.message));
         UI.scrollChat();
     },
 
     onChatBroadcast: function(data) {
-        // Handle chat messages broadcast to all players
-        
-        const timestamp = new Date(data.timestamp || Date.now()).toLocaleTimeString();
-        const chatMsg = `[${timestamp}] ${data.username || 'Anonymous'}: ${data.message}`;
-        
-        $('#messages').append($('<li class="chat">').text(chatMsg));
+        const msgElement = $('<li style="color: #aaa;">');
+        if (data.socketId) {
+            msgElement.html('<strong>' + data.socketId.substring(0, 6) + ':</strong> ' + data.message);
+        } else {
+            msgElement.text(data.message);
+        }
+        $('#messages').append(msgElement);
         UI.scrollChat();
     },
 
     onWaitingStatus: function(data) {
-        
         if (data.status === 'waiting') {
             $('#messages').append($('<li style="color:#ff0;">').text(data.message));
             
-            // Show waiting screen
             if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
                 Game.drawWaitingScreen();
             }
@@ -94,8 +95,21 @@ const SocketHandlers = {
         UI.scrollChat();
     },
 
-    onGameStart: function(data) {
+    onQueueJoined: function(data) {
+        console.log('Queue joined:', data);
         
+        $('#messages').append($('<li class="queue-info" style="color:#0f0;">').html(
+            '�� <strong>Queue Joined!</strong> Position: ' + data.position + '<br>' +
+            '📦 Current block: ' + data.currentBlock + ', Next: ' + data.nextBlock
+        ));
+        UI.scrollChat();
+        
+        if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+            Game.drawWaitingScreen();
+        }
+    },
+
+    onGameStart: function(data) {
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
         if (typeof Game !== 'undefined' && Game.stopWaitingScreen) {
@@ -109,173 +123,125 @@ const SocketHandlers = {
         }
         
         try {
-            // Pass all game data including lighting and torches
             var success = Game.startGame(data.player, data.map, data.monster, data.items, data.visibleTiles, data.lighting, data.torches);
             
             if (!success) {
                 $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
                 if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
             } else {
-                // Shift focus to the game display area after successful game start
-                $('#game-display').focus(); 
-                UI.updateFocusIndicator();
+                setTimeout(function() {
+                    $('#game-display').focus();
+                }, 100);
             }
-            
-        } catch (err) {
-            console.error("Error starting game:", err);
-            $('#messages').append($('<li class="error">').text("Error: " + err.message));
+        } catch (error) {
+            console.error("Error starting game:", error);
+            $('#messages').append($('<li class="error">').text("Game start error: " + error.message));
+            if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
         }
+        
+        UI.scrollChat();
     },
 
     onGameUpdate: function(data) {
-        
-        if (data.visibleTiles) {
-            if (window.GameDebug) window.GameDebug.updateDebugDisplay("SOCKET: Received game update with visibleTiles");
+        // Server pushed a game state update. The Game object exposes updateGameState().
+        // Older code referenced Game.updateGame, which doesn't exist in the current refactor,
+        // so updates were silently ignored (player appeared frozen).
+        if (typeof Game !== 'undefined') {
+            if (Game.updateGameState) {
+                Game.updateGameState(data);
+            } else if (Game.updateGame) { // Fallback if an alias gets added later
+                Game.updateGame(data);
+            } else {
+                console.warn('Game update received but no updateGameState()/updateGame() method found on Game.');
+            }
         }
-        
-        if (typeof Game !== 'undefined' && Game._gameActive) {
-            Game.updateGameState(data);
-        }
+        UI.scrollChat();
     },
 
     onGameOver: function(data) {
-        
-        // Update game state based on outcome
+        $('#messages').append($('<li class="game-over">').text("Game Over: " + data.message));
         if (typeof Game !== 'undefined') {
-            if (data.status === 'won') {
-                // Show win message
-                $('#messages').append($('<li style="color:#0f0; font-weight:bold;">').text(
-                    data.hasTreasure ? 
-                    "YOU ESCAPED WITH THE TREASURE! YOU WON!" : 
-                    "You escaped the dungeon alive!"
-                ));
-                
-                // Draw win screen
-                Game.drawWinScreen(data.hasTreasure);
-            } else {
-                // Show loss message
-                const reason = data.reason || "unknown";
-                let message = "You died in the dungeon!";
-                
-                if (reason === 'monster') {
-                    message = "You were killed by the monster!";
-                } else if (reason === 'timeout') {
-                    message = "You didn't escape before the next block was found!";
-                }
-                
-                $('#messages').append($('<li style="color:#f00; font-weight:bold;">').text(message));
-                
-                // Draw lose screen
-                if (Game && Game.drawLoseScreen) {
-                    Game.drawLoseScreen(reason);
-                }
+            if (Game.endGame) {
+                Game.endGame(data);
+            } else if (Game.drawLoseScreen && data && data.reason) {
+                // Minimal fallback if endGame not present
+                if (data.reason === 'monster') Game.drawLoseScreen('monster');
             }
-            
-            // Set game as inactive to prevent further movement
-            if (Game) {
-                Game._gameActive = false;
-            }
-            
-            // Auto-return to title screen after 30 seconds
-            setTimeout(() => {
-                $('#messages').append($('<li style="color:#888;">').text("Returning to title screen..."));
-                UI.scrollChat();
-                
-                // Return to welcome screen
-                if (Game && Game._drawWelcomeScreen) {
-                    Game._drawWelcomeScreen();
-                }
-                
-                // Reset game state
-                if (typeof GameState !== 'undefined') {
-                    GameState.reset();
-                }
-                
-                // Focus chat for new commands
-                $('#chatInput').focus();
-                UI.updateFocusIndicator();
-            }, 30000); // 30 seconds
         }
         
         UI.scrollChat();
     },
 
-    onQueueCancelled: function() {
+    onQueueCancelled: function(data) {
+        $('#messages').append($('<li style="color: #ff0;">').text("Queue entry cancelled."));
         
         if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) {
             Game._drawWelcomeScreen();
-        } else {
-            console.error("Game or _drawWelcomeScreen not available");
         }
-    },
-
-    onBlockHeight: function(height) {
-        UI.updateBlockHeight(height);
-        $('#statusValue').text('Connected');
-        $('#statusValue').css('color', '#0f0');
+        
+        UI.scrollChat();
     },
 
     onAddressDetected: function(data) {
-        // Handle address detection confirmation request
         console.log('Address detected:', data);
+        $('#messages').append($('<li class="address-detected" style="color: #ff0; white-space: pre-line;">').text(data.message));
+        UI.scrollChat();
+    },
+
+    onAddressConfirmed: function(data) {
+        console.log('Address confirmed:', data);
+        $('#messages').append($('<li class="address-confirmed" style="color: #0f0; white-space: pre-line;">').text(data.message));
+        UI.scrollChat();
+    },
+
+    onPaymentCreated: function(data) {
+        console.log('Payment created:', data);
         
-        // Display the confirmation message with styling
-        const confirmationHtml = `
-            <div class="address-confirmation" style="
-                background: #ffe066; 
-                color: #333; 
-                padding: 10px; 
-                margin: 5px 0; 
-                border-radius: 4px;
-                border-left: 4px solid #f0ad4e;
-            ">
-                <strong>🔍 ADDRESS DETECTED</strong><br>
-                <strong>Type:</strong> ${data.type}<br>
-                <strong>Address:</strong> <code style="word-break: break-all; font-size: 11px;">${data.address}</code><br><br>
-                <strong style="color: #d9534f;">⚠️ WARNING: Verify this is YOUR address!</strong><br>
-                <strong style="color: #d9534f;">⚠️ Clipboard viruses can change addresses!</strong><br><br>
-                Type <strong>"confirm"</strong> to set as payout address or <strong>"cancel"</strong> to reject.
-            </div>
-        `;
-        
-        $('#messages').append($(confirmationHtml));
+        $('#messages').append($('<li class="payment-info">').html(
+            '💳 <strong>Payment Required:</strong> ' + data.humanAmount + ' ' + data.cryptoType
+        ));
         UI.scrollChat();
         
-        // Focus chat input for easy confirmation
-        setTimeout(() => {
+        setTimeout(function() {
             $('#chatInput').focus();
         }, 100);
     },
 
-    onAddressConfirmed: function(data) {
-        // Handle successful address confirmation
-        console.log('Address confirmed:', data);
+    onPaymentConfirmed: function(data) {
+        console.log('Payment confirmed:', data);
         
-        const confirmationHtml = `
-            <div class="address-confirmed" style="
-                background: #d4edda; 
-                color: #155724; 
-                padding: 10px; 
-                margin: 5px 0; 
-                border-radius: 4px;
-                border-left: 4px solid #28a745;
-            ">
-                <strong>✅ PAYOUT ADDRESS CONFIRMED</strong><br>
-                <strong>Type:</strong> ${data.type}<br>
-                <strong>Address:</strong> <code style="word-break: break-all; font-size: 11px;">${data.address}</code><br><br>
-                Future winnings will be sent to this address.
-            </div>
-        `;
+        if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+            Game.drawWaitingScreen();
+        }
+        if (typeof Game !== 'undefined') {
+            Game._pendingPaymentConfirmed();
+        }
         
-        $('#messages').append($(confirmationHtml));
+        $('#messages').append($('<li class="payment-success">').html(
+            '✅ <strong>Payment confirmed!</strong> You are in the game queue.'
+        ));
         UI.scrollChat();
+    },
+
+    onPaymentDetected: function(data) {
+        console.log('Payment detected (mempool):', data);
+        if (typeof Game !== 'undefined') {
+            Game._pendingPaymentDetected(data);
+            if (Game.drawWaitingScreen) Game.drawWaitingScreen();
+        }
+        $('#messages').append($('<li class="payment-mempool" style="color:#0af;">').html(
+            '🌀 <strong>Payment seen in mempool</strong> – awaiting block confirmation...'
+        ));
+        UI.scrollChat();
+    },
+
+    onBlockHeight: function(data) {
+        if (typeof UI !== 'undefined' && UI.updateBlockHeight) {
+            UI.updateBlockHeight(data.blockHeight);
+        }
     }
 };
 
-// Ensure SocketHandlers is available globally
-if (typeof window !== 'undefined') {
-    window.SocketHandlers = SocketHandlers;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = SocketHandlers;
 }
-
-// Note: SocketHandlers.init() is called from index.html after DOM ready
-// to ensure proper initialization order with other modules
