@@ -202,26 +202,26 @@ var ScreenManager = {
         this.drawCenteredText(y, "CONGRATULATIONS!");
         
         if (hasTreasure) {
-            this.drawCenteredText(y + 2, "You escaped with the treasure!");
+            this.drawCenteredText(y + 2, "You got the treasure!");
         } else {
-            this.drawCenteredText(y + 2, "You escaped the dungeon!");
+            this.drawCenteredText(y + 2, "You escaped alive!");
         }
-        this.drawCenteredText(y + 3, "A true hero of Wownero!");
+        this.drawCenteredText(y + 3, "Hero of Wownero!");
     },
 
     drawLoseScreen: function(reason) {
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();
 
-                let y = Math.floor(this._screenHeight / 3);
+        let y = Math.floor(this._screenHeight / 3);
         this.drawCenteredText(y, "YOU HAVE PERISHED");
         
         if (reason === 'monster') {
-            this.drawCenteredText(y + 2, "Slain by a fearsome beast.");
+            this.drawCenteredText(y + 2, "Slain by a beast.");
         } else if (reason === 'timeout') {
-            this.drawCenteredText(y + 2, "The dungeon claimed you before the next block.");
+            this.drawCenteredText(y + 2, "Time ran out.");
         } else {
-            this.drawCenteredText(y + 2, "Your adventure ends here.");
+            this.drawCenteredText(y + 2, "Your adventure ends.");
         }
         this.drawCenteredText(y + 3, "Better luck next time.");
     },

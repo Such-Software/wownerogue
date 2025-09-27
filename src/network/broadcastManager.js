@@ -7,6 +7,7 @@
 class BroadcastManager {
     constructor(io) {
         this.io = io;
+        this._lastBroadcastBlock = null;
     }
 
     // ====== GLOBAL BROADCASTS (All Clients) ======
@@ -16,8 +17,12 @@ class BroadcastManager {
      * @param {number} blockHeight - Current block height
      */
     broadcastBlockHeight(blockHeight) {
-        console.log(`📡 Broadcasting block height ${blockHeight} to all clients`);
-        this.io.emit('blockheight', blockHeight);
+        // Only log when the height actually changes to avoid per-client spam
+        if (blockHeight !== this._lastBroadcastBlock) {
+            console.log(`📡 Broadcasting block height ${blockHeight} to all clients`);
+            this._lastBroadcastBlock = blockHeight;
+        }
+        this.io.emit('blockheight', { blockHeight });
     }
 
     /**

@@ -162,9 +162,10 @@ function debugRegisteredUsers() {
         console.log("📊 REGISTERED USERS DEBUG:");
         const allUsers = require('./db/user').getAllUsers();
         console.log(`Total registered users: ${allUsers.length}`);
-        allUsers.forEach(user => {
-            console.log(`  - User ID: ${user.id}, Socket: ${user.socketId}, Client: ${user.clientId}`);
-        });
+    allUsers.forEach(u => {
+      // u.id is the socket/server id; there is no separate socketId property on User
+      console.log(`  - User ID: ${u.id}, Socket: ${u.id}, Client: ${u.clientId}`);
+    });
         console.log(`Active games: ${activeGames.size}`);
     }
 }

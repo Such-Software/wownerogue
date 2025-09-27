@@ -76,7 +76,11 @@ var WaitingScreenAnimator = {
         
         // Fixed-position animated text
         let y = Math.floor(screenHeight / 2) - 8;
-        const baseText = "Awaiting next block";
+        let baseText = "Awaiting next block";
+        if (typeof Game !== 'undefined') {
+            if (Game._awaitingPayment) baseText = 'Awaiting payment';
+            else if (Game._unconfirmedPayment) baseText = 'Awaiting next block'; // mempool seen
+        }
         const dots = ".".repeat((Math.floor(Date.now() / 500) % 4));
         const paddedDots = dots.padEnd(3, " ");
         drawCenteredTextFn(y, `${baseText}${paddedDots}`);
@@ -364,15 +368,53 @@ var WaitingScreenAnimator = {
     },
 
     resetAnimation: function() {
+        // Track cycle count for variation
+        if (typeof this._cycleCount === 'undefined') this._cycleCount = 0;
+        this._cycleCount++;
+
+        // Random variant selection after first loop
+        const variant = this._cycleCount === 1 ? 'classic' : (Math.random() < 0.33 ? 'reverse' : (Math.random() < 0.5 ? 'race' : 'ambush'));
+        const basePlayerX = 8;
+        const baseMonsterX = 5;
+        let playerStart = basePlayerX;
+        let monsterStart = baseMonsterX;
+        let treasureX = 35;
+        let initialPhase = 'enter';
+
+        switch(variant) {
+            case 'reverse':
+                // Swap sides: player closer to treasure, monster further back
+                playerStart = 25 + Math.floor(Math.random()*4);
+                monsterStart = playerStart - 10;
+                treasureX = playerStart + 5 + Math.floor(Math.random()*3);
+                break;
+            case 'race':
+                // Both start near entrance racing for treasure
+                playerStart = 6;
+                monsterStart = 4;
+                treasureX = 40 + Math.floor(Math.random()*3);
+                break;
+            case 'ambush':
+                // Monster waits near treasure
+                playerStart = 8;
+                monsterStart = 30 + Math.floor(Math.random()*3);
+                treasureX = monsterStart + 3;
+                initialPhase = 'chase'; // jump into chase faster
+                break;
+            default:
+                // classic
+                break;
+        }
+
         this._waitingAnimation = {
             frame: 0,
-            playerX: 8,     // Start near entrance
+            playerX: playerStart,     // variant start
             playerY: 12,
-            monsterX: 5,    // Start at entrance
+            monsterX: monsterStart,    // variant start
             monsterY: 12,
-            treasureX: 35,  // Treasure near exit
+            treasureX: treasureX,  // variant treasure
             treasureY: 12,
-            phase: 'enter',
+            phase: initialPhase,
             frameCount: 0,
             direction: 1
         };

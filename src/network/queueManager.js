@@ -1,0 +1,146 @@
+/**
+ * Queue Manager
+ * Encapsulates logic for players waiting for the next block to start a game.
+ * Responsible for:
+ *  - Managing queue entries (add/remove/confirm)
+ *  - Starting games when a new block arrives
+ *  - Preserving unconfirmed (mempool-only) entries across blocks
+ */
+class QueueManager {
+    constructor({ debugManager, broadcastManager, io, createGameForUser, getUserBySocket, activeGames, gameModeManager, consoleLogging }) {
+        this.debugManager = debugManager;
+        this.broadcastManager = broadcastManager;
+        this.io = io;
+        this.createGameForUser = createGameForUser; // (user, gameType, options) => Game
+        this.getUserBySocket = getUserBySocket; // (socketId) => User
+        this.activeGames = activeGames; // Map socketId -> Game
+        this.gameModeManager = gameModeManager;
+        this.CONSOLE_LOGGING = !!consoleLogging;
+        this._waitingPlayers = []; // internal queue
+    }
+
+    addPlayer({ serverId, clientId, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true }) {
+        if (this.getPlayerIndex(serverId) !== -1) return; // already queued
+        this._waitingPlayers.push({ serverId, clientId, entryTime, paymentId, requiresConfirmation, confirmed });
+        if (this.CONSOLE_LOGGING) {
+            console.log(`[QueueManager] Added player ${serverId} (confirmed=${confirmed}, requiresConfirmation=${requiresConfirmation}). Queue length: ${this._waitingPlayers.length}`);
+        }
+    }
+
+    removePlayer(serverId) {
+        const idx = this.getPlayerIndex(serverId);
+        if (idx !== -1) {
+            this._waitingPlayers.splice(idx, 1);
+            if (this.CONSOLE_LOGGING) {
+                console.log(`[QueueManager] Removed player ${serverId}. Queue length: ${this._waitingPlayers.length}`);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    markConfirmed(serverId) {
+        const entry = this._waitingPlayers.find(p => p.serverId === serverId);
+        if (entry) {
+            entry.confirmed = true;
+            entry.requiresConfirmation = false;
+            if (this.CONSOLE_LOGGING) console.log(`[QueueManager] Marked player ${serverId} confirmed.`);
+        }
+    }
+
+    getPlayerIndex(serverId) { return this._waitingPlayers.findIndex(p => p.serverId === serverId); }
+    isPlayerQueued(serverId) { return this.getPlayerIndex(serverId) !== -1; }
+    getQueueLength() { return this._waitingPlayers.length; }
+    getQueuePosition(serverId) { const i = this.getPlayerIndex(serverId); return i === -1 ? -1 : i + 1; }
+
+    startGamesForWaiting(blockHeight) {
+        if (this.CONSOLE_LOGGING) {
+            console.log(`[QueueManager] Starting games for ${this._waitingPlayers.length} waiting players at block ${blockHeight}`);
+        }
+        const remainingQueue = [];
+        while (this._waitingPlayers.length > 0) {
+            const entry = this._waitingPlayers.shift();
+            const serverId = entry.serverId;
+
+            if (this.CONSOLE_LOGGING) console.log(`[QueueManager] Processing queued player ${serverId}`);
+            const currentUser = this.getUserBySocket(serverId);
+            if (!currentUser) {
+                if (this.CONSOLE_LOGGING) console.warn(`[QueueManager] User not found for ${serverId}, skipping.`);
+                continue;
+            }
+
+            // Keep unconfirmed paid entries in queue
+            if (entry.requiresConfirmation && !entry.confirmed) {
+                remainingQueue.push(entry);
+                if (this.CONSOLE_LOGGING) console.log(`[QueueManager] Skipping unconfirmed paid entry ${serverId}`);
+                continue;
+            }
+
+            currentUser.blockRec = blockHeight;
+            if (this.CONSOLE_LOGGING) {
+                console.log(`[QueueManager] Player ${serverId} enters on block ${blockHeight} (dies after ${blockHeight + 1})`);
+            }
+            try {
+                const game = this.createGameForUser(currentUser, 'standard');
+                const gameState = game.getState();
+                gameState.blockHeight = blockHeight;
+                this.io.to(serverId).emit('game_start', gameState);
+                if (this.CONSOLE_LOGGING) console.log(`[QueueManager] Game started for ${serverId}`);
+            } catch (error) {
+                console.error('[QueueManager] Error creating game:', error);
+                this.io.to(serverId).emit('message', 'Error starting game: ' + error.message);
+            }
+        }
+        if (remainingQueue.length > 0) {
+            this._waitingPlayers = remainingQueue.concat(this._waitingPlayers);
+            if (this.CONSOLE_LOGGING) {
+                console.log(`[QueueManager] Re-queued ${remainingQueue.length} unconfirmed entries.`);
+                remainingQueue.forEach(e => {
+                    console.log(`[QueueManager]   -> ${e.serverId} confirmed=${e.confirmed} requiresConfirmation=${e.requiresConfirmation}`);
+                });
+            }
+        }
+    }
+
+    debugDumpQueue() {
+        if (!this.CONSOLE_LOGGING) return;
+        console.log('[QueueManager] Current queue dump:');
+        this._waitingPlayers.forEach((e,i) => {
+            console.log(`  [${i}] ${e.serverId} confirmed=${e.confirmed} requiresConfirmation=${e.requiresConfirmation}`);
+        });
+    }
+
+    /**
+     * Immediately start a game for a single confirmed player (e.g. payment confirmed AFTER
+     * the block tick already processed). This prevents an additional full-block wait.
+     * Returns true if a game was started.
+     */
+    startGameImmediately(serverId, blockHeight) {
+        const idx = this.getPlayerIndex(serverId);
+        if (idx === -1) return false; // not queued
+        const entry = this._waitingPlayers[idx];
+        if (entry.requiresConfirmation && !entry.confirmed) {
+            // Still not confirmed; cannot start
+            return false;
+        }
+        // Remove from queue
+        this._waitingPlayers.splice(idx, 1);
+        const currentUser = this.getUserBySocket(serverId);
+        if (!currentUser) return false;
+        currentUser.blockRec = blockHeight; // lifetime until next block
+        try {
+            const game = this.createGameForUser(currentUser, 'standard');
+            const gameState = game.getState();
+            gameState.blockHeight = blockHeight;
+            this.io.to(serverId).emit('game_start', gameState);
+            if (this.CONSOLE_LOGGING) console.log(`[QueueManager] (immediate) Game started for ${serverId} at block ${blockHeight}`);
+            return true;
+        } catch (err) {
+            console.error('[QueueManager] Error starting immediate game:', err);
+            this.io.to(serverId).emit('message', 'Error starting game: ' + err.message);
+            return false;
+        }
+    }
+}
+
+module.exports = QueueManager;

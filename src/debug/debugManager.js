@@ -17,14 +17,24 @@ class DebugManager {
         this.IS_DEBUG = nodeEnv === 'debug';
         this.IS_DEVELOPMENT = nodeEnv === 'development';
         
-        // Debug mode is enabled in development or debug environments
-        this.DEBUG_MODE = this.IS_DEBUG || this.IS_DEVELOPMENT;
+    // Debug mode is enabled in development or debug environments
+    this.DEBUG_MODE = this.IS_DEBUG || this.IS_DEVELOPMENT;
         
-        // Configuration from package.json
-        const config = this.IS_PRODUCTION ? packageConfig.config.production : packageConfig.config.debug;
-        this.CONSOLE_LOGGING = config.console_logging || this.DEBUG_MODE;
-        this.DEBUG_HOTKEYS = config.debug_hotkeys || this.DEBUG_MODE;
-        this.SIMULATED_BLOCKS = config.simulated_blocks || this.DEBUG_MODE;
+    // Configuration precedence:
+    // 1. Explicit env overrides
+    // 2. Package.json config
+    const config = this.IS_PRODUCTION ? packageConfig.config.production : packageConfig.config.debug;
+    this.CONSOLE_LOGGING = process.env.CONSOLE_LOGGING ? process.env.CONSOLE_LOGGING === 'true' : (config.console_logging || this.DEBUG_MODE);
+    this.DEBUG_HOTKEYS = process.env.DEBUG_HOTKEYS ? process.env.DEBUG_HOTKEYS === 'true' : (config.debug_hotkeys || this.DEBUG_MODE);
+    // Simulation can be force-disabled by BLOCK_SOURCE=daemon or GAME_MODE paid modes
+    const forceSimFlag = process.env.FORCE_SIMULATED_BLOCKS === 'true';
+    const blockSource = (process.env.BLOCK_SOURCE || '').toLowerCase(); // 'daemon' | 'simulated'
+    let simulatedDefault = config.simulated_blocks || this.DEBUG_MODE;
+    if (blockSource === 'daemon') simulatedDefault = false;
+    // In paid modes always use real daemon unless explicitly forced (for test)
+    const paidMode = ['PAID_SINGLE','PAID_CREDITS'].includes(process.env.GAME_MODE);
+    if (paidMode && !forceSimFlag) simulatedDefault = false;
+    this.SIMULATED_BLOCKS = process.env.SIMULATED_BLOCKS ? process.env.SIMULATED_BLOCKS === 'true' : simulatedDefault;
         
         this.debugBlockHeight = 1;
         this.debugInterval = null;
@@ -48,6 +58,9 @@ class DebugManager {
             console.log(`  CONSOLE_LOGGING: ${this.CONSOLE_LOGGING}`);
             console.log(`  DEBUG_HOTKEYS: ${this.DEBUG_HOTKEYS}`);
             console.log(`  SIMULATED_BLOCKS: ${this.SIMULATED_BLOCKS}`);
+            if (process.env.GAME_MODE && ['PAID_SINGLE','PAID_CREDITS'].includes(process.env.GAME_MODE)) {
+                console.log(`  GAME_MODE: ${process.env.GAME_MODE} (simulation ${this.SIMULATED_BLOCKS ? 'ENABLED' : 'DISABLED'})`);
+            }
         }
     }
 
@@ -57,7 +70,7 @@ class DebugManager {
      * Initialize debug mode or production mode
      */
     initialize() {
-        if (this.DEBUG_MODE && this.SIMULATED_BLOCKS) {
+        if (this.SIMULATED_BLOCKS) {
             this.initializeDebugMode();
         } else {
             this.initializeProductionMode();
@@ -72,8 +85,8 @@ class DebugManager {
             console.log("🐛 DEBUG MODE ENABLED - Simulating blocks every 30 seconds");
         }
         
-        // Initial debug block broadcast
-        this.broadcastManager.broadcastBlockHeight(this.debugBlockHeight);
+    // Initial debug block broadcast
+    this.broadcastManager.broadcastBlockHeight(this.debugBlockHeight);
         
         // Debug block height simulator - advances every 30 seconds
         this.debugInterval = setInterval(() => {
@@ -108,7 +121,7 @@ class DebugManager {
         this.rpcService = new RpcService();
         
         // Real blockchain monitoring with new RPC service
-        this.debugInterval = setInterval(async () => {
+        const poll = async () => {
             try {
                 const currentHeight = await this.rpcService.getBlockHeight();
                 
@@ -151,7 +164,10 @@ class DebugManager {
                     }
                 });
             }
-        }, 2000); // Every 2 seconds as specified in .env
+        };
+        // immediate first poll so UI shows real height quickly
+        poll();
+        this.debugInterval = setInterval(poll, 2000); // Every 2 seconds
     }
 
     // ====== BLOCK HEIGHT MANAGEMENT ======
@@ -161,7 +177,8 @@ class DebugManager {
      * @returns {number} Current block height
      */
     getCurrentBlockHeight() {
-        return this.DEBUG_MODE ? this.debugBlockHeight : this.lastProductionBlockHeight;
+        if (this.SIMULATED_BLOCKS) return this.debugBlockHeight;
+        return this.lastProductionBlockHeight;
     }
 
     /**

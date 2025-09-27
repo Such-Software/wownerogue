@@ -16,6 +16,7 @@ var Game = {
     _maxLogMessages: 5,
     _unconfirmedPayment: false,
     _unconfirmedPaymentInfo: null,
+    _awaitingPayment: false,
 
     init: function() {
         // Update screen dimensions from options
@@ -178,7 +179,7 @@ var Game = {
                 const baseY = Math.floor(ScreenManager._screenHeight / 2) + 5;
                 ScreenManager.drawCenteredText(baseY, `Score: ${score}`);
                 if (treasure) {
-                    ScreenManager.drawCenteredText(baseY + 1, 'You secured the treasure!');
+                    ScreenManager.drawCenteredText(baseY + 1, 'Treasure secured!');
                 }
             }
 
@@ -341,11 +342,17 @@ var Game = {
 Game._pendingPaymentDetected = function(info) {
     this._unconfirmedPayment = true;
     this._unconfirmedPaymentInfo = info || {};
+    this._awaitingPayment = false; // no longer just awaiting creation; we've seen a tx
 };
 
 Game._pendingPaymentConfirmed = function() {
     this._unconfirmedPayment = false;
     this._unconfirmedPaymentInfo = null;
+    this._awaitingPayment = false;
+};
+
+Game._paymentRequested = function() {
+    this._awaitingPayment = true;
 };
 
 // Debug utility functions (keep as-is for compatibility)

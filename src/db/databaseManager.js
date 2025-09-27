@@ -63,6 +63,9 @@ class DatabaseManager {
      */
     async runMigrations() {
         try {
+            // Simple migration ledger
+            await this.pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMP DEFAULT NOW())`);
+
             const migrationsPath = path.join(__dirname, '../migrations');
             const files = await fs.readdir(migrationsPath);
             const sqlFiles = files.filter(file => file.endsWith('.sql')).sort();
@@ -70,15 +73,22 @@ class DatabaseManager {
             console.log(`📁 Found ${sqlFiles.length} migration files`);
 
             for (const file of sqlFiles) {
+                // Skip if already applied
+                const existing = await this.pool.query(`SELECT 1 FROM schema_migrations WHERE filename = $1`, [file]);
+                if (existing.rowCount > 0) {
+                    console.log(`⏩ Skipping already applied migration: ${file}`);
+                    continue;
+                }
+
                 const filePath = path.join(migrationsPath, file);
                 const sql = await fs.readFile(filePath, 'utf8');
-                
                 console.log(`🔄 Running migration: ${file}`);
                 await this.pool.query(sql);
+                await this.pool.query(`INSERT INTO schema_migrations (filename) VALUES ($1)`, [file]);
                 console.log(`✅ Migration completed: ${file}`);
             }
 
-            console.log('✅ All migrations completed successfully');
+            console.log('✅ Migration phase complete');
         } catch (error) {
             console.error('❌ Migration failed:', error.message);
             throw error;

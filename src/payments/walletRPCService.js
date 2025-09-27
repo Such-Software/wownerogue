@@ -157,7 +157,7 @@ class WalletRPCService {
                     if (!userInfo.detected) {
                         userInfo.detected = true;
                         if (this.debugManager?.CONSOLE_LOGGING) {
-                            console.log(`🎯 Payment detected in mempool:`, {
+                            console.log(`🎯 Payment detected (mempool):`, {
                                 address: address.substring(0, 10) + '...',
                                 amount: tx.amount,
                                 txid: txHash
@@ -183,7 +183,7 @@ class WalletRPCService {
                     if (!userInfo.confirmed) {
                         userInfo.confirmed = true;
                         if (this.debugManager?.CONSOLE_LOGGING) {
-                            console.log(`✅ Payment confirmed:`, {
+                            console.log(`✅ Payment included in block (confirmed):`, {
                                 address: address.substring(0, 10) + '...',
                                 confirmations: confirmations,
                                 txid: txHash
@@ -234,7 +234,9 @@ class WalletRPCService {
             }
         }, interval);
 
-        this.paymentWatchers.set(address, watcher);
+    this.paymentWatchers.set(address, watcher);
+    // Allow process to exit if this is the only remaining handle (useful for tests)
+    if (watcher.unref) watcher.unref();
 
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`👁️ Started monitoring payments for:`, address.substring(0, 10) + '...');
@@ -251,6 +253,17 @@ class WalletRPCService {
                 console.log(`🛑 Stopped monitoring:`, address.substring(0, 10) + '...');
             }
         }
+    }
+
+    /**
+     * Placeholder for future batch payout aggregation.
+     * Currently returns early to avoid runtime errors where it's scheduled.
+     */
+    async processBatchPayouts() {
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log('⚙️ processBatchPayouts stub invoked (no payouts processed).');
+        }
+        return { processed: 0 };
     }
 
     async processPayout(recipientAddress, amount, description) {
@@ -286,47 +299,6 @@ class WalletRPCService {
                 success: false, 
                 error: error.message 
             };
-        }
-    }
-
-    startPaymentMonitoring(address, callback, interval = 2000) {
-        if (this.paymentWatchers.has(address)) {
-            return; // Already monitoring
-        }
-
-        const watcher = setInterval(async () => {
-            try {
-                const status = await this.checkPaymentStatus(address);
-                
-                if (status.in_mempool || status.confirmed) {
-                    callback(status);
-                    
-                    // Stop monitoring if payment is confirmed
-                    if (status.confirmed && status.complete) {
-                        this.stopPaymentMonitoring(address);
-                    }
-                }
-            } catch (error) {
-                console.error(`❌ Error monitoring payment ${address.substring(0, 10)}...:`, error.message);
-            }
-        }, interval);
-
-        this.paymentWatchers.set(address, watcher);
-
-        if (this.debugManager?.CONSOLE_LOGGING) {
-            console.log(`👁️ Started monitoring payments for:`, address.substring(0, 10) + '...');
-        }
-    }
-
-    stopPaymentMonitoring(address) {
-        const watcher = this.paymentWatchers.get(address);
-        if (watcher) {
-            clearInterval(watcher);
-            this.paymentWatchers.delete(address);
-            
-            if (this.debugManager?.CONSOLE_LOGGING) {
-                console.log(`🛑 Stopped monitoring:`, address.substring(0, 10) + '...');
-            }
         }
     }
 

@@ -7,7 +7,7 @@
     "start": "NODE_ENV=production node index.js",
     "dev": "NODE_ENV=development node index.js",
     "debug": "NODE_ENV=debug node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --runInBand"
   },
   "config": {
     "debug": {
@@ -35,5 +35,9 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "uuid": "^9.0.0"
+    ,"qrcode": "^1.5.3"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   }
 }

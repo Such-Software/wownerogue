@@ -10,13 +10,25 @@ class GameModeManager {
         this.debugManager = debugManager;
         this.gameMode = process.env.GAME_MODE || 'FREE';
         this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
-        this.singleGamePrice = parseInt(process.env.SINGLE_GAME_PRICE) || 5000000000; // 0.005 XMR
-        this.creditsPackagePrice = parseInt(process.env.CREDITS_PACKAGE_PRICE) || 50000000000; // 0.05 XMR
+        // Flexible parsing: supports plain integers, scientific notation (e.g. 5e9), and underscores (e.g. 5_000_000_000)
+        const parseAtomic = (val, fallback) => {
+            if (val === undefined || val === null || val === '') return fallback;
+            if (typeof val !== 'string') return Math.trunc(Number(val)) || fallback;
+            const cleaned = val.replace(/_/g, '').trim();
+            const num = Number(cleaned);
+            if (!Number.isFinite(num) || num < 0) return fallback;
+            // Ensure integer atomic units
+            return Math.trunc(num);
+        };
+
+        this.singleGamePrice = parseAtomic(process.env.SINGLE_GAME_PRICE, 5000000000); // default 0.005 XMR
+        this.creditsPackagePrice = parseAtomic(process.env.CREDITS_PACKAGE_PRICE, 50000000000); // default 0.05 XMR
         
         console.log(`🎮 Game Mode Manager initialized: ${this.gameMode} mode`);
         console.log(`💰 Currency: ${this.cryptoType}`);
-        console.log(`💵 Single game price: ${this.singleGamePrice} atomic units`);
-        console.log(`🎫 Credits package price: ${this.creditsPackagePrice} atomic units`);
+        const toXMR = (atomic) => (atomic / 1e12).toFixed(6).replace(/0+$/,'').replace(/\.$/,'');
+        console.log(`💵 Single game price: ${this.singleGamePrice} atomic units (~${toXMR(this.singleGamePrice)} ${this.cryptoType})`);
+        console.log(`🎫 Credits package price: ${this.creditsPackagePrice} atomic units (~${toXMR(this.creditsPackagePrice)} ${this.cryptoType})`);
     }
 
     /**
@@ -256,9 +268,9 @@ class GameModeManager {
 
             // Store payment info in database
             await this.db.query(`
-                INSERT INTO payments (user_id, subaddress, expected_amount, payment_type, status, created_at)
-                VALUES ($1, $2, $3, $4, 'pending', NOW())
-            `, [user.id, paymentResult.address, amount, paymentType]);
+                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, created_at)
+                VALUES ($1, $2, $3, $4, $5, 'pending', NOW())
+            `, [user.id, socketId, paymentResult.address, amount, paymentType]);
             
             return {
                 id: paymentResult.id,

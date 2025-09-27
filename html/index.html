@@ -29,6 +29,7 @@
     
     <!-- Other modules -->
     <script src="js/ui/ui.js"></script>
+    <script src="js/ui/audioAlerts.js"></script>
     <script src="js/network/socketHandlers.js"></script>
     <script src="js/input/inputHandler.js"></script>
 </head>
@@ -51,6 +52,11 @@
             <button id="animationToggleButton" style="background: #5c5c0a; color: #ff0; border: 2px solid #aa0; padding: 6px 12px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
                 🎬 DISABLE ANIMATION
             </button>
+            <div style="margin-top:6px; font-size:11px; color:#ccc; display:flex; align-items:center; gap:4px;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:4px;">
+                    <input type="checkbox" id="audioAlertsToggle" style="cursor:pointer;"> Audio Alerts
+                </label>
+            </div>
         </div>
         
         <!-- Payment System UI -->
@@ -160,6 +166,7 @@
                 if (typeof SocketHandlers !== 'undefined') {
                     console.log("Initializing SocketHandlers...");
                     SocketHandlers.init();
+                    if (typeof AudioAlerts !== 'undefined') { AudioAlerts.init(); }
                 } else {
                     console.error("SocketHandlers object not found!");
                 }
