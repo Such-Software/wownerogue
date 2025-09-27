@@ -8,6 +8,8 @@ const Game = require('../game/game');
 const MovementManager = require('../game/movementManager');
 const QueueManager = require('./queueManager');
 const PaymentHandlers = require('./paymentHandlers');
+const AddressManager = require('./addressManager');
+const SessionManager = require('./sessionManager');
 
 class SocketHandlers {
     constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null, walletService = null) {
@@ -48,6 +50,31 @@ class SocketHandlers {
             moveCooldown: this.MOVE_COOLDOWN,
             postMoveHook: ({ socketId, game }) => this.afterPlayerMove(socketId, game)
         });
+        // Address / payout handling encapsulated in AddressManager
+        this.addressManager = new AddressManager({
+            gameModeManager: this.gameModeManager,
+            broadcastManager: this.broadcastManager,
+            io: this.io,
+            debugManager: this.debugManager,
+            onConfirmed: (socketId, accepted) => {
+                if (accepted && this._awaitingAddressFor && this._awaitingAddressFor.has(socketId)) {
+                    // Automatically proceed to payment creation after address confirmation
+                    const sock = this._getLiveSocket(socketId);
+                    if (sock) {
+                        this.paymentHandlers.createAndShowPaymentRequest(sock);
+                    }
+                    this._awaitingAddressFor.delete(socketId);
+                }
+            }
+        });
+        // Anonymous session management
+        if (this.gameModeManager && this.gameModeManager.db) {
+            this.sessionManager = new SessionManager({
+                db: this.gameModeManager.db,
+                debugManager: this.debugManager,
+                gameModeManager: this.gameModeManager
+            });
+        }
     }
 
     /**
@@ -137,25 +164,57 @@ class SocketHandlers {
     /**
      * Initialize socket event handlers for a new connection
      */
-    handleConnection(socket) {
+    async handleConnection(socket) {
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log('A user connected');
             console.log(socket.client.id);
             console.log(socket.handshake.address);
         }
         
-        // Create and register user
-        new user.User(socket.id, socket.handshake.address);
-        const newUser = this.getUserBySocket(socket.id);
-        if (newUser) {
-            newUser.clientId = socket.client.id;
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`User created with both socket.id (${socket.id}) and socket.client.id (${socket.client.id})`);
+        // Session resume / create (DB authoritative) + ephemeral in-memory user object for legacy game logic
+        let resumeToken = null;
+        try { resumeToken = socket.handshake.query?.resumeToken || null; } catch(_) {}
+        let sessionInfo = null;
+        if (this.sessionManager) {
+            try {
+                sessionInfo = await this.sessionManager.resumeOrCreate({
+                    socketId: socket.id,
+                    ipAddress: socket.handshake.address,
+                    resumeToken
+                });
+            } catch(e) {
+                console.error('Session initialization failed:', e.message);
             }
         }
+
+        // Always create an in-memory user (legacy systems rely on it) but map to socket.id
+        new user.User(socket.id, socket.handshake.address);
+        const memUser = this.getUserBySocket(socket.id);
+        if (memUser) memUser.clientId = socket.client.id;
         
-        // Send welcome and current status
-        this.io.to(socket.client.id).emit('welcome', socket.client.id);
+        // Emit session / welcome events
+        if (sessionInfo) {
+            if (sessionInfo.resumed) {
+                this.io.to(socket.id).emit('session_resumed', {
+                    token: sessionInfo.token,
+                    payoutAddress: sessionInfo.user.payout_address || null,
+                    credits: sessionInfo.user.credits || 0
+                });
+            } else {
+                this.io.to(socket.id).emit('session_token', { token: sessionInfo.token });
+            }
+        } else {
+            // fallback legacy welcome
+            this.io.to(socket.client.id).emit('welcome', socket.client.id);
+        }
+        // If payout address already set, echo confirmation for UI convenience
+        if (sessionInfo && sessionInfo.user.payout_address) {
+            this.io.to(socket.id).emit('address_confirmed', { address: sessionInfo.user.payout_address, message: 'Payout address restored.' });
+        }
+        // Credits convenience push
+        if (sessionInfo) {
+            this.io.to(socket.id).emit('credits_update', { balance: sessionInfo.user.credits || 0 });
+        }
         
         // Send current block height
         const currentBlock = this.debugManager.getCurrentBlockHeight();
@@ -182,6 +241,97 @@ class SocketHandlers {
     }
 
     /**
+     * Handle immediate start button (auto_start)
+     * Applies payment eligibility + payout address gating (for payout-eligible modes)
+     * If eligible, starts game immediately (bypassing block queue) and processes game start (credit deduction / payment linkage)
+     */
+    async handleAutoStart(socket) {
+        try {
+            const existingGame = this.activeGames.get(socket.id);
+            if (existingGame) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'You are already in a game!');
+                return;
+            }
+
+            const memUser = this.getUserBySocket(socket.id);
+            if (!memUser) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Could not start game (user not found). Please reconnect.');
+                return;
+            }
+
+            let canStart = { allowed: true, reason: 'Free mode' };
+            if (this.gameModeManager) {
+                // Payout address gating for modes that can payout
+                const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
+                if (payoutEligible) {
+                    try {
+                        const dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
+                        if (!dbUser.payout_address) {
+                            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm. Payment request will appear automatically.');
+                            if (!this._awaitingAddressFor) this._awaitingAddressFor = new Set();
+                            this._awaitingAddressFor.add(socket.id);
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('Payout address pre-check failed:', e.message);
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Address check failed, try again.');
+                        return;
+                    }
+                }
+
+                try {
+                    canStart = await this.gameModeManager.canUserStartGame(socket.id);
+                } catch (e) {
+                    console.error('Eligibility check failed:', e.message);
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Eligibility check failed.');
+                    return;
+                }
+
+                if (!canStart.allowed) {
+                    // Trigger payment request automatically
+                    if (canStart.action === 'make_payment' || canStart.action === 'purchase_credits') {
+                        await this.paymentHandlers.createAndShowPaymentRequest(socket);
+                        return;
+                    }
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', canStart.reason || 'Not allowed to start');
+                    return;
+                }
+            }
+
+            // Create game immediately
+            const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
+            memUser.blockRec = blockHeight; // keep legacy timeout logic consistent
+            const game = this.createGameForUser(memUser, 'standard');
+            const state = game.getState();
+            state.blockHeight = blockHeight;
+
+            // Process start (credits deduction / payment link)
+            if (this.gameModeManager) {
+                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id);
+                if (!startRes.success) {
+                    // Abort game
+                    this.activeGames.delete(socket.id);
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', startRes.reason || 'Failed to start game.');
+                    return;
+                }
+            }
+
+            this.io.to(socket.id).emit('game_start', state);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'success', 'Game started! Escape before the next block!');
+        } catch (err) {
+            console.error('handleAutoStart error:', err);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Unexpected error starting game.');
+        }
+    }
+
+    /** Return the active socket instance by id (io.sockets.sockets Map) */
+    _getLiveSocket(socketId) {
+        try {
+            return this.io.sockets.sockets.get(socketId) || null;
+        } catch(_) { return null; }
+    }
+
+    /**
      * Handle chat messages and game commands
      */
     handleChatMessage(socket, msg) {
@@ -191,10 +341,10 @@ class SocketHandlers {
         
         const command = msg.toLowerCase();
         
-        // Check for XMR/WOW address in the message
-        const xmrAddressMatch = this.detectXMRAddress(msg);
-        if (xmrAddressMatch) {
-            this.handleAddressDetection(socket, xmrAddressMatch);
+        // Check for XMR/WOW payout address in the message using AddressManager
+        const detected = this.addressManager.detectInText(msg);
+        if (detected) {
+            this.addressManager.handleDetection(socket.id, detected);
             return;
         }
         
@@ -211,17 +361,19 @@ class SocketHandlers {
                 return;
                 
             case 'cancel':
-                // Check if this is for address confirmation
-                if (this.pendingAddresses && this.pendingAddresses.has(socket.id)) {
-                    this.handleAddressConfirmation(socket, false);
+                if (this.addressManager.pending.has(socket.id)) {
+                    this.addressManager.confirm(socket.id, false);
                     return;
                 }
-                // Otherwise handle queue cancellation
-                this.handleCancelEntry(socket);
+                this.handleCancelEntry(socket); // queue cancellation path
                 return;
-                
+
             case 'confirm':
-                this.handleAddressConfirmation(socket, true);
+                if (this.addressManager.pending.has(socket.id)) {
+                    this.addressManager.confirm(socket.id, true);
+                    return;
+                }
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Nothing pending confirmation.');
                 return;
                 
             case 'address':
@@ -245,6 +397,7 @@ class SocketHandlers {
                 this.handleChatBroadcast(socket, msg);
         }
     }
+
 
     /**
      * Broadcast a generic chat message to all clients. Performs minimal sanitization
@@ -334,6 +487,15 @@ class SocketHandlers {
         if (this.gameModeManager) {
             try {
                 const eligibility = await this.gameModeManager.canUserStartGame(socket.id);
+                // If in payout-eligible mode and user missing payout address, require address first
+                const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
+                if (payoutEligible) {
+                    const u = await this.gameModeManager.getOrCreateUser(socket.id);
+                    if (!u.payout_address) {
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
+                        return;
+                    }
+                }
                 
                 if (!eligibility.allowed) {
                     if (this.debugManager.CONSOLE_LOGGING) {
@@ -443,7 +605,10 @@ class SocketHandlers {
         }
         
         // Clean up payment monitoring
-        this.stopPaymentMonitoring(socket.id);
+        // Payment monitoring cleanup (refactored into paymentHandlers)
+        if (this.paymentHandlers && typeof this.paymentHandlers.stopMonitoringForSocket === 'function') {
+            this.paymentHandlers.stopMonitoringForSocket(socket.id);
+        }
         
         // Clean up movement timestamps
         this.playerMoveTimestamps.delete(socket.id);

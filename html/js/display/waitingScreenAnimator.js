@@ -2,6 +2,7 @@
 var WaitingScreenAnimator = {
     _animationEnabled: true,
     _waitingAnimationInterval: null,
+    _animating: false,
     _waitingAnimation: {
         frame: 0,
         playerX: 8,
@@ -354,11 +355,12 @@ var WaitingScreenAnimator = {
                 break;
                 
             case 'exit':
-                // Brief pause then reset
-                if (anim.frameCount > anim.frameCount + 20) {
+                if (anim.exitStartFrame === undefined) {
+                    anim.exitStartFrame = anim.frameCount;
+                }
+                if (anim.frameCount - anim.exitStartFrame > 40) { // ~4s at 10fps
                     this.resetAnimation();
                 } else {
-                    // Monster exits
                     if (anim.monsterX < 48) {
                         anim.monsterX++;
                     }
@@ -432,22 +434,22 @@ var WaitingScreenAnimator = {
     },
 
     startAnimation: function() {
-        // Clear any existing interval
+        if (this._animating) return; // already running
+        // Clear any existing interval defensively
         if (this._waitingAnimationInterval) {
             clearInterval(this._waitingAnimationInterval);
         }
-        
-        // Start new animation loop
+        this._animating = true;
         this._waitingAnimationInterval = setInterval(() => {
             if (this._animationEnabled && !GameState.isGameActive()) {
-                // Trigger a redraw in the main screen manager
+                // Draw only the animated frame WITHOUT restarting the loop (avoid recursion)
                 if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                    ScreenManager.drawWaitingScreen();
+                    ScreenManager.drawWaitingScreen(true); // pass flag to skip auto-start
                 }
             } else {
                 this.stopAnimation();
             }
-        }, 100); // 10 FPS animation
+        }, 100); // 10 FPS
     },
 
     stopAnimation: function() {
@@ -455,6 +457,7 @@ var WaitingScreenAnimator = {
             clearInterval(this._waitingAnimationInterval);
             this._waitingAnimationInterval = null;
         }
+        this._animating = false;
         this.resetAnimation();
     },
 

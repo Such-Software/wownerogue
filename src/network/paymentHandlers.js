@@ -62,6 +62,21 @@ class PaymentHandlers {
     async createAndShowPaymentRequest(socket) {
         if (!this.gameModeManager) return;
         try {
+            // Ensure payout address exists for modes that may payout (PAID_SINGLE or PAID_CREDITS with payouts)
+            const mode = this.gameModeManager.gameMode;
+            const needsAddress = (mode === 'PAID_SINGLE') || (mode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
+            if (needsAddress) {
+                try {
+                    const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
+                    if (!userRow.payout_address) {
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '💳 Before paying, paste your payout address (XMR/WOW) then type confirm.');
+                        // Do not proceed until address is set
+                        return;
+                    }
+                } catch(e) {
+                    console.error('Address pre-check failed:', e.message);
+                }
+            }
             const currentUser = socket.id && this.queueManager.getUserBySocket ? this.queueManager.getUserBySocket(socket.id) : null;
             // caller (SocketHandlers) will handle user existence; keep method generic
             const gameMode = this.gameModeManager.gameMode;
@@ -145,10 +160,15 @@ class PaymentHandlers {
         } else if (paymentStatus.confirmed) {
             this.broadcastManager.sendStatusUpdate(socketId, 'success', `💰 PAYMENT CONFIRMED IN BLOCK\n\n✅ Added to queue.\n🕒 Starts at block ${nextBlock}.\n📦 Current block: ${currentBlock}`);
         }
-        if (!this.confirmedPayments.has(paymentRequest.id)) {
-            this.confirmedPayments.add(paymentRequest.id);
-            this.io.to(socketId).emit('payment_confirmed', { paymentId: paymentRequest.id, status: paymentStatus, nextBlock, currentBlock });
-            this._confirmedTimestamps.set(paymentRequest.id, Date.now());
+            const newBalRes = await this.db.query('SELECT credits FROM users WHERE id = $1', [currentUser.id]);
+            const remaining = newBalRes.rows[0] ? newBalRes.rows[0].credits : currentUser.credits;
+            if (this.io) {
+                this.io.to(socketId).emit('credits_update', { balance: remaining });
+            }
+            if (!this.confirmedPayments.has(paymentRequest.id)) {
+                this.confirmedPayments.add(paymentRequest.id);
+                this.io.to(socketId).emit('payment_confirmed', { paymentId: paymentRequest.id, status: paymentStatus, nextBlock, currentBlock });
+                this._confirmedTimestamps.set(paymentRequest.id, Date.now());
         }
     }
 

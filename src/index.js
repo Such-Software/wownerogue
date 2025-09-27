@@ -28,6 +28,8 @@ const databaseManager = new DatabaseManager();
 const rpcService = new RpcService();
 const walletRPCService = new WalletRPCService(debugManager);
 const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager);
+// Provide io reference so GameModeManager can emit events (e.g., credits_update)
+gameModeManager.io = io;
 
 // Initialize remaining components
 const activeGames = new Map(); // Maps socketId to Game objects

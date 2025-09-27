@@ -72,26 +72,27 @@ const InputHandler = {
                     let dy = 0;
                     let moved = false;
 
+                    let direction = null;
                     switch(e.key) {
-                        case 'w': case 'ArrowUp':    dy = -1; moved = true; break;
-                        case 's': case 'ArrowDown':  dy = 1;  moved = true; break;
-                        case 'a': case 'ArrowLeft':  dx = -1; moved = true; break;
-                        case 'd': case 'ArrowRight': dx = 1;  moved = true; break;
+                        case 'w': case 'ArrowUp':    direction = 'up';    dy = -1; moved = true; break;
+                        case 's': case 'ArrowDown':  direction = 'down';  dy = 1;  moved = true; break;
+                        case 'a': case 'ArrowLeft':  direction = 'left';  dx = -1; moved = true; break;
+                        case 'd': case 'ArrowRight': direction = 'right'; dx = 1;  moved = true; break;
                     }
 
-                    if (moved) {
+                    if (moved && direction) {
                         e.preventDefault(); // Prevent page scrolling
                         
                         // Implement movement throttling to prevent rapid-fire movement
                         const now = Date.now();
                         if (now - self._lastMoveTime >= self._moveCooldown) {
                             // Send move immediately if enough time has passed
-                            socket.emit('player_move', { dx: dx, dy: dy });
+                            socket.emit('player_move', { direction });
                             self._lastMoveTime = now;
                             self._pendingMove = null;
                         } else {
                             // Queue the move to be sent after cooldown
-                            self._pendingMove = { dx: dx, dy: dy };
+                            self._pendingMove = { direction };
                             const timeToWait = self._moveCooldown - (now - self._lastMoveTime);
                             setTimeout(() => {
                                 if (self._pendingMove) {
@@ -149,15 +150,12 @@ const InputHandler = {
     setupClickHandlers: function() {
         // Add click handling for the HTML START button
         $('#startButton').click(function(e) {
-            
-            // Use the new auto_start event for immediate entry
+            // Attempt immediate start
             socket.emit('auto_start');
-            
+            // We optimistically show waiting screen; if server later responds with payment requirement, audio handler will fire on payment_created
             if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
                 ScreenManager.drawWaitingScreen();
             }
-            
-            // Add visual feedback to chat
             $('#messages').append($('<li style="color: #0f0;">').text("🖱️ Game start requested..."));
             UI.scrollChat();
         });

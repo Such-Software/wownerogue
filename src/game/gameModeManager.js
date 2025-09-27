@@ -21,14 +21,18 @@ class GameModeManager {
             return Math.trunc(num);
         };
 
-        this.singleGamePrice = parseAtomic(process.env.SINGLE_GAME_PRICE, 5000000000); // default 0.005 XMR
-        this.creditsPackagePrice = parseAtomic(process.env.CREDITS_PACKAGE_PRICE, 50000000000); // default 0.05 XMR
+    this.singleGamePrice = parseAtomic(process.env.SINGLE_GAME_PRICE, 5000000000); // default 0.005 XMR
+    this.creditsPackagePrice = parseAtomic(process.env.CREDITS_PACKAGE_PRICE, 50000000000); // default 0.05 XMR
+    this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUT_ENABLED || 'false');
         
         console.log(`🎮 Game Mode Manager initialized: ${this.gameMode} mode`);
         console.log(`💰 Currency: ${this.cryptoType}`);
         const toXMR = (atomic) => (atomic / 1e12).toFixed(6).replace(/0+$/,'').replace(/\.$/,'');
         console.log(`💵 Single game price: ${this.singleGamePrice} atomic units (~${toXMR(this.singleGamePrice)} ${this.cryptoType})`);
         console.log(`🎫 Credits package price: ${this.creditsPackagePrice} atomic units (~${toXMR(this.creditsPackagePrice)} ${this.cryptoType})`);
+        if (this.creditsPayoutEnabled) {
+            console.log('🎁 Credits payout mode ENABLED (will pay rewards in PAID_CREDITS).');
+        }
     }
 
     /**
@@ -103,16 +107,19 @@ class GameModeManager {
                     
                 case 'PAID_CREDITS':
                     // Deduct one credit
-                    await this.db.query(`
+                    const updateRes = await this.db.query(`
                         UPDATE users 
                         SET credits = credits - 1,
                             total_games_played = total_games_played + 1,
                             updated_at = NOW()
                         WHERE id = $1
+                        RETURNING credits
                     `, [user.id]);
-                    
-                    console.log(`🎫 Deducted 1 credit from user ${user.id}, ${user.credits - 1} remaining`);
-                    return { success: true, creditsRemaining: user.credits - 1 };
+                    const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - 1);
+                    // Emit credits update asynchronously if an io ref was injected later (pattern: attach externally)
+                    try { this.io && this.io.to(socketId).emit('credits_update', { balance: remainingCredits }); } catch(_) {}
+                    console.log(`🎫 Deducted 1 credit from user ${user.id}, ${remainingCredits} remaining`);
+                    return { success: true, creditsRemaining: remainingCredits };
                     
                 case 'PAID_SINGLE':
                     // Link game to payment
@@ -186,15 +193,12 @@ class GameModeManager {
                 WHERE id = $4
             `, [outcome === 'escaped' ? 'won' : 'lost', outcome, treasureFound, gameId]);
             
-            // Handle payouts for PAID_SINGLE mode
-            if (this.gameMode === 'PAID_SINGLE' && outcome === 'escaped' && game.payout_address) {
+            // Handle payouts for PAID_SINGLE or (optionally) PAID_CREDITS mode
+            const payoutEligibleMode = (this.gameMode === 'PAID_SINGLE') || (this.gameMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
+            if (payoutEligibleMode && outcome === 'escaped' && game.payout_address) {
                 let payoutAmount;
-                
-                if (treasureFound) {
-                    payoutAmount = this.singleGamePrice * 3; // 3x for treasure
-                } else {
-                    payoutAmount = this.singleGamePrice * 2; // 2x for escape
-                }
+                const base = (this.gameMode === 'PAID_CREDITS') ? this.singleGamePrice : this.singleGamePrice; // could make distinct; reuse singleGamePrice as base
+                payoutAmount = treasureFound ? base * 3 : base * 2;
                 
                 // Create payout record
                 await this.walletService.processPayout(
@@ -221,7 +225,7 @@ class GameModeManager {
                 success: true, 
                 outcome, 
                 treasureFound,
-                payoutCreated: this.gameMode === 'PAID_SINGLE' && outcome === 'escaped'
+                payoutCreated: payoutEligibleMode && outcome === 'escaped'
             };
             
         } catch (error) {
@@ -423,7 +427,8 @@ class GameModeManager {
             }
 
             // Handle payouts only in PAID_SINGLE mode and only on win (escaped)
-            if (this.gameMode === 'PAID_SINGLE' && won) {
+            const payoutEligibleStartMode = (this.gameMode === 'PAID_SINGLE') || (this.gameMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
+            if (payoutEligibleStartMode && won) {
                 // Derive payout multiplier
                 const multiplier = treasureFound ? 3 : 2;
                 const payoutAmount = this.singleGamePrice * multiplier;

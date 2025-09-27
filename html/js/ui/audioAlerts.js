@@ -12,6 +12,13 @@ const AudioAlerts = {
     _volume: 0.4,
     _lastPlay: 0,
     _cooldownMs: 1500,
+    _audioTags: {}, // cache HTMLAudioElements
+    _fileMap: {
+        request_coin: 'audio/Pleasesendcoin.m4a',
+        payment_detected: 'audio/Paymentdetected.m4a',
+        payment_confirmed: 'audio/Paymentconfirmed.m4a',
+        game_start: 'audio/Nowescapethedunge.m4a'
+    },
 
     init() {
         if (this._initialized) return;
@@ -41,15 +48,22 @@ const AudioAlerts = {
         if (SocketHandlers._audioAlertsPatched) return; // idempotent
         SocketHandlers._audioAlertsPatched = true;
         const origPaymentConfirmed = SocketHandlers.onPaymentConfirmed;
+        const origPaymentDetected = SocketHandlers.onPaymentDetected;
         const origGameStart = SocketHandlers.onGameStart;
+        const origQueueJoined = SocketHandlers.onQueueJoined;
         SocketHandlers.onPaymentConfirmed = function(data) {
             if (origPaymentConfirmed) origPaymentConfirmed.call(SocketHandlers, data);
-            AudioAlerts.playPattern('payment');
+            AudioAlerts.playFile('payment_confirmed');
+        };
+        SocketHandlers.onPaymentDetected = function(data) {
+            if (origPaymentDetected) origPaymentDetected.call(SocketHandlers, data);
+            AudioAlerts.playFile('payment_detected');
         };
         SocketHandlers.onGameStart = function(data) {
             if (origGameStart) origGameStart.call(SocketHandlers, data);
-            AudioAlerts.playPattern('start');
+            AudioAlerts.playFile('game_start');
         };
+        // We'll trigger request_coin when user attempts start but is blocked for payment/credits; handled externally via public method
     },
 
     _lazyInitContext() {
@@ -97,6 +111,29 @@ const AudioAlerts = {
             t += dur * 0.5; // slight overlap for chord-like effect
         });
     }
+    ,
+    _getAudio(tag) {
+        if (!this._enabled) return null;
+        if (!this._audioTags[tag]) {
+            const src = this._fileMap[tag];
+            if (!src) return null;
+            const el = new Audio(src);
+            el.preload = 'auto';
+            this._audioTags[tag] = el;
+        }
+        return this._audioTags[tag];
+    },
+    playFile(tag) {
+        if (!this._enabled) return;
+        const now = Date.now();
+        if (now - this._lastPlay < this._cooldownMs) return;
+        this._lastPlay = now;
+        const el = this._getAudio(tag);
+        if (!el) return;
+        try { el.currentTime = 0; el.play().catch(()=>{}); } catch(_) {}
+    },
+    // Public helper to be invoked when server denies start due to payment/credits
+    playRequestCoin() { this.playFile('request_coin'); }
 };
 
 if (typeof module !== 'undefined' && module.exports) {

@@ -226,7 +226,7 @@ var ScreenManager = {
         this.drawCenteredText(y + 3, "Better luck next time.");
     },
 
-    drawWaitingScreen: function() {
+    drawWaitingScreen: function(_internalLoopCall = false) {
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();
         
@@ -259,7 +259,8 @@ var ScreenManager = {
         this.showAnimationButton();
         
         // Start animation loop if not already running
-        if (animationEnabled && typeof WaitingScreenAnimator !== 'undefined') {
+        // Only start the animator if this wasn't invoked from inside the animator loop
+        if (! _internalLoopCall && animationEnabled && typeof WaitingScreenAnimator !== 'undefined') {
             WaitingScreenAnimator.startAnimation();
         }
     },

@@ -8,9 +8,18 @@
     <!-- Socket.io -->
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
     
-    <!-- Initialize socket -->
+    <!-- Initialize socket with resume token (for persistent anonymous session) -->
     <script>
-        window.socket = io();
+        (function(){
+            let opts = {};
+            try {
+                const existing = localStorage.getItem('wowngeon_token');
+                if (existing) {
+                    opts.query = { resumeToken: existing };
+                }
+            } catch(_) {}
+            window.socket = io(opts);
+        })();
     </script>
     
     <!-- Core libraries -->

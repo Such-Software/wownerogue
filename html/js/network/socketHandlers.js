@@ -34,6 +34,8 @@ const SocketHandlers = {
         // Connection handlers
         socket.on('connect', this.onConnect);
         socket.on('welcome', this.onWelcome);
+        socket.on('session_token', this.onSessionToken);
+        socket.on('session_resumed', this.onSessionResumed);
         socket.on('message', this.onMessage);
         socket.on('status_update', this.onStatusUpdate);
         socket.on('chat_broadcast', this.onChatBroadcast);
@@ -52,6 +54,7 @@ const SocketHandlers = {
         socket.on('payment_created', this.onPaymentCreated);
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
+    socket.on('credits_update', this.onCreditsUpdate);
         
         // Block height handler
         socket.on('blockheight', this.onBlockHeight);
@@ -60,12 +63,64 @@ const SocketHandlers = {
     onConnect: function() {
         if (SocketHandlers._didConnect) return; // prevent duplicate registration emission
         SocketHandlers._didConnect = true;
+        // Include stored session token in a lightweight resume emit (if server did not get it via handshake)
+        try {
+            const existing = localStorage.getItem('wowngeon_token');
+            if (existing) {
+                // If we later decide to rely solely on query param at io() creation, this is harmless redundancy.
+                socket.io.opts.query = socket.io.opts.query || {};
+                socket.io.opts.query.resumeToken = existing;
+            }
+        } catch (e) {}
         socket.emit('register_client', {
             clientId: socket.id,
             userAgent: navigator.userAgent
         });
         // Update small status banner immediately
         SocketHandlers._setBannerStatus('Connected', '#0f0');
+    },
+
+    onSessionToken: function(data) {
+        if (data && data.token) {
+            try { localStorage.setItem('wowngeon_token', data.token); } catch(e) {}
+            $('#messages').append($('<li class="status">').text('New session established. Token stored.'));
+            UI.scrollChat();
+        }
+    },
+
+    onSessionResumed: function(data) {
+        if (data && data.token) {
+            try { localStorage.setItem('wowngeon_token', data.token); } catch(e) {}
+            $('#messages').append($('<li class="status">').text('Session resumed.'));
+            UI.scrollChat();
+        }
+        if (data && typeof data.credits === 'number') {
+            SocketHandlers._updateCreditsDisplay(data.credits);
+        }
+        if (data && data.payoutAddress) {
+            $('#messages').append($('<li class="address-confirmed" style="color:#0f0;">').text('Payout address restored.'));
+            UI.scrollChat();
+        }
+    },
+
+    onCreditsUpdate: function(data) {
+        if (!data) return;
+        if (typeof data.balance === 'number') {
+            SocketHandlers._updateCreditsDisplay(data.balance);
+        }
+    },
+
+    _updateCreditsDisplay: function(balance) {
+        let el = document.getElementById('creditsDisplay');
+        if (!el) {
+            // Create a small unobtrusive badge in header if not present
+            const header = document.getElementById('header') || document.body;
+            el = document.createElement('div');
+            el.id = 'creditsDisplay';
+            el.style.cssText = 'position:absolute;top:4px;right:8px;font-size:12px;font-family:monospace;color:#0af;background:#111;padding:2px 6px;border:1px solid #044;border-radius:4px;';
+            header.appendChild(el);
+        }
+        el.textContent = 'Credits: ' + balance;
     },
 
     onWelcome: function(msg) {
@@ -96,6 +151,7 @@ const SocketHandlers = {
         } else if (data.type === 'payment') {
             // Generic payment message (more granular handlers override later)
             SocketHandlers._setBannerStatus('Payment', '#0af');
+            if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
         } else if (data.type === 'error') {
             SocketHandlers._setBannerStatus('Error', '#f00');
         } else if (data.type === 'success') {
@@ -180,6 +236,9 @@ const SocketHandlers = {
         
         UI.scrollChat();
         SocketHandlers._setBannerStatus('In Game', '#0f0');
+        if (typeof AudioAlerts !== 'undefined' && AudioAlerts._enabled) {
+            try { AudioAlerts.playFile('game_start'); } catch(_) {}
+        }
     },
 
     onGameUpdate: function(data) {
@@ -243,6 +302,7 @@ const SocketHandlers = {
 
     onPaymentCreated: function(data) {
         console.log('Payment created:', data);
+        if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
         const parts = [];
         parts.push('💳 <strong>Payment Required</strong>');
         parts.push('Amount: ' + data.humanAmount + ' ' + data.cryptoType);
@@ -349,6 +409,9 @@ const SocketHandlers = {
         ));
         UI.scrollChat();
         SocketHandlers._setBannerStatus('Confirmed', '#0f0');
+        if (typeof AudioAlerts !== 'undefined' && AudioAlerts._enabled) {
+            try { AudioAlerts.playFile('payment_confirmed'); } catch(_) {}
+        }
     },
 
     _mempoolShownForPayment: new Set(),
@@ -369,6 +432,10 @@ const SocketHandlers = {
         ));
         UI.scrollChat();
         SocketHandlers._setBannerStatus('Mempool', '#0af');
+        // Fallback audio trigger if AudioAlerts patched earlier failed to wrap or user enabled after patch
+        if (typeof AudioAlerts !== 'undefined' && AudioAlerts._enabled) {
+            try { AudioAlerts.playFile('payment_detected'); } catch(_) {}
+        }
     },
 
     // Internal: periodic cleanup of client-side payment marker sets (invoked opportunistically)
