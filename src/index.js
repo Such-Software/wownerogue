@@ -153,11 +153,6 @@ async function initializePaymentSystem() {
 // Start the debug/production system
 debugManager.initialize();
 
-// Socket.io connection handler
-io.on('connection', function(socket) {
-    socketHandlers.handleConnection(socket);
-});
-
 // Debug function for registered users
 function debugRegisteredUsers() {
     if (debugManager.CONSOLE_LOGGING) {
@@ -180,6 +175,11 @@ async function startServer() {
     try {
         // Initialize payment system first
         const paymentSystemReady = await initializePaymentSystem();
+        
+        // Socket.io connection handler - ONLY after payment system is ready
+        io.on('connection', function(socket) {
+            socketHandlers.handleConnection(socket);
+        });
         
         // Start HTTP server
         http.listen(3000, function() {

@@ -7,10 +7,53 @@ const { Pool } = require('pg');
 const fs = require('fs').promises;
 const path = require('path');
 
+/**
+ * Query validator to detect potential SQL injection
+ */
+class QueryValidator {
+    constructor() {
+        this.dangerousKeywords = [
+            'DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'REPLACE',
+            'EXEC', 'EXECUTE', 'SCRIPT', '--', '/*', '*/', 'XP_', 'SP_'
+        ];
+    }
+
+    isSafe(text, params) {
+        // Check if using parameterized query properly
+        const placeholderCount = (text.match(/\$\d+/g) || []).length;
+        if (placeholderCount !== params.length) {
+            console.warn('⚠️ Parameter count mismatch in query');
+            return false;
+        }
+
+        // Check for dangerous patterns in the query text itself
+        const upperText = text.toUpperCase();
+        for (const keyword of this.dangerousKeywords) {
+            if (upperText.includes(keyword)) {
+                // Allow legitimate DDL in migrations only
+                const stack = new Error().stack;
+                if (!stack.includes('migrations')) {
+                    console.warn(`⚠️ Potentially dangerous keyword "${keyword}" in query`);
+                    // Log but don't block - some keywords might be legitimate
+                }
+            }
+        }
+
+        return true;
+    }
+
+    validateQuery(query) {
+        if (typeof query === 'string') {
+            console.warn('⚠️ Raw string query detected - should use parameterized queries');
+        }
+    }
+}
+
 class DatabaseManager {
     constructor() {
         this.pool = null;
         this.connected = false;
+        this.queryValidator = new QueryValidator();
     }
 
     /**
@@ -37,6 +80,13 @@ class DatabaseManager {
                 max: 20, // Maximum number of clients in the pool
                 idleTimeoutMillis: 30000,
                 connectionTimeoutMillis: 2000,
+            });
+            
+            // Add query monitoring for security
+            this.pool.on('query', (query) => {
+                if (process.env.DEBUG === 'true') {
+                    this.queryValidator.validateQuery(query);
+                }
             });
 
             // Test connection
@@ -96,11 +146,16 @@ class DatabaseManager {
     }
 
     /**
-     * Execute a query
+     * Execute a query with security validation
      */
     async query(text, params = []) {
         if (!this.connected) {
             throw new Error('Database not connected');
+        }
+
+        // Validate query structure for security
+        if (!this.queryValidator.isSafe(text, params)) {
+            throw new Error('Potentially unsafe query detected');
         }
 
         try {
@@ -118,6 +173,32 @@ class DatabaseManager {
             console.error('Query:', text);
             throw error;
         }
+    }
+
+    /**
+     * Helper method to ensure parameterized queries
+     */
+    async safeQuery(template, values = {}) {
+        const { text, params } = this.buildParameterizedQuery(template, values);
+        return this.query(text, params);
+    }
+
+    /**
+     * Build parameterized query from template
+     */
+    buildParameterizedQuery(template, values) {
+        let paramIndex = 1;
+        const params = [];
+        
+        const text = template.replace(/:(\w+)/g, (match, key) => {
+            if (key in values) {
+                params.push(values[key]);
+                return `$${paramIndex++}`;
+            }
+            throw new Error(`Missing parameter: ${key}`);
+        });
+        
+        return { text, params };
     }
 
     /**

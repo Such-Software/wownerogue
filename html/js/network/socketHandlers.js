@@ -361,12 +361,12 @@ const SocketHandlers = {
                 if (statusDiv) {
                     qrHolder = document.createElement('div');
                     qrHolder.id = 'paymentQRContainer';
-                    qrHolder.style.cssText = 'margin-top:6px;padding:4px;border:1px solid #0f0;background:#000;display:inline-block;width:150px;text-align:center;';
+                    qrHolder.style.cssText = 'margin-top:6px;padding:8px;border:1px solid #0f0;background:#000;display:block;width:calc(100% - 18px);text-align:center;';
                     statusDiv.appendChild(qrHolder);
                 }
             }
             if (qrHolder) {
-                qrHolder.innerHTML = '<img style="image-rendering:pixelated;width:140px;height:140px;display:block;margin:0 auto;" src="' + data.qr + '" alt="Payment QR" />';
+                qrHolder.innerHTML = '<img style="image-rendering:pixelated;width:100%;height:auto;display:block;margin:0 auto;max-width:320px;" src="' + data.qr + '" alt="Payment QR" />';
             }
         } else {
             console.warn('Payment created but no QR data supplied by server.');

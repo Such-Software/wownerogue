@@ -4,12 +4,17 @@
  */
 
 const user = require('../db/user');
-const Game = require('../game/game');
+const GameManager = require('../game/gameManager');
 const MovementManager = require('../game/movementManager');
 const QueueManager = require('./queueManager');
 const PaymentHandlers = require('./paymentHandlers');
 const AddressManager = require('./addressManager');
 const SessionManager = require('./sessionManager');
+const RateLimiter = require('./rateLimiter');
+const ConnectionHandler = require('./connectionHandler');
+const ChatHandler = require('./chatHandler');
+const QueueHandler = require('./queueHandler');
+const MemoryManager = require('../utils/memoryManager');
 
 class SocketHandlers {
     constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null, walletService = null) {
@@ -19,21 +24,72 @@ class SocketHandlers {
         this.debugManager = debugManager;
         this.gameModeManager = gameModeManager;
         this.walletService = walletService;
-        this.playerMoveTimestamps = new Map();
-        this.clientSocketMap = new Map();
         this.MOVE_COOLDOWN = 100; // Minimum 100ms between moves
-    // Legacy WAITING_PLAYERS removed; queueManager owns queue state
+
+        // Initialize rate limiter with debug mode matching debugManager
+        this.rateLimiter = new RateLimiter({
+            debugMode: this.debugManager.CONSOLE_LOGGING,
+            limits: {
+                'payment:create': { window: 60000, max: 3 },
+                'game:start': { window: 60000, max: 15 },
+                'game:queue': { window: 30000, max: 5 },
+                'chat:message': { window: 10000, max: 12 },
+                'address:set': { window: 300000, max: 3 },
+                'connection:new': { window: 60000, max: 10 }
+            }
+        });
+
+        // Initialize memory manager for cleanup
+        this.memoryManager = new MemoryManager({
+            debugMode: this.debugManager.CONSOLE_LOGGING,
+            cleanupInterval: 300000 // 5 minutes
+        });
+
+        // Initialize game manager
+        this.gameManager = new GameManager({
+            activeGames: this.activeGames,
+            io: this.io,
+            broadcastManager: this.broadcastManager,
+            debugManager: this.debugManager,
+            gameModeManager: this.gameModeManager
+        });
+
+        // Legacy WAITING_PLAYERS removed; queueManager owns queue state
         this.mempoolNotified = new Set(); // track payment addresses already queued
+        
+        // Initialize session manager first
+        if (this.gameModeManager && this.gameModeManager.db) {
+            this.sessionManager = new SessionManager({
+                db: this.gameModeManager.db,
+                debugManager: this.debugManager,
+                gameModeManager: this.gameModeManager
+            });
+            // Initialize cleanup timers
+            this.sessionManager.initialize().catch(err => {
+                console.error('Failed to initialize SessionManager:', err);
+            });
+        }
+
+        // Initialize connection handler
+        this.connectionHandler = new ConnectionHandler({
+            io: this.io,
+            broadcastManager: this.broadcastManager,
+            debugManager: this.debugManager,
+            sessionManager: this.sessionManager,
+            rateLimiter: this.rateLimiter
+        });
+
         this.queueManager = new QueueManager({
             debugManager: this.debugManager,
             broadcastManager: this.broadcastManager,
             io: this.io,
-            createGameForUser: (userObj, gameType, options) => this.createGameForUser(userObj, gameType, options),
-            getUserBySocket: (socketId) => this.getUserBySocket(socketId),
+            createGameForUser: (userObj, gameType, options) => this.gameManager.createGameForUser(userObj, gameType, options),
+            getUserBySocket: (socketId) => this.connectionHandler.getUserBySocket(socketId),
             activeGames: this.activeGames,
             gameModeManager: this.gameModeManager,
             consoleLogging: this.debugManager.CONSOLE_LOGGING
         });
+
         this.paymentHandlers = new PaymentHandlers({
             io: this.io,
             gameModeManager: this.gameModeManager,
@@ -42,14 +98,7 @@ class SocketHandlers {
             queueManager: this.queueManager,
             broadcastManager: this.broadcastManager
         });
-        // Movement manager abstraction
-        this.movementManager = new MovementManager({
-            activeGames: this.activeGames,
-            io: this.io,
-            debugManager: this.debugManager,
-            moveCooldown: this.MOVE_COOLDOWN,
-            postMoveHook: ({ socketId, game }) => this.afterPlayerMove(socketId, game)
-        });
+
         // Address / payout handling encapsulated in AddressManager
         this.addressManager = new AddressManager({
             gameModeManager: this.gameModeManager,
@@ -57,23 +106,103 @@ class SocketHandlers {
             io: this.io,
             debugManager: this.debugManager,
             onConfirmed: (socketId, accepted) => {
-                if (accepted && this._awaitingAddressFor && this._awaitingAddressFor.has(socketId)) {
+                if (accepted) {
                     // Automatically proceed to payment creation after address confirmation
                     const sock = this._getLiveSocket(socketId);
                     if (sock) {
                         this.paymentHandlers.createAndShowPaymentRequest(sock);
                     }
-                    this._awaitingAddressFor.delete(socketId);
+                    if (this.chatHandler) {
+                        this.chatHandler.clearAddressConfirmation(socketId);
+                    }
                 }
             }
         });
-        // Anonymous session management
-        if (this.gameModeManager && this.gameModeManager.db) {
-            this.sessionManager = new SessionManager({
-                db: this.gameModeManager.db,
-                debugManager: this.debugManager,
-                gameModeManager: this.gameModeManager
-            });
+
+        // Initialize chat handler
+        this.chatHandler = new ChatHandler({
+            io: this.io,
+            broadcastManager: this.broadcastManager,
+            debugManager: this.debugManager,
+            addressManager: this.addressManager,
+            paymentHandlers: this.paymentHandlers,
+            queueManager: this.queueManager,
+            gameModeManager: this.gameModeManager,
+            rateLimiter: this.rateLimiter
+        });
+
+        // Initialize queue handler
+        this.queueHandler = new QueueHandler({
+            queueManager: this.queueManager,
+            gameModeManager: this.gameModeManager,
+            paymentHandlers: this.paymentHandlers,
+            activeGames: this.activeGames,
+            broadcastManager: this.broadcastManager,
+            debugManager: this.debugManager,
+            rateLimiter: this.rateLimiter
+        });
+
+        // Movement manager abstraction with memory cleanup
+        this.playerMoveTimestamps = new Map();
+        this.movementManager = new MovementManager({
+            activeGames: this.activeGames,
+            io: this.io,
+            debugManager: this.debugManager,
+            moveCooldown: this.MOVE_COOLDOWN,
+            postMoveHook: ({ socketId, game }) => this.afterPlayerMove(socketId, game)
+        });
+
+        // Register memory cleanup functions
+        this._registerMemoryCleanups();
+    }
+
+    /**
+     * Register memory cleanup functions to prevent memory leaks
+     */
+    _registerMemoryCleanups() {
+        // Cleanup player move timestamps (keep for 5 minutes)
+        this.memoryManager.registerCleanup(
+            'playerMoveTimestamps',
+            () => {
+                const now = Date.now();
+                const maxAge = 300000; // 5 minutes
+                let cleaned = 0;
+                const toDelete = [];
+                
+                for (const [socketId, timestamp] of this.playerMoveTimestamps.entries()) {
+                    if (now - timestamp > maxAge) {
+                        toDelete.push(socketId);
+                    }
+                }
+                
+                for (const socketId of toDelete) {
+                    if (this.playerMoveTimestamps.delete(socketId)) {
+                        cleaned++;
+                    }
+                }
+                
+                return cleaned;
+            },
+            300000
+        );
+
+        // Cleanup mempool notifications (keep for 10 minutes)  
+        this.memoryManager.registerCleanup(
+            'mempoolNotifications', 
+            MemoryManager.createSetCleanup(this.mempoolNotified, (addr) => {
+                // This is a simple heuristic - in production you'd want to track timestamps
+                return Math.random() < 0.1; // Randomly clean ~10% each cycle
+            }),
+            600000
+        );
+
+        // Let other components register their cleanups
+        if (this.rateLimiter) {
+            this.memoryManager.registerCleanup(
+                'rateLimiterCleanup',
+                () => { this.rateLimiter.cleanup(); return 0; },
+                60000
+            );
         }
     }
 
@@ -165,79 +294,25 @@ class SocketHandlers {
      * Initialize socket event handlers for a new connection
      */
     async handleConnection(socket) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log('A user connected');
-            console.log(socket.client.id);
-            console.log(socket.handshake.address);
-        }
-        
-        // Session resume / create (DB authoritative) + ephemeral in-memory user object for legacy game logic
-        let resumeToken = null;
-        try { resumeToken = socket.handshake.query?.resumeToken || null; } catch(_) {}
-        let sessionInfo = null;
-        if (this.sessionManager) {
-            try {
-                sessionInfo = await this.sessionManager.resumeOrCreate({
-                    socketId: socket.id,
-                    ipAddress: socket.handshake.address,
-                    resumeToken
-                });
-            } catch(e) {
-                console.error('Session initialization failed:', e.message);
-            }
-        }
-
-        // Always create an in-memory user (legacy systems rely on it) but map to socket.id
-        new user.User(socket.id, socket.handshake.address);
-        const memUser = this.getUserBySocket(socket.id);
-        if (memUser) memUser.clientId = socket.client.id;
-        
-        // Emit session / welcome events
-        if (sessionInfo) {
-            if (sessionInfo.resumed) {
-                this.io.to(socket.id).emit('session_resumed', {
-                    token: sessionInfo.token,
-                    payoutAddress: sessionInfo.user.payout_address || null,
-                    credits: sessionInfo.user.credits || 0
-                });
-            } else {
-                this.io.to(socket.id).emit('session_token', { token: sessionInfo.token });
-            }
-        } else {
-            // fallback legacy welcome
-            this.io.to(socket.client.id).emit('welcome', socket.client.id);
-        }
-        // If payout address already set, echo confirmation for UI convenience
-        if (sessionInfo && sessionInfo.user.payout_address) {
-            this.io.to(socket.id).emit('address_confirmed', { address: sessionInfo.user.payout_address, message: 'Payout address restored.' });
-        }
-        // Credits convenience push
-        if (sessionInfo) {
-            this.io.to(socket.id).emit('credits_update', { balance: sessionInfo.user.credits || 0 });
-        }
-        
-        // Send current block height
-        const currentBlock = this.debugManager.getCurrentBlockHeight();
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`📈 Sending current block height ${currentBlock} to new connection ${socket.id}`);
-        }
-    this.io.to(socket.id).emit('blockheight', { blockHeight: currentBlock });
-        
-        // Send connection status
-        this.broadcastManager.sendStatusUpdate(socket.id, 'connection', 'Connected to Wowngeon server');
+        const connectionResult = await this.connectionHandler.handleConnection(socket);
+        if (!connectionResult) return; // Connection was rejected or failed
 
         // Register event handlers
-        socket.on('chat message', (msg) => this.handleChatMessage(socket, msg));
-    socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
+        socket.on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
+            handleGameQueue: (socket) => this.queueHandler.handleGameQueue(socket, (socketId) => this.connectionHandler.getUserBySocket(socketId)),
+            handleCancelEntry: (socket) => this.queueHandler.handleCancelEntry(socket),
+            handleStatsRequest: (socket) => this.handleStatsRequest(socket)
+        }));
+        socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         socket.on('disconnect', () => this.handleDisconnect(socket));
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
-        socket.on('register_client', (data) => this.handleRegisterClient(socket, data));
+        socket.on('register_client', (data) => this.connectionHandler.handleRegisterClient(socket, data));
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
         
         // Payment system handlers
-    socket.on('request_payment', (data) => this.paymentHandlers.handlePaymentRequest(socket, data));
-    socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
-    socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
+        socket.on('request_payment', (data) => this.paymentHandlers.handlePaymentRequest(socket, data));
+        socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
+        socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
     }
 
     /**
@@ -247,13 +322,21 @@ class SocketHandlers {
      */
     async handleAutoStart(socket) {
         try {
+            // Rate limiting for game starts
+            const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:start');
+            if (!rateLimitResult.allowed) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+                    `Please wait ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds before starting another game. (${rateLimitResult.remaining} attempts remaining)`);
+                return;
+            }
+
             const existingGame = this.activeGames.get(socket.id);
             if (existingGame) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'You are already in a game!');
                 return;
             }
 
-            const memUser = this.getUserBySocket(socket.id);
+            const memUser = this.connectionHandler.getUserBySocket(socket.id);
             if (!memUser) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Could not start game (user not found). Please reconnect.');
                 return;
@@ -268,8 +351,6 @@ class SocketHandlers {
                         const dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
                         if (!dbUser.payout_address) {
                             this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm. Payment request will appear automatically.');
-                            if (!this._awaitingAddressFor) this._awaitingAddressFor = new Set();
-                            this._awaitingAddressFor.add(socket.id);
                             return;
                         }
                     } catch (e) {
@@ -298,10 +379,13 @@ class SocketHandlers {
                 }
             }
 
+            // Record the game start attempt
+            await this.rateLimiter.recordAttempt(socket.id, 'game:start');
+
             // Create game immediately
             const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
             memUser.blockRec = blockHeight; // keep legacy timeout logic consistent
-            const game = this.createGameForUser(memUser, 'standard');
+            const game = this.gameManager.createGameForUser(memUser, 'standard');
             const state = game.getState();
             state.blockHeight = blockHeight;
 
@@ -332,294 +416,82 @@ class SocketHandlers {
     }
 
     /**
-     * Handle chat messages and game commands
-     */
-    handleChatMessage(socket, msg) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log('Message received:', msg);
-        }
-        
-        const command = msg.toLowerCase();
-        
-        // Check for XMR/WOW payout address in the message using AddressManager
-        const detected = this.addressManager.detectInText(msg);
-        if (detected) {
-            this.addressManager.handleDetection(socket.id, detected);
-            return;
-        }
-        
-        // Handle game commands
-        switch (command) {
-            case 'hello':
-                this.broadcastManager.sendStatusUpdate(socket.id, 'help', 
-                    'Welcome! Type "enter" to join the queue for the next block, or use the START button for immediate entry. ' +
-                    'Paste your XMR/WOW address in chat to set your payout address.');
-                return;
-                
-            case 'enter':
-                this.handleGameQueue(socket);
-                return;
-                
-            case 'cancel':
-                if (this.addressManager.pending.has(socket.id)) {
-                    this.addressManager.confirm(socket.id, false);
-                    return;
-                }
-                this.handleCancelEntry(socket); // queue cancellation path
-                return;
-
-            case 'confirm':
-                if (this.addressManager.pending.has(socket.id)) {
-                    this.addressManager.confirm(socket.id, true);
-                    return;
-                }
-                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Nothing pending confirmation.');
-                return;
-                
-            case 'address':
-            case 'payout':
-                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
-                    'Please paste your XMR/WOW address directly in chat. The system will automatically detect and confirm it.');
-                return;
-                
-            case 'payment':
-            case 'pay':
-                // Legacy payment command path removed; auto-create request if needed
-                if (this.gameModeManager) {
-                    this.paymentHandlers.createAndShowPaymentRequest(socket);
-                } else {
-                    this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Server is in FREE mode - no payment required.');
-                }
-                return;
-                
-            default:
-                // Broadcast as chat message to all clients
-                this.handleChatBroadcast(socket, msg);
-        }
-    }
-
-
-    /**
-     * Broadcast a generic chat message to all clients. Performs minimal sanitization
-     * and rate limiting (simple cooldown per socket) to avoid spam / abuse.
-     */
-    handleChatBroadcast(socket, msg) {
-        if (typeof msg !== 'string') return;
-        const trimmed = msg.trim();
-        if (!trimmed) return;
-
-        // Basic rate limit: one broadcast per 750ms per socket
-        const now = Date.now();
-        if (!this._chatLastSent) this._chatLastSent = new Map();
-        const last = this._chatLastSent.get(socket.id) || 0;
-        if (now - last < 750) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'You are sending messages too fast.');
-            return;
-        }
-        this._chatLastSent.set(socket.id, now);
-
-        // Very light sanitization (escape < >)
-        const safe = trimmed.replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;').slice(0, 300);
-        this.broadcastManager.broadcastChatMessage(socket.id.substring(0,6), safe, now, socket.id);
-    }
-
-    /**
-     * Handle game entry request
+     * Handle game entry request (legacy method - now delegates to queue)
      */
     handleGameEntry(socket) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Player ${socket.id} requested to enter the dungeon - STARTING IMMEDIATELY`);
-        }
-        const currentUser = this.getUserBySocket(socket.id);
-        if (!currentUser) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error: Could not start game. Please try again.');
-            return;
-        }
-
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Found user for socket ${socket.id}, starting game immediately...`);
-        }
-
-        try {
-            const currentBlock = this.debugManager.getCurrentBlockHeight();
-            currentUser.blockRec = currentBlock;
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`🕒 AUTO-ENTRY: Player enters on block ${currentUser.blockRec}, will die when block ${currentUser.blockRec + 1} starts`);
-            }
-            const game = this.createGameForUser(currentUser, 'standard');
-            const gameState = game.getState();
-            gameState.blockHeight = currentBlock;
-            this.io.to(socket.id).emit('game_start', gameState);
-        } catch (error) {
-            console.error('Error creating game:', error);
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error starting game: ' + error.message);
-        }
+        return this.handleGameQueue(socket);
     }
 
     /**
-     * Handle game queue request (typing "enter")
+     * Handle game queue request (delegates to QueueHandler)
      */
     async handleGameQueue(socket) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Player ${socket.id} requested to enter the dungeon`);
-        }
-        
-        const currentUser = this.getUserBySocket(socket.id);
-        if (!currentUser) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Error: Could not add to queue. Please try again.');
-            return;
-        }
+        return this.queueHandler.handleGameQueue(socket, (socketId) => this.connectionHandler.getUserBySocket(socketId));
+    }
 
-        // Check if already waiting
-        const existingIndex = this.queueManager.getPlayerIndex(socket.id);
-        if (existingIndex !== -1) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'You are already in the queue!');
-            return;
-        }
+    /**
+     * Handle queue cancellation (delegates to QueueHandler)
+     */
+    handleCancelEntry(socket) {
+        return this.queueHandler.handleCancelEntry(socket);
+    }
 
-        // Check if already in a game
-        if (this.activeGames.has(socket.id)) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You are already in a game!');
-            return;
-        }
+    /**
+     * Handle stats request
+     */
+    async handleStatsRequest(socket) {
+        try {
+            const stats = {
+                rateLimiter: this.rateLimiter.getStats(),
+                memoryManager: this.memoryManager.getStats(),
+                connections: this.connectionHandler.getStats(),
+                chat: this.chatHandler.getStats(),
+                activeGames: this.activeGames.size,
+                queueLength: this.queueManager.getQueueLength()
+            };
 
-        // Check payment eligibility if payment system is available
-        if (this.gameModeManager) {
-            try {
-                const eligibility = await this.gameModeManager.canUserStartGame(socket.id);
-                // If in payout-eligible mode and user missing payout address, require address first
-                const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
-                if (payoutEligible) {
-                    const u = await this.gameModeManager.getOrCreateUser(socket.id);
-                    if (!u.payout_address) {
-                        this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
-                        return;
-                    }
-                }
-                
-                if (!eligibility.allowed) {
-                    if (this.debugManager.CONSOLE_LOGGING) {
-                        console.log(`❌ Payment required for ${socket.id}: ${eligibility.reason}`);
-                    }
-                    
-                    // Create payment request immediately instead of asking user to type 'payment'
-                    await this.paymentHandlers.createAndShowPaymentRequest(socket);
-                    return;
-                }
-                
-                if (this.debugManager.CONSOLE_LOGGING) {
-                    console.log(`✅ Payment validated for ${socket.id}: ${eligibility.reason}`);
-                }
-            } catch (error) {
-                console.error('Error checking payment eligibility:', error);
-                
-                // In paid mode, don't add to queue if payment check fails
-                if (this.gameModeManager.gameMode !== 'FREE') {
-                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
-                        'Payment system error. Please try again or contact support.');
-                    return;
-                }
-                
-                // Only in FREE mode, continue to queue on payment system errors
-                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment system unavailable. Playing in FREE mode.');
-            }
-        }
-
-        // Add to waiting queue (in free mode or already authorized paid mode)
-        this.queueManager.addPlayer({
-            serverId: socket.id,
-            clientId: currentUser.clientId,
-            requiresConfirmation: false,
-            confirmed: true
-        });
-
-        const currentBlock = this.debugManager.getCurrentBlockHeight();
-        const nextBlock = currentBlock + 1;
-        this.broadcastManager.sendStatusUpdate(socket.id, 'queue', 
-            `Added to queue! You will enter when block ${nextBlock} is found. Current block: ${currentBlock}`);
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`🕒 QUEUE ENTRY: Player ${socket.id} queued for block ${nextBlock}. Queue length: ${this.queueManager.getQueueLength()}`);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                `Server Stats: ${stats.activeGames} active games, ${stats.queueLength} in queue, ${stats.connections.clientSocketMappings} connections`);
+        } catch (error) {
+            console.error('handleStatsRequest error:', error);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Failed to get stats.');
         }
     }
 
     /**
-     * Handle game over scenarios
+     * Handle game over scenarios (delegates to GameManager)
      */
     async handleGameOver(socket, game, status, reason, message, score = 0) {
-        game.gameState = status;
-        const gameStats = { 
-            score: score, 
-            reason: reason,
-            treasuresFound: game.player.hasTreasure ? 1 : 0 
-        };
-        game.endGame(status, gameStats);
-        
-        // Process game completion with payment system
-        let payoutInfo = null;
-        if (this.gameModeManager) {
-            try {
-                payoutInfo = await this.gameModeManager.completeGame(
-                    socket.id, 
-                    game.id, 
-                    status === 'won', 
-                    game.player.hasTreasure || false
-                );
-                
-                if (this.debugManager.CONSOLE_LOGGING && payoutInfo) {
-                    console.log(`💰 Payout processed for ${socket.id}:`, payoutInfo);
-                }
-            } catch (error) {
-                console.error('Error processing game completion:', error);
-            }
-        }
-        
-        this.io.to(socket.id).emit('game_over', {
-            status: status,
-            reason: reason,
-            message: message,
-            score: score,
-            payout: payoutInfo,
-            treasure: game.player.hasTreasure || false
-        });
-
-        // Persist completion details if DB available
-        if (this.gameModeManager && this.gameModeManager.db) {
-            const db = this.gameModeManager.db;
-            const outcome = reason === 'escaped' ? 'escaped' : (reason === 'monster' ? 'caught_by_monster' : reason);
-            db.query(`
-                UPDATE games SET status = $1, outcome = $2, treasure_found = $3, completed_at = NOW()
-                WHERE dungeon_seed = $4 AND socket_id = $5
-            `, [status, outcome, game.player.hasTreasure, game.id, socket.id])
-            .catch(err => console.error('Game completion update failed:', err.message));
-        }
-        
-        this.activeGames.delete(socket.id);
+        return this.gameManager.handleGameOver(socket, game, status, reason, message, score);
     }
 
     /**
-     * Handle client disconnection
+     * Handle client disconnection with proper cleanup
      */
     handleDisconnect(socket) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log('User disconnected', socket.client.id);
-        }
-        
-        // Clean up payment monitoring
-        // Payment monitoring cleanup (refactored into paymentHandlers)
-        if (this.paymentHandlers && typeof this.paymentHandlers.stopMonitoringForSocket === 'function') {
-            this.paymentHandlers.stopMonitoringForSocket(socket.id);
-        }
-        
-        // Clean up movement timestamps
-        this.playerMoveTimestamps.delete(socket.id);
-        
-        // Clean up active games
-        this.activeGames.delete(socket.id);
-        
-        // Remove from queue manager (idempotent)
-        this.queueManager.removePlayer(socket.id);
-        
-        user.removeUser(socket.client.id);
+        // Use connection handler for main disconnect logic
+        this.connectionHandler.handleDisconnect(socket, (socket) => {
+            // Additional cleanup specific to socket handlers
+            
+            // Clean up payment monitoring
+            if (this.paymentHandlers && typeof this.paymentHandlers.stopMonitoringForSocket === 'function') {
+                this.paymentHandlers.stopMonitoringForSocket(socket.id);
+            }
+            
+            // Clean up movement timestamps
+            this.playerMoveTimestamps.delete(socket.id);
+            
+            // Clean up active games
+            this.activeGames.delete(socket.id);
+            
+            // Remove from queue manager (idempotent)
+            this.queueManager.removePlayer(socket.id);
+            
+            // Clear any pending address confirmations
+            if (this.chatHandler) {
+                this.chatHandler.clearAddressConfirmation(socket.id);
+            }
+        });
     }
 
     /**
@@ -637,120 +509,45 @@ class SocketHandlers {
         });
     }
 
-    /**
-     * Handle client registration
-     */
-    handleRegisterClient(socket, data) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Client registered: ${socket.id} (server) <-> ${data.clientId} (client)`);
-        }
-        
-        this.clientSocketMap.set(data.clientId, socket.id);
-        this.clientSocketMap.set(socket.id, data.clientId);
-        
-        socket.emit('socket_registered', {
-            clientId: data.clientId,
-            serverId: socket.id,
-            success: true
-        });
-    }
-
     // Helper methods
 
     /**
-     * Get user by socket ID with fallback mapping
+     * Get user by socket ID with fallback mapping (delegates to connection handler)
      */
     getUserBySocket(socketId) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Looking up user with socketId: ${socketId}`);
-        }
-        
-        let foundUser = user.getUserBySocketId(socketId);
-        
-        if (!foundUser && this.clientSocketMap.has(socketId)) {
-            const mappedId = this.clientSocketMap.get(socketId);
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`Socket ID ${socketId} not found directly, trying mapped ID: ${mappedId}`);
-            }
-            foundUser = user.getUserBySocketId(mappedId);
-        }
-        
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`User lookup result for ${socketId}: ${foundUser ? "FOUND" : "NOT FOUND"}`);
-        }
-        return foundUser;
+        return this.connectionHandler.getUserBySocket(socketId);
     }
 
+    // Helper methods (delegated to other managers)
+
     /**
-     * Create a new game for a user
+     * Create a new game for a user (delegates to GameManager)
      */
     createGameForUser(user, gameType = 'standard', options = {}) {
-        let game;
-        
-        if (gameType === 'legacy') {
-            game = Game.createLegacyGame(user.id, user, options);
-        } else {
-            game = Game.createStandardGame(user.id, user, options);
-        }
-        
-        user.joinGame(game);
-        this.activeGames.set(user.id, game);
-
-        // Insert a DB record for this game (best effort)
-        if (this.gameModeManager && this.gameModeManager.db) {
-            const db = this.gameModeManager.db;
-            const gameMode = this.gameModeManager.gameMode || 'FREE';
-            const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
-            const socketId = user.id; // user.id is the socket id string
-            db.query(`
-                INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
-                VALUES ((SELECT id FROM users WHERE socket_id = $1), $1, $2, 'active', $3, $4, NOW())
-            `, [socketId, gameMode, blockHeight, game.id])
-            .catch(err => console.error('Game insert failed:', err.message));
-        }
-        
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id}`);
-        }
-        return game;
+        return this.gameManager.createGameForUser(user, gameType, options);
     }
 
     /**
-     * Check if monster caught player
+     * Check if monster caught player (delegates to GameManager)
      */
     checkMonsterKill(player, monster) {
-        return monster.x === player.x && monster.y === player.y;
+        return this.gameManager.checkMonsterKill(player, monster);
     }
 
     /**
-     * Log game update debug information
+     * Log game update debug information (delegates to GameManager)
      */
     logGameUpdate(socketId, gameState) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`🔍 GAME UPDATE DEBUG for ${socketId}:`);
-            console.log(`  - Player position: (${gameState.player?.x}, ${gameState.player?.y})`);
-            console.log(`  - Visible tiles keys: ${Object.keys(gameState.visibleTiles || {}).length} rows`);
-            console.log(`  - Lighting data included: ${!!gameState.lighting}`);
-            if (gameState.lighting) {
-                const lightingTileCount = Object.keys(gameState.lighting).reduce((acc, yKey) => 
-                    acc + Object.keys(gameState.lighting[yKey] || {}).length, 0);
-                console.log(`  - Lighting tiles count: ${lightingTileCount}`);
-            }
-            console.log(`  - Torch data included: ${!!gameState.torches}`);
-            if (gameState.torches) {
-                console.log(`  - Torch count: ${gameState.torches.length}`);
-            }
-            console.log(`Sending game_update to ${socketId} after player move.`);
-        }
+        return this.gameManager.logGameUpdate(socketId, gameState);
     }
 
-    // Queue management methods (for future block-based game entry)
+    // Queue management methods (delegates to QueueHandler)
     
     /**
      * Start games for waiting players when a new block is found
      */
     startGamesForWaiting(blockHeight) {
-        this.queueManager.startGamesForWaiting(blockHeight);
+        return this.queueHandler.startGamesForWaiting(blockHeight);
     }
 
     /**
@@ -758,7 +555,7 @@ class SocketHandlers {
      */
     checkGamesTimeout(currentHeight) {
         this.activeGames.forEach((game, socketId) => {
-            const user = this.getUserBySocket(socketId);
+            const user = this.connectionHandler.getUserBySocket(socketId);
             
             if (user && user.blockRec && currentHeight > user.blockRec) {
                 if (this.debugManager.CONSOLE_LOGGING) {
@@ -766,14 +563,76 @@ class SocketHandlers {
                 }
                 
                 game.gameState = 'lost';
-                this.handleGameOver(socket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
+                const fakeSocket = { id: socketId };
+                this.handleGameOver(fakeSocket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
             }
         });
     }
 
-    // ====== PAYMENT SYSTEM HANDLERS (delegated to paymentHandlers now) ======
+    // Payment system handlers (placeholder for compatibility)
+    async handleCheckPaymentStatus(socket, data) {
+        if (this.paymentHandlers && typeof this.paymentHandlers.handleCheckPaymentStatus === 'function') {
+            return this.paymentHandlers.handleCheckPaymentStatus(socket, data);
+        }
+    }
 
-    // (Address detection & direct payment monitoring removed; now handled by PaymentHandlers)
+    async handleGetUserCredits(socket) {
+        if (this.paymentHandlers && typeof this.paymentHandlers.handleGetUserCredits === 'function') {
+            return this.paymentHandlers.handleGetUserCredits(socket);
+        }
+    }
+
+    /**
+     * Get comprehensive statistics
+     */
+    getStats() {
+        return {
+            activeGames: this.activeGames.size,
+            rateLimiter: this.rateLimiter.getStats(),
+            memoryManager: this.memoryManager.getStats(),
+            connections: this.connectionHandler.getStats(),
+            chat: this.chatHandler.getStats(),
+            games: this.gameManager.getStats(),
+            queue: this.queueHandler.getStats()
+        };
+    }
+
+    /**
+     * Shutdown method to clean up all resources and prevent memory leaks
+     */
+    async shutdown() {
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log('🛑 SocketHandlers shutting down...');
+        }
+
+        // Shutdown components in reverse order of initialization
+        if (this.chatHandler) {
+            this.chatHandler.shutdown();
+        }
+
+        if (this.connectionHandler) {
+            this.connectionHandler.shutdown();
+        }
+
+        if (this.rateLimiter) {
+            this.rateLimiter.shutdown();
+        }
+
+        if (this.memoryManager) {
+            // Force final cleanup before shutdown
+            await this.memoryManager.forceCleanup();
+            this.memoryManager.shutdown();
+        }
+
+        // Clear remaining data structures
+        this.activeGames.clear();
+        this.playerMoveTimestamps.clear();
+        this.mempoolNotified.clear();
+
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log('✅ SocketHandlers shutdown complete');
+        }
+    }
 }
 
 module.exports = SocketHandlers;

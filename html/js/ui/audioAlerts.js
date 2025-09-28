@@ -17,7 +17,11 @@ const AudioAlerts = {
         request_coin: 'audio/Pleasesendcoin.m4a',
         payment_detected: 'audio/Paymentdetected.m4a',
         payment_confirmed: 'audio/Paymentconfirmed.m4a',
-        game_start: 'audio/Nowescapethedunge.m4a'
+        game_start: 'audio/Nowescapethedunge.m4a',
+        game_escaped: 'audio/Youescaped.m4a',
+        game_escaped_treasure: 'audio/Youescapedwiththe.m4a',
+        game_timeout: 'audio/Yourtimeranout.m4a',
+        game_monster: 'audio/Youwererektbythe.m4a'
     },
 
     init() {
@@ -50,6 +54,7 @@ const AudioAlerts = {
         const origPaymentConfirmed = SocketHandlers.onPaymentConfirmed;
         const origPaymentDetected = SocketHandlers.onPaymentDetected;
         const origGameStart = SocketHandlers.onGameStart;
+        const origGameOver = SocketHandlers.onGameOver;
         const origQueueJoined = SocketHandlers.onQueueJoined;
         SocketHandlers.onPaymentConfirmed = function(data) {
             if (origPaymentConfirmed) origPaymentConfirmed.call(SocketHandlers, data);
@@ -61,7 +66,18 @@ const AudioAlerts = {
         };
         SocketHandlers.onGameStart = function(data) {
             if (origGameStart) origGameStart.call(SocketHandlers, data);
-            AudioAlerts.playFile('game_start');
+            // Add delay to prevent overlap with payment_confirmed audio
+            const lastPaymentConfirmed = AudioAlerts._audioTagTimes && AudioAlerts._audioTagTimes['payment_confirmed'];
+            if (lastPaymentConfirmed && (Date.now() - lastPaymentConfirmed < 2000)) {
+                // Delay game_start audio if payment_confirmed played recently
+                setTimeout(() => AudioAlerts.playFile('game_start'), 1500);
+            } else {
+                AudioAlerts.playFile('game_start');
+            }
+        };
+        SocketHandlers.onGameOver = function(data) {
+            if (origGameOver) origGameOver.call(SocketHandlers, data);
+            AudioAlerts.playGameOverSound(data);
         };
         // We'll trigger request_coin when user attempts start but is blocked for payment/credits; handled externally via public method
     },
@@ -137,6 +153,28 @@ const AudioAlerts = {
         const el = this._getAudio(tag);
         if (!el) return;
         try { el.currentTime = 0; el.play().catch(()=>{}); } catch(_) {}
+    },
+    playGameOverSound(gameOverData) {
+        if (!this._enabled) return;
+        if (!gameOverData || !gameOverData.reason) return;
+        
+        let soundTag = '';
+        switch (gameOverData.reason) {
+            case 'escaped':
+                // Check if they escaped with treasure
+                soundTag = gameOverData.treasure ? 'game_escaped_treasure' : 'game_escaped';
+                break;
+            case 'timeout':
+                soundTag = 'game_timeout';
+                break;
+            case 'monster':
+                soundTag = 'game_monster';
+                break;
+            default:
+                return; // Unknown reason, no audio
+        }
+        
+        this.playFile(soundTag);
     },
     // Public helper to be invoked when server denies start due to payment/credits
     playRequestCoin() { this.playFile('request_coin'); }
