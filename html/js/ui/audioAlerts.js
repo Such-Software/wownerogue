@@ -126,8 +126,14 @@ const AudioAlerts = {
     playFile(tag) {
         if (!this._enabled) return;
         const now = Date.now();
-        if (now - this._lastPlay < this._cooldownMs) return;
-        this._lastPlay = now;
+        // Per-tag cooldown so different event types can fire back-to-back (e.g. payment_confirmed -> game_start)
+        if (!this._audioTagTimes) this._audioTagTimes = {}; // tag -> last play timestamp
+        const lastForTag = this._audioTagTimes[tag] || 0;
+        const elapsed = now - lastForTag;
+        const allow = elapsed >= this._cooldownMs || (tag === 'game_start' && this._lastTag !== 'game_start');
+        if (!allow) return;
+        this._audioTagTimes[tag] = now;
+        this._lastTag = tag;
         const el = this._getAudio(tag);
         if (!el) return;
         try { el.currentTime = 0; el.play().catch(()=>{}); } catch(_) {}
