@@ -8,15 +8,18 @@ try {
   QR = null;
 }
 
-function formatAmount(atomic) {
+function formatAmount(atomic, decimals = 12) {
   if (!atomic || atomic <= 0) return '0';
-  return (atomic / 1e12).toFixed(12).replace(/0+$/,'').replace(/\.$/,'');
+  const divisor = Math.pow(10, decimals);
+  return (Number(atomic) / divisor).toFixed(decimals)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '');
 }
 
-async function generatePaymentQR(address, amountAtomic, cryptoType, description) {
+async function generatePaymentQR(address, amountAtomic, cryptoType, description, decimals = 12) {
   if (!QR) return null; // Library not installed
   try {
-    const amountStr = formatAmount(amountAtomic);
+    const amountStr = formatAmount(amountAtomic, decimals);
     const scheme = cryptoType && cryptoType.toUpperCase() === 'WOW' ? 'wownero' : 'monero';
     // Basic URI; wallets usually understand amount (tx_amount) & description
     const params = new URLSearchParams();

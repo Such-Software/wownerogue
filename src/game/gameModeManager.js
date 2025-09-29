@@ -3,36 +3,276 @@
  * Handles different game modes (FREE, PAID_SINGLE, PAID_CREDITS)
  */
 
+const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW depending on currency decimals
+const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
+const DEFAULT_DECIMALS = 12;
+
+const parseAtomicEnvValue = (val, fallback) => {
+    if (val === undefined || val === null || val === '') return fallback;
+    if (typeof val !== 'string') {
+        const numVal = Number(val);
+        return Number.isFinite(numVal) ? Math.trunc(numVal) : fallback;
+    }
+    const cleaned = val.replace(/_/g, '').trim();
+    if (!cleaned) {
+        return fallback;
+    }
+    const num = Number(cleaned);
+    if (!Number.isFinite(num) || num < 0) {
+        return fallback;
+    }
+    return Math.trunc(num);
+};
+
 class GameModeManager {
-    constructor(databaseManager, walletRPCService, debugManager) {
+    constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null) {
         this.db = databaseManager;
         this.walletService = walletRPCService; // Changed from moneroPayService
         this.debugManager = debugManager;
-        this.gameMode = process.env.GAME_MODE || 'FREE';
-        this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
-        // Flexible parsing: supports plain integers, scientific notation (e.g. 5e9), and underscores (e.g. 5_000_000_000)
-        const parseAtomic = (val, fallback) => {
-            if (val === undefined || val === null || val === '') return fallback;
-            if (typeof val !== 'string') return Math.trunc(Number(val)) || fallback;
-            const cleaned = val.replace(/_/g, '').trim();
-            const num = Number(cleaned);
-            if (!Number.isFinite(num) || num < 0) return fallback;
-            // Ensure integer atomic units
-            return Math.trunc(num);
-        };
+        this.paymentConfigManager = paymentConfigManager || null;
 
-    this.singleGamePrice = parseAtomic(process.env.SINGLE_GAME_PRICE, 5000000000); // default 0.005 XMR
-    this.creditsPackagePrice = parseAtomic(process.env.CREDITS_PACKAGE_PRICE, 50000000000); // default 0.05 XMR
-    this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUT_ENABLED || 'false');
-        
-        console.log(`🎮 Game Mode Manager initialized: ${this.gameMode} mode`);
-        console.log(`💰 Currency: ${this.cryptoType}`);
-        const toXMR = (atomic) => (atomic / 1e12).toFixed(6).replace(/0+$/,'').replace(/\.$/,'');
-        console.log(`💵 Single game price: ${this.singleGamePrice} atomic units (~${toXMR(this.singleGamePrice)} ${this.cryptoType})`);
-        console.log(`🎫 Credits package price: ${this.creditsPackagePrice} atomic units (~${toXMR(this.creditsPackagePrice)} ${this.cryptoType})`);
+        this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
+        this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
+        this.singleGamePrice = DEFAULT_SINGLE_GAME_PRICE;
+        this.creditsPackagePrice = DEFAULT_CREDITS_PACKAGE_PRICE;
+        this.creditsPayoutEnabled = false;
+        this.creditsPayoutBaseValue = DEFAULT_SINGLE_GAME_PRICE;
+        this.directPayoutMultipliers = { escape: 2, escapeWithTreasure: 3 };
+        this.creditPayoutMultipliers = { escape: 2, escapeWithTreasure: 3 };
+        this.creditsPerGameCost = 1;
+        this.preferCreditsFirst = true;
+        this.paymentsEnabled = false;
+        this.directModeEnabled = false;
+        this.creditsModeEnabled = false;
+        this.configSnapshot = null;
+
+        this.applyLegacyEnvConfig();
+
+        if (this.paymentConfigManager) {
+            const config = this.paymentConfigManager.getConfig();
+            this.applyConfigSnapshot(config, { emitLog: false });
+            this.setLegacyGameMode(this.paymentConfigManager.getLegacyGameMode());
+
+            if (this.paymentConfigManager.eventBus && typeof this.paymentConfigManager.eventBus.on === 'function') {
+                this.paymentConfigManager.eventBus.on('paymentConfig:update', (updatedConfig) => {
+                    this.applyConfigSnapshot(updatedConfig, { emitLog: true, context: 'updated' });
+                    this.setLegacyGameMode(this.paymentConfigManager.getLegacyGameMode());
+                });
+            }
+        }
+
+        this.logConfiguration('initialized');
+    }
+
+    inferCurrencyDecimals(symbol) {
+        if (!symbol) return DEFAULT_DECIMALS;
+        const normalized = symbol.toUpperCase();
+        if (normalized === 'WOW') return 11;
+        if (normalized === 'XMR') return 12;
+        return DEFAULT_DECIMALS;
+    }
+
+    applyLegacyEnvConfig() {
+        this.setLegacyGameMode(process.env.GAME_MODE || 'FREE');
+        this.cryptoType = process.env.CRYPTO_TYPE || this.cryptoType;
+        this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
+        this.singleGamePrice = parseAtomicEnvValue(process.env.SINGLE_GAME_PRICE, this.singleGamePrice);
+        this.creditsPackagePrice = parseAtomicEnvValue(process.env.CREDITS_PACKAGE_PRICE, this.creditsPackagePrice);
+        this.creditsPerGameCost = parseAtomicEnvValue(process.env.CREDITS_PER_GAME, 1) || 1;
+        this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUT_ENABLED || 'false');
+        this.creditsPayoutBaseValue = this.singleGamePrice;
+        process.env.CREDITS_PER_GAME = String(this.creditsPerGameCost);
+
+        const directEscape = Number(process.env.DIRECT_PAYOUT_ESCAPE);
+        if (Number.isFinite(directEscape) && directEscape > 0) {
+            this.directPayoutMultipliers.escape = directEscape;
+        }
+        const directTreasure = Number(process.env.DIRECT_PAYOUT_TREASURE);
+        if (Number.isFinite(directTreasure) && directTreasure > 0) {
+            this.directPayoutMultipliers.escapeWithTreasure = directTreasure;
+        }
+        const creditsEscape = Number(process.env.CREDITS_PAYOUT_ESCAPE);
+        if (Number.isFinite(creditsEscape) && creditsEscape > 0) {
+            this.creditPayoutMultipliers.escape = creditsEscape;
+        }
+        const creditsTreasure = Number(process.env.CREDITS_PAYOUT_TREASURE);
+        if (Number.isFinite(creditsTreasure) && creditsTreasure > 0) {
+            this.creditPayoutMultipliers.escapeWithTreasure = creditsTreasure;
+        }
+
+        if (process.env.PREFER_CREDITS_FIRST) {
+            this.preferCreditsFirst = /^true$/i.test(process.env.PREFER_CREDITS_FIRST);
+        }
+
+        this.paymentsEnabled = this.gameMode !== 'FREE';
+        this.directModeEnabled = this.gameMode === 'PAID_SINGLE';
+        this.creditsModeEnabled = this.gameMode === 'PAID_CREDITS';
+    }
+
+    applyConfigSnapshot(config, options = {}) {
+        if (!config || typeof config !== 'object') {
+            return;
+        }
+
+        this.configSnapshot = config;
+        this.paymentsEnabled = !!config.paymentsEnabled;
+
+        if (config.currency) {
+            if (config.currency.symbol) {
+                this.cryptoType = config.currency.symbol;
+            }
+            if (config.currency.decimals !== undefined) {
+                this.currencyDecimals = Number(config.currency.decimals);
+            } else {
+                this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
+            }
+        }
+
+        if (config.modes && config.modes.direct) {
+            const { price, enabled } = config.modes.direct;
+            if (price !== undefined && price !== null) {
+                this.singleGamePrice = Number(price);
+            }
+            this.directModeEnabled = !!enabled;
+        }
+
+        if (config.modes && config.modes.credits) {
+            const creditsMode = config.modes.credits;
+            if (creditsMode.packages && creditsMode.packages.length > 0) {
+                const primaryPackage = creditsMode.packages[0];
+                if (primaryPackage.price !== undefined && primaryPackage.price !== null) {
+                    this.creditsPackagePrice = Number(primaryPackage.price);
+                }
+                if (primaryPackage.credits) {
+                    process.env.CREDITS_PER_PACKAGE = String(primaryPackage.credits);
+                }
+            }
+            if (creditsMode.creditsPerGame !== undefined) {
+                this.creditsPerGameCost = Number(creditsMode.creditsPerGame) || 1;
+            }
+            this.creditsModeEnabled = !!creditsMode.enabled;
+        }
+
+        if (config.payouts && config.payouts.rules) {
+            const directRule = config.payouts.rules.direct || {};
+            const creditsRule = config.payouts.rules.credits || {};
+
+            if (directRule.multipliers) {
+                if (directRule.multipliers.escape !== undefined) {
+                    this.directPayoutMultipliers.escape = Number(directRule.multipliers.escape);
+                }
+                if (directRule.multipliers.escapeWithTreasure !== undefined) {
+                    this.directPayoutMultipliers.escapeWithTreasure = Number(directRule.multipliers.escapeWithTreasure);
+                }
+            }
+
+            if (creditsRule.multipliers) {
+                if (creditsRule.multipliers.escape !== undefined) {
+                    this.creditPayoutMultipliers.escape = Number(creditsRule.multipliers.escape);
+                }
+                if (creditsRule.multipliers.escapeWithTreasure !== undefined) {
+                    this.creditPayoutMultipliers.escapeWithTreasure = Number(creditsRule.multipliers.escapeWithTreasure);
+                }
+            }
+
+            if (creditsRule.baseValue !== undefined) {
+                this.creditsPayoutBaseValue = Number(creditsRule.baseValue);
+            }
+
+            if (creditsRule.enabled !== undefined) {
+                this.creditsPayoutEnabled = !!creditsRule.enabled;
+            }
+        }
+
+        if (config.preferences) {
+            if (config.preferences.preferCreditsFirst !== undefined) {
+                this.preferCreditsFirst = !!config.preferences.preferCreditsFirst;
+            }
+        }
+
+        process.env.SINGLE_GAME_PRICE = String(this.singleGamePrice);
+        process.env.CREDITS_PACKAGE_PRICE = String(this.creditsPackagePrice);
+        process.env.CREDITS_PER_GAME = String(this.creditsPerGameCost);
+        process.env.CREDITS_PAYOUT_ENABLED = this.creditsPayoutEnabled ? 'true' : 'false';
+        process.env.CREDITS_PAYOUTS_ENABLED = process.env.CREDITS_PAYOUT_ENABLED;
+
+        if (options.emitLog) {
+            this.logConfiguration(options.context || 'updated');
+        }
+    }
+
+    setLegacyGameMode(mode) {
+        this.gameMode = (mode || 'FREE').toUpperCase();
+        process.env.GAME_MODE = this.gameMode;
+    }
+
+    formatAtomic(value) {
+        if (value === undefined || value === null) {
+            return '0';
+        }
+        const decimals = Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS;
+        const divisor = Math.pow(10, decimals);
+        const quotient = Number(value) / divisor;
+        return Number.isFinite(quotient)
+            ? quotient.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
+            : value.toString();
+    }
+
+    getDecimalDivisor() {
+        const decimals = Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS;
+        return Math.pow(10, decimals);
+    }
+
+    formatAtomicHuman(value, digits = 3) {
+        if (value === undefined || value === null) {
+            return '0';
+        }
+        const divisor = this.getDecimalDivisor();
+        const quotient = Number(value) / divisor;
+        if (!Number.isFinite(quotient)) {
+            return value.toString();
+        }
+        return quotient.toFixed(digits);
+    }
+
+    getPrimaryCreditPackage() {
+        const packages = this.configSnapshot?.modes?.credits?.packages;
+        if (Array.isArray(packages) && packages.length > 0) {
+            return packages[0];
+        }
+        return {
+            id: 'default',
+            credits: 10,
+            price: this.creditsPackagePrice,
+            bonus: 0
+        };
+    }
+
+    calculatePayout(mode, { treasureFound = false } = {}) {
+        const normalizedMode = (mode || this.gameMode || 'FREE').toUpperCase();
+        const usingCredits = normalizedMode === 'PAID_CREDITS';
+        const base = usingCredits ? (this.creditsPayoutBaseValue || this.singleGamePrice) : this.singleGamePrice;
+        const multipliers = usingCredits ? this.creditPayoutMultipliers : this.directPayoutMultipliers;
+        const multiplier = treasureFound
+            ? (multipliers.escapeWithTreasure ?? multipliers.escape ?? 0)
+            : (multipliers.escape ?? 0);
+
+        const amount = Math.round(base * multiplier);
+        return { amount, multiplier, base };
+    }
+
+    logConfiguration(context = 'initialized') {
+        console.log(`🎮 Game Mode Manager ${context}: ${this.gameMode} mode`);
+        console.log(`💰 Currency: ${this.cryptoType} (decimals: ${this.currencyDecimals})`);
+        console.log(`💵 Single game price: ${this.singleGamePrice} atomic units (~${this.formatAtomic(this.singleGamePrice)} ${this.cryptoType})`);
+        console.log(`🎫 Credits package price: ${this.creditsPackagePrice} atomic units (~${this.formatAtomic(this.creditsPackagePrice)} ${this.cryptoType})`);
+        console.log(`🎯 Credits per game cost: ${this.creditsPerGameCost}`);
+        console.log(`🧮 Payout multipliers - direct: ${JSON.stringify(this.directPayoutMultipliers)}, credits: ${JSON.stringify(this.creditPayoutMultipliers)}`);
+        console.log(`🔁 Mode availability - direct: ${this.directModeEnabled}, credits: ${this.creditsModeEnabled}, preferCreditsFirst: ${this.preferCreditsFirst}`);
         if (this.creditsPayoutEnabled) {
             console.log('🎁 Credits payout mode ENABLED (will pay rewards in PAID_CREDITS).');
         }
+        console.log(`⚙️ Payments enabled: ${this.paymentsEnabled}`);
     }
 
     /**
@@ -47,13 +287,19 @@ class GameModeManager {
                     return { allowed: true, reason: 'Free mode' };
                     
                 case 'PAID_CREDITS':
-                    if (user.credits > 0) {
-                        return { allowed: true, reason: `${user.credits} credits remaining` };
+                    if (user.credits >= this.creditsPerGameCost) {
+                        return {
+                            allowed: true,
+                            reason: `${user.credits} credits remaining`,
+                            creditsRequired: this.creditsPerGameCost
+                        };
                     }
                     return { 
                         allowed: false, 
-                        reason: 'No credits remaining',
-                        action: 'purchase_credits'
+                        reason: 'Insufficient credits',
+                        action: 'purchase_credits',
+                        creditsRequired: this.creditsPerGameCost,
+                        balance: user.credits
                     };
                     
                 case 'PAID_SINGLE':
@@ -106,20 +352,21 @@ class GameModeManager {
                     return { success: true };
                     
                 case 'PAID_CREDITS':
-                    // Deduct one credit
+                    // Deduct required credits for this mode
+                    const creditsToSpend = this.creditsPerGameCost;
                     const updateRes = await this.db.query(`
                         UPDATE users 
-                        SET credits = credits - 1,
+                        SET credits = credits - $1,
                             total_games_played = total_games_played + 1,
                             updated_at = NOW()
-                        WHERE id = $1
+                        WHERE id = $2
                         RETURNING credits
-                    `, [user.id]);
-                    const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - 1);
+                    `, [creditsToSpend, user.id]);
+                    const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - creditsToSpend);
                     // Emit credits update asynchronously if an io ref was injected later (pattern: attach externally)
                     try { this.io && this.io.to(socketId).emit('credits_update', { balance: remainingCredits }); } catch(_) {}
-                    console.log(`🎫 Deducted 1 credit from user ${user.id}, ${remainingCredits} remaining`);
-                    return { success: true, creditsRemaining: remainingCredits };
+                    console.log(`🎫 Deducted ${creditsToSpend} credit(s) from user ${user.id}, ${remainingCredits} remaining`);
+                    return { success: true, creditsRemaining: remainingCredits, creditsSpent: creditsToSpend };
                     
                 case 'PAID_SINGLE':
                     // Link game to payment
@@ -193,22 +440,20 @@ class GameModeManager {
                 WHERE id = $4
             `, [outcome === 'escaped' ? 'won' : 'lost', outcome, treasureFound, gameId]);
             
-            // Handle payouts for PAID_SINGLE or (optionally) PAID_CREDITS mode
-            const payoutEligibleMode = (this.gameMode === 'PAID_SINGLE') || (this.gameMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
+            const recordedMode = (game.payment_mode || game.game_mode || this.gameMode || 'FREE').toUpperCase();
+            const payoutEligibleMode = (recordedMode === 'PAID_SINGLE') || (recordedMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
             if (payoutEligibleMode && outcome === 'escaped' && game.payout_address) {
-                let payoutAmount;
-                const base = (this.gameMode === 'PAID_CREDITS') ? this.singleGamePrice : this.singleGamePrice; // could make distinct; reuse singleGamePrice as base
-                payoutAmount = treasureFound ? base * 3 : base * 2;
+                const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedMode, { treasureFound });
+                if (payoutAmount > 0) {
+                    await this.walletService.processPayout(
+                        game.user_id,
+                        gameId,
+                        game.payout_address,
+                        payoutAmount
+                    );
                 
-                // Create payout record
-                await this.walletService.processPayout(
-                    game.user_id,
-                    gameId,
-                    game.payout_address,
-                    payoutAmount
-                );
-                
-                console.log(`💸 Created payout: ${payoutAmount} atomic units for game ${gameId}`);
+                    console.log(`💸 Created payout: ${payoutAmount} atomic units for game ${gameId} (multiplier ${multiplier}x)`);
+                }
             }
             
             // Update user statistics
@@ -241,19 +486,25 @@ class GameModeManager {
         try {
             const user = await this.getOrCreateUser(socketId);
             
-            let amount, description;
-            
+            let amount;
+            let description;
+            let packageInfo = null;
+
             switch (paymentType) {
-                case 'single_game':
+                case 'single_game': {
                     amount = this.singleGamePrice;
                     description = `Wowngeon single game entry (${this.cryptoType})`;
                     break;
-                    
-                case 'credits_package':
-                    amount = this.creditsPackagePrice;
-                    description = `Wowngeon 10 credits package (${this.cryptoType})`;
+                }
+                case 'credits_package': {
+                    const primaryPackage = this.getPrimaryCreditPackage();
+                    const packagePrice = primaryPackage?.price ?? this.creditsPackagePrice;
+                    amount = Number(packagePrice);
+                    packageInfo = primaryPackage;
+                    const creditCount = primaryPackage?.credits ?? 10;
+                    description = `Wowngeon ${creditCount} credits package (${this.cryptoType})`;
                     break;
-                    
+                }
                 default:
                     throw new Error('Invalid payment type');
             }
@@ -280,9 +531,10 @@ class GameModeManager {
                 id: paymentResult.id,
                 address: paymentResult.address,
                 amount: amount,
-                amountFormatted: (amount / 1e12).toFixed(4), // Convert from atomic units
+                amountFormatted: this.formatAtomicHuman(amount, 4),
                 currency: this.cryptoType,
-                expiresAt: paymentResult.expiresAt
+                expiresAt: paymentResult.expiresAt,
+                package: packageInfo
             };
             
         } catch (error) {
@@ -389,10 +641,14 @@ class GameModeManager {
             cryptoType: this.cryptoType,
             singleGamePrice: this.singleGamePrice,
             creditsPackagePrice: this.creditsPackagePrice,
+            creditsPerGame: this.creditsPerGameCost,
+            paymentsEnabled: this.paymentsEnabled,
+            directModeEnabled: this.directModeEnabled,
+            creditsModeEnabled: this.creditsModeEnabled,
             features: {
-                paymentRequired: this.gameMode !== 'FREE',
-                creditsSystem: this.gameMode === 'PAID_CREDITS',
-                payouts: this.gameMode === 'PAID_SINGLE'
+                paymentRequired: this.paymentsEnabled,
+                creditsSystem: this.creditsModeEnabled,
+                payouts: this.directPayoutMultipliers.escape > 0 || this.creditPayoutMultipliers.escape > 0
             }
         };
     }
@@ -429,9 +685,7 @@ class GameModeManager {
             // Handle payouts only in PAID_SINGLE mode and only on win (escaped)
             const payoutEligibleStartMode = (this.gameMode === 'PAID_SINGLE') || (this.gameMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
             if (payoutEligibleStartMode && won) {
-                // Derive payout multiplier
-                const multiplier = treasureFound ? 3 : 2;
-                const payoutAmount = this.singleGamePrice * multiplier;
+                const { amount: payoutAmount, multiplier } = this.calculatePayout(this.gameMode, { treasureFound });
 
                 // Look up user record for payout address
                 const userResult = await this.db.query(`SELECT * FROM users WHERE socket_id = $1 LIMIT 1`, [socketId]);

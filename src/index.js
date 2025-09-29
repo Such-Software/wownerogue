@@ -13,11 +13,19 @@ const DatabaseManager = require('./db/databaseManager');
 const WalletRPCService = require('./payments/walletRPCService');
 const GameModeManager = require('./game/gameModeManager');
 const RpcService = require('./rpc/rpcService');
+const PaymentConfigManager = require('./config/paymentConfig');
+const EnvironmentValidator = require('./config/environmentValidator');
 
 // Import modular components
 const BroadcastManager = require('./network/broadcastManager');
 const DebugManager = require('./debug/debugManager');
 const SocketHandlers = require('./network/socketHandlers');
+
+// Initialize payment configuration
+const paymentConfigManager = new PaymentConfigManager({ logger: console });
+const environmentValidator = new EnvironmentValidator({ logger: console });
+environmentValidator.validate(paymentConfigManager.getConfig());
+process.env.GAME_MODE = paymentConfigManager.getLegacyGameMode();
 
 // Initialize modular components first
 const broadcastManager = new BroadcastManager(io);
@@ -27,7 +35,7 @@ const debugManager = new DebugManager(broadcastManager);
 const databaseManager = new DatabaseManager();
 const rpcService = new RpcService();
 const walletRPCService = new WalletRPCService(debugManager);
-const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager);
+const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager, paymentConfigManager);
 // Provide io reference so GameModeManager can emit events (e.g., credits_update)
 gameModeManager.io = io;
 
@@ -99,18 +107,41 @@ app.get('/api/user/:userId/credits', async (req, res) => {
 });
 
 app.get('/api/game-modes', (req, res) => {
+  const config = paymentConfigManager.getConfig();
+  const decimals = Number(config.currency?.decimals ?? 12);
+  const divisor = Number.isFinite(decimals) ? Math.pow(10, decimals) : 1;
+  const toDisplay = (value) => {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+    const numeric = typeof value === 'bigint' ? Number(value) : Number(value);
+    return Number.isFinite(numeric) ? numeric / divisor : 0;
+  };
+
+  const directMode = config.modes.direct;
+  const creditsMode = config.modes.credits;
+
   res.json({
-    FREE: { name: 'Free Play', cost: 0, payoutMultiplier: 0 },
-    PAID_SINGLE: { 
-      name: 'Paid Single Game', 
-      cost: parseFloat(process.env.SINGLE_GAME_COST || '0.005'), 
-      payoutMultiplier: { escape: 2, treasure: 3 }
+    FREE: {
+      name: 'Free Play',
+      cost: 0,
+      payoutMultiplier: 0,
+      enabled: !config.paymentsEnabled
     },
-    PAID_CREDITS: { 
-      name: 'Credits Package', 
-      cost: parseFloat(process.env.CREDITS_PACKAGE_COST || '0.03'), 
-      credits: parseInt(process.env.CREDITS_PER_PACKAGE || '10'),
-      payoutMultiplier: 0
+    PAID_SINGLE: {
+      name: 'Paid Single Game',
+      cost: toDisplay(directMode.price),
+      enabled: !!directMode.enabled,
+      payoutMultiplier: config.payouts.rules.direct.multipliers
+    },
+    PAID_CREDITS: {
+      name: 'Credits Package',
+      cost: toDisplay(creditsMode.packages?.[0]?.price ?? 0),
+      credits: creditsMode.packages?.[0]?.credits ?? creditsMode.creditsPerGame,
+      enabled: !!creditsMode.enabled,
+      payoutMultiplier: creditsMode.enabled && config.payouts.rules.credits.enabled
+        ? config.payouts.rules.credits.multipliers
+        : 0
     }
   });
 });
@@ -131,6 +162,11 @@ async function initializePaymentSystem() {
         if (!walletInitialized) {
             console.log('⚠️ Wallet RPC not available - falling back to FREE mode');
             process.env.GAME_MODE = 'FREE';
+      paymentConfigManager.refresh();
+      gameModeManager.setLegacyGameMode('FREE');
+      gameModeManager.paymentsEnabled = false;
+      gameModeManager.directModeEnabled = false;
+      gameModeManager.creditsModeEnabled = false;
         }
         
         // Initialize database connection and run migrations
@@ -186,18 +222,35 @@ async function startServer() {
             console.log('🚀 Wowngeon server listening on *:3000');
             console.log(`🐛 Debug mode: ${debugManager.getDebugStatus().debugMode ? 'ENABLED' : 'DISABLED'}`);
             console.log(`💰 Payment system: ${paymentSystemReady ? 'ENABLED' : 'FREE MODE ONLY'}`);
-            console.log(`🎮 Available game modes: ${paymentSystemReady ? 'FREE, PAID_SINGLE, PAID_CREDITS' : 'FREE ONLY'}`);
+      const summary = paymentConfigManager.summarize();
+      const enabledModes = [];
+      if (!summary.paymentsEnabled || !paymentSystemReady) {
+        enabledModes.push('FREE');
+      }
+      if (summary.directEnabled && paymentSystemReady) {
+        enabledModes.push('PAID_SINGLE');
+      }
+      if (summary.creditsEnabled && paymentSystemReady) {
+        enabledModes.push('PAID_CREDITS');
+      }
+      if (enabledModes.length === 0) {
+        enabledModes.push(summary.legacyMode || 'FREE');
+      }
+      console.log(`🎮 Available game modes: ${enabledModes.join(', ')}`);
         });
         
         // Start batch payout processing if payment system is ready
-        if (paymentSystemReady) {
+    if (paymentSystemReady) {
+      const payoutConfig = paymentConfigManager.getConfig().payouts?.processing || {};
+      const payoutIntervalSeconds = Math.max(1, Number(payoutConfig.batchInterval || 300));
+      const payoutIntervalMs = payoutIntervalSeconds * 1000;
             setInterval(async () => {
                 try {
                     await walletRPCService.processBatchPayouts();
                 } catch (error) {
                     console.error('Error in batch payout processing:', error);
                 }
-            }, 300000); // Every 5 minutes
+      }, payoutIntervalMs);
         }
         
     } catch (error) {

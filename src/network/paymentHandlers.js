@@ -50,6 +50,9 @@ class PaymentHandlers {
                 paymentId: paymentRequest.id,
                 address: paymentRequest.address,
                 amount: paymentRequest.amount,
+                amountFormatted: paymentRequest.amountFormatted,
+                currency: this.gameModeManager.cryptoType,
+                package: paymentRequest.package,
                 gameMode: gameMode
             });
             if (this.debugManager.CONSOLE_LOGGING) console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount}`);
@@ -81,17 +84,60 @@ class PaymentHandlers {
             // caller (SocketHandlers) will handle user existence; keep method generic
             const gameMode = this.gameModeManager.gameMode;
             const cryptoType = this.gameModeManager.cryptoType;
-            let paymentType, amount, description;
-            if (gameMode === 'PAID_SINGLE') { paymentType = 'single_game'; amount = this.gameModeManager.singleGamePrice; description = 'Single game entry'; }
-            else if (gameMode === 'PAID_CREDITS') { paymentType = 'credits_package'; amount = this.gameModeManager.creditsPackagePrice; description = '10 game credits package'; }
-            else { this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Invalid game mode configuration.'); return; }
+            let paymentType;
+            let amount;
+            let description;
+
+            if (gameMode === 'PAID_SINGLE') {
+                paymentType = 'single_game';
+                amount = this.gameModeManager.singleGamePrice;
+                description = 'Single game entry';
+            } else if (gameMode === 'PAID_CREDITS') {
+                paymentType = 'credits_package';
+                const primaryPackage = this.gameModeManager.getPrimaryCreditPackage();
+                amount = Number(primaryPackage?.price ?? this.gameModeManager.creditsPackagePrice);
+                const credits = primaryPackage?.credits ?? this.gameModeManager.creditsPerGameCost * 10;
+                description = `${credits} credit package`;
+            } else {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Invalid game mode configuration.');
+                return;
+            }
 
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType);
-            let qrDataUrl = null; try { const { generatePaymentQR } = require('../payments/qrService'); qrDataUrl = await generatePaymentQR(paymentRequest.address, amount, cryptoType, description); } catch(e) {}
-            const humanAmount = (amount / 1000000000000).toFixed(3);
-            this.io.to(socket.id).emit('payment_created', { paymentId: paymentRequest.id, address: paymentRequest.address, amount: paymentRequest.amount, paymentType, gameMode, cryptoType, humanAmount, description, expiresAt: paymentRequest.expiresAt, qr: qrDataUrl });
-            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', `💳 PAYMENT REQUIRED (${description})\n\nAmount: ${humanAmount} ${cryptoType}\nAddress: ${paymentRequest.address}\n\n⚠️  Send EXACTLY ${humanAmount} ${cryptoType}.\n🔄 Added to queue once mempool seen.\n⏰ Expires in 30 minutes.`);
-            this._monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser);
+            const formattedAmount = paymentRequest.amountFormatted ?? this.gameModeManager.formatAtomicHuman(amount, 3);
+            let qrDataUrl = null;
+            try {
+                const { generatePaymentQR } = require('../payments/qrService');
+                qrDataUrl = await generatePaymentQR(
+                    paymentRequest.address,
+                    paymentRequest.amount,
+                    cryptoType,
+                    description,
+                    this.gameModeManager.currencyDecimals
+                );
+            } catch (e) {}
+
+            this.io.to(socket.id).emit('payment_created', {
+                paymentId: paymentRequest.id,
+                address: paymentRequest.address,
+                amount: paymentRequest.amount,
+                amountFormatted: formattedAmount,
+                paymentType,
+                gameMode,
+                cryptoType,
+                description,
+                expiresAt: paymentRequest.expiresAt,
+                qr: qrDataUrl,
+                package: paymentRequest.package
+            });
+
+            this.broadcastManager.sendStatusUpdate(
+                socket.id,
+                'payment',
+                `💳 PAYMENT REQUIRED (${description})\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${paymentRequest.address}\n\n⚠️  Send EXACTLY ${formattedAmount} ${cryptoType}.\n🔄 Added to queue once mempool seen.\n⏰ Expires in 30 minutes.`
+            );
+
+            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser);
         } catch (e) {
             console.error('Error creating payment request:', e);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Failed to create payment request.');
