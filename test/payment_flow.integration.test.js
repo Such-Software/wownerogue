@@ -36,7 +36,7 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
     };
 
     // User lookup
-    const userObj = { id: socketId, clientId: 'client-int' };
+  const userObj = { id: socketId, clientId: 'client-int', payout_address: 'wow1address' };
     const getUserBySocket = (id) => id === socketId ? userObj : null;
 
     // createGameForUser mock (records active game & returns state)
@@ -52,8 +52,18 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
     const gameModeManager = {
       gameMode: 'PAID_SINGLE',
       cryptoType: 'WOW',
+      currencyDecimals: 11,
       singleGamePrice: 1000,
-      createPaymentRequest: async () => ({ id: 'pay-1', address: 'addr-1', amount: 1000, expiresAt: new Date(Date.now()+60000) })
+      creditsPayoutEnabled: false,
+      formatAtomicHuman: () => '0.001',
+      getOrCreateUser: async () => ({ id: socketId, payout_address: 'wow1address', clientId: 'client-int' }),
+      createPaymentRequest: async () => ({
+        id: 'pay-1',
+        address: 'addr-1',
+        amount: 1000,
+        amountFormatted: '0.001',
+        expiresAt: new Date(Date.now()+60000)
+      })
     };
 
     // Wallet service mock with manual callback control

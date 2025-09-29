@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
+const { ExternalServiceError, AppError } = require('../utils/errors');
 
 class WalletRPCService {
     constructor(debugManager) {
@@ -53,15 +54,26 @@ class WalletRPCService {
             });
 
             if (response.data.error) {
-                throw new Error(response.data.error.message);
+                throw new ExternalServiceError(`Wallet RPC responded with error for method ${method}`, {
+                    safeMessage: 'Wallet RPC call failed.',
+                    details: response.data.error,
+                    cause: response.data.error
+                });
             }
 
             return response.data;
         } catch (error) {
+            const wrapped = error instanceof ExternalServiceError
+                ? error
+                : new ExternalServiceError(`Wallet RPC call failed (${method})`, {
+                    safeMessage: 'Wallet RPC call failed.',
+                    cause: error
+                });
+
             if (this.debugManager?.CONSOLE_LOGGING) {
-                console.error(`❌ Wallet RPC call failed (${method}):`, error.message);
+                console.error(`❌ Wallet RPC call failed (${method}):`, wrapped.message);
             }
-            throw error;
+            throw wrapped;
         }
     }
 
@@ -112,8 +124,12 @@ class WalletRPCService {
                 expiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
             };
         } catch (error) {
-            console.error('❌ Failed to create payment address:', error);
-            return { success: false, error: error.message };
+            const wrapped = error instanceof AppError ? error : new ExternalServiceError('Failed to create payment address', {
+                safeMessage: 'Unable to create a payment address at this time.',
+                cause: error
+            });
+            console.error('❌ Failed to create payment address:', wrapped.message);
+            throw wrapped;
         }
     }
 
@@ -294,11 +310,12 @@ class WalletRPCService {
                 fee: response.result.fee
             };
         } catch (error) {
-            console.error('❌ Failed to process payout:', error);
-            return { 
-                success: false, 
-                error: error.message 
-            };
+            const wrapped = error instanceof AppError ? error : new ExternalServiceError('Failed to process payout', {
+                safeMessage: 'Unable to send payout at this time.',
+                cause: error
+            });
+            console.error('❌ Failed to process payout:', wrapped.message);
+            throw wrapped;
         }
     }
 

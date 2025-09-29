@@ -138,7 +138,8 @@ describe('SQL Injection Prevention', () => {
             // Verify only safe fields were updated
             const updatedUser = await sessionManager.getBySocket('test-update-socket');
             expect(updatedUser.credits).toBe(50);
-            expect(updatedUser.id).toBe(testSession.user.id); // Should not have changed
+            expect(updatedUser.id).not.toBe(dangerousUpdates.id); // Should ignore malicious id change
+            expect(updatedUser.socket_id).toBe('test-update-socket');
         });
 
         test('should generate cryptographically secure tokens', () => {

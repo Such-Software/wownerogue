@@ -1,30 +1,52 @@
 const PaymentHandlers = require('../src/network/paymentHandlers');
 
 function makeMocks() {
+  const user = { id: 'user-1', clientId: 'client1', payout_address: 'wow1address' };
   return {
     io: { to: () => ({ emit: () => {} }) },
     gameModeManager: {
       gameMode: 'PAID_SINGLE',
       cryptoType: 'WOW',
+      currencyDecimals: 11,
       singleGamePrice: 1000,
-      createPaymentRequest: async () => ({ id: 'pid123', address: 'addr', amount: 1000, expiresAt: new Date() })
+      creditsPayoutEnabled: false,
+      formatAtomicHuman: jest.fn(() => '0.001'),
+      getOrCreateUser: jest.fn(async () => user),
+      createPaymentRequest: async () => ({
+        id: 'pid123',
+        address: 'addr',
+        amount: 1000,
+        amountFormatted: '0.001',
+        expiresAt: new Date()
+      })
     },
     walletService: {
-      startPaymentMonitoring: (addr, cb) => { /* simulate nothing */ },
-      stopPaymentMonitoring: () => {}
+      startPaymentMonitoring: jest.fn(),
+      stopPaymentMonitoring: jest.fn()
     },
     debugManager: { getCurrentBlockHeight: () => 123, CONSOLE_LOGGING: false },
     queueManager: {
-      getUserBySocket: () => ({ clientId: 'client1' }),
+      getUserBySocket: () => user,
       getPlayerIndex: () => -1,
-      addPlayer: () => {},
-      markConfirmed: () => {}
+      getQueueLength: () => 0,
+      addPlayer: jest.fn(),
+      markConfirmed: jest.fn(),
+      startGameImmediately: jest.fn(() => false)
     },
-    broadcastManager: { sendStatusUpdate: () => {} }
+    broadcastManager: { sendStatusUpdate: jest.fn() }
   };
 }
 
 describe('PaymentHandlers basic', () => {
+  let ph;
+
+  afterEach(() => {
+    if (ph && typeof ph.dispose === 'function') {
+      ph.dispose();
+    }
+    ph = null;
+  });
+
   test('createAndShowPaymentRequest emits payment_created', async () => {
     const mocks = makeMocks();
     const emitted = {};
@@ -33,10 +55,6 @@ describe('PaymentHandlers basic', () => {
     await ph.createAndShowPaymentRequest({ id: 'sock1' });
     expect(emitted.payment_created).toBeDefined();
     expect(emitted.payment_created.paymentId).toBe('pid123');
-  });
-  afterAll(() => {
-    if (ph && typeof ph.dispose === 'function') {
-      ph.dispose();
-    }
+    expect(mocks.walletService.startPaymentMonitoring).toHaveBeenCalled();
   });
 });

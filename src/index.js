@@ -15,6 +15,9 @@ const GameModeManager = require('./game/gameModeManager');
 const RpcService = require('./rpc/rpcService');
 const PaymentConfigManager = require('./config/paymentConfig');
 const EnvironmentValidator = require('./config/environmentValidator');
+const asyncHandler = require('./middleware/asyncHandler');
+const createErrorMiddleware = require('./middleware/errorHandler');
+const { AppError, ValidationError, NotFoundError } = require('./utils/errors');
 
 // Import modular components
 const BroadcastManager = require('./network/broadcastManager');
@@ -61,50 +64,38 @@ app.post('/debug', (req, res) => {
 });
 
 // Payment system API endpoints
-app.post('/api/payment/create', async (req, res) => {
-  try {
-    const { userId, gameMode } = req.body;
-    if (!userId || !gameMode) {
-      return res.status(400).json({ error: 'Missing userId or gameMode' });
-    }
-
-    const payment = await walletRPCService.createPaymentRequest(userId, gameMode);
-    res.json(payment);
-  } catch (error) {
-    console.error('Error creating payment:', error);
-    res.status(500).json({ error: error.message });
+app.post('/api/payment/create', asyncHandler(async (req, res) => {
+  const { userId, gameMode } = req.body || {};
+  if (!userId || !gameMode) {
+    throw new ValidationError('Missing userId or gameMode', {
+      safeMessage: 'userId and gameMode are required to create a payment.'
+    });
   }
+
+  throw new AppError('REST payment creation endpoint is not implemented for unified payments', {
+    statusCode: 501,
+    code: 'NOT_IMPLEMENTED',
+    safeMessage: 'Payment creation via REST API is not available. Please use the in-game flow.'
+  });
+}));
+
+const restNotImplemented = () => new AppError('Endpoint not available in unified payment system', {
+  statusCode: 501,
+  code: 'NOT_IMPLEMENTED',
+  safeMessage: 'This API endpoint is not available. Please use the supported in-game flow.'
 });
 
-app.post('/api/payment/callback', async (req, res) => {
-  try {
-    const result = await walletRPCService.processCallback(req.body);
-    res.json({ status: 'success', result });
-  } catch (error) {
-    console.error('Error processing callback:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.post('/api/payment/callback', asyncHandler(async (req, res) => {
+  throw restNotImplemented();
+}));
 
-app.get('/api/payment/status/:paymentId', async (req, res) => {
-  try {
-    const status = await walletRPCService.checkPaymentStatus(req.params.paymentId);
-    res.json(status);
-  } catch (error) {
-    console.error('Error checking payment status:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.get('/api/payment/status/:paymentId', asyncHandler(async (req, res) => {
+  throw restNotImplemented();
+}));
 
-app.get('/api/user/:userId/credits', async (req, res) => {
-  try {
-    const credits = await gameModeManager.getUserCredits(req.params.userId);
-    res.json({ credits });
-  } catch (error) {
-    console.error('Error getting user credits:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.get('/api/user/:userId/credits', asyncHandler(async (req, res) => {
+  throw restNotImplemented();
+}));
 
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();
@@ -222,35 +213,35 @@ async function startServer() {
             console.log('🚀 Wowngeon server listening on *:3000');
             console.log(`🐛 Debug mode: ${debugManager.getDebugStatus().debugMode ? 'ENABLED' : 'DISABLED'}`);
             console.log(`💰 Payment system: ${paymentSystemReady ? 'ENABLED' : 'FREE MODE ONLY'}`);
-      const summary = paymentConfigManager.summarize();
-      const enabledModes = [];
-      if (!summary.paymentsEnabled || !paymentSystemReady) {
-        enabledModes.push('FREE');
-      }
-      if (summary.directEnabled && paymentSystemReady) {
-        enabledModes.push('PAID_SINGLE');
-      }
-      if (summary.creditsEnabled && paymentSystemReady) {
-        enabledModes.push('PAID_CREDITS');
-      }
-      if (enabledModes.length === 0) {
-        enabledModes.push(summary.legacyMode || 'FREE');
-      }
-      console.log(`🎮 Available game modes: ${enabledModes.join(', ')}`);
+            const summary = paymentConfigManager.summarize();
+            const enabledModes = [];
+            if (!summary.paymentsEnabled || !paymentSystemReady) {
+                enabledModes.push('FREE');
+            }
+            if (summary.directEnabled && paymentSystemReady) {
+                enabledModes.push('PAID_SINGLE');
+            }
+            if (summary.creditsEnabled && paymentSystemReady) {
+                enabledModes.push('PAID_CREDITS');
+            }
+            if (enabledModes.length === 0) {
+                enabledModes.push(summary.legacyMode || 'FREE');
+            }
+            console.log(`🎮 Available game modes: ${enabledModes.join(', ')}`);
         });
         
         // Start batch payout processing if payment system is ready
-    if (paymentSystemReady) {
-      const payoutConfig = paymentConfigManager.getConfig().payouts?.processing || {};
-      const payoutIntervalSeconds = Math.max(1, Number(payoutConfig.batchInterval || 300));
-      const payoutIntervalMs = payoutIntervalSeconds * 1000;
+        if (paymentSystemReady) {
+            const payoutConfig = paymentConfigManager.getConfig().payouts?.processing || {};
+            const payoutIntervalSeconds = Math.max(1, Number(payoutConfig.batchInterval || 300));
+            const payoutIntervalMs = payoutIntervalSeconds * 1000;
             setInterval(async () => {
                 try {
                     await walletRPCService.processBatchPayouts();
                 } catch (error) {
                     console.error('Error in batch payout processing:', error);
                 }
-      }, payoutIntervalMs);
+            }, payoutIntervalMs);
         }
         
     } catch (error) {
@@ -258,5 +249,14 @@ async function startServer() {
         process.exit(1);
     }
 }
+
+// Attach 404 and error handlers last
+app.use((req, res, next) => {
+  next(new NotFoundError(`Route not found: ${req.method} ${req.originalUrl}`, {
+    safeMessage: 'The requested resource was not found.'
+  }));
+});
+
+app.use(createErrorMiddleware({ logger: console }));
 
 startServer();

@@ -1,413 +1,233 @@
 # Wowngeon
 
-A production-ready blockchain-based roguelike dungeon crawler with integrated cryptocurrency payments, comprehensive security features, and enterprise-grade architecture.
-
-## 🎯 Current Status (September 2025)
-
-**✅ Production Ready** - Complete refactoring with security hardening, memory management, and modular architecture
-
-### Recent Major Updates
-- **🛡️ Security Hardened**: SQL injection vulnerabilities fixed with comprehensive query validation
-- **⚡ Performance Optimized**: Memory leaks eliminated with automatic cleanup systems  
-- **🏗️ Architecture Modernized**: Monolithic code split into 7 focused, maintainable modules
-- **🚫 Rate Limiting**: Comprehensive protection against DDoS, spam, and resource abuse
-- **📊 Monitoring Ready**: Full statistics and health monitoring capabilities
+Wowngeon is a browser-based roguelike that synchronizes dungeon runs with Monero (XMR) and Wownero (WOW) block timing. The backend is a Node.js/Express server with Socket.IO for realtime play, optional payment enforcement, and automated payouts.
 
 ## Overview
 
-Wowngeon is a web-based roguelike game that integrates with Monero (XMR) and Wownero (WOW) networks for a unique crypto-gaming experience. Players enter randomly generated dungeons with the goal of escaping before the next blockchain block is discovered. The game features three distinct game modes with optional payment integration.
+- Multiplayer dungeon crawler rendered in the browser
+- Three game modes with configurable pricing and payouts
+- Optional crypto payments with automatic subaddress management
+- Centralized error handling, rate limiting, and memory management
+- Jest coverage for wallet RPC interactions, payment flow, security checks, and game helpers
 
 ## Game Modes
 
-### 🆓 **FREE Mode**
-- Unlimited free play
-- No payments required
-- Full game features available
+The unified payment config exposes two monetized modes. They map to the legacy identifiers still exposed over the socket and REST APIs.
 
-### 💰 **PAID_SINGLE Mode** 
-- Pay per game (default: 0.005 XMR)
-- 2x payout for successful escape
-- 3x payout for escape with treasure
-- Automatic payouts to user addresses
+| Legacy Identifier | Unified Key | Description | Default Cost¹ | Default Payout |
+| --- | --- | --- | --- | --- |
+| `FREE` | n/a | Payments disabled. Runs never require a wallet or address. | n/a | n/a |
+| `PAID_SINGLE` | `direct` | Per-run charge. Requires a confirmed payout address unless `DIRECT_REQUIRES_ADDRESS=false`. | 1 WOW (1e11 atomic) | 2× escape, 3× escape+treasure |
+| `PAID_CREDITS` | `credits` | Credit bundles; each run consumes one credit. Mixed mode allowed when `ALLOW_MIXED_MODE=true`. | 10 credits for 5 WOW (small bundle) | Credits only (payouts disabled) |
 
-### 🎫 **PAID_CREDITS Mode**
-- Buy 10-game credit packages (default: 0.05 XMR)
-- Play 10 games with purchased credits
-- No individual payouts (credits consumed)
+¹ Atomic amounts use 11 decimal places (Monero/Wownero standard). Update `DIRECT_GAME_PRICE` or `CREDITS_PACKAGES` to change pricing. Config changes take effect when the snapshot refreshes or the process restarts.
 
-## Payment System Features
+## Payment System
 
-### 🔍 **Automatic Address Detection**
-- Paste XMR/WOW addresses directly in chat
-- Automatic regex-based detection with confirmation
-- Security warnings about clipboard viruses
-- Two-step confirmation process for safety
+- **Wallet RPC service** (`walletRPCService.js`): Handles subaddress creation, monitors payments, and batches payouts. Errors are wrapped in typed exceptions for consistent handling.
+- **Game Mode manager** (`gameModeManager.js`): Applies payment configuration, validates player state, and coordinates payouts.
+- **Payment handlers** (`paymentHandlers.js`): Manages request lifecycle, socket notifications, and queue integration.
+- **Environment validator** (`config/environmentValidator.js`): Rejects unsafe payment configs and falls back to `FREE` mode when necessary.
+- **Address detection** (`network/addressManager.js`): Parses XMR/WOW addresses shared in chat and requests confirmation before storing them.
 
-### 💳 **Wallet-RPC Integration**
-- Subaddress generation for payments
-- Real-time payment monitoring
-- Automated payment confirmations
-- Batch payout processing
+If the wallet RPC service or configuration is unavailable the backend automatically downgrades to `FREE` mode so players can still start games.
 
-### 🛡️ **Security & Reliability**
-- PostgreSQL database with comprehensive schema
-- RPC failover system (primary/fallback endpoints)
-- Graceful degradation to FREE mode if payment system fails
-- Extensive error handling and logging
+## Backend Components
 
-## Technical Architecture
+- `src/index.js`: Express entry point, REST routes, Socket.IO server, payout scheduler.
+- `src/network/`: Socket handlers, connection/session management, chat commands, queue logic, rate limiting.
+- `src/game/`: Dungeon generation, game state, movement, mode management, lighting/FOV helpers.
+- `src/payments/`: Wallet RPC integration and QR code support.
+- `src/db/`: PostgreSQL access layer and migration utilities.
+- `src/utils/`: Shared utilities including memory management and custom error classes.
+- `src/middleware/`: Express async wrapper and error middleware.
 
-### **🏗️ Modular Backend Architecture (2025 Refactor)**
-The codebase has been completely refactored into a modular, production-ready architecture:
+## API Surface
 
-- **🎮 Core Game Engine**: `socketHandlers.js` (638 lines) - Main coordinator and event orchestrator
-- **🔒 Security Layer**: `rateLimiter.js` (249 lines) - Comprehensive rate limiting and abuse prevention
-- **🌐 Connection Management**: `connectionHandler.js` (292 lines) - Socket lifecycle and session management
-- **💬 Communication**: `chatHandler.js` (221 lines) - Chat processing and command handling
-- **⏳ Queue System**: `queueHandler.js` (189 lines) - Game queue management and validation
-- **🎯 Game Logic**: `gameManager.js` (249 lines) - Game creation, lifecycle, and completion
-- **🧹 Memory Management**: `memoryManager.js` (283 lines) - Automatic cleanup and leak prevention
+- `POST /api/payment/create` – Request a payment for the active mode.
+- `GET /api/payment/status/:paymentId` – Poll payment status.
+- `POST /api/payment/callback` – Wallet RPC webhook to confirm payments.
+- `GET /api/game/modes` – Current game modes and pricing.
+- `GET /api/user/credits/:userId` – Remaining credit balance.
+- `GET /api/user/mode/:userId` – User game mode.
+- `POST /api/user/address/:userId` – Store payout address after confirmation.
 
-### **🛡️ Security & Performance Features**
-- **SQL Injection Prevention**: Multi-layered defense with query validation and parameterization
-- **Rate Limiting**: Configurable limits per action type (connections, payments, messages, games)
-- **Memory Leak Prevention**: Automatic cleanup of timestamps, mappings, and expired data
-- **Session Security**: Secure token generation with field whitelisting and validation
-- **Input Validation**: Comprehensive sanitization and boundary checking
+Only the payment routes require wallet RPC access; all other gameplay functions work without it.
 
-### **📊 Monitoring & Observability**
-- **Real-time Statistics**: Component-level metrics and health monitoring
-- **Memory Usage Tracking**: Automatic cleanup reporting and memory optimization
-- **Rate Limit Monitoring**: Detailed usage patterns and abuse detection
-- **Performance Metrics**: Game creation times, queue lengths, active connections
-- **Debug Capabilities**: Comprehensive logging with configurable verbosity
-
-### **Backend Payment Infrastructure**
-- **Database Manager**: PostgreSQL connection pooling, migrations, health checks
-- **Wallet RPC Service**: Direct wallet integration, payment monitoring, batch payout processing
-- **RPC Service**: Blockchain communication with automatic failover between endpoints
-- **Game Mode Manager**: Payment validation, credit management, user eligibility checking
-
-### **Payment Database Schema**
-- **Users Table**: User profiles, payout addresses, game statistics, secure session tokens
-- **Games Table**: Game records with outcomes, payments, rewards, and audit trails  
-- **Payments Table**: Direct wallet payment tracking with status updates and security validation
-- **Payouts Table**: Batch payout management with transaction records and fraud prevention
-- **Security Enhancements**: Foreign key constraints, performance indexes, audit logging
-
-### **🔐 Security Hardening (2025)**
-- **Query Security**: QueryValidator class prevents SQL injection attacks
-- **Session Management**: Crypto-secure token generation with automatic cleanup
-- **Field Validation**: Strict whitelisting of updateable user fields
-- **Rate Protection**: Multi-layered rate limiting (user-based and IP-based)
-- **Memory Security**: Automatic cleanup prevents memory-based attacks
-
-### **Address Detection System**
-- **Chat Monitoring**: Real-time regex detection of XMR/WOW addresses in chat
-- **Security Warnings**: Automatic clipboard virus alerts for user safety
-- **Confirmation Flow**: Two-step confirmation before setting payout addresses
-- **Frontend Integration**: Styled UI notifications and user prompts
-
-## API Endpoints
-
-### Payment Management
-- `POST /api/payment/create` - Create new payment request for single games
-- `GET /api/payment/status/:paymentId` - Check payment status
-- `POST /api/payment/callback` - Wallet RPC webhook for payment confirmations
-
-### User Management  
-- `GET /api/user/credits/:userId` - Check user's remaining credits
-- `GET /api/user/mode/:userId` - Get user's current game mode
-- `POST /api/user/address/:userId` - Set user's payout address
-
-### Game Information
-- `GET /api/game/modes` - Available game modes and pricing
-- `GET /api/game/stats/:userId` - User's game statistics and history
-
-## Installation & Setup
+## Installation
 
 ### Prerequisites
-- Node.js 16+ with npm
-- PostgreSQL 12+ database
-- Wallet-RPC service access (optional, will fallback to FREE mode)
 
-### Installation Steps
+- Node.js 16 or newer
+- npm
+- PostgreSQL 12+
+- Optional: Monero/Wownero Wallet RPC endpoints
 
-1. **Clone the repository**:
+### Steps
+
+1. Clone and enter the server directory.
    ```bash
-   git clone [repository-url]
+   git clone <repository-url>
    cd wowngeon/src
    ```
-
-2. **Install dependencies**:
+2. Install dependencies.
    ```bash
    npm install
    ```
-
-3. **Environment Configuration**:
+3. Configure the environment file.
    ```bash
    cp .env.example .env
-   # Edit .env with your database and Wallet-RPC credentials
+   # edit .env to match your database and wallet settings
    ```
-
-4. **Database Setup**:
+4. Provision the database (migrations run automatically at startup).
    ```bash
-   # Create PostgreSQL database
    createdb wowngeon
-   
-   # Database migrations will run automatically on first start
    ```
-
-5. **Start the server**:
+5. Start the development server.
    ```bash
-   node index.js
+   npm run dev
    ```
 
-6. **Access the game**:
-   - Navigate to `http://localhost:3000`
-   - The server will gracefully fallback to FREE mode if payment systems are unavailable
+The default Socket.IO client served from `/html` listens on port 3000. Configure a reverse proxy if you need TLS or path routing.
 
-## Environment Configuration
+## Configuration
 
-Key environment variables in `.env`:
+Key environment variables (see `.env.example` for the full list):
 
 ```bash
-# Game Mode Configuration
-DEFAULT_GAME_MODE=FREE
-PAID_SINGLE_PRICE=0.005
-PAID_CREDITS_PRICE=0.05
+# Unified payments
+PAYMENTS_ENABLED=true
+PAYMENT_MODES=direct,credits
 
-# Database Configuration  
-DATABASE_URL=postgresql://username:password@localhost:5432/wowngeon
+# Direct (per-run) mode
+DIRECT_PAYMENT_ENABLED=true
+DIRECT_GAME_PRICE=100000000000       # 1 WOW (atomic units)
+DIRECT_REQUIRES_ADDRESS=true
+DIRECT_ALLOW_GUEST_PLAY=false
+DIRECT_PAYOUTS_ENABLED=true
+DIRECT_PAYOUT_ESCAPE=2.0
+DIRECT_PAYOUT_TREASURE=3.0
 
-# Wallet RPC Configuration
+# Credits mode
+CREDITS_ENABLED=true
+CREDITS_PER_GAME=1
+CREDITS_REQUIRES_ADDRESS=true
+ALLOW_MIXED_MODE=true
+PREFER_CREDITS_FIRST=true
+CREDITS_PACKAGES='[{"id":"small","credits":10,"price":"500000000000","bonus":0}]'
+CREDITS_PAYOUTS_ENABLED=false
+CREDITS_PAYOUT_BASE=50000000000
+CREDITS_PAYOUT_ESCAPE=1.5
+CREDITS_PAYOUT_TREASURE=2.0
+
+# Payout processing
+PAYOUTS_ENABLED=true
+PAYOUT_MIN_AMOUNT=10000000000
+PAYOUT_MAX_PER_GAME=10000000000000
+PAYOUT_BATCH_INTERVAL=300
+PAYOUT_MAX_RETRIES=3
+MAX_PAYOUT_BATCH_SIZE=50
+
+# Limits
+MAX_GAMES_PER_HOUR=60
+MAX_PAYOUTS_PER_DAY=100
+MAX_CREDIT_PURCHASE_PER_DAY=100000000000000
+GAME_COOLDOWN_SECONDS=5
+
+# Legacy override (optional)
+GAME_MODE=
+SINGLE_GAME_PRICE=100000000000
+CREDITS_PACKAGE_PRICE=500000000000
+
+# Wallet RPC
 PRIMARY_WALLET_ENDPOINT=http://127.0.0.1:34570
-WALLET_RPC_USER=your_rpc_user
-WALLET_RPC_PASSWORD=your_rpc_password
+# WALLET_RPC_USER=<rpc-user>
+# WALLET_RPC_PASSWORD=<rpc-password>
 
-# Crypto RPC Configuration
-PRIMARY_RPC_URL=http://localhost:18081
-FALLBACK_RPC_URL=http://backup-node:18081
+# Blockchain RPC
+PRIMARY_RPC_ENDPOINT=http://127.0.0.1:34568
+FALLBACK_RPC_ENDPOINT=http://127.0.0.1:34568
+RPC_POLL_INTERVAL=2000
+
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=wowgue
+DB_USER=jw
+DB_PASSWORD=jw
+
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Block timing overrides
+BLOCK_SOURCE=daemon
+# SIMULATED_BLOCKS=false
+# FORCE_SIMULATED_BLOCKS=false
 ```
 
-## Payment Flow
+- Amounts are specified in atomic units (1 WOW = 1e11) unless otherwise noted.
+- Leave wallet credentials unset to enforce `FREE` mode; payments require RPC access.
+- `CREDITS_PACKAGES` must be valid JSON encoded as a single-line string. Adjust the bundle list to match your pricing model.
+- The legacy `GAME_MODE`, `SINGLE_GAME_PRICE`, and `CREDITS_PACKAGE_PRICE` variables remain for compatibility but are ignored when `PAYMENT_MODES` is set.
 
-### PAID_SINGLE Mode
-1. User requests to play paid game
-2. System generates Wallet-RPC payment request  
-3. User completes payment (0.005 XMR default)
-4. Game starts after payment confirmation
-5. Automatic 2x or 3x payout on successful escape
+## Payment Flow Summary
 
-### PAID_CREDITS Mode  
-1. User purchases 10-game credit package (0.05 XMR default)
-2. Credits added to user account after payment
-3. Each game consumes one credit
-4. No individual payouts (credits are the value)
+**`PAID_SINGLE`**
+1. Player requests a paid run.
+2. Server creates a subaddress and returns the payment details.
+3. Wallet RPC monitors the subaddress and signals confirmation.
+4. Game starts; payouts run after successful completion.
 
-### Address Detection Workflow
-1. User pastes XMR/WOW address in chat
-2. System detects address via regex pattern matching
-3. Security warning displayed about clipboard viruses
-4. User confirms address in two-step process
-5. Address saved for automatic payouts
+**`PAID_CREDITS`**
+1. Player buys a ten-run bundle.
+2. Credits are recorded in the database on confirmation.
+3. Each game consumes one credit; no automatic payouts occur.
 
-## Game Controls & Features
-
-- **WASD** or **Arrow Keys**: Move player through dungeon
-- **Enter**: Enter dungeon when block timing allows
-- **Chat**: Commands and communication (with address detection)
-- **Real-time Multiplayer**: See other players and chat in real-time
-- **Blockchain Integration**: Game timing tied to block discoveries
+**Address confirmation**
+1. Player pastes an address in chat.
+2. Regex detection flags the message and issues a warning.
+3. Player confirms; the address is persisted for payouts.
 
 ## Testing
 
-The payment system includes comprehensive test coverage:
+Run the Jest suite from `src`:
 
 ```bash
-# Run address detection tests
-cd test
-node test_address_detection.js
-```
-
-Test suite covers:
-- XMR address pattern matching (95 characters, starts with 4/8/A/B)
-- WOW address pattern matching (97 characters, starts with W)
-- Invalid address rejection
-- Regex boundary conditions
-
-## 🚀 Production Deployment
-
-### **🔒 Security Configuration**
-```bash
-# Rate Limiting (requests per time window)
-RATE_LIMIT_PAYMENTS=3          # 3 payments per minute
-RATE_LIMIT_GAMES=15            # 15 game starts per minute  
-RATE_LIMIT_CHAT=12             # 12 messages per 10 seconds
-RATE_LIMIT_CONNECTIONS=10      # 10 connections per minute per IP
-
-# Memory Management
-MEMORY_CLEANUP_INTERVAL=300000  # 5 minutes
-MEMORY_DEBUG_MODE=false
-
-# Security Features
-ENABLE_SQL_QUERY_VALIDATION=true
-ENABLE_SECURE_SESSIONS=true
-ENABLE_FIELD_WHITELISTING=true
-```
-
-### **📊 Health Monitoring**
-The system provides comprehensive health endpoints:
-```bash
-# Get system statistics
-GET /api/health/stats
-{
-  "activeGames": 5,
-  "rateLimiter": { "totalKeys": 12, "userKeys": 8, "ipKeys": 4 },
-  "memoryManager": { "totalCleanups": 145, "itemsCleaned": 1205 },
-  "connections": { "clientSocketMappings": 23 },
-  "chat": { "chatTimestamps": 15, "awaitingAddress": 2 },
-  "games": { "totalActive": 5, "byType": {...}, "byState": {...} },
-  "queue": { "length": 3 }
-}
-```
-
-### Security Considerations
-- **✅ SQL Injection Protected**: Multi-layered query validation and parameterization
-- **✅ Rate Limiting Active**: Protection against DDoS and resource abuse
-- **✅ Memory Leak Prevention**: Automatic cleanup prevents resource exhaustion
-- **✅ Secure Sessions**: Crypto-secure token generation and validation
-- Database credentials should use environment variables
-- Wallet-RPC credentials must be kept secure
-- RPC endpoints should be trusted nodes only
-- Monitor rate limiting metrics for abuse patterns
-
-### **🔧 Advanced Monitoring & Logging**
-- **Security Events**: SQL injection attempts, rate limit violations, session anomalies
-- **Performance Metrics**: Memory usage, cleanup effectiveness, response times
-- **Business Logic**: Payment processing events logged for audit trails
-- Database health checks with automatic failover
-- Wallet-RPC webhook validation and processing
-- Graceful degradation logs when payment systems unavailable
-- **Component-level Statistics**: Each module provides detailed operational metrics
-
-### **⚡ Scalability Features**
-- **Memory Management**: Automatic cleanup prevents memory leaks in long-running processes
-- **Rate Limiting**: Redis-ready architecture for distributed rate limiting
-- Connection pooling for database performance
-- Batch payout processing to reduce transaction fees
-- RPC failover system for blockchain reliability
-- **Modular Architecture**: Horizontal scaling with independent component scaling
-- **Resource Efficiency**: Bounded memory usage with automatic garbage collection
-
-## 📁 File Structure
-
-```
-wowngeon/
-├── src/                           # Backend server code
-│   ├── index.js                  # Main server with payment integration
-│   ├── package.json              # Dependencies (dotenv, pg, uuid, etc.)
-│   ├── .env.example              # Environment configuration template
-│   ├── migrations/               # Database migration scripts
-│   │   ├── 001_initial_schema.sql
-│   │   ├── 002_alter_address_length.sql  
-│   │   ├── 003_add_anon_token.sql
-│   │   └── 004_security_improvements.sql  # 🆕 Security hardening
-│   ├── db/                       # Database management
-│   │   ├── databaseManager.js    # 🔒 Enhanced with QueryValidator
-│   │   ├── dbcalls.js           # Database operations
-│   │   └── user.js              # User management
-│   ├── network/                  # 🏗️ Modular network architecture
-│   │   ├── socketHandlers.js     # 📉 Reduced to 638 lines (main coordinator)
-│   │   ├── rateLimiter.js        # 🆕 Rate limiting system
-│   │   ├── connectionHandler.js  # 🆕 Connection management  
-│   │   ├── chatHandler.js        # 🆕 Chat processing
-│   │   ├── queueHandler.js       # 🆕 Queue management
-│   │   ├── addressManager.js     # Address detection
-│   │   ├── sessionManager.js     # 🔒 Hardened session management
-│   │   └── paymentHandlers.js    # Payment processing
-│   ├── game/                     # Game logic
-│   │   ├── gameManager.js        # 🆕 Game lifecycle management
-│   │   ├── gameModeManager.js    # Payment validation & modes
-│   │   ├── game.js              # Core game logic
-│   │   └── movementManager.js    # Player movement
-│   ├── utils/                    # 🆕 Utility modules
-│   │   └── memoryManager.js      # 🆕 Memory cleanup coordination
-│   ├── payments/                 # Payment system
-│   │   └── walletRPCService.js   # Wallet-RPC integration
-│   └── rpc/                      # Blockchain integration
-│       └── rpcService.js         # RPC with failover
-├── test/                         # 🧪 Comprehensive test suite
-│   ├── security.test.js          # 🆕 Security vulnerability tests
-│   ├── test_address_detection.js # Address detection tests
-│   └── payment_flow.integration.test.js # Payment flow tests
-├── html/                         # Frontend with payment UI
-├── REFACTORING_SUMMARY.md        # 🆕 Detailed refactoring documentation
-└── README.md                     # This documentation
-```
-
-## 🎯 Development Status
-
-### ✅ **Production Ready Features**
-- **🛡️ Security Hardened**: SQL injection prevention, secure sessions, input validation
-- **⚡ Performance Optimized**: Memory leak prevention, rate limiting, resource management
-- **🏗️ Enterprise Architecture**: Modular design with 7 focused, maintainable components
-- **📊 Monitoring Ready**: Comprehensive statistics, health checks, and observability
-- Complete payment system infrastructure with three-tier game mode implementation
-- PostgreSQL database with migration system and security enhancements
-- Direct wallet-RPC integration with payment monitoring and fraud prevention
-- RPC failover system for blockchain reliability and uptime
-- XMR/WOW address detection via chat regex with security warnings
-- **🧪 Comprehensive test suite**: Security tests, integration tests, 100% syntax validation
-
-### 🔄 **Recent Completions (September 2025)**
-- **✅ Memory Leak Elimination**: Automatic cleanup of all data structures
-- **✅ Rate Limiting System**: Protection against DDoS, spam, and resource abuse  
-- **✅ Modular Refactoring**: 784-line monolith split into 7 focused modules
-- **✅ Security Hardening**: SQL injection prevention and session security
-- **✅ Production Monitoring**: Full statistics and health monitoring capabilities
-
-### � **Next Phase Goals**
-- Load testing with production-scale traffic simulation
-- Redis integration for distributed rate limiting and session management
-- Advanced monitoring dashboard with real-time metrics visualization  
-- Automated deployment pipeline with health check integration
-
-### 🏆 **Production Deployment Ready**
-- **✅ Security**: Multi-layered protection against common web vulnerabilities
-- **✅ Scalability**: Memory-bounded architecture with automatic resource cleanup
-- **✅ Reliability**: Graceful fallback to FREE mode if payment systems fail
-- **✅ Maintainability**: Modular architecture with clear separation of concerns
-- **✅ Monitoring**: Comprehensive error handling, logging, and health endpoints
-- **✅ Performance**: Rate limiting, connection pooling, and resource optimization
-
-## 🤝 Support & Contributing
-
-### **📚 Documentation**
-- **Architecture**: See `REFACTORING_SUMMARY.md` for detailed technical architecture
-- **Security**: Review security test suite in `/test/security.test.js`
-- **Examples**: Check environment configuration in `.env.example`
-- **Components**: Each module includes comprehensive inline documentation
-
-### **🧪 Development & Testing**
-```bash
-# Run comprehensive test suite
 npm test
-
-# Test individual components
-node -c src/network/rateLimiter.js      # Rate limiting
-node -c src/network/connectionHandler.js # Connection management  
-node -c src/game/gameManager.js         # Game lifecycle
-node -c src/utils/memoryManager.js      # Memory management
-
-# Security testing
-node test/security.test.js              # SQL injection prevention
 ```
 
-### **🔍 Monitoring & Debugging**
-- Component-level statistics available via WebSocket commands
-- Comprehensive logging with configurable debug levels
-- Health check endpoints for production monitoring
-- Memory usage tracking and cleanup reporting
+Tests cover payment handlers, wallet RPC error propagation, security rules, movement logic, and integration flows. Additional manual scripts live under `test/` for browser debugging and lighting verification.
 
-**The payment system is designed to be robust, secure, and user-friendly while maintaining the core gaming experience even when payment features are unavailable. The 2025 refactoring ensures enterprise-grade reliability, security, and maintainability.**
+## Monitoring and Operations
+
+- Rate limiting metrics and in-memory cleanup stats are exposed through server logs and debug views.
+- Optional health endpoints provide game counts, queue length, and rate limiter state.
+- Structured error handling ensures failed wallet or RPC calls return consistent payloads and are logged with context.
+
+## Repository Layout
+
+```
+src/
+├── index.js
+├── config/
+├── db/
+├── game/
+├── middleware/
+├── network/
+├── payments/
+├── rpc/
+└── utils/
+html/
+└── index.html
+test/
+└── *.test.js
+```
+
+Refer to `REFACTORING_SUMMARY.md` for module-by-module details and migration history.
+
+## Next Steps
+
+- Persist payment configuration updates for hot reloads.
+- Extend error normalization to remaining network modules.
+- Build a lightweight monitoring dashboard for live metrics.

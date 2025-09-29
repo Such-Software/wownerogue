@@ -3,6 +3,9 @@
  * Encapsulates payment request creation, monitoring, mempool detection,
  * confirmation handling, and queue integration.
  */
+
+const { normalizeError } = require('../utils/errors');
+
 class PaymentHandlers {
     constructor({ io, gameModeManager, walletService, debugManager, queueManager, broadcastManager }) {
         this.io = io;
@@ -15,8 +18,8 @@ class PaymentHandlers {
         this.paymentMonitors = new Map();
         // Track active monitored address per socket so we can stop on disconnect/expiry
         this.socketAddressMap = new Map();
-    // Track paymentIds already confirmed (avoid duplicate emits / queue actions)
-    this.confirmedPayments = new Set();
+        // Track paymentIds already confirmed (avoid duplicate emits / queue actions)
+        this.confirmedPayments = new Set();
         // Periodic cleanup (confirmed payment IDs older than retention window)
         this._confirmedTimestamps = new Map();
         this._confirmedRetentionMs = 6 * 60 * 60 * 1000; // 6 hours
@@ -57,8 +60,9 @@ class PaymentHandlers {
             });
             if (this.debugManager.CONSOLE_LOGGING) console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount}`);
         } catch (e) {
-            console.error('Error creating payment request:', e);
-            this.io.to(socket.id).emit('payment_error', { error: e.message });
+            const err = normalizeError(e, 'Failed to create payment request');
+            console.error('Error creating payment request:', err.message);
+            this.io.to(socket.id).emit('payment_error', { error: err.safeMessage });
         }
     }
 
@@ -76,8 +80,9 @@ class PaymentHandlers {
                         // Do not proceed until address is set
                         return;
                     }
-                } catch(e) {
-                    console.error('Address pre-check failed:', e.message);
+                } catch (e) {
+                    const err = normalizeError(e, 'Failed to verify payout address');
+                    console.error('Address pre-check failed:', err.message);
                 }
             }
             const currentUser = socket.id && this.queueManager.getUserBySocket ? this.queueManager.getUserBySocket(socket.id) : null;
@@ -139,8 +144,9 @@ class PaymentHandlers {
 
             this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser);
         } catch (e) {
-            console.error('Error creating payment request:', e);
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Failed to create payment request.');
+            const err = normalizeError(e, 'Failed to create payment request');
+            console.error('Error creating payment request:', err.message);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', err.safeMessage);
         }
     }
 

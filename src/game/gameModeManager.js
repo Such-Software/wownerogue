@@ -3,26 +3,18 @@
  * Handles different game modes (FREE, PAID_SINGLE, PAID_CREDITS)
  */
 
+const {
+    DEFAULT_DECIMALS,
+    parseAtomicEnvValue,
+    inferCurrencyDecimals: inferCurrencyDecimalsForSymbol,
+    formatAtomic,
+    formatAtomicHuman,
+    getDecimalDivisor
+} = require('./helpers/gameModeUtils');
+const { ValidationError, normalizeError } = require('../utils/errors');
+
 const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW depending on currency decimals
 const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
-const DEFAULT_DECIMALS = 12;
-
-const parseAtomicEnvValue = (val, fallback) => {
-    if (val === undefined || val === null || val === '') return fallback;
-    if (typeof val !== 'string') {
-        const numVal = Number(val);
-        return Number.isFinite(numVal) ? Math.trunc(numVal) : fallback;
-    }
-    const cleaned = val.replace(/_/g, '').trim();
-    if (!cleaned) {
-        return fallback;
-    }
-    const num = Number(cleaned);
-    if (!Number.isFinite(num) || num < 0) {
-        return fallback;
-    }
-    return Math.trunc(num);
-};
 
 class GameModeManager {
     constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null) {
@@ -65,11 +57,7 @@ class GameModeManager {
     }
 
     inferCurrencyDecimals(symbol) {
-        if (!symbol) return DEFAULT_DECIMALS;
-        const normalized = symbol.toUpperCase();
-        if (normalized === 'WOW') return 11;
-        if (normalized === 'XMR') return 12;
-        return DEFAULT_DECIMALS;
+        return inferCurrencyDecimalsForSymbol(symbol);
     }
 
     applyLegacyEnvConfig() {
@@ -207,32 +195,22 @@ class GameModeManager {
     }
 
     formatAtomic(value) {
-        if (value === undefined || value === null) {
-            return '0';
-        }
-        const decimals = Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS;
-        const divisor = Math.pow(10, decimals);
-        const quotient = Number(value) / divisor;
-        return Number.isFinite(quotient)
-            ? quotient.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
-            : value.toString();
+        return formatAtomic({
+            value,
+            decimals: Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS
+        });
     }
 
     getDecimalDivisor() {
-        const decimals = Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS;
-        return Math.pow(10, decimals);
+        return getDecimalDivisor(Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS);
     }
 
     formatAtomicHuman(value, digits = 3) {
-        if (value === undefined || value === null) {
-            return '0';
-        }
-        const divisor = this.getDecimalDivisor();
-        const quotient = Number(value) / divisor;
-        if (!Number.isFinite(quotient)) {
-            return value.toString();
-        }
-        return quotient.toFixed(digits);
+        return formatAtomicHuman({
+            value,
+            decimals: Number.isFinite(this.currencyDecimals) ? this.currencyDecimals : DEFAULT_DECIMALS,
+            digits
+        });
     }
 
     getPrimaryCreditPackage() {
@@ -334,8 +312,9 @@ class GameModeManager {
                     return { allowed: false, reason: 'Invalid game mode' };
             }
         } catch (error) {
-            console.error('❌ Error checking user game eligibility:', error.message);
-            return { allowed: false, reason: 'Database error' };
+            const normalized = normalizeError(error, 'Unable to verify game eligibility');
+            console.error('❌ Error checking user game eligibility:', normalized.message);
+            return { allowed: false, reason: normalized.safeMessage };
         }
     }
 
@@ -406,8 +385,9 @@ class GameModeManager {
                     return { success: false, reason: 'Invalid game mode' };
             }
         } catch (error) {
-            console.error('❌ Error processing game start:', error.message);
-            return { success: false, reason: 'Database error' };
+            const normalized = normalizeError(error, 'Failed to process game start');
+            console.error('❌ Error processing game start:', normalized.message);
+            return { success: false, reason: normalized.safeMessage };
         }
     }
 
@@ -474,8 +454,9 @@ class GameModeManager {
             };
             
         } catch (error) {
-            console.error('❌ Error processing game completion:', error.message);
-            return { success: false, reason: 'Database error' };
+            const normalized = normalizeError(error, 'Failed to process game completion');
+            console.error('❌ Error processing game completion:', normalized.message);
+            return { success: false, reason: normalized.safeMessage };
         }
     }
 
@@ -506,7 +487,9 @@ class GameModeManager {
                     break;
                 }
                 default:
-                    throw new Error('Invalid payment type');
+                    throw new ValidationError(`Invalid payment type requested: ${paymentType}`, {
+                        safeMessage: 'Unsupported payment type requested.'
+                    });
             }
             
             // Create payment request using wallet RPC with correct parameters
@@ -516,10 +499,6 @@ class GameModeManager {
                 user.id,
                 socketId
             );
-
-            if (!paymentResult.success) {
-                throw new Error(paymentResult.error || 'Failed to create payment address');
-            }
 
             // Store payment info in database
             await this.db.query(`
@@ -538,8 +517,9 @@ class GameModeManager {
             };
             
         } catch (error) {
-            console.error('❌ Error creating payment request:', error.message);
-            throw error;
+            const normalized = normalizeError(error, 'Failed to create payment request');
+            console.error('❌ Error creating payment request:', normalized.message);
+            throw normalized;
         }
     }
 
@@ -575,8 +555,9 @@ class GameModeManager {
             return userResult.rows[0];
             
         } catch (error) {
-            console.error('❌ Error getting/creating user:', error.message);
-            throw error;
+            const normalized = normalizeError(error, 'Failed to load user');
+            console.error('❌ Error getting/creating user:', normalized.message);
+            throw normalized;
         }
     }
 
@@ -598,7 +579,8 @@ class GameModeManager {
             return true;
             
         } catch (error) {
-            console.error('❌ Error setting payout address:', error.message);
+            const normalized = normalizeError(error, 'Failed to update payout address');
+            console.error('❌ Error setting payout address:', normalized.message);
             return false;
         }
     }
@@ -627,7 +609,8 @@ class GameModeManager {
             };
             
         } catch (error) {
-            console.error('❌ Error getting user stats:', error.message);
+            const normalized = normalizeError(error, 'Failed to load user stats');
+            console.error('❌ Error getting user stats:', normalized.message);
             return null;
         }
     }
@@ -708,8 +691,9 @@ class GameModeManager {
                             }
                         };
                     } catch (payoutErr) {
-                        console.error('❌ Error creating payout:', payoutErr.message);
-                        return { success: true, mode: this.gameMode, payout: null, payoutError: payoutErr.message };
+                        const normalizedPayout = normalizeError(payoutErr, 'Failed to send payout');
+                        console.error('❌ Error creating payout:', normalizedPayout.message);
+                        return { success: true, mode: this.gameMode, payout: null, payoutError: normalizedPayout.safeMessage };
                     }
                 }
                 return { success: true, mode: this.gameMode, payout: null, reason: 'No payout address' };
@@ -718,8 +702,9 @@ class GameModeManager {
             // Credits mode: decrement nothing here (already handled start). Optionally could award stats.
             return { success: true, mode: this.gameMode, payout: null };
         } catch (err) {
-            console.error('❌ completeGame error:', err.message);
-            return { success: false, error: err.message };
+            const normalized = normalizeError(err, 'Failed to complete game');
+            console.error('❌ completeGame error:', normalized.message);
+            return { success: false, error: normalized.safeMessage };
         }
     }
 }
