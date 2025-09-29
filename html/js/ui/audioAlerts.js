@@ -13,6 +13,8 @@ const AudioAlerts = {
     _lastPlay: 0,
     _cooldownMs: 1500,
     _audioTags: {}, // cache HTMLAudioElements
+    _gameStartHoldUntil: 0,
+    _pendingGameStartTimer: null,
     _fileMap: {
         request_coin: 'audio/Pleasesendcoin.m4a',
         payment_detected: 'audio/Paymentdetected.m4a',
@@ -58,7 +60,7 @@ const AudioAlerts = {
         const origQueueJoined = SocketHandlers.onQueueJoined;
         SocketHandlers.onPaymentConfirmed = function(data) {
             if (origPaymentConfirmed) origPaymentConfirmed.call(SocketHandlers, data);
-            AudioAlerts.playFile('payment_confirmed');
+            AudioAlerts.playPaymentConfirmed();
         };
         SocketHandlers.onPaymentDetected = function(data) {
             if (origPaymentDetected) origPaymentDetected.call(SocketHandlers, data);
@@ -66,14 +68,7 @@ const AudioAlerts = {
         };
         SocketHandlers.onGameStart = function(data) {
             if (origGameStart) origGameStart.call(SocketHandlers, data);
-            // Add delay to prevent overlap with payment_confirmed audio
-            const lastPaymentConfirmed = AudioAlerts._audioTagTimes && AudioAlerts._audioTagTimes['payment_confirmed'];
-            if (lastPaymentConfirmed && (Date.now() - lastPaymentConfirmed < 2000)) {
-                // Delay game_start audio if payment_confirmed played recently
-                setTimeout(() => AudioAlerts.playFile('game_start'), 1500);
-            } else {
-                AudioAlerts.playFile('game_start');
-            }
+            AudioAlerts.playGameStart();
         };
         SocketHandlers.onGameOver = function(data) {
             if (origGameOver) origGameOver.call(SocketHandlers, data);
@@ -140,19 +135,51 @@ const AudioAlerts = {
         return this._audioTags[tag];
     },
     playFile(tag) {
-        if (!this._enabled) return;
+        if (!this._enabled) return null;
         const now = Date.now();
         // Per-tag cooldown so different event types can fire back-to-back (e.g. payment_confirmed -> game_start)
         if (!this._audioTagTimes) this._audioTagTimes = {}; // tag -> last play timestamp
         const lastForTag = this._audioTagTimes[tag] || 0;
         const elapsed = now - lastForTag;
         const allow = elapsed >= this._cooldownMs || (tag === 'game_start' && this._lastTag !== 'game_start');
-        if (!allow) return;
+        if (!allow) return null;
         this._audioTagTimes[tag] = now;
         this._lastTag = tag;
         const el = this._getAudio(tag);
-        if (!el) return;
-        try { el.currentTime = 0; el.play().catch(()=>{}); } catch(_) {}
+        if (!el) return null;
+        try {
+            el.currentTime = 0;
+            el.play().catch(()=>{});
+        } catch(_) {}
+        return el;
+    },
+    playPaymentConfirmed() {
+        if (!this._enabled) return;
+        const el = this.playFile('payment_confirmed');
+        const fallback = 2200;
+        let holdMs = fallback;
+        if (el && isFinite(el.duration) && el.duration > 0.2) {
+            holdMs = Math.ceil(el.duration * 1000);
+        }
+        this._gameStartHoldUntil = Date.now() + holdMs;
+    },
+    playGameStart() {
+        if (!this._enabled) return;
+        const now = Date.now();
+        if (this._pendingGameStartTimer) {
+            clearTimeout(this._pendingGameStartTimer);
+            this._pendingGameStartTimer = null;
+        }
+        const holdUntil = this._gameStartHoldUntil || 0;
+        if (holdUntil && now < holdUntil) {
+            const delay = Math.max(0, holdUntil - now);
+            this._pendingGameStartTimer = setTimeout(() => {
+                this._pendingGameStartTimer = null;
+                this.playFile('game_start');
+            }, delay);
+            return;
+        }
+        this.playFile('game_start');
     },
     playGameOverSound(gameOverData) {
         if (!this._enabled) return;

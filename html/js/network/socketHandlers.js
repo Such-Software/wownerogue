@@ -49,8 +49,10 @@ const SocketHandlers = {
         socket.on('queue_cancelled', this.onQueueCancelled);
         
         // Payment/Address handlers
-        socket.on('address_detected', this.onAddressDetected);
-        socket.on('address_confirmed', this.onAddressConfirmed);
+    socket.on('address_detected', this.onAddressDetected);
+    socket.on('address_confirmed', this.onAddressConfirmed);
+    socket.on('address_update_error', this.onAddressUpdateError);
+    socket.on('address_prompt', this.onAddressPrompt);
         socket.on('payment_created', this.onPaymentCreated);
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
@@ -100,6 +102,9 @@ const SocketHandlers = {
         if (data && data.payoutAddress) {
             $('#messages').append($('<li class="address-confirmed" style="color:#0f0;">').text('Payout address restored.'));
             UI.scrollChat();
+            if (typeof AddressModal !== 'undefined') {
+                AddressModal.setCurrentAddress(data.payoutAddress);
+            }
         }
     },
 
@@ -298,6 +303,24 @@ const SocketHandlers = {
         console.log('Address confirmed:', data);
         $('#messages').append($('<li class="address-confirmed" style="color: #0f0; white-space: pre-line;">').text(data.message));
         UI.scrollChat();
+        if (typeof AddressModal !== 'undefined') {
+            AddressModal.onConfirmed(data);
+        }
+    },
+
+    onAddressPrompt: function(data) {
+        if (typeof AddressModal !== 'undefined') {
+            AddressModal.show({
+                existingAddress: data?.existingAddress || null,
+                message: data?.message || null
+            });
+        }
+    },
+
+    onAddressUpdateError: function(data) {
+        if (typeof AddressModal !== 'undefined') {
+            AddressModal.handleError(data?.message || 'Failed to update address.');
+        }
     },
 
     onPaymentCreated: function(data) {

@@ -54,12 +54,17 @@ class GameManager {
     async handleGameOver(socket, game, status, reason, message, score = 0) {
         try {
             const socketId = socket.id || socket;
-            
+
             game.gameState = status;
-            const gameStats = { 
-                score: score, 
+            const moves = game.moveCount || 0;
+            const durationSeconds = game.startedAt ? Math.max(0, Math.round((Date.now() - game.startedAt) / 1000)) : null;
+            const finalScore = score > 0 ? score : this._calculateScore(game, status, reason);
+            const gameStats = {
+                score: finalScore,
                 reason: reason,
-                treasuresFound: game.player.hasTreasure ? 1 : 0 
+                treasuresFound: game.player.hasTreasure ? 1 : 0,
+                moves,
+                durationSeconds
             };
             game.endGame(status, gameStats);
             
@@ -71,7 +76,8 @@ class GameManager {
                         socketId, 
                         game.id, 
                         status === 'won', 
-                        game.player.hasTreasure || false
+                        game.player.hasTreasure || false,
+                        { moves, durationSeconds, score: finalScore }
                     );
                     
                     if (this.debugManager.CONSOLE_LOGGING && payoutInfo) {
@@ -87,13 +93,15 @@ class GameManager {
                 status: status,
                 reason: reason,
                 message: message,
-                score: score,
+                score: finalScore,
+                moves,
+                durationSeconds,
                 payout: payoutInfo,
                 treasure: game.player.hasTreasure || false
             });
 
             // Persist completion details if DB available
-            await this._updateGameRecord(game, socketId, status, reason);
+            await this._updateGameRecord(game, socketId, status, reason, moves, durationSeconds);
             
             // Clean up game from active games
             this.activeGames.delete(socketId);
@@ -199,6 +207,24 @@ class GameManager {
 
     // Private helper methods
 
+    _calculateScore(game, status, reason) {
+        if (!game) return 0;
+        const moves = game.moveCount || 0;
+        let score = 0;
+        if (status === 'won' && reason === 'escaped') {
+            score += 100; // base win
+            if (game.player?.hasTreasure) {
+                score += 100; // treasure bonus
+            }
+            const moveBonus = Math.max(0, 100 - Math.max(moves - 40, 0) * 2);
+            score += moveBonus;
+        } else if (game.player?.hasTreasure) {
+            // Reached treasure but did not escape
+            score += 50;
+        }
+        return Math.max(0, Math.round(score));
+    }
+
     /**
      * Insert a database record for the game
      * @param {Object} game - Game instance
@@ -213,8 +239,8 @@ class GameManager {
             
             db.query(`
                 INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
-                VALUES ((SELECT id FROM users WHERE socket_id = $1), $1, $2, 'active', $3, $4, NOW())
-            `, [socketId, gameMode, blockHeight, game.id])
+                VALUES ((SELECT id FROM users WHERE socket_id = $1), $2, $3, 'active', $4, $5, NOW())
+            `, [socketId, socketId, gameMode, blockHeight, game.id])
             .catch(err => console.error('Game insert failed:', err.message));
         }
     }
@@ -226,16 +252,16 @@ class GameManager {
      * @param {string} status - Final game status
      * @param {string} reason - Reason for ending
      */
-    async _updateGameRecord(game, socketId, status, reason) {
+    async _updateGameRecord(game, socketId, status, reason, moves = 0, durationSeconds = null) {
         if (this.gameModeManager && this.gameModeManager.db) {
             const db = this.gameModeManager.db;
             const outcome = reason === 'escaped' ? 'escaped' : (reason === 'monster' ? 'caught_by_monster' : reason);
             
             try {
                 await db.query(`
-                    UPDATE games SET status = $1, outcome = $2, treasure_found = $3, completed_at = NOW()
-                    WHERE dungeon_seed = $4 AND socket_id = $5
-                `, [status, outcome, game.player.hasTreasure, game.id, socketId]);
+                    UPDATE games SET status = $1, outcome = $2, treasure_found = $3, moves_made = $4, duration_seconds = $5, completed_at = NOW()
+                    WHERE dungeon_seed = $6 AND socket_id = $7
+                `, [status, outcome, game.player.hasTreasure, moves, durationSeconds, game.id, socketId]);
                 
                 if (this.debugManager.CONSOLE_LOGGING) {
                     console.log(`✅ Updated game record for ${socketId}: ${status} (${outcome})`);

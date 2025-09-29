@@ -64,6 +64,23 @@ class MovementManager {
       this.io.to(socketId).emit('game_event', { event: moveResult.event });
     }
   }
+
+  emitGameUpdate(socketId) {
+    const game = this.activeGames.get(socketId);
+    if (!game) {
+      return;
+    }
+    let state;
+    if (typeof game.getState === 'function') {
+      state = game.getState();
+    } else {
+      state = { player: game.player };
+    }
+    if (this.debugManager && typeof this.debugManager.getCurrentBlockHeight === 'function') {
+      state.blockHeight = this.debugManager.getCurrentBlockHeight();
+    }
+    this.io.to(socketId).emit('game_update', state);
+  }
 }
 
 module.exports = MovementManager;

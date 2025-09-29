@@ -282,24 +282,93 @@ class WalletRPCService {
         return { processed: 0 };
     }
 
-    async processPayout(recipientAddress, amount, description) {
+    normalizeAtomicAmount(value) {
+        if (value === undefined || value === null) {
+            throw new AppError('Payout amount was not provided', {
+                safeMessage: 'Invalid payout amount supplied.'
+            });
+        }
+
+        if (typeof value === 'bigint') {
+            if (value <= 0n) {
+                throw new AppError('Payout amount must be greater than zero', {
+                    safeMessage: 'Invalid payout amount supplied.'
+                });
+            }
+            if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+                return value.toString();
+            }
+            return Number(value);
+        }
+
+        const num = Number(value);
+        if (!Number.isFinite(num) || num <= 0) {
+            throw new AppError('Payout amount must be a positive number', {
+                safeMessage: 'Invalid payout amount supplied.'
+            });
+        }
+
+        const truncated = Math.trunc(num);
+        if (truncated <= 0) {
+            throw new AppError('Payout amount rounded below minimum atomic unit', {
+                safeMessage: 'Invalid payout amount supplied.'
+            });
+        }
+
+        return truncated;
+    }
+
+    async processPayout({
+        address,
+        amount,
+        userId = null,
+        gameId = null,
+        description = null,
+        multiplier = null,
+        subaddressIndex = null
+    } = {}) {
         try {
-            // Send payment to user
-            const response = await this.rpcCall('transfer', {
+            if (!address || typeof address !== 'string') {
+                throw new AppError('Payout address was not provided or invalid', {
+                    safeMessage: 'Invalid payout address supplied.'
+                });
+            }
+
+            const normalizedAmount = this.normalizeAtomicAmount(amount);
+
+            const transferParams = {
                 destinations: [{
-                    amount: amount,
-                    address: recipientAddress
+                    amount: normalizedAmount,
+                    address
                 }],
                 account_index: this.accountIndex,
-                priority: 1, // Normal priority
+                priority: 1,
                 get_tx_key: true
-            });
+            };
+
+            if (Number.isInteger(subaddressIndex) && subaddressIndex >= 0) {
+                transferParams.subaddr_indices = [subaddressIndex];
+            }
 
             if (this.debugManager?.CONSOLE_LOGGING) {
-                console.log(`💸 Payout sent:`, {
-                    to: recipientAddress.substring(0, 10) + '...',
-                    amount: amount,
-                    txHash: response.result.tx_hash
+                console.log('🚀 Initiating payout transfer', {
+                    to: address.substring(0, 10) + '...',
+                    amount: normalizedAmount,
+                    userId,
+                    gameId,
+                    multiplier,
+                    description
+                });
+            }
+
+            const response = await this.rpcCall('transfer', transferParams);
+
+            if (this.debugManager?.CONSOLE_LOGGING) {
+                console.log('💸 Payout sent successfully', {
+                    to: address.substring(0, 10) + '...',
+                    amount: normalizedAmount,
+                    txHash: response.result.tx_hash,
+                    fee: response.result.fee
                 });
             }
 
@@ -307,14 +376,19 @@ class WalletRPCService {
                 success: true,
                 txHash: response.result.tx_hash,
                 txKey: response.result.tx_key,
-                fee: response.result.fee
+                fee: response.result.fee,
+                userId,
+                gameId,
+                amount: normalizedAmount
             };
         } catch (error) {
             const wrapped = error instanceof AppError ? error : new ExternalServiceError('Failed to process payout', {
                 safeMessage: 'Unable to send payout at this time.',
                 cause: error
             });
-            console.error('❌ Failed to process payout:', wrapped.message);
+
+            const meta = { userId, gameId, address: address?.substring?.(0, 10) + '...', amount };
+            console.error('❌ Failed to process payout:', wrapped.message, meta);
             throw wrapped;
         }
     }

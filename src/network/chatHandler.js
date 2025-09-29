@@ -102,6 +102,10 @@ class ChatHandler {
 
     // Private helper methods
 
+    async promptAddress(socket) {
+        await this._promptAddress(socket);
+    }
+
     async _handleAddressDetection(socket, detected) {
         // Rate limiting for address setting
         const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'address:set');
@@ -150,8 +154,7 @@ class ChatHandler {
                 
             case 'address':
             case 'payout':
-                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
-                    'Please paste your XMR/WOW address directly in chat. The system will automatically detect and confirm it.');
+                await this._promptAddress(socket);
                 return true;
                 
             case 'payment':
@@ -215,6 +218,31 @@ class ChatHandler {
 
         if (this.debugManager.CONSOLE_LOGGING && cleanedCount > 0) {
             console.log(`🧹 ChatHandler cleanup: removed ${cleanedCount} old timestamps`);
+        }
+    }
+
+    async _promptAddress(socket) {
+        let existing = null;
+        try {
+            if (this.gameModeManager) {
+                const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
+                existing = userRow?.payout_address || null;
+            }
+        } catch (e) {
+            if (this.debugManager?.CONSOLE_LOGGING) {
+                console.warn('Address prompt lookup failed:', e.message);
+            }
+        }
+
+        socket.emit('address_prompt', {
+            existingAddress: existing,
+            canUpdate: true
+        });
+
+        if (existing) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Update your payout address using the address manager.');
+        } else {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Add your payout address to receive rewards.');
         }
     }
 }

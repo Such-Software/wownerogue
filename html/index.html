@@ -39,6 +39,7 @@
     <!-- Other modules -->
     <script src="js/ui/ui.js"></script>
     <script src="js/ui/audioAlerts.js"></script>
+    <script src="js/ui/addressModal.js"></script>
     <script src="js/network/socketHandlers.js"></script>
     <script src="js/input/inputHandler.js"></script>
 </head>
@@ -65,6 +66,7 @@
                 <label style="cursor:pointer; display:flex; align-items:center; gap:4px;">
                     <input type="checkbox" id="audioAlertsToggle" style="cursor:pointer;"> Audio Alerts
                 </label>
+                <button id="manageAddressButton" style="margin-left:auto; background:#053655; color:#0ff; border:1px solid #0ff; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;">⚙️ Manage Payout Address</button>
             </div>
         </div>
         
@@ -130,6 +132,24 @@
         <!-- Footer -->
         <div class="footer">
             Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move
+        </div>
+    </div>
+
+    <!-- Address management modal -->
+    <div id="addressModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="addressModalTitle">
+        <div class="modal-content">
+            <button type="button" class="modal-close" id="addressModalClose" aria-label="Close">✕</button>
+            <h2 id="addressModalTitle">Manage Payout Address</h2>
+            <p class="modal-description">Enter your Wownero (WOW) or Monero (XMR) address below. This will be used for payouts when you escape.</p>
+            <form id="addressModalForm">
+                <label for="addressModalInput" class="modal-label">Payout Address</label>
+                <textarea id="addressModalInput" autocomplete="off" spellcheck="false" rows="3" placeholder="Paste your payout address here"></textarea>
+                <div class="modal-actions">
+                    <button type="submit" id="addressModalSave">Save Address</button>
+                    <button type="button" id="addressModalCancel">Cancel</button>
+                </div>
+                <div id="addressModalFeedback" class="modal-feedback" aria-live="polite"></div>
+            </form>
         </div>
     </div>
 

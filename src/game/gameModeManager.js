@@ -425,12 +425,14 @@ class GameModeManager {
             if (payoutEligibleMode && outcome === 'escaped' && game.payout_address) {
                 const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedMode, { treasureFound });
                 if (payoutAmount > 0) {
-                    await this.walletService.processPayout(
-                        game.user_id,
+                    await this.walletService.processPayout({
+                        userId: game.user_id,
                         gameId,
-                        game.payout_address,
-                        payoutAmount
-                    );
+                        address: game.payout_address,
+                        amount: payoutAmount,
+                        multiplier,
+                        description: `Game ${gameId} payout`
+                    });
                 
                     console.log(`💸 Created payout: ${payoutAmount} atomic units for game ${gameId} (multiplier ${multiplier}x)`);
                 }
@@ -644,10 +646,10 @@ class GameModeManager {
      * @param {boolean} treasureFound - Whether treasure was found
      * @returns {object} payout / completion info
      */
-    async completeGame(socketId, gameId, won, treasureFound) {
+    async completeGame(socketId, gameId, won, treasureFound, metrics = {}) {
         // For FREE mode we just return basic info
         if (this.gameMode === 'FREE') {
-            return { success: true, mode: 'FREE', payout: null };
+            return { success: true, mode: 'FREE', payout: null, score: metrics.score ?? null };
         }
 
         try {
@@ -655,9 +657,16 @@ class GameModeManager {
             // If a games table exists with at least id & user reference, mark completion.
             try {
                 await this.db.query(`
-                    UPDATE games SET status = $1, treasure_found = $2, completed_at = NOW()
-                    WHERE id = $3
-                `, [won ? 'won' : 'lost', treasureFound, gameId]);
+                    UPDATE games SET status = $1, treasure_found = $2, moves_made = COALESCE($3, moves_made), duration_seconds = COALESCE($4, duration_seconds), completed_at = NOW()
+                    WHERE dungeon_seed = $5 AND socket_id = $6
+                `, [
+                    won ? 'won' : 'lost',
+                    treasureFound,
+                    metrics.moves ?? null,
+                    metrics.durationSeconds ?? null,
+                    gameId,
+                    socketId
+                ]);
             } catch (e) {
                 // Non-fatal if games table differs during early dev.
                 if (process.env.NODE_ENV === 'development') {
@@ -675,12 +684,14 @@ class GameModeManager {
                 const userRow = userResult.rows[0];
                 if (userRow && userRow.payout_address) {
                     try {
-                        await this.walletService.processPayout(
-                            userRow.id,
+                        await this.walletService.processPayout({
+                            userId: userRow.id,
                             gameId,
-                            userRow.payout_address,
-                            payoutAmount
-                        );
+                            address: userRow.payout_address,
+                            amount: payoutAmount,
+                            multiplier,
+                            description: `Game ${gameId} payout`
+                        });
                         return {
                             success: true,
                             mode: this.gameMode,
@@ -688,19 +699,20 @@ class GameModeManager {
                                 amount: payoutAmount,
                                 multiplier,
                                 treasure: treasureFound
-                            }
+                            },
+                            score: metrics.score ?? null
                         };
                     } catch (payoutErr) {
                         const normalizedPayout = normalizeError(payoutErr, 'Failed to send payout');
                         console.error('❌ Error creating payout:', normalizedPayout.message);
-                        return { success: true, mode: this.gameMode, payout: null, payoutError: normalizedPayout.safeMessage };
+                        return { success: true, mode: this.gameMode, payout: null, payoutError: normalizedPayout.safeMessage, score: metrics.score ?? null };
                     }
                 }
-                return { success: true, mode: this.gameMode, payout: null, reason: 'No payout address' };
+                return { success: true, mode: this.gameMode, payout: null, reason: 'No payout address', score: metrics.score ?? null };
             }
 
             // Credits mode: decrement nothing here (already handled start). Optionally could award stats.
-            return { success: true, mode: this.gameMode, payout: null };
+            return { success: true, mode: this.gameMode, payout: null, score: metrics.score ?? null };
         } catch (err) {
             const normalized = normalizeError(err, 'Failed to complete game');
             console.error('❌ completeGame error:', normalized.message);

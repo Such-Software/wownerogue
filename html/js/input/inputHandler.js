@@ -176,6 +176,17 @@ const InputHandler = {
             $('#messages').append($('<li style="color: #aa0;">').text(`🎬 Animation ${status}`));
             UI.scrollChat();
         });
+
+        // Address management button
+        $('#manageAddressButton').click(function(e) {
+            e.preventDefault();
+            if (window.socket) {
+                socket.emit('address:prompt');
+            }
+            if (typeof AddressModal !== 'undefined') {
+                AddressModal.show();
+            }
+        });
     },
 
     setupModeToggle: function() {

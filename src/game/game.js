@@ -22,6 +22,8 @@ class Game {
     this.players = {};
     this.monsters = {};
     this.dungeon = null;
+  this.moveCount = 0;
+  this.startedAt = Date.now();
 
     // Get default configuration from DungeonGenerator
     const dungeonConfig = DungeonGenerator.getConfig();
@@ -140,7 +142,8 @@ class Game {
         this.dungeon.map[newY][newX] !== undefined && 
         (this.dungeon.map[newY][newX] === primaryFloor || this.dungeon.map[newY][newX] === secondaryFloor)) {
       
-      this.player.moveTo(newX, newY);
+  this.player.moveTo(newX, newY);
+  this.moveCount += 1;
       if (CONSOLE_LOGGING) {
         console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
       }
@@ -151,7 +154,7 @@ class Game {
       // Check for game events like finding treasure or exit
       if (this.dungeon.exit && this.player.isAt(this.dungeon.exit[0], this.dungeon.exit[1])) {
         this.gameState = 'won';
-        return { status: 'moved', event: 'escaped', player: this.player.getState(), visibleTiles: this.visibleTiles };
+  return { status: 'moved', event: 'escaped', player: this.player.getState(), visibleTiles: this.visibleTiles, moves: this.moveCount };
       }
       if (this.dungeon.treasure && this.player.isAt(this.dungeon.treasure[0], this.dungeon.treasure[1]) && !this.player.hasTreasure) {
         this.player.hasTreasure = true;
@@ -163,10 +166,10 @@ class Game {
           console.log(`🗑️ TREASURE REMOVED: dungeon.treasure is now null for player ${this.socketId}`);
           console.log(`Player ${this.socketId} collected treasure! hasTreasure: ${this.player.hasTreasure}`);
         }
-        return { status: 'moved', event: 'treasure_found', player: this.player.getState(), visibleTiles: this.visibleTiles };
+  return { status: 'moved', event: 'treasure_found', player: this.player.getState(), visibleTiles: this.visibleTiles, moves: this.moveCount };
       }
       
-      return { status: 'moved', player: this.player.getState(), visibleTiles: this.visibleTiles };
+  return { status: 'moved', player: this.player.getState(), visibleTiles: this.visibleTiles, moves: this.moveCount };
     }
     
     if (CONSOLE_LOGGING) {
@@ -176,7 +179,27 @@ class Game {
   }
   
   moveMonster() {
+    if (!this.monster || !this.player) {
+      return { status: 'idle' };
+    }
+
     this.monster.moveTowardPlayer(this.player, this.dungeon);
+
+    if (this.monster.hasCaughtPlayer(this.player)) {
+      this.gameState = 'lost';
+      return {
+        status: 'monster_caught',
+        event: 'monster_caught',
+        player: this.player.getState(),
+        monster: this.monster.getState()
+      };
+    }
+
+    return {
+      status: 'moved',
+      player: this.player.getState(),
+      monster: this.monster.getState()
+    };
   }
   
   getState() {
@@ -189,6 +212,8 @@ class Game {
       entrance: this.dungeon ? this.dungeon.entrance : null,
       exit: this.dungeon ? this.dungeon.exit : null,
       treasure: this.dungeon ? this.dungeon.treasure : null,
+      moves: this.moveCount,
+      startedAt: this.startedAt
     };
 
     if (CONSOLE_LOGGING) {

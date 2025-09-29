@@ -3,6 +3,10 @@
  * Handles detection, pending confirmation, validation, and persistence of payout addresses.
  * Keeps socketHandlers slimmer by encapsulating this concern.
  */
+const { AppError, normalizeError } = require('../utils/errors');
+
+const ADDRESS_REGEX = /((?:4|8)[1-9A-HJ-NP-Za-km-z]{90,110}|(?:Wo|WO|ww|WW)[0-9A-Za-z]{88,112}|W[0-9A-Za-z]{90,112})/;
+
 class AddressManager {
   constructor({ gameModeManager, broadcastManager, io, debugManager, onConfirmed = null }) {
     this.gameModeManager = gameModeManager;
@@ -15,11 +19,18 @@ class AddressManager {
 
   detectInText(text) {
     if (!text || typeof text !== 'string') return null;
-    const re = /((?:4|8)[0-9A-Za-z]{90,110}|Wo[0-9A-Za-z]{88,110})/; // Monero / Wownero style
-    const m = text.match(re);
-    if (!m) return null;
-    if (m[1].length < 80) return null;
-    return m[1];
+    const match = text.match(ADDRESS_REGEX);
+    if (!match) return null;
+    const candidate = match[1];
+    return this.isValidAddress(candidate) ? candidate : null;
+  }
+
+  isValidAddress(address) {
+    const value = typeof address === 'string' ? address.trim() : '';
+    if (!value) return false;
+    if (!ADDRESS_REGEX.test(value)) return false;
+    // Basic length guard for sanity (allowing integrated addresses)
+    return value.length >= 80 && value.length <= 120;
   }
 
   async handleDetection(socketId, address) {
@@ -27,7 +38,9 @@ class AddressManager {
       if (this.gameModeManager) {
         const userRow = await this.gameModeManager.getOrCreateUser(socketId);
         if (userRow && userRow.payout_address === address) {
-          this.io.to(socketId).emit('address_confirmed', { address, message: 'Payout address already set.' });
+          const shortAddr = address.slice(0, 10) + '…' + address.slice(-6);
+          this.io.to(socketId).emit('address_confirmed', { address, message: `Payout address already set to ${shortAddr}. You can update it via the address manager.` });
+          this.broadcastManager?.sendStatusUpdate(socketId, 'info', 'Address already on file. Use the address button/command to replace it.');
           return;
         }
       }
@@ -38,6 +51,29 @@ class AddressManager {
     const shortAddr = address.slice(0, 10) + '…' + address.slice(-6);
     this.io.to(socketId).emit('address_detected', { address: shortAddr, fullAddress: address, message: `Detected payout address: ${shortAddr}\nType 'confirm' to save or 'cancel' to discard.` });
     this.broadcastManager?.sendStatusUpdate(socketId, 'info', 'Address detected. Type confirm or cancel.');
+  }
+
+  async saveAddress(socketId, address, { autoConfirm = true } = {}) {
+    const trimmed = typeof address === 'string' ? address.trim() : '';
+    if (!trimmed) {
+      throw new AppError('No payout address supplied', {
+        safeMessage: 'Please enter a payout address.'
+      });
+    }
+
+    if (!this.isValidAddress(trimmed)) {
+      throw new AppError('Invalid payout address format', {
+        safeMessage: 'That does not look like a valid XMR/WOW address.'
+      });
+    }
+
+    this.pending.set(socketId, trimmed);
+
+    if (autoConfirm) {
+      await this.confirm(socketId, true);
+    }
+
+    return trimmed;
   }
 
   async confirm(socketId, accept) {
@@ -61,7 +97,8 @@ class AddressManager {
         this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address saved.');
         this.io.to(socketId).emit('address_confirmed', { address: pending, message: 'Payout address saved.' });
       } catch (e) {
-        this.broadcastManager?.sendStatusUpdate(socketId, 'error', 'Failed to save address. Try again.');
+        const normalized = normalizeError?.(e, 'Failed to save address') || e;
+        this.broadcastManager?.sendStatusUpdate(socketId, 'error', normalized.safeMessage || 'Failed to save address. Try again.');
         return;
       } finally {
         this.pending.delete(socketId);

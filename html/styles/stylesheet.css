@@ -206,3 +206,122 @@ li.debug {
     border-left: 2px solid #0ff;
 }
 
+/* Utility */
+.hidden {
+    display: none !important;
+}
+
+/* Modal styling */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+    padding: 20px;
+}
+
+.modal-content {
+    background: #0a0a0f;
+    border: 2px solid #0ff;
+    border-radius: 6px;
+    width: min(480px, 90vw);
+    padding: 20px;
+    color: #0ff;
+    font-family: 'PixelOperator', monospace;
+    position: relative;
+    box-shadow: 0 0 18px rgba(0, 255, 255, 0.2);
+}
+
+.modal-content h2 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 20px;
+}
+
+.modal-description {
+    margin-top: 0;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: #9cf;
+}
+
+.modal-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+#addressModalInput {
+    width: 100%;
+    background: #020205;
+    border: 1px solid #0ff;
+    border-radius: 4px;
+    color: #0ff;
+    padding: 10px;
+    font-family: monospace;
+    resize: vertical;
+    min-height: 100px;
+    box-shadow: inset 0 0 6px rgba(0, 255, 255, 0.15);
+}
+
+.modal-actions {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.modal-actions button {
+    padding: 8px 16px;
+    border-radius: 4px;
+    border: 1px solid #0ff;
+    background: #031c28;
+    color: #0ff;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.modal-actions button#addressModalSave {
+    background: #013d2a;
+    border-color: #0f7;
+    color: #0f7;
+}
+
+.modal-actions button:hover {
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+}
+
+.modal-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: transparent;
+    border: none;
+    color: #0ff;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.modal-feedback {
+    margin-top: 12px;
+    font-size: 12px;
+    min-height: 16px;
+}
+
+.modal-feedback.error {
+    color: #ff6b6b;
+}
+
+.modal-feedback.success {
+    color: #5dff9c;
+}
+
+.modal-feedback.info {
+    color: #9cf6ff;
+}
+

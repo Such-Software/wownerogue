@@ -15,6 +15,7 @@ const ConnectionHandler = require('./connectionHandler');
 const ChatHandler = require('./chatHandler');
 const QueueHandler = require('./queueHandler');
 const MemoryManager = require('../utils/memoryManager');
+const { normalizeError } = require('../utils/errors');
 
 class SocketHandlers {
     constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null, walletService = null) {
@@ -149,7 +150,7 @@ class SocketHandlers {
             io: this.io,
             debugManager: this.debugManager,
             moveCooldown: this.MOVE_COOLDOWN,
-            postMoveHook: ({ socketId, game }) => this.afterPlayerMove(socketId, game)
+            postMoveHook: ({ socketId, game, moveResult }) => this.afterPlayerMove(socketId, game, moveResult)
         });
 
         // Register memory cleanup functions
@@ -245,6 +246,10 @@ class SocketHandlers {
                 }
             }
 
+            if (typeof game.moveMonster === 'function') {
+                game.moveMonster();
+            }
+
             // Build updated state
             let state;
             if (typeof game.getState === 'function') {
@@ -269,24 +274,35 @@ class SocketHandlers {
      * Called after a successful player move (before update is emitted) via MovementManager postMoveHook.
      * Handles monster chasing logic and immediate game over if monster catches player.
      */
-    afterPlayerMove(socketId, game) {
+    afterPlayerMove(socketId, game, moveResult) {
+        let monsterResult = null;
+
         // Move monster one step toward player each player action
         if (game && typeof game.moveMonster === 'function') {
             try {
-                game.moveMonster();
+                monsterResult = game.moveMonster();
             } catch (e) {
                 console.error('Monster move error:', e);
             }
         }
 
-        // Check if monster catches player
-        try {
-            if (game && game.monster && game.player && game.monster.x === game.player.x && game.monster.y === game.player.y) {
-                const fakeSocket = { id: socketId };
-                this.handleGameOver(fakeSocket, game, 'lost', 'monster', 'You were caught by the monster!', 0);
-            }
-        } catch (e) {
-            console.error('Monster catch check error:', e);
+        // If the monster caught the player, end the game immediately
+        if (monsterResult && monsterResult.event === 'monster_caught') {
+            const fakeSocket = { id: socketId };
+            this.handleGameOver(fakeSocket, game, 'lost', 'monster', 'You were caught by the monster!', 0);
+            return;
+        }
+
+        // If player escaped or triggered another event, handle via game manager
+        if (moveResult && moveResult.event === 'escaped') {
+            const fakeSocket = { id: socketId };
+            this.handleGameOver(fakeSocket, game, 'won', 'escaped', 'You escaped the dungeon!', 0);
+            return;
+        }
+
+        // Re-emit state if treasure collected without auto game_update (fallback)
+        if (moveResult && moveResult.event === 'treasure_found') {
+            this.movementManager.emitGameUpdate(socketId);
         }
     }
 
@@ -303,16 +319,18 @@ class SocketHandlers {
             handleCancelEntry: (socket) => this.queueHandler.handleCancelEntry(socket),
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
-        socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
+    socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         socket.on('disconnect', () => this.handleDisconnect(socket));
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
         socket.on('register_client', (data) => this.connectionHandler.handleRegisterClient(socket, data));
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
+        socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
         // Payment system handlers
         socket.on('request_payment', (data) => this.paymentHandlers.handlePaymentRequest(socket, data));
         socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
         socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
+        socket.on('address:update', (data) => this.handleAddressUpdate(socket, data));
     }
 
     /**
@@ -405,6 +423,62 @@ class SocketHandlers {
         } catch (err) {
             console.error('handleAutoStart error:', err);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Unexpected error starting game.');
+        }
+    }
+
+    async handleAddressPrompt(socket) {
+        try {
+            if (this.chatHandler && typeof this.chatHandler.promptAddress === 'function') {
+                await this.chatHandler.promptAddress(socket);
+                return;
+            }
+
+            let existingAddress = null;
+            if (this.gameModeManager) {
+                try {
+                    const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
+                    existingAddress = userRow?.payout_address || null;
+                } catch (err) {
+                    if (this.debugManager?.CONSOLE_LOGGING) {
+                        console.warn('Address prompt lookup failed:', err.message);
+                    }
+                }
+            }
+
+            this.io.to(socket.id).emit('address_prompt', {
+                existingAddress,
+                message: existingAddress ? 'Update your payout address anytime.' : 'Add a payout address to receive rewards.'
+            });
+        } catch (error) {
+            const normalized = normalizeError(error, 'Unable to open address manager');
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', normalized.safeMessage || 'Address manager unavailable.');
+        }
+    }
+
+    async handleAddressUpdate(socket, data) {
+        try {
+            const address = typeof data?.address === 'string' ? data.address.trim() : '';
+            if (!address) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Please enter a payout address before saving.');
+                this.io.to(socket.id).emit('address_update_error', { message: 'Please enter a payout address before saving.' });
+                return;
+            }
+
+            const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'address:set');
+            if (!rateLimitResult.allowed) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+                    `Address changes are rate limited. Try again in ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds.`);
+                this.io.to(socket.id).emit('address_update_error', { message: 'Address changes are temporarily rate limited.' });
+                return;
+            }
+
+            await this.rateLimiter.recordAttempt(socket.id, 'address:set');
+
+            await this.addressManager.saveAddress(socket.id, address);
+        } catch (err) {
+            const normalized = normalizeError?.(err, 'Failed to update payout address') || err;
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', normalized.safeMessage || 'Failed to update payout address.');
+            this.io.to(socket.id).emit('address_update_error', { message: normalized.safeMessage || 'Failed to update payout address.' });
         }
     }
 
