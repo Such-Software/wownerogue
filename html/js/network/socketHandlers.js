@@ -327,8 +327,12 @@ const SocketHandlers = {
         console.log('Payment created:', data);
         if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
         const parts = [];
-        parts.push('💳 <strong>Payment Required</strong>');
-        parts.push('Amount: ' + data.humanAmount + ' ' + data.cryptoType);
+        const reusedCopy = data.reused
+            ? '🔁 <strong>Pending payment request still active.</strong> Use the same amount and address below.'
+            : '💳 <strong>Payment Required</strong>';
+        parts.push(reusedCopy);
+        const displayAmount = data.humanAmount || data.amountFormatted || data.amount;
+        parts.push('Amount: ' + displayAmount + ' ' + (data.cryptoType || ''));
         const shortAddr = data.address.substring(0, 10) + '…' + data.address.slice(-6);
         parts.push('Address: <span class="pay-address-full" style="cursor:pointer;" title="Click to toggle full address">' + shortAddr + '</span>' +
                    ' <button class="copy-pay-address" data-address="' + data.address + '" style="margin-left:4px;padding:1px 4px;font-size:11px;cursor:pointer;">Copy</button>');

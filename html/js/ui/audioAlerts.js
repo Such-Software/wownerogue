@@ -13,6 +13,9 @@ const AudioAlerts = {
     _lastPlay: 0,
     _cooldownMs: 1500,
     _audioTags: {}, // cache HTMLAudioElements
+    _audioDurations: {},
+    _sequentialBufferMs: 600,
+    _minGameStartDelayMs: 2800,
     _gameStartHoldUntil: 0,
     _pendingGameStartTimer: null,
     _fileMap: {
@@ -130,25 +133,33 @@ const AudioAlerts = {
             if (!src) return null;
             const el = new Audio(src);
             el.preload = 'auto';
+            el.addEventListener('loadedmetadata', () => {
+                if (isFinite(el.duration) && el.duration > 0) {
+                    this._audioDurations[tag] = Math.ceil(el.duration * 1000);
+                }
+            }, { once: true });
             this._audioTags[tag] = el;
         }
         return this._audioTags[tag];
     },
-    playFile(tag) {
+    playFile(tag, options = {}) {
         if (!this._enabled) return null;
+        const force = !!options.force;
         const now = Date.now();
         // Per-tag cooldown so different event types can fire back-to-back (e.g. payment_confirmed -> game_start)
         if (!this._audioTagTimes) this._audioTagTimes = {}; // tag -> last play timestamp
         const lastForTag = this._audioTagTimes[tag] || 0;
         const elapsed = now - lastForTag;
-        const allow = elapsed >= this._cooldownMs || (tag === 'game_start' && this._lastTag !== 'game_start');
+        const allow = force || elapsed >= this._cooldownMs || (tag === 'game_start' && this._lastTag !== 'game_start');
         if (!allow) return null;
         this._audioTagTimes[tag] = now;
         this._lastTag = tag;
         const el = this._getAudio(tag);
         if (!el) return null;
         try {
+            el.pause();
             el.currentTime = 0;
+            el.volume = this._volume;
             el.play().catch(()=>{});
         } catch(_) {}
         return el;
@@ -156,11 +167,14 @@ const AudioAlerts = {
     playPaymentConfirmed() {
         if (!this._enabled) return;
         const el = this.playFile('payment_confirmed');
-        const fallback = 2200;
-        let holdMs = fallback;
-        if (el && isFinite(el.duration) && el.duration > 0.2) {
-            holdMs = Math.ceil(el.duration * 1000);
-        }
+        const storedDuration = this._audioDurations?.payment_confirmed || 0;
+        const measuredMs = (el && isFinite(el.duration) && el.duration > 0.2)
+            ? Math.ceil(el.duration * 1000)
+            : storedDuration;
+        const holdMs = Math.max(
+            this._minGameStartDelayMs,
+            (measuredMs || 0) + this._sequentialBufferMs
+        );
         this._gameStartHoldUntil = Date.now() + holdMs;
     },
     playGameStart() {
@@ -183,25 +197,36 @@ const AudioAlerts = {
     },
     playGameOverSound(gameOverData) {
         if (!this._enabled) return;
-        if (!gameOverData || !gameOverData.reason) return;
-        
+        if (!gameOverData) return;
+
+        let reason = (gameOverData.reason || '').toLowerCase();
         let soundTag = '';
-        switch (gameOverData.reason) {
+        switch (reason) {
             case 'escaped':
-                // Check if they escaped with treasure
                 soundTag = gameOverData.treasure ? 'game_escaped_treasure' : 'game_escaped';
+                break;
+            case 'treasure_escape':
+                soundTag = 'game_escaped_treasure';
                 break;
             case 'timeout':
                 soundTag = 'game_timeout';
                 break;
             case 'monster':
+            case 'monster_caught':
+            case 'caught':
                 soundTag = 'game_monster';
                 break;
             default:
-                return; // Unknown reason, no audio
+                if (gameOverData.status === 'won') {
+                    soundTag = gameOverData.treasure ? 'game_escaped_treasure' : 'game_escaped';
+                } else if (gameOverData.status === 'lost') {
+                    soundTag = reason === 'timeout' ? 'game_timeout' : 'game_monster';
+                }
         }
-        
-        this.playFile(soundTag);
+
+        if (soundTag) {
+            this.playFile(soundTag, { force: true });
+        }
     },
     // Public helper to be invoked when server denies start due to payment/credits
     playRequestCoin() { this.playFile('request_coin'); }

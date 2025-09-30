@@ -239,6 +239,38 @@ class GameModeManager {
         return { amount, multiplier, base };
     }
 
+    async _findReusablePayment(userId, paymentType) {
+        if (!userId) return null;
+        const result = await this.db.query(`
+            SELECT id, subaddress, expected_amount, payment_type, status, created_at, expires_at, description
+            FROM payments
+            WHERE user_id = $1
+              AND payment_type = $2
+              AND status = 'pending'
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [userId, paymentType]);
+        return result.rows[0] || null;
+    }
+
+    _mapPaymentRowToRequest(row, paymentType, packageInfo) {
+        if (!row) return null;
+        const amount = Number(row.expected_amount);
+        return {
+            id: row.id,
+            address: row.subaddress,
+            amount,
+            amountFormatted: this.formatAtomicHuman(amount, 4),
+            currency: this.cryptoType,
+            expiresAt: row.expires_at,
+            paymentType,
+            description: row.description,
+            package: packageInfo || null,
+            reused: true
+        };
+    }
+
     logConfiguration(context = 'initialized') {
         console.log(`🎮 Game Mode Manager ${context}: ${this.gameMode} mode`);
         console.log(`💰 Currency: ${this.cryptoType} (decimals: ${this.currencyDecimals})`);
@@ -465,10 +497,11 @@ class GameModeManager {
     /**
      * Create payment request
      */
-    async createPaymentRequest(socketId, paymentType) {
+    async createPaymentRequest(socketId, paymentType, options = {}) {
         try {
             const user = await this.getOrCreateUser(socketId);
-            
+            const reuseExisting = options.reuseExisting !== false;
+
             let amount;
             let description;
             let packageInfo = null;
@@ -493,6 +526,17 @@ class GameModeManager {
                         safeMessage: 'Unsupported payment type requested.'
                     });
             }
+
+            if (reuseExisting) {
+                const existingRow = await this._findReusablePayment(user.id, paymentType);
+                if (existingRow) {
+                    const existing = this._mapPaymentRowToRequest(existingRow, paymentType, packageInfo);
+                    if (existing && !existing.description) {
+                        existing.description = description;
+                    }
+                    return existing;
+                }
+            }
             
             // Create payment request using wallet RPC with correct parameters
             const paymentResult = await this.walletService.createPaymentRequest(
@@ -502,20 +546,28 @@ class GameModeManager {
                 socketId
             );
 
+            const expiresAt = paymentResult.expiresAt || new Date(Date.now() + 30 * 60 * 1000);
+
             // Store payment info in database
-            await this.db.query(`
-                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, created_at)
-                VALUES ($1, $2, $3, $4, $5, 'pending', NOW())
-            `, [user.id, socketId, paymentResult.address, amount, paymentType]);
+            const insertResult = await this.db.query(`
+                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, description, created_at, expires_at)
+                VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7)
+                RETURNING id, expires_at
+            `, [user.id, socketId, paymentResult.address, amount, paymentType, description, expiresAt]);
+
+            const insertedRow = insertResult.rows[0];
             
             return {
-                id: paymentResult.id,
+                id: insertedRow?.id,
                 address: paymentResult.address,
                 amount: amount,
                 amountFormatted: this.formatAtomicHuman(amount, 4),
                 currency: this.cryptoType,
-                expiresAt: paymentResult.expiresAt,
-                package: packageInfo
+                expiresAt: insertedRow?.expires_at || expiresAt,
+                package: packageInfo,
+                paymentType,
+                description,
+                reused: false
             };
             
         } catch (error) {

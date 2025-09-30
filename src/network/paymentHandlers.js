@@ -16,8 +16,8 @@ class PaymentHandlers {
         this.broadcastManager = broadcastManager;
         this.mempoolNotified = new Set();
         this.paymentMonitors = new Map();
-        // Track active monitored address per socket so we can stop on disconnect/expiry
-        this.socketAddressMap = new Map();
+        // Track pending payment metadata per socket (may reuse existing)
+        this.socketPaymentMap = new Map(); // socketId -> { address, paymentId, amount, cryptoType, createdAt }
         // Track paymentIds already confirmed (avoid duplicate emits / queue actions)
         this.confirmedPayments = new Set();
         // Periodic cleanup (confirmed payment IDs older than retention window)
@@ -108,7 +108,8 @@ class PaymentHandlers {
                 return;
             }
 
-            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType);
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, { reuseExisting: true });
+            const reused = !!paymentRequest.reused;
             const formattedAmount = paymentRequest.amountFormatted ?? this.gameModeManager.formatAtomicHuman(amount, 3);
             let qrDataUrl = null;
             try {
@@ -127,21 +128,31 @@ class PaymentHandlers {
                 address: paymentRequest.address,
                 amount: paymentRequest.amount,
                 amountFormatted: formattedAmount,
+                humanAmount: formattedAmount,
                 paymentType,
                 gameMode,
                 cryptoType,
                 description,
                 expiresAt: paymentRequest.expiresAt,
                 qr: qrDataUrl,
-                package: paymentRequest.package
+                package: paymentRequest.package,
+                reused
             });
+
+            const statusHeader = reused
+                ? '🔁 Existing payment request still pending. Use the details below to pay.'
+                : `💳 PAYMENT REQUIRED (${description})`;
+
+            const statusBody = `\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${paymentRequest.address}\n\n⚠️  Send EXACTLY ${formattedAmount} ${cryptoType}.\n🔄 Added to queue once mempool seen.\n⏰ Expires in 30 minutes.`;
 
             this.broadcastManager.sendStatusUpdate(
                 socket.id,
                 'payment',
-                `💳 PAYMENT REQUIRED (${description})\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${paymentRequest.address}\n\n⚠️  Send EXACTLY ${formattedAmount} ${cryptoType}.\n🔄 Added to queue once mempool seen.\n⏰ Expires in 30 minutes.`
+                `${statusHeader}${statusBody}`
             );
 
+            // If we reused an existing request, ensure we refresh monitoring to avoid duplicate watchers
+            this.stopMonitoringForSocket(socket.id);
             this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser);
         } catch (e) {
             const err = normalizeError(e, 'Failed to create payment request');
@@ -151,8 +162,14 @@ class PaymentHandlers {
     }
 
     _monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser) {
-        // Record mapping so we can stop later
-        this.socketAddressMap.set(socket.id, paymentRequest.address);
+        // Record mapping so we can stop later (replace existing entry)
+        this.socketPaymentMap.set(socket.id, {
+            address: paymentRequest.address,
+            paymentId: paymentRequest.id,
+            amount: paymentRequest.amount,
+            cryptoType,
+            createdAt: Date.now()
+        });
 
         this.walletService.startPaymentMonitoring(paymentRequest.address, async (status) => {
             if (status.in_mempool && !status.confirmed) {
@@ -186,15 +203,14 @@ class PaymentHandlers {
 
         // Expire request after 30 minutes if not confirmed
         const expiryTimeout = setTimeout(() => {
-            const address = this.socketAddressMap.get(socket.id);
-            if (address === paymentRequest.address) { // still active and not replaced
+            const mapping = this.socketPaymentMap.get(socket.id);
+            if (mapping && mapping.address === paymentRequest.address) { // still active and not replaced
                 this.stopMonitoringForSocket(socket.id);
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment request expired. Type \'enter\' again to create a new payment request.');
             }
         }, 30 * 60 * 1000);
         // Store & unref so tests / process can exit
         this._expiryTimeouts.set(socket.id, expiryTimeout);
-        if (expiryTimeout.unref) expiryTimeout.unref();
     }
 
     async handlePaymentDetected(socketId, paymentRequest, paymentStatus) {
@@ -212,15 +228,15 @@ class PaymentHandlers {
         } else if (paymentStatus.confirmed) {
             this.broadcastManager.sendStatusUpdate(socketId, 'success', `💰 PAYMENT CONFIRMED IN BLOCK\n\n✅ Added to queue.\n🕒 Starts at block ${nextBlock}.\n📦 Current block: ${currentBlock}`);
         }
-            const newBalRes = await this.db.query('SELECT credits FROM users WHERE id = $1', [currentUser.id]);
-            const remaining = newBalRes.rows[0] ? newBalRes.rows[0].credits : currentUser.credits;
-            if (this.io) {
-                this.io.to(socketId).emit('credits_update', { balance: remaining });
-            }
-            if (!this.confirmedPayments.has(paymentRequest.id)) {
-                this.confirmedPayments.add(paymentRequest.id);
-                this.io.to(socketId).emit('payment_confirmed', { paymentId: paymentRequest.id, status: paymentStatus, nextBlock, currentBlock });
-                this._confirmedTimestamps.set(paymentRequest.id, Date.now());
+        const newBalRes = await this.db.query('SELECT credits FROM users WHERE id = $1', [currentUser.id]);
+        const remaining = newBalRes.rows[0] ? newBalRes.rows[0].credits : currentUser.credits;
+        if (this.io) {
+            this.io.to(socketId).emit('credits_update', { balance: remaining });
+        }
+        if (!this.confirmedPayments.has(paymentRequest.id)) {
+            this.confirmedPayments.add(paymentRequest.id);
+            this.io.to(socketId).emit('payment_confirmed', { paymentId: paymentRequest.id, status: paymentStatus, nextBlock, currentBlock });
+            this._confirmedTimestamps.set(paymentRequest.id, Date.now());
         }
     }
 
@@ -228,10 +244,10 @@ class PaymentHandlers {
      * Stop monitoring (if any) for a given socket (disconnect/expiry)
      */
     stopMonitoringForSocket(socketId) {
-        const address = this.socketAddressMap.get(socketId);
-        if (address) {
-            this.walletService.stopPaymentMonitoring(address);
-            this.socketAddressMap.delete(socketId);
+        const mapping = this.socketPaymentMap.get(socketId);
+        if (mapping) {
+            this.walletService.stopPaymentMonitoring(mapping.address);
+            this.socketPaymentMap.delete(socketId);
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log(`🛑 Stopped monitoring for socket ${socketId}`);
             }
@@ -251,7 +267,7 @@ class PaymentHandlers {
             clearInterval(this._cleanupInterval);
             this._cleanupInterval = null;
         }
-        for (const [socketId] of this.socketAddressMap.entries()) {
+        for (const socketId of Array.from(this.socketPaymentMap.keys())) {
             this.stopMonitoringForSocket(socketId);
         }
         for (const [socketId, to] of this._expiryTimeouts.entries()) {
