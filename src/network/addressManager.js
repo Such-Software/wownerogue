@@ -94,7 +94,7 @@ class AddressManager {
     if (this.gameModeManager) {
       try {
         await this.gameModeManager.setUserPayoutAddress(socketId, pending);
-        this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address saved.');
+        // this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address saved.'); // Removed duplicate
         this.io.to(socketId).emit('address_confirmed', { address: pending, message: 'Payout address saved.' });
       } catch (e) {
         const normalized = normalizeError?.(e, 'Failed to save address') || e;
@@ -105,7 +105,7 @@ class AddressManager {
       }
     } else {
       this.pending.delete(socketId);
-      this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address accepted (session only).');
+      // this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address accepted (session only).'); // Removed duplicate
       this.io.to(socketId).emit('address_confirmed', { address: pending, message: 'Payout address accepted (session only).' });
     }
     if (this.onConfirmed) {

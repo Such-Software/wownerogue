@@ -1,6 +1,6 @@
 /**
  * Broadcast Manager Module
- * Handles all socket.io event broadcasting for the Wowngeon game server
+ * Handles all socket.io event broadcasting for the Wownerogue game server
  * Supports current player-specific events and future spectator broadcasting
  */
 

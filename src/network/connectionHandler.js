@@ -241,7 +241,7 @@ class ConnectionHandler {
         this.io.to(socket.id).emit('blockheight', { blockHeight: currentBlock });
         
         // Send connection status
-        this.broadcastManager.sendStatusUpdate(socket.id, 'connection', 'Connected to Wowngeon server');
+        this.broadcastManager.sendStatusUpdate(socket.id, 'connection', 'Connected to Wownerogue server');
     }
 
     _cleanupExistingMappings(socketId, clientId) {

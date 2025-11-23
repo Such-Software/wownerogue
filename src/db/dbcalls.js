@@ -6,7 +6,7 @@ const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV
 const client = new Client({
    user: 'postgres',
    host: 'localhost',
-   database: 'bitdungeon',
+   database: 'wownerogue',
    password: 'postgres',
    port: 5432,
 });

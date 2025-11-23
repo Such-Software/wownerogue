@@ -74,7 +74,7 @@ class DatabaseManager {
             this.pool = new Pool({
                 host: process.env.DB_HOST || 'localhost',
                 port: process.env.DB_PORT || 5432,
-                database: process.env.DB_NAME || 'wowgue',
+                database: process.env.DB_NAME || 'wownerogue',
                 user: process.env.DB_USER || 'jw',
                 password: process.env.DB_PASSWORD || 'jw',
                 max: 20, // Maximum number of clients in the pool
@@ -96,9 +96,6 @@ class DatabaseManager {
 
             this.connected = true;
             console.log('✅ Database connected successfully');
-            
-            // Run migrations
-            await this.runMigrations();
             
             return true;
         } catch (error) {

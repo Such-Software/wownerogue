@@ -51,7 +51,7 @@ class MoneroPayService {
             
             const response = await axios.post(`${this.endpoint}/receive`, {
                 amount: parseInt(amount),
-                description: description || `Wowgue ${paymentType}`,
+                description: description || `Wownerogue ${paymentType}`,
                 callback_url: callbackUrl
             });
 

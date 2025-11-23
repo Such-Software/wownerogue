@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Wowgue - A Wownero Roguelike</title>
+    <title>Wownerogue - A Wownero Roguelike</title>
     <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     
@@ -13,7 +13,7 @@
         (function(){
             let opts = {};
             try {
-                const existing = localStorage.getItem('wowngeon_token');
+                const existing = localStorage.getItem('wownerogue_token');
                 if (existing) {
                     opts.query = { resumeToken: existing };
                 }
@@ -38,6 +38,7 @@
     
     <!-- Other modules -->
     <script src="js/ui/ui.js"></script>
+    <script src="js/ui/paymentUI.js"></script>
     <script src="js/ui/audioAlerts.js"></script>
     <script src="js/ui/addressModal.js"></script>
     <script src="js/network/socketHandlers.js"></script>
@@ -59,6 +60,9 @@
             <button id="startButton" style="background: #0a5c0a; color: #ff0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; display: none;">
                 🎮 START GAME
             </button>
+            <button id="shopButton" style="background: #004400; color: #0f0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
+                🛒 SHOP
+            </button>
             <button id="animationToggleButton" style="background: #5c5c0a; color: #ff0; border: 2px solid #aa0; padding: 6px 12px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
                 🎬 DISABLE ANIMATION
             </button>
@@ -71,21 +75,21 @@
         </div>
         
         <!-- Payment System UI -->
-        <div id="payment-ui" class="payment-section" style="display: none; background: rgba(0,50,0,0.9); border: 2px solid #0f0; padding: 10px; margin: 5px; color: #0f0;">
+        <div id="payment-ui" class="payment-section" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2000; background: rgba(0,20,0,0.95); border: 2px solid #0f0; padding: 20px; color: #0f0; min-width: 400px; box-shadow: 0 0 20px rgba(0,255,0,0.2);">
             <div class="payment-header">
                 <strong>🎮 Game Mode Selection</strong>
-                <button id="close-payment" style="float: right; background: #500; color: #f00; border: 1px solid #f00; padding: 2px 6px;">✕</button>
+                <button id="close-payment" style="float: right; background: #500; color: #f00; border: 1px solid #f00; padding: 2px 6px; cursor: pointer;">✕</button>
             </div>
             
-            <div class="game-modes" style="margin: 10px 0;">
-                <div class="mode-option" data-mode="FREE" style="padding: 8px; margin: 5px 0; border: 1px solid #555; cursor: pointer;">
+            <div class="game-modes" style="margin: 15px 0;">
+                <div class="mode-option" data-mode="FREE" style="padding: 10px; margin: 5px 0; border: 1px solid #555; cursor: pointer; background: rgba(0,0,0,0.5);">
                     <strong>🆓 FREE PLAY</strong> - No cost, no rewards
                 </div>
-                <div class="mode-option" data-mode="PAID_SINGLE" style="padding: 8px; margin: 5px 0; border: 1px solid #555; cursor: pointer;">
-                    <strong>💰 PAID SINGLE</strong> - 0.005 XMR per game, 2x payout for escape, 3x with treasure
+                <div class="mode-option" data-mode="PAID_SINGLE" style="padding: 10px; margin: 5px 0; border: 1px solid #555; cursor: pointer; background: rgba(0,0,0,0.5);">
+                    <strong>💰 PAID SINGLE</strong> - 0.005 WOW per game, 2x payout for escape, 3x with treasure
                 </div>
-                <div class="mode-option" data-mode="PAID_CREDITS" style="padding: 8px; margin: 5px 0; border: 1px solid #555; cursor: pointer;">
-                    <strong>🎫 CREDITS PACKAGE</strong> - 0.03 XMR for 10 games, no payouts
+                <div class="mode-option" data-mode="PAID_CREDITS" style="padding: 10px; margin: 5px 0; border: 1px solid #555; cursor: pointer; background: rgba(0,0,0,0.5);">
+                    <strong>🎫 CREDITS PACKAGE</strong> - 0.03 WOW for 10 games, no payouts
                 </div>
             </div>
             
@@ -93,15 +97,19 @@
                 <strong>Credits remaining: <span id="credits-count">0</span></strong>
             </div>
             
-            <div id="payment-details" style="display: none; margin: 10px 0;">
-                <div><strong>Payment Required:</strong></div>
-                <div>Amount: <span id="payment-amount">0</span> XMR</div>
-                <div>Address: <input id="payment-address" type="text" readonly style="width: 100%; background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px;"></div>
-                <div style="margin: 10px 0;">
-                    <button id="copy-address" style="background: #050; color: #0f0; border: 1px solid #0f0; padding: 5px 10px;">📋 Copy Address</button>
-                    <button id="check-payment" style="background: #005; color: #0f0; border: 1px solid #0f0; padding: 5px 10px;">🔄 Check Payment</button>
+            <div id="payment-details" style="display: none; margin: 15px 0;">
+                <div style="margin-bottom: 5px;"><strong>Payment Required:</strong></div>
+                <div style="font-size: 1.2em; margin-bottom: 10px;">Amount: <span id="payment-amount" style="color: #ff0;">0</span></div>
+                <div style="margin-bottom: 5px;">Address:</div>
+                <input id="payment-address" type="text" readonly style="width: 100%; background: #000; color: #0f0; border: 1px solid #0f0; padding: 8px; font-family: monospace; margin-bottom: 10px;">
+                <div style="margin: 10px 0; display: flex; gap: 10px;">
+                    <button id="copy-address" style="flex: 1; background: #050; color: #0f0; border: 1px solid #0f0; padding: 8px; cursor: pointer;">📋 Copy Address</button>
+                    <button id="check-payment" style="flex: 1; background: #005; color: #0f0; border: 1px solid #0f0; padding: 8px; cursor: pointer;">🔄 Check Payment</button>
                 </div>
-                <div id="payment-status" style="margin: 10px 0; font-weight: bold;"></div>
+                <div id="payment-status" style="margin: 10px 0; font-weight: bold; text-align: center;"></div>
+                <div style="font-size: 0.8em; color: #aaa; text-align: center; margin-top: 15px; border-top: 1px solid #333; padding-top: 10px;">
+                    ℹ️ You can close this window. The payment information is also available in the sidebar/chat area.
+                </div>
             </div>
         </div>
         

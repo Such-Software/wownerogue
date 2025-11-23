@@ -1,5 +1,5 @@
 {
-  "name": "bitrogue",
+  "name": "wownerogue",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -7,7 +7,10 @@
     "start": "NODE_ENV=production node index.js",
     "dev": "NODE_ENV=development node index.js",
     "debug": "NODE_ENV=debug node index.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "db:create": "node scripts/setup_db.js",
+    "db:drop": "node scripts/setup_db.js drop",
+    "db:reset": "npm run db:drop && npm run db:create"
   },
   "config": {
     "debug": {

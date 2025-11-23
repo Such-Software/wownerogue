@@ -3,7 +3,6 @@ const path = require('path');
 var app = express();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
-var db = require('./db/dbcalls.js');
 
 // Load environment configuration
 require('dotenv').config();
@@ -210,7 +209,7 @@ async function startServer() {
         
         // Start HTTP server
         http.listen(3000, function() {
-            console.log('🚀 Wowngeon server listening on *:3000');
+            console.log('🚀 Wownerogue server listening on *:3000');
             console.log(`🐛 Debug mode: ${debugManager.getDebugStatus().debugMode ? 'ENABLED' : 'DISABLED'}`);
             console.log(`💰 Payment system: ${paymentSystemReady ? 'ENABLED' : 'FREE MODE ONLY'}`);
             const summary = paymentConfigManager.summarize();

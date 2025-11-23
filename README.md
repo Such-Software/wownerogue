@@ -1,6 +1,6 @@
-# Wowngeon
+# Wownerogue
 
-Wowngeon is a browser-based roguelike that synchronizes dungeon runs with Monero (XMR) and Wownero (WOW) block timing. The backend is a Node.js/Express server with Socket.IO for realtime play, optional payment enforcement, and automated payouts.
+Wownerogue is a browser-based roguelike that synchronizes dungeon runs with Monero (XMR) and Wownero (WOW) block timing. The backend is a Node.js/Express server with Socket.IO for realtime play, optional payment enforcement, and automated payouts.
 
 ## Overview
 
@@ -68,7 +68,7 @@ Only the payment routes require wallet RPC access; all other gameplay functions 
 1. Clone and enter the server directory.
    ```bash
    git clone <repository-url>
-   cd wowngeon/src
+   cd wownerogue/src
    ```
 2. Install dependencies.
    ```bash
@@ -79,9 +79,13 @@ Only the payment routes require wallet RPC access; all other gameplay functions 
    cp .env.example .env
    # edit .env to match your database and wallet settings
    ```
-4. Provision the database (migrations run automatically at startup).
+4. Provision the database.
    ```bash
-   createdb wowngeon
+   # Create database and user
+   npm run db:create
+   
+   # (Optional) To reset the database later:
+   # npm run db:reset
    ```
 5. Start the development server.
    ```bash
@@ -152,7 +156,7 @@ RPC_POLL_INTERVAL=2000
 # Database
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=wowgue
+DB_NAME=wownerogue
 DB_USER=jw
 DB_PASSWORD=jw
 

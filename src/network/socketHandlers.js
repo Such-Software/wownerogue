@@ -1,6 +1,6 @@
 /**
  * Socket Event Handlers Module
- * Handles all socket.io event processing for the Wowngeon game server
+ * Handles all socket.io event processing for the Wownerogue game server
  */
 
 const user = require('../db/user');
@@ -312,6 +312,11 @@ class SocketHandlers {
     async handleConnection(socket) {
         const connectionResult = await this.connectionHandler.handleConnection(socket);
         if (!connectionResult) return; // Connection was rejected or failed
+
+        // Send game mode info to client
+        if (this.gameModeManager) {
+            socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
+        }
 
         // Register event handlers
         socket.on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {

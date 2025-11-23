@@ -33,7 +33,7 @@ const UI = {
     // Initialize teletype animation
     initTeletype: function() {
         $('#banner').teletype({
-            text: ["Welcome traveler...", "You have arrived at...", "The Wowngeon"],
+            text: ["Welcome traveler...", "You have arrived at...", "The Dungeon"],
             typeDelay: 100,
             backDelay: 50,
             pause: 1500
@@ -42,9 +42,27 @@ const UI = {
         // After animations are complete, set static text
         setTimeout(function() {
             $('#banner, #bannercursor').fadeOut(500, function() {
-                $('#staticbanner').text("WOWGUE - A Wownero Roguelike").fadeIn(500);
+                const title = UI._gameTitleFull || "WOWNEROGUE - A Wownero Roguelike";
+                $('#staticbanner').text(title).fadeIn(500);
             });
         }, 14000);
+    },
+
+    _gameTitleFull: "WOWNEROGUE - A Wownero Roguelike",
+
+    updateGameTitle: function(cryptoType) {
+        if (cryptoType === 'XMR') {
+            document.title = "XMROGUE - A Monero Roguelike";
+            this._gameTitleFull = "XMROGUE - A Monero Roguelike";
+        } else {
+            document.title = "Wownerogue - A Wownero Roguelike";
+            this._gameTitleFull = "WOWNEROGUE - A Wownero Roguelike";
+        }
+
+        // If the static banner is already visible (animation finished), update it immediately
+        if ($('#staticbanner').is(':visible') && !$('#banner').is(':visible')) {
+            $('#staticbanner').text(this._gameTitleFull);
+        }
     },
 
     // Initialize browser detection

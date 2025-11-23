@@ -1,5 +1,5 @@
 /**
- * Socket event handlers for the Wowngeon game
+ * Socket event handlers for the Wownerogue game
  */
 const SocketHandlers = {
     _initialized: false,
@@ -53,6 +53,7 @@ const SocketHandlers = {
     socket.on('address_confirmed', this.onAddressConfirmed);
     socket.on('address_update_error', this.onAddressUpdateError);
     socket.on('address_prompt', this.onAddressPrompt);
+        socket.on('game_mode_info', this.onGameModeInfo);
         socket.on('payment_created', this.onPaymentCreated);
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
@@ -67,7 +68,7 @@ const SocketHandlers = {
         SocketHandlers._didConnect = true;
         // Include stored session token in a lightweight resume emit (if server did not get it via handshake)
         try {
-            const existing = localStorage.getItem('wowngeon_token');
+            const existing = localStorage.getItem('wownerogue_token');
             if (existing) {
                 // If we later decide to rely solely on query param at io() creation, this is harmless redundancy.
                 socket.io.opts.query = socket.io.opts.query || {};
@@ -84,7 +85,7 @@ const SocketHandlers = {
 
     onSessionToken: function(data) {
         if (data && data.token) {
-            try { localStorage.setItem('wowngeon_token', data.token); } catch(e) {}
+            try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('New session established. Token stored.'));
             UI.scrollChat();
         }
@@ -92,7 +93,7 @@ const SocketHandlers = {
 
     onSessionResumed: function(data) {
         if (data && data.token) {
-            try { localStorage.setItem('wowngeon_token', data.token); } catch(e) {}
+            try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('Session resumed.'));
             UI.scrollChat();
         }
@@ -301,6 +302,18 @@ const SocketHandlers = {
 
     onAddressConfirmed: function(data) {
         console.log('Address confirmed:', data);
+        
+        // Cleanup previous address-related messages to reduce clutter
+        $('#messages li').each(function() {
+            const text = $(this).text();
+            if (text.includes('Paste your payout address') || 
+                text.includes('Detected payout address') || 
+                text.includes('Type \'confirm\' to save') ||
+                text.includes('Address detected. Type confirm')) {
+                $(this).remove();
+            }
+        });
+
         $('#messages').append($('<li class="address-confirmed" style="color: #0f0; white-space: pre-line;">').text(data.message));
         UI.scrollChat();
         if (typeof AddressModal !== 'undefined') {
@@ -323,9 +336,32 @@ const SocketHandlers = {
         }
     },
 
+    onGameModeInfo: function(data) {
+        console.log('Game mode info received:', data);
+        
+        if (typeof UI !== 'undefined' && UI.updateGameTitle) {
+            UI.updateGameTitle(data.cryptoType);
+        }
+
+        if (typeof PaymentUI !== 'undefined') {
+            PaymentUI.updateConfig(data);
+            // Show shop button if payments enabled
+            if (data.paymentsEnabled) {
+                $('#shopButton').show();
+            } else {
+                $('#shopButton').hide();
+            }
+        }
+    },
+
     onPaymentCreated: function(data) {
         console.log('Payment created:', data);
         if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
+        
+        if (typeof PaymentUI !== 'undefined') {
+            PaymentUI.showPaymentRequest(data);
+        }
+
         const parts = [];
         const reusedCopy = data.reused
             ? '🔁 <strong>Pending payment request still active.</strong> Use the same amount and address below.'
