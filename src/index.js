@@ -92,9 +92,120 @@ app.get('/api/payment/status/:paymentId', asyncHandler(async (req, res) => {
   throw restNotImplemented();
 }));
 
-app.get('/api/user/:userId/credits', asyncHandler(async (req, res) => {
-  throw restNotImplemented();
+app.get('/api/user/:socketId/credits', asyncHandler(async (req, res) => {
+  const { socketId } = req.params;
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId parameter is required.'
+    });
+  }
+
+  try {
+    const user = await gameModeManager.getOrCreateUser(socketId);
+    res.json({
+      socketId,
+      credits: user.credits || 0,
+      totalCreditsPurchased: user.total_credits_purchased || 0
+    });
+  } catch (error) {
+    throw new AppError('Failed to retrieve credits', {
+      statusCode: 500,
+      safeMessage: 'Unable to retrieve credit balance.',
+      cause: error
+    });
+  }
 }));
+
+app.get('/api/user/:socketId/mode', asyncHandler(async (req, res) => {
+  const { socketId } = req.params;
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId parameter is required.'
+    });
+  }
+
+  try {
+    const user = await gameModeManager.getOrCreateUser(socketId);
+    res.json({
+      socketId,
+      preferredPaymentMode: user.preferred_payment_mode || 'direct',
+      hasPayoutAddress: !!user.payout_address,
+      paymentsEnabled: gameModeManager.paymentsEnabled,
+      directModeEnabled: gameModeManager.directModeEnabled,
+      creditsModeEnabled: gameModeManager.creditsModeEnabled
+    });
+  } catch (error) {
+    throw new AppError('Failed to retrieve user mode', {
+      statusCode: 500,
+      safeMessage: 'Unable to retrieve user mode.',
+      cause: error
+    });
+  }
+}));
+
+app.post('/api/user/:socketId/address', asyncHandler(async (req, res) => {
+  const { socketId } = req.params;
+  const { address } = req.body || {};
+
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId parameter is required.'
+    });
+  }
+
+  if (!address || typeof address !== 'string') {
+    throw new ValidationError('Missing or invalid address', {
+      safeMessage: 'A valid payout address is required.'
+    });
+  }
+
+  // Basic address validation (XMR/WOW addresses)
+  const ADDRESS_REGEX = /((?:4|8)[1-9A-HJ-NP-Za-km-z]{90,110}|(?:Wo|WO|ww|WW)[0-9A-Za-z]{88,112}|W[0-9A-Za-z]{90,112})/;
+  if (!ADDRESS_REGEX.test(address.trim())) {
+    throw new ValidationError('Invalid address format', {
+      safeMessage: 'The provided address does not appear to be a valid XMR/WOW address.'
+    });
+  }
+
+  try {
+    const success = await gameModeManager.setUserPayoutAddress(socketId, address.trim());
+    if (!success) {
+      throw new AppError('Failed to save address', {
+        statusCode: 500,
+        safeMessage: 'Unable to save payout address.'
+      });
+    }
+    res.json({
+      success: true,
+      message: 'Payout address saved successfully.'
+    });
+  } catch (error) {
+    if (error instanceof AppError || error instanceof ValidationError) {
+      throw error;
+    }
+    throw new AppError('Failed to save address', {
+      statusCode: 500,
+      safeMessage: 'Unable to save payout address.',
+      cause: error
+    });
+  }
+}));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memoryUsage: process.memoryUsage(),
+    gameMode: gameModeManager.gameMode,
+    paymentsEnabled: gameModeManager.paymentsEnabled,
+    walletHealthy: walletRPCService.isHealthy,
+    activeGames: activeGames.size,
+    debugMode: debugManager.getDebugStatus().debugMode
+  };
+  res.json(health);
+});
 
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();

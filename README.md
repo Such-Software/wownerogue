@@ -44,15 +44,44 @@ If the wallet RPC service or configuration is unavailable the backend automatica
 
 ## API Surface
 
-- `POST /api/payment/create` – Request a payment for the active mode.
-- `GET /api/payment/status/:paymentId` – Poll payment status.
-- `POST /api/payment/callback` – Wallet RPC webhook to confirm payments.
-- `GET /api/game/modes` – Current game modes and pricing.
-- `GET /api/user/credits/:userId` – Remaining credit balance.
-- `GET /api/user/mode/:userId` – User game mode.
-- `POST /api/user/address/:userId` – Store payout address after confirmation.
+### Health & Status
 
-Only the payment routes require wallet RPC access; all other gameplay functions work without it.
+- `GET /health` – Server health check with uptime, memory usage, game counts, and wallet status.
+- `GET /api/game-modes` – Current game modes and pricing configuration.
+
+### User Endpoints
+
+- `GET /api/user/:socketId/credits` – Remaining credit balance for a user.
+- `GET /api/user/:socketId/mode` – User payment mode preferences and enabled features.
+- `POST /api/user/:socketId/address` – Store payout address (body: `{ "address": "<XMR/WOW address>" }`).
+
+### Payment Endpoints (Socket.IO Preferred)
+
+The following REST endpoints exist but return `501 Not Implemented`. Payment flows are handled via Socket.IO events for real-time feedback:
+
+- `POST /api/payment/create` – Use socket event `request_payment` instead.
+- `GET /api/payment/status/:paymentId` – Use socket event `payment_status` instead.
+- `POST /api/payment/callback` – Reserved for future webhook integration.
+
+### Socket.IO Events (Primary Payment Flow)
+
+| Client → Server | Description |
+|-----------------|-------------|
+| `request_payment` | Request a payment address for game entry |
+| `confirm_address` | Confirm a detected payout address |
+| `cancel_address` | Cancel pending address confirmation |
+| `join_queue` | Join the game queue after payment |
+
+| Server → Client | Description |
+|-----------------|-------------|
+| `payment_created` | Payment address and QR code ready |
+| `payment_confirmed` | Payment received and confirmed |
+| `address_detected` | Payout address detected in chat |
+| `address_confirmed` | Payout address saved |
+| `game_start` | Game session beginning |
+| `credits_update` | Credit balance changed |
+
+All gameplay functions work without wallet RPC access; only paid modes require it.
 
 ## Installation
 
