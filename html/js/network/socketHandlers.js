@@ -343,6 +343,13 @@ const SocketHandlers = {
             UI.updateGameTitle(data.cryptoType);
         }
 
+        // Display testnet/stagenet warning if applicable
+        if (data.testnetWarning) {
+            SocketHandlers._showNetworkWarning(data.testnetWarning, data.network);
+        } else {
+            SocketHandlers._hideNetworkWarning();
+        }
+
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.updateConfig(data);
             // Show shop button if payments enabled
@@ -352,6 +359,26 @@ const SocketHandlers = {
                 $('#shopButton').hide();
             }
         }
+    },
+
+    _showNetworkWarning: function(message, network) {
+        let $warning = $('#networkWarning');
+        if (!$warning.length) {
+            $warning = $('<div id="networkWarning"></div>');
+            // Insert at top of container
+            $('.container').prepend($warning);
+        }
+        const networkUpper = (network || 'stagenet').toUpperCase();
+        $warning.html(`
+            <div style="background:#ff6600; color:#000; padding:10px; text-align:center; font-weight:bold; font-size:14px; border-bottom:2px solid #ff0000;">
+                ⚠️ ${networkUpper} MODE ⚠️<br>
+                <span style="font-size:12px; font-weight:normal;">${message}</span>
+            </div>
+        `).show();
+    },
+
+    _hideNetworkWarning: function() {
+        $('#networkWarning').hide();
     },
 
     onPaymentCreated: function(data) {

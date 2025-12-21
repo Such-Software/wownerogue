@@ -20,17 +20,34 @@ class Monster {
         return this.x === x && this.y === y;
     }
 
-    // Simple AI to move toward player
+    // Simple AI to move toward player (or randomly if player is null)
     moveTowardPlayer(player, dungeon) {
-        if (!player || !dungeon || !dungeon.map) return;
+        if (!dungeon || !dungeon.map) return;
 
-        const dx = Math.sign(player.x - this.x);
-        const dy = Math.sign(player.y - this.y);
-        
         // Check if a tile is passable (floor)
         const isPassable = (tile) => {
             return tile === "'1" || tile === "'2" || tile === 0; // Support both new and legacy floor types
         };
+
+        // If no player target, move randomly
+        if (!player) {
+            const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
+            const shuffledDirs = ROT.RNG.shuffle(dirs.slice());
+            
+            for (const [dx, dy] of shuffledDirs) {
+                const nx = this.x + dx;
+                const ny = this.y + dy;
+                if (dungeon.map[ny] && isPassable(dungeon.map[ny][nx])) {
+                    this.x = nx;
+                    this.y = ny;
+                    return;
+                }
+            }
+            return;
+        }
+
+        const dx = Math.sign(player.x - this.x);
+        const dy = Math.sign(player.y - this.y);
         
         // Try horizontal move first
         if (dx !== 0) {

@@ -7,8 +7,34 @@ Wownerogue is a browser-based roguelike that synchronizes dungeon runs with Mone
 - Multiplayer dungeon crawler rendered in the browser
 - Three game modes with configurable pricing and payouts
 - Optional crypto payments with automatic subaddress management
+- **Provably fair** gaming with pre-game hash commitments
+- Configurable difficulty with house edge tuning
 - Centralized error handling, rate limiting, and memory management
 - Jest coverage for wallet RPC interactions, payment flow, security checks, and game helpers
+
+## Difficulty System
+
+Dungeon difficulty is configurable via presets that control dungeon size, monster behavior, and placement:
+
+| Preset | Dungeon Size | Monster Aggression | Target House Win Rate |
+|--------|--------------|--------------------|-----------------------|
+| `easy` | 30×15 | Low (60%) | 30% |
+| `normal` | 45×22 | Medium (80%) | 55% |
+| `hard` | 55×28 | High (90%) | 65% |
+| `casino` | 60×30 | Very High (95%) | 70% |
+
+Set `DIFFICULTY_PRESET=casino` in `.env` for paid games. The default automatically selects `casino` for paid modes and `normal` for free play.
+
+## Provably Fair Gaming
+
+Every game uses cryptographic verification to prove fairness:
+
+1. **Pre-game**: Server generates a random seed and shows its SHA-256 hash to the player
+2. **During game**: The seed deterministically generates dungeon layout, positions, etc.
+3. **Post-game**: Server reveals the seed so players can verify hash(seed) = pre-game commitment
+4. **Verification**: Players can regenerate the dungeon using the seed to confirm fairness
+
+This prevents the server from generating unfair dungeons or changing outcomes after seeing payments.
 
 ## Game Modes
 
@@ -128,6 +154,13 @@ The default Socket.IO client served from `/html` listens on port 3000. Configure
 Key environment variables (see `.env.example` for the full list):
 
 ```bash
+# Network selection (Monero only - Wownero only has mainnet)
+MONERO_NETWORK=mainnet        # mainnet, stagenet, or testnet
+# ⚠️ STAGENET: Stagenet XMR has no value! UI shows warning when not mainnet.
+
+# Difficulty preset
+DIFFICULTY_PRESET=casino      # easy, normal, hard, casino (auto-selects for paid modes)
+
 # Unified payments
 PAYMENTS_ENABLED=true
 PAYMENT_MODES=direct,credits

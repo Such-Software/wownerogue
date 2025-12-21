@@ -25,6 +25,12 @@ class GameModeManager {
 
         this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
         this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
+        
+        // Network configuration (mainnet/stagenet/testnet) - only applies to Monero
+        // Wownero only has mainnet, so this is ignored for WOW
+        this.network = (process.env.MONERO_NETWORK || 'mainnet').toLowerCase();
+        this.isTestNetwork = this.network === 'stagenet' || this.network === 'testnet';
+        
         this.singleGamePrice = DEFAULT_SINGLE_GAME_PRICE;
         this.creditsPackagePrice = DEFAULT_CREDITS_PACKAGE_PRICE;
         this.creditsPayoutEnabled = false;
@@ -979,15 +985,27 @@ class GameModeManager {
      * Get game mode info for frontend
      */
     getGameModeInfo() {
+        // Determine if we should show a testnet warning
+        // Only for XMR on stagenet/testnet - WOW only has mainnet
+        const showTestnetWarning = this.cryptoType === 'XMR' && this.isTestNetwork;
+        const testnetWarning = showTestnetWarning 
+            ? `⚠️ STAGENET MODE: This server is using ${this.network} XMR. Do NOT send real mainnet XMR! Only ${this.network} XMR will be accepted.`
+            : null;
+        
         return {
             mode: this.gameMode,
             cryptoType: this.cryptoType,
+            network: this.network,
+            isTestNetwork: this.isTestNetwork,
+            testnetWarning: testnetWarning,
             singleGamePrice: this.singleGamePrice,
             creditsPackagePrice: this.creditsPackagePrice,
             creditsPerGame: this.creditsPerGameCost,
             paymentsEnabled: this.paymentsEnabled,
             directModeEnabled: this.directModeEnabled,
             creditsModeEnabled: this.creditsModeEnabled,
+            directPayoutsEnabled: this.directPayoutMultipliers.escape > 0,
+            creditsPayoutsEnabled: this.creditsPayoutEnabled,
             features: {
                 paymentRequired: this.paymentsEnabled,
                 creditsSystem: this.creditsModeEnabled,

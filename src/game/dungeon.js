@@ -1,4 +1,5 @@
 const ROT = require('./rot.js');
+const { getDifficultyConfig, getMonsterSpawnRoomIndex, getTreasureRoomIndex } = require('./difficultyConfig');
 
 // Environment-based console logging control
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
@@ -6,20 +7,21 @@ const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV
 // ========================================
 // DUNGEON CONFIGURATION SECTION
 // ========================================
-// Edit these values to customize dungeon generation
+// These values are now overridden by difficultyConfig.js based on game mode
+// Edit difficultyConfig.js presets to customize dungeon generation
 const DUNGEON_CONFIGS = {
-    // Default dungeon dimensions
-    DEFAULT_WIDTH: 40,
-    DEFAULT_HEIGHT: 20,
+    // Default dungeon dimensions (overridden by difficulty preset)
+    DEFAULT_WIDTH: 45,
+    DEFAULT_HEIGHT: 22,
     
     // Legacy smaller dungeon size (for compatibility)
     LEGACY_WIDTH: 25,
     LEGACY_HEIGHT: 19,
     
-    // Dungeon generation settings
-    ROOM_WIDTH_RANGE: [3, 9],
-    ROOM_HEIGHT_RANGE: [3, 7],
-    CORRIDOR_LENGTH_RANGE: [2, 6],
+    // Dungeon generation settings (overridden by difficulty preset)
+    ROOM_WIDTH_RANGE: [3, 7],
+    ROOM_HEIGHT_RANGE: [3, 6],
+    CORRIDOR_LENGTH_RANGE: [3, 7],
     DUG_PERCENTAGE: 0.2,
     
     // Lighting and appearance
@@ -38,9 +40,22 @@ const DUNGEON_CONFIGS = {
  * Dungeon generation utilities
  */
 class DungeonGenerator {
-    // Get the configuration object (allows external access)
-    static getConfig() {
-        return { ...DUNGEON_CONFIGS };
+    // Get the configuration object with difficulty settings applied
+    static getConfig(cryptoType = null) {
+        const difficulty = getDifficultyConfig(cryptoType || process.env.CRYPTO_TYPE || 'WOW');
+        
+        return { 
+            ...DUNGEON_CONFIGS,
+            // Override with difficulty settings
+            DEFAULT_WIDTH: difficulty.dungeon.width,
+            DEFAULT_HEIGHT: difficulty.dungeon.height,
+            ROOM_WIDTH_RANGE: difficulty.dungeon.roomWidthRange,
+            ROOM_HEIGHT_RANGE: difficulty.dungeon.roomHeightRange,
+            CORRIDOR_LENGTH_RANGE: difficulty.dungeon.corridorLengthRange,
+            DUG_PERCENTAGE: difficulty.dungeon.dugPercentage,
+            // Include difficulty info for game.js
+            difficulty: difficulty
+        };
     }
     
     static generate(width, height, options = {}) {
