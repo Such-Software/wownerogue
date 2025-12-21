@@ -222,6 +222,32 @@ BLOCK_SOURCE=daemon
 2. Regex detection flags the message and issues a warning.
 3. Player confirms; the address is persisted for payouts.
 
+## Session Persistence
+
+Player sessions are tied to an anonymous token stored in the browser's localStorage. This token persists:
+
+- ✅ **Across page refreshes** – Reconnecting reloads your credits and payout address.
+- ✅ **After closing the browser** – The token survives normal browser sessions.
+- ✅ **Server restarts** – Session data is stored in PostgreSQL, not memory.
+
+Sessions are **lost** when:
+
+- ⚠️ Clearing cookies or localStorage
+- ⚠️ Using private/incognito browsing mode (localStorage may be disabled or ephemeral)
+- ⚠️ Switching browsers or devices
+
+**Important notes for players:**
+
+1. Your payout address and credit balance are tied to your session token.
+2. If localStorage is unavailable (private browsing), a warning appears next to the "Manage Payout Address" button.
+3. There is no account system—your session token *is* your identity. Treat it carefully.
+
+**For deployment:**
+
+- Ensure your reverse proxy preserves WebSocket connections for token handshake.
+- The `wownerogue_token` key in localStorage contains the resume token.
+- Session data (credits, address) is stored in the `users` table with the token in `anon_token`.
+
 ## Testing
 
 Run the Jest suite from `src`:

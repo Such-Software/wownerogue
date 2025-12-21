@@ -153,7 +153,7 @@ class PaymentHandlers {
 
             // If we reused an existing request, ensure we refresh monitoring to avoid duplicate watchers
             this.stopMonitoringForSocket(socket.id);
-            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser);
+            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser, paymentType);
         } catch (e) {
             const err = normalizeError(e, 'Failed to create payment request');
             console.error('Error creating payment request:', err.message);
@@ -161,13 +161,15 @@ class PaymentHandlers {
         }
     }
 
-    _monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser) {
+    _monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser, paymentType = 'single_game') {
         // Record mapping so we can stop later (replace existing entry)
         this.socketPaymentMap.set(socket.id, {
             address: paymentRequest.address,
             paymentId: paymentRequest.id,
             amount: paymentRequest.amount,
             cryptoType,
+            paymentType,
+            package: paymentRequest.package,
             createdAt: Date.now()
         });
 
@@ -184,15 +186,47 @@ class PaymentHandlers {
             } else if (status.confirmed) {
                 if (!this.confirmedPayments.has(paymentRequest.id)) {
                     this.confirmedPayments.add(paymentRequest.id);
-                    socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
                     this._confirmedTimestamps.set(paymentRequest.id, Date.now());
-                    this.queueManager.markConfirmed(socket.id);
-                    // Attempt immediate game start so user doesn't wait another full block
-                    const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
-                    if (currentBlock !== null) {
-                        const started = this.queueManager.startGameImmediately(socket.id, currentBlock);
-                        if (!started && this.debugManager.CONSOLE_LOGGING) {
-                            console.log(`[PaymentHandlers] Immediate start skipped (not queued or still unconfirmed) for ${socket.id}`);
+                    
+                    // Handle credits_package: add credits to user
+                    const mapping = this.socketPaymentMap.get(socket.id);
+                    if (mapping && mapping.paymentType === 'credits_package' && this.gameModeManager) {
+                        try {
+                            const creditsResult = await this.gameModeManager.processCreditsPackageConfirmation(
+                                socket.id,
+                                paymentRequest.id,
+                                mapping.package
+                            );
+                            if (creditsResult.success) {
+                                socket.emit('credits_update', { balance: creditsResult.newBalance });
+                                socket.emit('payment_confirmed', { 
+                                    paymentId: paymentRequest.id, 
+                                    message: `Payment confirmed! Added ${creditsResult.creditsAdded} credits. New balance: ${creditsResult.newBalance}`,
+                                    creditsAdded: creditsResult.creditsAdded,
+                                    newBalance: creditsResult.newBalance,
+                                    confirmations: status.confirmations 
+                                });
+                                this.broadcastManager.sendStatusUpdate(socket.id, 'success', 
+                                    `✅ CREDITS PURCHASED!\n\n+${creditsResult.creditsAdded} credits added.\nNew balance: ${creditsResult.newBalance} credits.\n\nType 'enter' to start a game!`);
+                            } else {
+                                console.error('Failed to process credits package:', creditsResult.reason);
+                                socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed but failed to add credits. Contact support.', confirmations: status.confirmations });
+                            }
+                        } catch (e) {
+                            console.error('Error processing credits package confirmation:', e.message);
+                            socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
+                        }
+                    } else {
+                        // single_game payment - standard flow
+                        socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
+                        this.queueManager.markConfirmed(socket.id);
+                        // Attempt immediate game start so user doesn't wait another full block
+                        const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
+                        if (currentBlock !== null) {
+                            const started = this.queueManager.startGameImmediately(socket.id, currentBlock);
+                            if (!started && this.debugManager.CONSOLE_LOGGING) {
+                                console.log(`[PaymentHandlers] Immediate start skipped (not queued or still unconfirmed) for ${socket.id}`);
+                            }
                         }
                     }
                 }

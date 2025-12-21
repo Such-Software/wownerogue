@@ -12,13 +12,28 @@
     <script>
         (function(){
             let opts = {};
+            window._localStorageAvailable = false;
             try {
+                // Test localStorage availability (fails in private browsing on some browsers)
+                localStorage.setItem('_test', '1');
+                localStorage.removeItem('_test');
+                window._localStorageAvailable = true;
                 const existing = localStorage.getItem('wownerogue_token');
                 if (existing) {
                     opts.query = { resumeToken: existing };
                 }
-            } catch(_) {}
+            } catch(_) {
+                window._localStorageAvailable = false;
+                console.warn('localStorage unavailable - session will not persist');
+            }
             window.socket = io(opts);
+            // Show warning if localStorage unavailable (after DOM ready)
+            document.addEventListener('DOMContentLoaded', function() {
+                if (!window._localStorageAvailable) {
+                    const warn = document.getElementById('sessionWarning');
+                    if (warn) warn.style.display = 'inline';
+                }
+            });
         })();
     </script>
     
@@ -70,7 +85,8 @@
                 <label style="cursor:pointer; display:flex; align-items:center; gap:4px;">
                     <input type="checkbox" id="audioAlertsToggle" style="cursor:pointer;"> Audio Alerts
                 </label>
-                <button id="manageAddressButton" style="margin-left:auto; background:#053655; color:#0ff; border:1px solid #0ff; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;">⚙️ Manage Payout Address</button>
+                <button id="manageAddressButton" style="margin-left:auto; background:#053655; color:#0ff; border:1px solid #0ff; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;" title="Your payout address and credits are tied to a browser session token. Clearing cookies/localStorage or using incognito mode will lose your session.">⚙️ Manage Payout Address</button>
+                <span id="sessionWarning" style="display:none; color:#f59e0b; font-size:10px; margin-left:6px;" title="Private browsing or localStorage blocked - your session won't persist">⚠️ Session not saved</span>
             </div>
         </div>
         
@@ -149,6 +165,7 @@
             <button type="button" class="modal-close" id="addressModalClose" aria-label="Close">✕</button>
             <h2 id="addressModalTitle">Manage Payout Address</h2>
             <p class="modal-description">Enter your Wownero (WOW) or Monero (XMR) address below. This will be used for payouts when you escape.</p>
+            <p class="modal-description" style="font-size:11px; color:#888; margin-top:8px; padding:6px; background:rgba(255,200,0,0.1); border-radius:4px;">💡 <strong>Session Info:</strong> Your address and credits are tied to a browser session token stored locally. They will persist across page refreshes but will be lost if you clear cookies, use incognito mode, or switch browsers.</p>
             <form id="addressModalForm">
                 <label for="addressModalInput" class="modal-label">Payout Address</label>
                 <textarea id="addressModalInput" autocomplete="off" spellcheck="false" rows="3" placeholder="Paste your payout address here"></textarea>

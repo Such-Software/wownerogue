@@ -200,12 +200,35 @@ app.get('/health', (req, res) => {
     memoryUsage: process.memoryUsage(),
     gameMode: gameModeManager.gameMode,
     paymentsEnabled: gameModeManager.paymentsEnabled,
+    directModeEnabled: gameModeManager.directModeEnabled,
+    creditsModeEnabled: gameModeManager.creditsModeEnabled,
     walletHealthy: walletRPCService.isHealthy,
     activeGames: activeGames.size,
     debugMode: debugManager.getDebugStatus().debugMode
   };
   res.json(health);
 });
+
+// Get payment options for a user (mixed mode support)
+app.get('/api/user/:socketId/payment-options', asyncHandler(async (req, res) => {
+  const { socketId } = req.params;
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId parameter is required.'
+    });
+  }
+
+  try {
+    const options = await gameModeManager.getPaymentOptionsForUser(socketId);
+    res.json(options);
+  } catch (error) {
+    throw new AppError('Failed to retrieve payment options', {
+      statusCode: 500,
+      safeMessage: 'Unable to retrieve payment options.',
+      cause: error
+    });
+  }
+}));
 
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();

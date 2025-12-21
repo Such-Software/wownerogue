@@ -106,24 +106,23 @@ class MoneroPayService {
     }
 
     /**
-     * Process payment confirmation callback
+     * Process payment callback (when payment confirmed)
      */
-    async processPaymentCallback(socketId, paymentData) {
+    async processPaymentCallback(paymentData) {
         try {
-            const payment = await this.db.query(`
+            // Find the payment record
+            const paymentResult = await this.db.query(`
                 SELECT * FROM payments 
-                WHERE socket_id = $1 AND status = 'pending'
-                ORDER BY created_at DESC 
-                LIMIT 1
-            `, [socketId]);
+                WHERE subaddress = $1 AND status = 'pending'
+            `, [paymentData.address]);
 
-            if (payment.rows.length === 0) {
-                console.warn(`⚠️ No pending payment found for socket ${socketId}`);
+            if (paymentResult.rows.length === 0) {
+                console.warn('⚠️ Payment callback for unknown address:', paymentData.address);
                 return false;
             }
 
-            const paymentRecord = payment.rows[0];
-            
+            const paymentRecord = paymentResult.rows[0];
+
             // Update payment status
             await this.db.query(`
                 UPDATE payments 
@@ -144,16 +143,23 @@ class MoneroPayService {
 
             // Handle different payment types
             if (paymentRecord.payment_type === 'credits_package') {
-                // Add 10 credits to user
+                // Parse credits from description or use default
+                // Description format: "Wowngeon X credits package (WOW)"
+                let creditsToAdd = 10; // Default fallback
+                const descMatch = paymentRecord.description?.match(/(\d+)\s*credits/i);
+                if (descMatch) {
+                    creditsToAdd = parseInt(descMatch[1], 10) || 10;
+                }
+                
                 await this.db.query(`
                     UPDATE users 
-                    SET credits = credits + 10,
-                        total_amount_paid = total_amount_paid + $1,
+                    SET credits = credits + $1,
+                        total_amount_paid = total_amount_paid + $2,
                         updated_at = NOW()
-                    WHERE id = $2
-                `, [paymentData.amount, paymentRecord.user_id]);
+                    WHERE id = $3
+                `, [creditsToAdd, paymentData.amount, paymentRecord.user_id]);
 
-                console.log(`💰 Added 10 credits to user ${paymentRecord.user_id}`);
+                console.log(`💰 Added ${creditsToAdd} credits to user ${paymentRecord.user_id}`);
             }
 
             console.log(`✅ Payment confirmed: ${paymentData.tx_hash} for ${paymentData.amount} atomic units`);

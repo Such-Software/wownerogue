@@ -239,6 +239,79 @@ class GameModeManager {
         return { amount, multiplier, base };
     }
 
+    /**
+     * Process a confirmed credits package payment - add credits to user
+     * @param {string} socketId - Socket ID of the user
+     * @param {number} paymentId - Payment record ID
+     * @param {object} packageInfo - Package info (credits, bonus, etc.)
+     * @returns {object} Result with success, creditsAdded, newBalance
+     */
+    async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null) {
+        try {
+            const user = await this.getOrCreateUser(socketId);
+            
+            // Determine credits to add from package or fallback
+            let creditsToAdd = 10; // Default fallback
+            if (packageInfo && packageInfo.credits) {
+                creditsToAdd = Number(packageInfo.credits) + (Number(packageInfo.bonus) || 0);
+            } else {
+                // Try to get from payment record description
+                const paymentResult = await this.db.query(`
+                    SELECT description FROM payments WHERE id = $1
+                `, [paymentId]);
+                if (paymentResult.rows.length > 0) {
+                    const desc = paymentResult.rows[0].description || '';
+                    const match = desc.match(/(\d+)\s*credits?/i);
+                    if (match) {
+                        creditsToAdd = parseInt(match[1], 10) || 10;
+                    }
+                }
+            }
+
+            // Update user credits
+            const updateResult = await this.db.query(`
+                UPDATE users 
+                SET credits = credits + $1,
+                    total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1,
+                    updated_at = NOW()
+                WHERE id = $2
+                RETURNING credits
+            `, [creditsToAdd, user.id]);
+
+            const newBalance = updateResult.rows[0]?.credits ?? (user.credits + creditsToAdd);
+
+            // Mark payment as processed
+            await this.db.query(`
+                UPDATE payments 
+                SET status = 'confirmed',
+                    credits_purchased = $1,
+                    confirmed_at = NOW()
+                WHERE id = $2
+            `, [creditsToAdd, paymentId]);
+
+            // Record credit transaction
+            await this.db.query(`
+                INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                VALUES ($1, $2, 'package_purchase', $3, 'purchase')
+            `, [user.id, creditsToAdd, newBalance]);
+
+            console.log(`💰 Credits package confirmed: +${creditsToAdd} credits for user ${user.id}, new balance: ${newBalance}`);
+
+            return {
+                success: true,
+                creditsAdded: creditsToAdd,
+                newBalance: newBalance
+            };
+        } catch (error) {
+            const normalized = normalizeError(error, 'Failed to process credits package confirmation');
+            console.error('❌ Error processing credits package:', normalized.message);
+            return {
+                success: false,
+                reason: normalized.safeMessage
+            };
+        }
+    }
+
     async _findReusablePayment(userId, paymentType) {
         if (!userId) return null;
         const result = await this.db.query(`
@@ -286,22 +359,192 @@ class GameModeManager {
     }
 
     /**
+     * Get effective game mode for a specific user, considering:
+     * - Whether both modes are enabled (mixed mode)
+     * - User's credit balance
+     * - preferCreditsFirst setting
+     * @param {object} user - User object with credits field
+     * @returns {object} { mode, canUseCredits, canUseDirect, hasCredits, creditsBalance }
+     */
+    getEffectiveModeForUser(user) {
+        const hasCredits = (user?.credits || 0) >= this.creditsPerGameCost;
+        const bothModesEnabled = this.directModeEnabled && this.creditsModeEnabled;
+        
+        // Determine available options
+        const canUseCredits = this.creditsModeEnabled && hasCredits;
+        const canUseDirect = this.directModeEnabled;
+        
+        // Determine effective mode
+        let effectiveMode;
+        if (!this.paymentsEnabled) {
+            effectiveMode = 'FREE';
+        } else if (bothModesEnabled) {
+            // Mixed mode: prefer based on config and availability
+            if (this.preferCreditsFirst && hasCredits) {
+                effectiveMode = 'PAID_CREDITS';
+            } else if (hasCredits) {
+                effectiveMode = 'PAID_CREDITS'; // Has credits, can use them
+            } else {
+                effectiveMode = 'PAID_SINGLE'; // No credits, must pay
+            }
+        } else if (this.creditsModeEnabled) {
+            effectiveMode = 'PAID_CREDITS';
+        } else if (this.directModeEnabled) {
+            effectiveMode = 'PAID_SINGLE';
+        } else {
+            effectiveMode = 'FREE';
+        }
+        
+        return {
+            mode: effectiveMode,
+            canUseCredits,
+            canUseDirect,
+            hasCredits,
+            creditsBalance: user?.credits || 0,
+            creditsRequired: this.creditsPerGameCost,
+            bothModesEnabled,
+            preferCreditsFirst: this.preferCreditsFirst,
+            creditsPayoutsEnabled: this.creditsPayoutEnabled,
+            directPayoutsEnabled: this.directPayoutMultipliers.escape > 0
+        };
+    }
+
+    /**
+     * Get available payment options for a user
+     * @param {string} socketId - Socket ID
+     * @returns {object} Available options for the user
+     */
+    async getPaymentOptionsForUser(socketId) {
+        try {
+            const user = await this.getOrCreateUser(socketId);
+            const effective = this.getEffectiveModeForUser(user);
+            
+            const options = [];
+            
+            if (effective.canUseCredits) {
+                options.push({
+                    type: 'use_credit',
+                    label: `Use 1 Credit (${effective.creditsBalance} available)`,
+                    mode: 'PAID_CREDITS',
+                    cost: 0,
+                    costDisplay: '1 credit',
+                    payoutEligible: effective.creditsPayoutsEnabled,
+                    recommended: effective.preferCreditsFirst
+                });
+            }
+            
+            if (effective.canUseDirect) {
+                options.push({
+                    type: 'pay_direct',
+                    label: `Pay ${this.formatAtomicHuman(this.singleGamePrice, 2)} ${this.cryptoType}`,
+                    mode: 'PAID_SINGLE',
+                    cost: this.singleGamePrice,
+                    costDisplay: `${this.formatAtomicHuman(this.singleGamePrice, 2)} ${this.cryptoType}`,
+                    payoutEligible: effective.directPayoutsEnabled,
+                    recommended: !effective.preferCreditsFirst || !effective.hasCredits
+                });
+            }
+            
+            if (this.creditsModeEnabled) {
+                const pkg = this.getPrimaryCreditPackage();
+                options.push({
+                    type: 'buy_credits',
+                    label: `Buy ${pkg.credits} Credits`,
+                    mode: 'PURCHASE',
+                    cost: Number(pkg.price),
+                    costDisplay: `${this.formatAtomicHuman(pkg.price, 2)} ${this.cryptoType}`,
+                    credits: pkg.credits + (pkg.bonus || 0),
+                    payoutEligible: false,
+                    recommended: false
+                });
+            }
+            
+            return {
+                user: {
+                    credits: effective.creditsBalance,
+                    hasPayoutAddress: !!user.payout_address
+                },
+                effective,
+                options
+            };
+        } catch (error) {
+            const normalized = normalizeError(error, 'Failed to get payment options');
+            console.error('❌ Error getting payment options:', normalized.message);
+            return {
+                user: { credits: 0, hasPayoutAddress: false },
+                effective: { mode: 'FREE' },
+                options: []
+            };
+        }
+    }
+
+    /**
      * Check if user can start a game
      */
     async canUserStartGame(socketId) {
         try {
             const user = await this.getOrCreateUser(socketId);
+            const effective = this.getEffectiveModeForUser(user);
             
-            switch (this.gameMode) {
-                case 'FREE':
-                    return { allowed: true, reason: 'Free mode' };
-                    
+            // FREE mode or payments disabled
+            if (effective.mode === 'FREE') {
+                return { allowed: true, reason: 'Free mode' };
+            }
+            
+            // Mixed mode: check if user can play with credits OR has confirmed payment
+            if (effective.bothModesEnabled) {
+                // Option 1: User has credits
+                if (effective.hasCredits) {
+                    return {
+                        allowed: true,
+                        reason: `${effective.creditsBalance} credits available`,
+                        useCredits: true,
+                        creditsRequired: this.creditsPerGameCost,
+                        balance: effective.creditsBalance,
+                        effectiveMode: 'PAID_CREDITS'
+                    };
+                }
+                
+                // Option 2: User has confirmed single_game payment
+                const pendingPayment = await this.db.query(`
+                    SELECT * FROM payments 
+                    WHERE socket_id = $1 AND status = 'confirmed' 
+                    AND payment_type = 'single_game'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM games 
+                        WHERE games.payment_id = payments.id
+                    )
+                    ORDER BY confirmed_at DESC 
+                    LIMIT 1
+                `, [socketId]);
+                
+                if (pendingPayment.rows.length > 0) {
+                    return { 
+                        allowed: true, 
+                        reason: 'Payment confirmed',
+                        paymentId: pendingPayment.rows[0].id,
+                        effectiveMode: 'PAID_SINGLE'
+                    };
+                }
+                
+                // Neither credits nor payment available
+                return { 
+                    allowed: false, 
+                    reason: 'Payment or credits required',
+                    action: 'choose_payment',
+                    options: await this.getPaymentOptionsForUser(socketId)
+                };
+            }
+            
+            // Single mode logic (backwards compatible)
+            switch (effective.mode) {
                 case 'PAID_CREDITS':
-                    if (user.credits >= this.creditsPerGameCost) {
+                    if (effective.hasCredits) {
                         return {
                             allowed: true,
-                            reason: `${user.credits} credits remaining`,
-                            creditsRequired: this.creditsPerGameCost
+                            reason: `${effective.creditsBalance} credits remaining`,
+                            creditsRequired: this.creditsPerGameCost,
+                            effectiveMode: 'PAID_CREDITS'
                         };
                     }
                     return { 
@@ -309,12 +552,11 @@ class GameModeManager {
                         reason: 'Insufficient credits',
                         action: 'purchase_credits',
                         creditsRequired: this.creditsPerGameCost,
-                        balance: user.credits
+                        balance: effective.creditsBalance
                     };
                     
                 case 'PAID_SINGLE':
-                    // Check for pending payment
-                    const pendingPayment = await this.db.query(`
+                    const payment = await this.db.query(`
                         SELECT * FROM payments 
                         WHERE socket_id = $1 AND status = 'confirmed' 
                         AND payment_type = 'single_game'
@@ -326,11 +568,12 @@ class GameModeManager {
                         LIMIT 1
                     `, [socketId]);
                     
-                    if (pendingPayment.rows.length > 0) {
+                    if (payment.rows.length > 0) {
                         return { 
                             allowed: true, 
                             reason: 'Payment confirmed',
-                            paymentId: pendingPayment.rows[0].id
+                            paymentId: payment.rows[0].id,
+                            effectiveMode: 'PAID_SINGLE'
                         };
                     }
                     
@@ -356,31 +599,51 @@ class GameModeManager {
     async processGameStart(socketId, gameId) {
         try {
             const user = await this.getOrCreateUser(socketId);
+            const effective = this.getEffectiveModeForUser(user);
             
-            switch (this.gameMode) {
-                case 'FREE':
-                    // No processing needed for free mode
-                    return { success: true };
-                    
+            // FREE mode
+            if (effective.mode === 'FREE') {
+                return { success: true, effectiveMode: 'FREE' };
+            }
+            
+            // Mixed mode: determine which method to use
+            if (effective.bothModesEnabled) {
+                // Prefer credits if available and preferCreditsFirst is true
+                if (effective.hasCredits && this.preferCreditsFirst) {
+                    return await this._processGameStartWithCredits(user, socketId, gameId);
+                }
+                
+                // Check for confirmed direct payment
+                const payment = await this.db.query(`
+                    SELECT * FROM payments 
+                    WHERE socket_id = $1 AND status = 'confirmed' 
+                    AND payment_type = 'single_game'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM games 
+                        WHERE games.payment_id = payments.id
+                    )
+                    ORDER BY confirmed_at DESC 
+                    LIMIT 1
+                `, [socketId]);
+                
+                if (payment.rows.length > 0) {
+                    return await this._processGameStartWithPayment(user, payment.rows[0], gameId);
+                }
+                
+                // Fall back to credits if available
+                if (effective.hasCredits) {
+                    return await this._processGameStartWithCredits(user, socketId, gameId);
+                }
+                
+                return { success: false, reason: 'No valid payment or credits found' };
+            }
+            
+            // Single mode logic
+            switch (effective.mode) {
                 case 'PAID_CREDITS':
-                    // Deduct required credits for this mode
-                    const creditsToSpend = this.creditsPerGameCost;
-                    const updateRes = await this.db.query(`
-                        UPDATE users 
-                        SET credits = credits - $1,
-                            total_games_played = total_games_played + 1,
-                            updated_at = NOW()
-                        WHERE id = $2
-                        RETURNING credits
-                    `, [creditsToSpend, user.id]);
-                    const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - creditsToSpend);
-                    // Emit credits update asynchronously if an io ref was injected later (pattern: attach externally)
-                    try { this.io && this.io.to(socketId).emit('credits_update', { balance: remainingCredits }); } catch(_) {}
-                    console.log(`🎫 Deducted ${creditsToSpend} credit(s) from user ${user.id}, ${remainingCredits} remaining`);
-                    return { success: true, creditsRemaining: remainingCredits, creditsSpent: creditsToSpend };
+                    return await this._processGameStartWithCredits(user, socketId, gameId);
                     
                 case 'PAID_SINGLE':
-                    // Link game to payment
                     const payment = await this.db.query(`
                         SELECT * FROM payments 
                         WHERE socket_id = $1 AND status = 'confirmed' 
@@ -397,21 +660,7 @@ class GameModeManager {
                         return { success: false, reason: 'No valid payment found' };
                     }
                     
-                    await this.db.query(`
-                        UPDATE games 
-                        SET payment_id = $1
-                        WHERE id = $2
-                    `, [payment.rows[0].id, gameId]);
-                    
-                    await this.db.query(`
-                        UPDATE users 
-                        SET total_games_played = total_games_played + 1,
-                            updated_at = NOW()
-                        WHERE id = $1
-                    `, [user.id]);
-                    
-                    console.log(`💳 Linked game ${gameId} to payment ${payment.rows[0].id}`);
-                    return { success: true, paymentId: payment.rows[0].id };
+                    return await this._processGameStartWithPayment(user, payment.rows[0], gameId);
                     
                 default:
                     return { success: false, reason: 'Invalid game mode' };
@@ -421,6 +670,63 @@ class GameModeManager {
             console.error('❌ Error processing game start:', normalized.message);
             return { success: false, reason: normalized.safeMessage };
         }
+    }
+
+    async _processGameStartWithCredits(user, socketId, gameId) {
+        const creditsToSpend = this.creditsPerGameCost;
+        const updateRes = await this.db.query(`
+            UPDATE users 
+            SET credits = credits - $1,
+                total_games_played = total_games_played + 1,
+                updated_at = NOW()
+            WHERE id = $2
+            RETURNING credits
+        `, [creditsToSpend, user.id]);
+        const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - creditsToSpend);
+        
+        // Record the game mode used
+        await this.db.query(`
+            UPDATE games SET payment_mode = 'credits' WHERE id = $1
+        `, [gameId]);
+        
+        // Record credit transaction
+        await this.db.query(`
+            INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+            VALUES ($1, $2, 'game_entry', $3, 'spend')
+        `, [user.id, -creditsToSpend, remainingCredits]);
+        
+        // Emit credits update
+        try { this.io && this.io.to(socketId).emit('credits_update', { balance: remainingCredits }); } catch(_) {}
+        console.log(`🎫 Deducted ${creditsToSpend} credit(s) from user ${user.id}, ${remainingCredits} remaining`);
+        
+        return { 
+            success: true, 
+            creditsRemaining: remainingCredits, 
+            creditsSpent: creditsToSpend,
+            effectiveMode: 'PAID_CREDITS'
+        };
+    }
+
+    async _processGameStartWithPayment(user, payment, gameId) {
+        await this.db.query(`
+            UPDATE games 
+            SET payment_id = $1, payment_mode = 'direct'
+            WHERE id = $2
+        `, [payment.id, gameId]);
+        
+        await this.db.query(`
+            UPDATE users 
+            SET total_games_played = total_games_played + 1,
+                updated_at = NOW()
+            WHERE id = $1
+        `, [user.id]);
+        
+        console.log(`💳 Linked game ${gameId} to payment ${payment.id}`);
+        return { 
+            success: true, 
+            paymentId: payment.id,
+            effectiveMode: 'PAID_SINGLE'
+        };
     }
 
     /**

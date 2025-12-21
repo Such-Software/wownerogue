@@ -4,6 +4,8 @@
  */
 const PaymentUI = {
     config: null,
+    userCredits: 0,
+    hasPayoutAddress: false,
     
     init: function() {
         console.log("Initializing PaymentUI...");
@@ -13,10 +15,11 @@ const PaymentUI = {
             $('#payment-ui').hide();
         });
 
-        // Bind mode options
-        $('.mode-option').on('click', function() {
+        // Bind mode options (use delegation for dynamic content)
+        $('#payment-ui').on('click', '.mode-option', function() {
             const mode = $(this).data('mode');
-            PaymentUI.handleModeSelection(mode);
+            const action = $(this).data('action');
+            PaymentUI.handleModeSelection(mode, action);
         });
 
         // Bind check payment button
@@ -56,12 +59,26 @@ const PaymentUI = {
         $('#shopButton').on('click', function() {
             PaymentUI.show();
         });
+        
+        // Listen for credits updates
+        if (window.socket) {
+            window.socket.on('credits_update', function(data) {
+                PaymentUI.updateCredits(data.balance);
+            });
+        }
     },
 
     updateConfig: function(config) {
         console.log("PaymentUI config updated:", config);
         this.config = config;
         this.render();
+    },
+    
+    updateCredits: function(balance) {
+        this.userCredits = balance || 0;
+        this.render();
+        // Update credit display if visible
+        $('#user-credits-display').text(this.userCredits);
     },
 
     render: function() {
@@ -70,51 +87,100 @@ const PaymentUI = {
         const currency = this.config.cryptoType || 'WOW';
         const decimals = currency === 'XMR' ? 12 : 11;
         const divisor = Math.pow(10, decimals);
-
-        // Update PAID_SINGLE
-        if (this.config.directModeEnabled) {
-            const price = (this.config.singleGamePrice / divisor).toFixed(decimals === 12 ? 4 : 2);
-            const $el = $('.mode-option[data-mode="PAID_SINGLE"]');
-            $el.html(`<strong>💰 PAID SINGLE</strong> - ${price} ${currency} per game<br><span style="font-size:0.8em;color:#aaa;">Payouts enabled for winners</span>`);
-            $el.show();
-        } else {
-            $('.mode-option[data-mode="PAID_SINGLE"]').hide();
-        }
-
-        // Update PAID_CREDITS
+        const bothEnabled = this.config.directModeEnabled && this.config.creditsModeEnabled;
+        const hasCredits = this.userCredits >= (this.config.creditsPerGame || 1);
+        
+        // Build dynamic options container
+        const $container = $('.game-modes');
+        $container.empty();
+        
+        // Add credits balance display if credits mode is enabled
         if (this.config.creditsModeEnabled) {
-            // Note: config.creditsPackagePrice is for the default package
-            const price = (this.config.creditsPackagePrice / divisor).toFixed(decimals === 12 ? 4 : 2);
-            // We assume the default package size is 10 if not specified, but let's be vague if unsure
-            // Ideally we'd get package info. For now, "Credits Package" is safe.
-            const $el = $('.mode-option[data-mode="PAID_CREDITS"]');
-            $el.html(`<strong>🎫 CREDITS PACKAGE</strong> - ${price} ${currency}<br><span style="font-size:0.8em;color:#aaa;">Bulk discount, no payouts</span>`);
-            $el.show();
-        } else {
-            $('.mode-option[data-mode="PAID_CREDITS"]').hide();
+            $container.append(`
+                <div class="credits-balance" style="text-align:center;margin-bottom:10px;padding:8px;background:#1a1a2e;border-radius:4px;">
+                    <span style="color:#888;">Your Credits:</span> 
+                    <strong id="user-credits-display" style="color:#4ade80;font-size:1.2em;">${this.userCredits}</strong>
+                </div>
+            `);
         }
         
-        // Update FREE
+        // If user has credits and credits mode is enabled, show "Use Credit" option first
+        if (hasCredits && this.config.creditsModeEnabled) {
+            const creditsPayoutsEnabled = this.config.creditsPayoutsEnabled;
+            const payoutNote = creditsPayoutsEnabled 
+                ? '<span style="color:#4ade80;">💰 Payouts enabled</span>' 
+                : '<span style="color:#f59e0b;">⚡ Fast play • No payouts</span>';
+            $container.append(`
+                <button class="mode-option recommended" data-mode="PAID_CREDITS" data-action="use_credit" style="border:2px solid #4ade80;">
+                    <strong>🎮 Use 1 Credit</strong> (${this.userCredits} available)<br>
+                    <span style="font-size:0.8em;">Start game immediately • ${payoutNote}</span>
+                </button>
+            `);
+        }
+        
+        // Show direct payment option
+        if (this.config.directModeEnabled) {
+            const price = (this.config.singleGamePrice / divisor).toFixed(decimals === 12 ? 4 : 2);
+            const recommended = !hasCredits ? 'recommended' : '';
+            const directPayoutsEnabled = this.config.directPayoutsEnabled !== false; // Default true
+            const payoutInfo = directPayoutsEnabled 
+                ? '<span style="color:#4ade80;">💰 2x payout on escape, 3x with treasure</span>'
+                : '<span style="color:#f59e0b;">⚡ Play mode • No payouts</span>';
+            $container.append(`
+                <button class="mode-option ${recommended}" data-mode="PAID_SINGLE" data-action="pay_direct">
+                    <strong>💰 Pay Per Game</strong> - ${price} ${currency}<br>
+                    <span style="font-size:0.8em;">${payoutInfo}</span>
+                </button>
+            `);
+        }
+
+        // Show buy credits option if credits mode is enabled
+        if (this.config.creditsModeEnabled) {
+            const price = (this.config.creditsPackagePrice / divisor).toFixed(decimals === 12 ? 4 : 2);
+            const pkgCredits = this.config.creditsPackageCount || 10;
+            $container.append(`
+                <button class="mode-option" data-mode="PAID_CREDITS" data-action="buy_credits">
+                    <strong>🎫 Buy ${pkgCredits} Credits</strong> - ${price} ${currency}<br>
+                    <span style="font-size:0.8em;color:#aaa;">Bulk discount • Credits never expire</span>
+                </button>
+            `);
+        }
+        
+        // Show FREE option only if payments are disabled
         if (!this.config.paymentsEnabled) {
-             $('.mode-option[data-mode="FREE"]').show();
-             // If payments are disabled, maybe hide the others?
-             // The logic above handles hiding if enabled flags are false.
-        } else {
-             // If payments are enabled, FREE is usually disabled/hidden
-             $('.mode-option[data-mode="FREE"]').hide();
+            $container.append(`
+                <button class="mode-option" data-mode="FREE" data-action="free">
+                    <strong>🆓 Free Play</strong><br>
+                    <span style="font-size:0.8em;color:#aaa;">No payments required</span>
+                </button>
+            `);
         }
     },
 
-    handleModeSelection: function(mode) {
-        console.log("Mode selected:", mode);
+    handleModeSelection: function(mode, action) {
+        console.log("Mode selected:", mode, "Action:", action);
         
         if (mode === 'FREE') {
             $('#payment-ui').hide();
+            // Emit to start game directly
+            if (window.socket) {
+                window.socket.emit('enter_game');
+            }
             return;
         }
         
+        // If using existing credits, just start the game
+        if (action === 'use_credit' && this.userCredits >= 1) {
+            $('#payment-ui').hide();
+            if (window.socket) {
+                window.socket.emit('enter_game'); // Will use credits automatically
+            }
+            return;
+        }
+        
+        // Otherwise, request payment
         let paymentType = 'single_game';
-        if (mode === 'PAID_CREDITS') {
+        if (action === 'buy_credits') {
             paymentType = 'credits_package';
         }
         
@@ -134,7 +200,10 @@ const PaymentUI = {
         $('#payment-ui').show();
         $('#payment-details').show();
         $('.game-modes').hide(); // Hide selection, show payment
-        $('.payment-header strong').text('💳 Payment Required');
+        
+        const isCreditsPurchase = data.paymentType === 'credits_package';
+        const headerText = isCreditsPurchase ? '🎫 Buy Credits' : '💳 Payment Required';
+        $('.payment-header strong').text(headerText);
         
         const displayAmount = data.humanAmount || data.amountFormatted || data.amount;
         $('#payment-amount').text(displayAmount + ' ' + (data.currency || ''));
@@ -144,7 +213,10 @@ const PaymentUI = {
         if (data.reused) {
             $('#payment-status').html('<span style="color:#ff0">♻️ Using existing pending payment</span>');
         } else {
-            $('#payment-status').text('Waiting for payment...');
+            const statusText = isCreditsPurchase 
+                ? 'Send payment to receive credits...'
+                : 'Waiting for payment...';
+            $('#payment-status').text(statusText);
         }
     },
     
