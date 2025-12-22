@@ -37,6 +37,7 @@ const DIFFICULTY_PRESETS = {
             startDistanceFromPlayer: 0.9, // 90% of max distance (far from player)
             movesPerPlayerMove: 0.5,      // Monster moves every other player move
             chaseAggressiveness: 0.6,     // 60% chance to chase, 40% random
+            visionRange: 6,               // Short vision - easy to evade
             respawnOnDeath: false
         },
         treasure: {
@@ -60,6 +61,7 @@ const DIFFICULTY_PRESETS = {
             startDistanceFromPlayer: 0.6, // 60% of max distance
             movesPerPlayerMove: 1.0,      // Monster moves every player move
             chaseAggressiveness: 0.8,     // 80% chase, 20% random
+            visionRange: 10,              // Medium vision
             respawnOnDeath: false
         },
         treasure: {
@@ -83,6 +85,7 @@ const DIFFICULTY_PRESETS = {
             startDistanceFromPlayer: 0.4, // Closer to player
             movesPerPlayerMove: 1.0,
             chaseAggressiveness: 0.9,     // Very aggressive
+            visionRange: 14,              // Good vision
             respawnOnDeath: false
         },
         treasure: {
@@ -106,6 +109,7 @@ const DIFFICULTY_PRESETS = {
             startDistanceFromPlayer: 0.35, // Close to player
             movesPerPlayerMove: 1.0,
             chaseAggressiveness: 0.95,     // Nearly always chases
+            visionRange: 18,               // Excellent vision
             respawnOnDeath: false
         },
         treasure: {

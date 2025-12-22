@@ -23,10 +23,44 @@ const SocketHandlers = {
 
         this.registerEventHandlers();
         this._initialized = true;
+        
+        // Delegated handlers for proof copy buttons
+        $(document).on('click', '.copy-hash-btn', function() {
+            const hash = $(this).data('hash');
+            if (hash) {
+                SocketHandlers._copyToClipboard(hash, $(this));
+            }
+        });
+        $(document).on('click', '.copy-seed-btn', function() {
+            const seed = $(this).data('seed');
+            if (seed) {
+                SocketHandlers._copyToClipboard(seed, $(this));
+            }
+        });
 
         // If the low-level socket connected before handlers were registered, emulate onConnect.
         if (window.socket && window.socket.connected) {
             this.onConnect();
+        }
+    },
+    
+    _copyToClipboard: function(text, $btn) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+                const origText = $btn.text();
+                $btn.text('Copied!');
+                setTimeout(function() { $btn.text(origText); }, 1500);
+            });
+        } else {
+            // Fallback
+            const $temp = $('<input>');
+            $('body').append($temp);
+            $temp.val(text).select();
+            document.execCommand('copy');
+            $temp.remove();
+            const origText = $btn.text();
+            $btn.text('Copied!');
+            setTimeout(function() { $btn.text(origText); }, 1500);
         }
     },
 
@@ -39,6 +73,7 @@ const SocketHandlers = {
         socket.on('message', this.onMessage);
         socket.on('status_update', this.onStatusUpdate);
         socket.on('chat_broadcast', this.onChatBroadcast);
+        socket.on('chat_history', this.onChatHistory);
         
         // Game state handlers
         socket.on('waiting_status', this.onWaitingStatus);
@@ -61,6 +96,12 @@ const SocketHandlers = {
         
         // Block height handler
         socket.on('blockheight', this.onBlockHeight);
+        
+        // Spectator handlers
+        socket.on('active_games', this.onActiveGames);
+        socket.on('spectate_start', this.onSpectateStart);
+        socket.on('spectator_update', this.onSpectatorUpdate);
+        socket.on('spectate_ended', this.onSpectateEnded);
     },
 
     onConnect: function() {
@@ -176,6 +217,29 @@ const SocketHandlers = {
         UI.scrollChat();
     },
 
+    onChatHistory: function(data) {
+        if (!data || !data.messages || !Array.isArray(data.messages)) return;
+        
+        // Add a separator for history messages
+        if (data.messages.length > 0) {
+            $('#messages').append($('<li class="chat-history-header" style="color: #666; font-style: italic; border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px;">').text('--- Recent Chat History ---'));
+        }
+        
+        // Add each historical message
+        data.messages.forEach(function(msg) {
+            const msgElement = $('<li style="color: #888;">');
+            const username = msg.username || (msg.socketId ? msg.socketId.substring(0, 6) : 'anon');
+            msgElement.html('<strong>' + username + ':</strong> ' + msg.message);
+            $('#messages').append(msgElement);
+        });
+        
+        if (data.messages.length > 0) {
+            $('#messages').append($('<li class="chat-history-footer" style="color: #666; font-style: italic; border-top: 1px solid #333; margin-top: 5px; padding-top: 5px;">').text('--- End of History ---'));
+        }
+        
+        UI.scrollChat();
+    },
+
     onWaitingStatus: function(data) {
         if (data.status === 'waiting') {
             $('#messages').append($('<li style="color:#ff0;">').text(data.message));
@@ -213,6 +277,21 @@ const SocketHandlers = {
     onGameStart: function(data) {
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
+        // Display provably fair commitment if present
+        if (data && data.proof && data.proof.commitment) {
+            const shortHash = data.proof.commitment.substring(0, 16) + '...';
+            const $proofMsg = $('<li class="proof-commitment" style="color:#0af; font-size:11px;">').html(
+                '🔐 <strong>Provably Fair:</strong> Game hash commitment: <code style="background:#001a00; padding:2px 4px; border-radius:3px;" title="' + 
+                data.proof.commitment + '">' + shortHash + '</code> ' +
+                '<button class="copy-hash-btn" style="font-size:10px; padding:1px 4px; cursor:pointer;" data-hash="' + 
+                data.proof.commitment + '">Copy</button>'
+            );
+            $('#messages').append($proofMsg);
+            
+            // Store for later verification display
+            SocketHandlers._currentGameProof = data.proof;
+        }
+        
         if (typeof Game !== 'undefined' && Game.stopWaitingScreen) {
             Game.stopWaitingScreen();
         }
@@ -242,9 +321,7 @@ const SocketHandlers = {
         
         UI.scrollChat();
         SocketHandlers._setBannerStatus('In Game', '#0f0');
-        if (typeof AudioAlerts !== 'undefined' && AudioAlerts._enabled) {
-            try { AudioAlerts.playFile('game_start'); } catch(_) {}
-        }
+        // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
     },
 
     onGameUpdate: function(data) {
@@ -265,6 +342,28 @@ const SocketHandlers = {
 
     onGameOver: function(data) {
         $('#messages').append($('<li class="game-over">').text("Game Over: " + data.message));
+        
+        // Display provably fair verification info if present
+        if (data && data.proof && data.proof.seed) {
+            const shortSeed = data.proof.seed.substring(0, 16) + '...';
+            const shortCommitment = data.proof.commitment.substring(0, 16) + '...';
+            const verifyUrl = data.proof.verificationUrl || ('/verify/' + data.proof.gameId);
+            
+            const $proofReveal = $('<li class="proof-reveal" style="color:#4ade80; font-size:11px; margin-top:5px; padding:8px; background:rgba(0,50,0,0.5); border-radius:4px;">').html(
+                '🔓 <strong>Game Verified:</strong><br>' +
+                '<span style="color:#888;">Seed:</span> <code style="background:#001a00; padding:2px 4px; border-radius:3px;" title="' + 
+                data.proof.seed + '">' + shortSeed + '</code> ' +
+                '<button class="copy-seed-btn" style="font-size:10px; padding:1px 4px; cursor:pointer;" data-seed="' + 
+                data.proof.seed + '">Copy</button><br>' +
+                '<span style="color:#888;">Hash:</span> <code style="background:#001a00; padding:2px 4px; border-radius:3px;">' + shortCommitment + '</code><br>' +
+                '<a href="' + verifyUrl + '" target="_blank" style="color:#0af;">🔗 Verify this game</a>'
+            );
+            $('#messages').append($proofReveal);
+            
+            // Clear stored proof
+            SocketHandlers._currentGameProof = null;
+        }
+        
         if (typeof Game !== 'undefined') {
             if (Game.endGame) {
                 Game.endGame(data);
@@ -499,9 +598,7 @@ const SocketHandlers = {
         ));
         UI.scrollChat();
         SocketHandlers._setBannerStatus('Confirmed', '#0f0');
-        if (typeof AudioAlerts !== 'undefined' && AudioAlerts._enabled) {
-            try { AudioAlerts.playFile('payment_confirmed'); } catch(_) {}
-        }
+        // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
     },
 
     _mempoolShownForPayment: new Set(),
@@ -522,10 +619,7 @@ const SocketHandlers = {
         ));
         UI.scrollChat();
         SocketHandlers._setBannerStatus('Mempool', '#0af');
-        // Fallback audio trigger if AudioAlerts patched earlier failed to wrap or user enabled after patch
-        if (typeof AudioAlerts !== 'undefined' && AudioAlerts._enabled) {
-            try { AudioAlerts.playFile('payment_detected'); } catch(_) {}
-        }
+        // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
     },
 
     // Internal: periodic cleanup of client-side payment marker sets (invoked opportunistically)
@@ -556,11 +650,275 @@ const SocketHandlers = {
         if (typeof UI !== 'undefined' && UI.updateBlockHeight) {
             UI.updateBlockHeight(data.blockHeight);
         }
+        // Sync to ScreenManager for welcome screen display
+        if (typeof ScreenManager !== 'undefined' && data.blockHeight) {
+            ScreenManager._currentBlockHeight = data.blockHeight;
+        }
         // Fallback: if status banner still says Connecting..., upgrade it
         const current = $('#statusValue').text();
         if (current === 'Connecting...') {
             SocketHandlers._setBannerStatus('Ready', '#0f0');
         }
+    },
+
+    // ====== SPECTATOR HANDLERS ======
+
+    _spectatorMode: false,
+    _spectatingGameId: null,
+    _activeGames: [],
+
+    onActiveGames: function(data) {
+        if (!data || !data.games) return;
+        SocketHandlers._activeGames = data.games;
+        SocketHandlers._updateGamesListPanel(data);
+    },
+
+    onSpectateStart: function(data) {
+        if (!data) return;
+        SocketHandlers._spectatorMode = true;
+        SocketHandlers._spectatingGameId = data.gameId;
+        
+        // Hide games panel
+        SocketHandlers._hideGamesPanel();
+        
+        // Show spectator controls
+        SocketHandlers._showSpectatorControls(data.playerId);
+        
+        // Start the game display in spectator mode
+        if (typeof Game !== 'undefined' && data.initialState) {
+            const state = data.initialState;
+            try {
+                // Use a modified startGame that marks as spectator
+                Game._isSpectating = true;
+                Game.startGame(
+                    state.player,
+                    state.map,
+                    state.monster,
+                    state.items || {},
+                    state.visibleTiles,
+                    state.lighting,
+                    state.torches
+                );
+                
+                $('#messages').append($('<li class="spectate-start" style="color:#0af;">').text(
+                    '👁️ Now spectating player ' + data.playerId + '. Press ESC or click "Leave" to exit.'
+                ));
+                UI.scrollChat();
+            } catch (err) {
+                console.error('Failed to start spectator view:', err);
+            }
+        }
+        
+        SocketHandlers._setBannerStatus('Spectating', '#0af');
+    },
+
+    onSpectatorUpdate: function(data) {
+        if (!data || !SocketHandlers._spectatorMode) return;
+        
+        // Update the game display with new state
+        if (typeof Game !== 'undefined' && typeof Game.updateGameState === 'function') {
+            Game.updateGameState(data.gameState);
+        }
+    },
+
+    onSpectateEnded: function(data) {
+        SocketHandlers._spectatorMode = false;
+        SocketHandlers._spectatingGameId = null;
+        
+        if (typeof Game !== 'undefined') {
+            Game._isSpectating = false;
+        }
+        
+        // Hide spectator controls
+        SocketHandlers._hideSpectatorControls();
+        
+        // Show end message
+        const reason = data?.reason || 'unknown';
+        const gameOverData = data?.gameOverData;
+        
+        let message = '👁️ Spectating ended';
+        if (reason === 'game_over' && gameOverData) {
+            message = '👁️ Game ended: ' + (gameOverData.status === 'won' ? '🏆 Player escaped!' : '💀 Player caught!');
+        } else if (reason === 'user_left') {
+            message = '👁️ Left spectator mode';
+        }
+        
+        $('#messages').append($('<li class="spectate-end" style="color:#0af;">').text(message));
+        UI.scrollChat();
+        
+        // Return to welcome screen
+        if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWelcomeScreen) {
+            ScreenManager.drawWelcomeScreen();
+        }
+        
+        // Show games panel again
+        SocketHandlers._showGamesPanel();
+        
+        SocketHandlers._setBannerStatus('Ready', '#0f0');
+    },
+
+    _updateGamesListPanel: function(data) {
+        let $panel = $('#gamesListPanel');
+        
+        // Create panel if it doesn't exist
+        if (!$panel.length) {
+            $panel = $(`
+                <div id="gamesListPanel" style="
+                    position: fixed;
+                    top: 10px;
+                    right: 10px;
+                    width: 280px;
+                    max-height: 400px;
+                    background: rgba(0, 20, 0, 0.95);
+                    border: 2px solid #0f0;
+                    border-radius: 5px;
+                    padding: 10px;
+                    color: #0f0;
+                    font-family: monospace;
+                    font-size: 12px;
+                    z-index: 1500;
+                    overflow-y: auto;
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #0f0; padding-bottom: 5px; margin-bottom: 10px;">
+                        <strong>👁️ Live Games</strong>
+                        <button id="gamesListClose" style="background: none; border: 1px solid #0f0; color: #0f0; cursor: pointer; padding: 2px 6px;">×</button>
+                    </div>
+                    <div id="gamesListContent"></div>
+                    <div id="gamesListPagination" style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 10px; text-align: center;"></div>
+                </div>
+            `);
+            $('body').append($panel);
+            
+            // Close button handler
+            $panel.on('click', '#gamesListClose', function() {
+                $panel.hide();
+            });
+            
+            // Spectate button handler (delegated)
+            $panel.on('click', '.spectate-btn', function() {
+                const gameId = $(this).data('gameid');
+                if (gameId && window.socket) {
+                    socket.emit('spectate_game', { gameId: gameId });
+                }
+            });
+        }
+        
+        const $content = $('#gamesListContent');
+        $content.empty();
+        
+        if (!data.games || data.games.length === 0) {
+            $content.html('<div style="color: #888; text-align: center; padding: 20px;">No active games</div>');
+            return;
+        }
+        
+        // Render each game
+        data.games.forEach(function(game) {
+            const duration = game.durationSeconds || 0;
+            const mins = Math.floor(duration / 60);
+            const secs = duration % 60;
+            const timeStr = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+            
+            const $gameItem = $(`
+                <div class="game-list-item" style="
+                    padding: 8px;
+                    margin-bottom: 5px;
+                    background: rgba(0, 40, 0, 0.5);
+                    border: 1px solid #050;
+                    border-radius: 3px;
+                    cursor: pointer;
+                " data-gameid="${game.gameId}">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #0f0;">Player ${game.playerId}</span>
+                        <span style="color: #888; font-size: 10px;">${timeStr}</span>
+                    </div>
+                    <div style="font-size: 10px; color: #888; margin-top: 3px;">
+                        ${game.moveCount} moves | 
+                        ${game.hasTreasure ? '💎' : '⬜'} | 
+                        👁️ ${game.spectatorCount}
+                    </div>
+                    <button class="spectate-btn" data-gameid="${game.gameId}" style="
+                        width: 100%;
+                        margin-top: 5px;
+                        background: #050;
+                        border: 1px solid #0f0;
+                        color: #0f0;
+                        padding: 4px;
+                        cursor: pointer;
+                        font-size: 11px;
+                    ">👁️ Watch Game</button>
+                </div>
+            `);
+            $content.append($gameItem);
+        });
+        
+        // Pagination info
+        const pag = data.pagination;
+        if (pag && pag.totalGames > pag.pageSize) {
+            $('#gamesListPagination').html(
+                'Page ' + pag.page + '/' + pag.totalPages + 
+                ' (' + pag.totalGames + ' games)'
+            );
+        } else {
+            $('#gamesListPagination').html(pag ? pag.totalGames + ' game(s)' : '');
+        }
+        
+        $panel.show();
+    },
+
+    _showGamesPanel: function() {
+        $('#gamesListPanel').show();
+    },
+
+    _hideGamesPanel: function() {
+        $('#gamesListPanel').hide();
+    },
+
+    _showSpectatorControls: function(playerId) {
+        let $controls = $('#spectatorControls');
+        
+        if (!$controls.length) {
+            $controls = $(`
+                <div id="spectatorControls" style="
+                    position: fixed;
+                    top: 10px;
+                    right: 10px;
+                    background: rgba(0, 20, 60, 0.95);
+                    border: 2px solid #0af;
+                    border-radius: 5px;
+                    padding: 10px 15px;
+                    color: #0af;
+                    font-family: monospace;
+                    font-size: 12px;
+                    z-index: 1500;
+                ">
+                    <div style="margin-bottom: 8px;">
+                        👁️ <strong>Spectating:</strong> <span id="spectatingPlayer">---</span>
+                    </div>
+                    <button id="leaveSpectate" style="
+                        background: #500;
+                        border: 1px solid #f55;
+                        color: #f55;
+                        padding: 6px 12px;
+                        cursor: pointer;
+                        width: 100%;
+                    ">Leave Spectate</button>
+                </div>
+            `);
+            $('body').append($controls);
+            
+            $controls.on('click', '#leaveSpectate', function() {
+                if (window.socket) {
+                    socket.emit('leave_spectate');
+                }
+            });
+        }
+        
+        $('#spectatingPlayer').text(playerId);
+        $controls.show();
+    },
+
+    _hideSpectatorControls: function() {
+        $('#spectatorControls').hide();
     }
 };
 

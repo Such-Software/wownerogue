@@ -6,12 +6,21 @@
 const Game = require('../game/game');
 
 class GameManager {
-    constructor({ activeGames, io, broadcastManager, debugManager, gameModeManager }) {
+    constructor({ activeGames, io, broadcastManager, debugManager, gameModeManager, spectatorManager = null }) {
         this.activeGames = activeGames;
         this.io = io;
         this.broadcastManager = broadcastManager;
         this.debugManager = debugManager;
         this.gameModeManager = gameModeManager;
+        this.spectatorManager = spectatorManager;
+    }
+
+    /**
+     * Set the spectator manager (allows late binding after initialization)
+     * @param {SpectatorManager} spectatorManager
+     */
+    setSpectatorManager(spectatorManager) {
+        this.spectatorManager = spectatorManager;
     }
 
     /**
@@ -88,7 +97,9 @@ class GameManager {
                 }
             }
             
-            // Emit game over event
+            // Emit game over event with provably fair reveal
+            const proofReveal = game.getProofReveal ? game.getProofReveal() : null;
+            
             this.io.to(socketId).emit('game_over', {
                 status: status,
                 reason: reason,
@@ -97,8 +108,22 @@ class GameManager {
                 moves,
                 durationSeconds,
                 payout: payoutInfo,
-                treasure: game.player.hasTreasure || false
+                treasure: game.player.hasTreasure || false,
+                proof: proofReveal
             });
+
+            // Notify spectators that the game has ended
+            if (this.spectatorManager) {
+                this.spectatorManager.notifyGameEnded(game.id, {
+                    status,
+                    reason,
+                    message,
+                    score: finalScore,
+                    moves,
+                    durationSeconds,
+                    treasure: game.player.hasTreasure || false
+                });
+            }
 
             // Persist completion details if DB available
             await this._updateGameRecord(game, socketId, status, reason, moves, durationSeconds);

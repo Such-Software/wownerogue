@@ -3,6 +3,8 @@
  * Handles game queue operations, validation, and queue management
  */
 
+const { normalizeError } = require('../utils/errors');
+
 class QueueHandler {
     constructor({ queueManager, gameModeManager, paymentHandlers, activeGames, broadcastManager, debugManager, rateLimiter }) {
         this.queueManager = queueManager;
@@ -87,8 +89,9 @@ class QueueHandler {
                 console.log(`🕒 QUEUE ENTRY: Player ${socket.id} queued for block ${nextBlock}. Queue length: ${this.queueManager.getQueueLength()}`);
             }
         } catch (error) {
-            console.error('handleGameQueue error:', error);
-            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Failed to join queue. Please try again.');
+            const normalized = normalizeError(error, 'Failed to join queue');
+            console.error('handleGameQueue error:', normalized.message);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', normalized.message);
         }
     }
 

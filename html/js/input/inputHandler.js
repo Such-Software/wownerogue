@@ -66,8 +66,23 @@ const InputHandler = {
     setupKeyboardControls: function() {
         const self = this; // Store reference to InputHandler for use in event handler
         $(document).on('keydown', function(e) {
+            // Handle ESC to leave spectate mode
+            if (e.key === 'Escape' && typeof SocketHandlers !== 'undefined' && SocketHandlers._spectatorMode) {
+                e.preventDefault();
+                if (window.socket) {
+                    socket.emit('leave_spectate');
+                }
+                return;
+            }
+            
             if (document.activeElement === $('#game-display')[0]) {
                 if (Game && Game._gameActive) {
+                    // Block movement input if spectating
+                    if (typeof Game !== 'undefined' && Game._isSpectating) {
+                        // In spectator mode - ignore movement keys
+                        return;
+                    }
+                    
                     let dx = 0;
                     let dy = 0;
                     let moved = false;
@@ -158,6 +173,22 @@ const InputHandler = {
             }
             $('#messages').append($('<li style="color: #0f0;">').text("🖱️ Game start requested..."));
             UI.scrollChat();
+        });
+        
+        // Watch games button - toggle the games list panel
+        $('#watchGamesButton').click(function(e) {
+            const $panel = $('#gamesListPanel');
+            if ($panel.length && $panel.is(':visible')) {
+                $panel.hide();
+            } else {
+                // Request fresh game list and show panel
+                if (window.socket) {
+                    socket.emit('get_active_games', { page: 1, pageSize: 20 });
+                }
+                if (typeof SocketHandlers !== 'undefined') {
+                    SocketHandlers._showGamesPanel();
+                }
+            }
         });
         
         // Add click handling for the animation toggle button

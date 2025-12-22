@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wownerogue - Admin Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0a0a;
+            color: #0f0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        h1 { color: #0ff; margin-bottom: 20px; text-align: center; }
+        h2 { color: #ff0; margin: 15px 0 10px; font-size: 14px; }
+        .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; max-width: 1400px; margin: 0 auto; }
+        .card {
+            background: #001a00;
+            border: 1px solid #0f0;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .card.warning { border-color: #ff0; }
+        .card.error { border-color: #f00; }
+        .metric { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #002200; }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: #888; }
+        .metric-value { color: #0f0; font-weight: bold; }
+        .metric-value.warning { color: #ff0; }
+        .metric-value.error { color: #f00; }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+        .status-dot.green { background: #0f0; }
+        .status-dot.yellow { background: #ff0; }
+        .status-dot.red { background: #f00; }
+        .refresh-bar { text-align: center; margin-bottom: 20px; color: #888; }
+        .refresh-bar button {
+            background: #0a5c0a;
+            color: #ff0;
+            border: 2px solid #0f0;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            margin-left: 10px;
+        }
+        .refresh-bar button:hover { background: #0f0; color: #000; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #002200; }
+        th { color: #0ff; }
+        .log-entry { font-size: 11px; color: #888; padding: 3px 0; }
+        .log-entry.error { color: #f00; }
+        .log-entry.warn { color: #ff0; }
+        #error-banner { display: none; background: #300; border: 1px solid #f00; color: #f88; padding: 10px; margin-bottom: 15px; border-radius: 5px; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1>🎮 Wownerogue Admin Dashboard</h1>
+    
+    <div id="error-banner"></div>
+    
+    <div class="refresh-bar">
+        Last updated: <span id="lastUpdate">-</span>
+        <button onclick="refreshAll()">🔄 Refresh Now</button>
+        Auto-refresh: <select id="autoRefresh" onchange="setAutoRefresh()">
+            <option value="0">Off</option>
+            <option value="5000" selected>5s</option>
+            <option value="10000">10s</option>
+            <option value="30000">30s</option>
+        </select>
+    </div>
+    
+    <div class="dashboard">
+        <!-- Server Status -->
+        <div class="card" id="server-card">
+            <h2>🖥️ Server Status</h2>
+            <div class="metric">
+                <span class="metric-label">Status</span>
+                <span class="metric-value" id="serverStatus"><span class="status-dot"></span>Loading...</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Uptime</span>
+                <span class="metric-value" id="uptime">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Node Version</span>
+                <span class="metric-value" id="nodeVersion">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Environment</span>
+                <span class="metric-value" id="nodeEnv">-</span>
+            </div>
+        </div>
+
+        <!-- Memory Usage -->
+        <div class="card" id="memory-card">
+            <h2>💾 Memory Usage</h2>
+            <div class="metric">
+                <span class="metric-label">Heap Used</span>
+                <span class="metric-value" id="heapUsed">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Heap Total</span>
+                <span class="metric-value" id="heapTotal">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">RSS</span>
+                <span class="metric-value" id="rss">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">External</span>
+                <span class="metric-value" id="external">-</span>
+            </div>
+        </div>
+
+        <!-- Game Stats -->
+        <div class="card" id="games-card">
+            <h2>🎮 Game Statistics</h2>
+            <div class="metric">
+                <span class="metric-label">Active Games</span>
+                <span class="metric-value" id="activeGames">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Queue Length</span>
+                <span class="metric-value" id="queueLength">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Connected Players</span>
+                <span class="metric-value" id="connectedPlayers">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Game Mode</span>
+                <span class="metric-value" id="gameMode">-</span>
+            </div>
+        </div>
+
+        <!-- Blockchain -->
+        <div class="card" id="blockchain-card">
+            <h2>⛏️ Blockchain</h2>
+            <div class="metric">
+                <span class="metric-label">Current Block</span>
+                <span class="metric-value" id="currentBlock">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Block Source</span>
+                <span class="metric-value" id="blockSource">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Network</span>
+                <span class="metric-value" id="network">-</span>
+            </div>
+        </div>
+
+        <!-- Wallet Status -->
+        <div class="card" id="wallet-card">
+            <h2>💰 Wallet RPC</h2>
+            <div class="metric">
+                <span class="metric-label">Status</span>
+                <span class="metric-value" id="walletStatus"><span class="status-dot"></span>-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Endpoint</span>
+                <span class="metric-value" id="walletEndpoint">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Pending Payouts</span>
+                <span class="metric-value" id="pendingPayouts">-</span>
+            </div>
+        </div>
+
+        <!-- Rate Limiting -->
+        <div class="card" id="ratelimit-card">
+            <h2>🛡️ Rate Limiting</h2>
+            <div class="metric">
+                <span class="metric-label">Tracked IPs</span>
+                <span class="metric-value" id="trackedIPs">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Blocked Requests (1h)</span>
+                <span class="metric-value" id="blockedRequests">-</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Max Games/Hour</span>
+                <span class="metric-value" id="maxGamesPerHour">-</span>
+            </div>
+        </div>
+
+        <!-- Payment Modes -->
+        <div class="card" id="payment-card">
+            <h2>💵 Payment Configuration</h2>
+            <div id="paymentConfig">Loading...</div>
+        </div>
+
+        <!-- Recent Events Log -->
+        <div class="card" style="grid-column: span 2;">
+            <h2>📋 System Status</h2>
+            <div id="systemLog">
+                <div class="log-entry">Dashboard loaded...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let refreshInterval = null;
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+        
+        function formatUptime(seconds) {
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            if (d > 0) return `${d}d ${h}h ${m}m`;
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+        
+        function setStatusDot(elementId, status) {
+            const el = document.getElementById(elementId);
+            const dot = el.querySelector('.status-dot');
+            if (dot) {
+                dot.className = 'status-dot ' + status;
+            }
+        }
+        
+        function addLog(message, level = 'info') {
+            const log = document.getElementById('systemLog');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + level;
+            entry.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+            log.insertBefore(entry, log.firstChild);
+            if (log.children.length > 20) {
+                log.removeChild(log.lastChild);
+            }
+        }
+        
+        async function refreshAll() {
+            try {
+                const res = await fetch('/health');
+                const data = await res.json();
+                
+                document.getElementById('error-banner').style.display = 'none';
+                
+                // Server status
+                document.getElementById('serverStatus').innerHTML = '<span class="status-dot green"></span>Online';
+                document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
+                document.getElementById('nodeVersion').textContent = data.nodeVersion || '-';
+                document.getElementById('nodeEnv').textContent = data.environment || '-';
+                
+                // Memory
+                if (data.memory) {
+                    document.getElementById('heapUsed').textContent = formatBytes(data.memory.heapUsed || 0);
+                    document.getElementById('heapTotal').textContent = formatBytes(data.memory.heapTotal || 0);
+                    document.getElementById('rss').textContent = formatBytes(data.memory.rss || 0);
+                    document.getElementById('external').textContent = formatBytes(data.memory.external || 0);
+                    
+                    // Warn if heap > 80%
+                    const heapPercent = data.memory.heapUsed / data.memory.heapTotal;
+                    const heapEl = document.getElementById('heapUsed');
+                    heapEl.className = 'metric-value' + (heapPercent > 0.8 ? ' warning' : '');
+                }
+                
+                // Games
+                if (data.games) {
+                    document.getElementById('activeGames').textContent = data.games.active || 0;
+                    document.getElementById('queueLength').textContent = data.games.queued || 0;
+                    document.getElementById('connectedPlayers').textContent = data.games.connected || 0;
+                    document.getElementById('gameMode').textContent = data.games.mode || '-';
+                }
+                
+                // Blockchain
+                document.getElementById('currentBlock').textContent = data.blockHeight || '-';
+                document.getElementById('blockSource').textContent = data.blockSource || '-';
+                document.getElementById('network').textContent = data.network || 'mainnet';
+                
+                // Wallet
+                if (data.wallet) {
+                    const walletOk = data.wallet.status === 'connected' || data.wallet.available;
+                    document.getElementById('walletStatus').innerHTML = 
+                        `<span class="status-dot ${walletOk ? 'green' : 'red'}"></span>${walletOk ? 'Connected' : 'Disconnected'}`;
+                    document.getElementById('walletEndpoint').textContent = data.wallet.endpoint ? '****' + data.wallet.endpoint.slice(-10) : '-';
+                    document.getElementById('pendingPayouts').textContent = data.wallet.pendingPayouts || 0;
+                } else {
+                    document.getElementById('walletStatus').innerHTML = '<span class="status-dot yellow"></span>N/A (Free mode)';
+                }
+                
+                // Rate limiting
+                if (data.rateLimiter) {
+                    document.getElementById('trackedIPs').textContent = data.rateLimiter.trackedEntries || 0;
+                    document.getElementById('blockedRequests').textContent = data.rateLimiter.blockedCount || 0;
+                }
+                document.getElementById('maxGamesPerHour').textContent = data.limits?.maxGamesPerHour || 60;
+                
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+                
+            } catch (err) {
+                document.getElementById('error-banner').textContent = 'Failed to connect to server: ' + err.message;
+                document.getElementById('error-banner').style.display = 'block';
+                document.getElementById('serverStatus').innerHTML = '<span class="status-dot red"></span>Offline';
+                addLog('Health check failed: ' + err.message, 'error');
+            }
+            
+            // Also fetch game modes
+            try {
+                const modesRes = await fetch('/api/game-modes');
+                const modes = await modesRes.json();
+                
+                let html = '';
+                for (const [key, mode] of Object.entries(modes)) {
+                    if (mode && typeof mode === 'object') {
+                        html += `<div class="metric"><span class="metric-label">${mode.name || key}</span>`;
+                        html += `<span class="metric-value ${mode.enabled ? '' : 'warning'}">${mode.enabled ? '✓ Enabled' : '✗ Disabled'}`;
+                        if (mode.cost) html += ` (${mode.cost})`;
+                        html += `</span></div>`;
+                    }
+                }
+                document.getElementById('paymentConfig').innerHTML = html || '<em>Free mode</em>';
+            } catch (e) {
+                document.getElementById('paymentConfig').innerHTML = '<em>Unable to load</em>';
+            }
+        }
+        
+        function setAutoRefresh() {
+            const interval = parseInt(document.getElementById('autoRefresh').value);
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+            if (interval > 0) {
+                refreshInterval = setInterval(refreshAll, interval);
+                addLog(`Auto-refresh set to ${interval/1000}s`);
+            } else {
+                addLog('Auto-refresh disabled');
+            }
+        }
+        
+        // Initial load
+        refreshAll();
+        setAutoRefresh();
+    </script>
+</body>
+</html>

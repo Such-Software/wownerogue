@@ -8,6 +8,8 @@ Wownerogue is a browser-based roguelike that synchronizes dungeon runs with Mone
 - Three game modes with configurable pricing and payouts
 - Optional crypto payments with automatic subaddress management
 - **Provably fair** gaming with pre-game hash commitments
+- **Live spectator mode** - watch any active game in real-time
+- **Persistent chat** with 30-day history for new users
 - Configurable difficulty with house edge tuning
 - Centralized error handling, rate limiting, and memory management
 - Jest coverage for wallet RPC interactions, payment flow, security checks, and game helpers
@@ -35,6 +37,34 @@ Every game uses cryptographic verification to prove fairness:
 4. **Verification**: Players can regenerate the dungeon using the seed to confirm fairness
 
 This prevents the server from generating unfair dungeons or changing outcomes after seeing payments.
+
+## Spectator Mode
+
+Watch any active game in real-time without joining the queue or paying:
+
+1. Click the **"👁️ Watch Games"** button to see a list of active games
+2. Each game shows: player ID, duration, move count, treasure status, and spectator count
+3. Click **"Watch Game"** to start spectating
+4. Press **ESC** or click **"Leave Spectate"** to exit
+
+**Technical details:**
+- Games list auto-refreshes every 3 seconds
+- Spectators receive real-time game state updates via Socket.IO rooms
+- Pagination supports 100+ simultaneous games
+- Spectators cannot interact with the game (input is disabled)
+- Game over events are broadcast to spectators with final status
+
+## Chat System
+
+Persistent chat with history for community engagement:
+
+- **30-day message retention** in PostgreSQL with automatic cleanup
+- **New users receive last 50 messages** on connect for context
+- **Rate limiting** prevents spam (12 messages per 10 seconds)
+- **Address detection** recognizes XMR/WOW addresses pasted in chat
+- **Commands**: `hello`, `enter`, `cancel`, `confirm`, `address`, `pay`, `stats`
+
+Chat messages are stored in the `chat_messages` table and cached in memory for fast retrieval.
 
 ## Game Modes
 
@@ -148,6 +178,165 @@ All gameplay functions work without wallet RPC access; only paid modes require i
    ```
 
 The default Socket.IO client served from `/html` listens on port 3000. Configure a reverse proxy if you need TLS or path routing.
+
+## Production Deployment
+
+### Building for Production
+
+There is no build step required—the Node.js server runs directly. However, ensure you configure the environment correctly:
+
+```bash
+# Set production environment
+export NODE_ENV=production
+
+# Start the production server
+npm start
+# Or with explicit environment:
+NODE_ENV=production node index.js
+```
+
+### Production vs Development
+
+| Feature | Development (`npm run dev`) | Production (`npm start`) |
+|---------|----------------------------|-------------------------|
+| `NODE_ENV` | development | production |
+| Console logging | Verbose | Minimal |
+| Error details | Full stack traces | Safe messages only |
+| Debug hotkeys | Available | Disabled |
+| Simulated blocks | Auto-enabled if no RPC | Requires real daemon |
+
+### Reverse Proxy Setup (Nginx)
+
+For TLS termination and serving the static frontend:
+
+```nginx
+upstream wownerogue_backend {
+    server 127.0.0.1:3000;
+    keepalive 64;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name play.yoursite.com;
+
+    ssl_certificate /etc/letsencrypt/live/play.yoursite.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/play.yoursite.com/privkey.pem;
+
+    # Static files (game client)
+    location / {
+        root /var/www/wownerogue/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # Admin dashboard (restrict access!)
+    location /admin.html {
+        # Basic auth or IP whitelist recommended
+        # auth_basic "Admin";
+        # auth_basic_user_file /etc/nginx/.htpasswd;
+        root /var/www/wownerogue/html;
+    }
+
+    # API and Socket.IO
+    location /socket.io/ {
+        proxy_pass http://wownerogue_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    location ~ ^/(health|api|verify) {
+        proxy_pass http://wownerogue_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# HTTP redirect
+server {
+    listen 80;
+    server_name play.yoursite.com;
+    return 301 https://$server_name$request_uri;
+}
+```
+
+### Reverse Proxy Setup (Caddy)
+
+Caddy auto-provisions TLS certificates:
+
+```caddyfile
+play.yoursite.com {
+    root * /var/www/wownerogue/html
+    file_server
+
+    # Admin dashboard - consider adding basicauth
+    # basicauth /admin.html {
+    #     admin $2a$14$hashedpassword
+    # }
+
+    # WebSocket and API proxy
+    @backend {
+        path /socket.io/* /health /api/* /verify/*
+    }
+    reverse_proxy @backend localhost:3000
+}
+```
+
+### Process Management (systemd)
+
+Create `/etc/systemd/system/wownerogue.service`:
+
+```ini
+[Unit]
+Description=Wownerogue Game Server
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=wownerogue
+WorkingDirectory=/var/www/wownerogue/src
+EnvironmentFile=/var/www/wownerogue/src/.env
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=10
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/wownerogue/src
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable wownerogue
+sudo systemctl start wownerogue
+sudo systemctl status wownerogue
+```
+
+### Production Checklist
+
+- [ ] Set `NODE_ENV=production` in `.env`
+- [ ] Configure TLS via reverse proxy (Nginx/Caddy)
+- [ ] Set up PostgreSQL with proper credentials (not default)
+- [ ] Configure Wownero/Monero wallet-rpc with authentication
+- [ ] Enable firewall rules (only expose 80/443, not 3000)
+- [ ] Set up log rotation for application logs
+- [ ] Configure automated database backups
+- [ ] Test the full payment flow with real funds
+- [ ] Protect `/admin.html` with authentication
+- [ ] Review and tune rate limits for expected traffic
 
 ## Configuration
 
@@ -297,29 +486,116 @@ Tests cover payment handlers, wallet RPC error propagation, security rules, move
 - Optional health endpoints provide game counts, queue length, and rate limiter state.
 - Structured error handling ensures failed wallet or RPC calls return consistent payloads and are logged with context.
 
+## Socket.IO Events
+
+### Client → Server
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `chat` | `{ id, message }` | Send chat message or command |
+| `new game` | – | Request to join queue / start game |
+| `cancel queue` | – | Leave the waiting queue |
+| `movement` | `{ direction }` | Player movement (0–3 for N/E/S/W) |
+| `get_active_games` | `{ page?, limit? }` | Request paginated list of active games |
+| `spectate_game` | `{ gameId }` | Start spectating a specific game |
+| `leave_spectate` | – | Stop spectating current game |
+
+### Server → Client
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `chat message` | `{ id, message, timestamp }` | Broadcast chat message |
+| `chat_history` | `{ messages: [...] }` | Last 50 messages on connect |
+| `queue update` | `{ position, total }` | Queue position notification |
+| `game started` | `{ gameState }` | Game initialization data |
+| `game update` | `{ tiles, player, monsters, ... }` | Game state after movement |
+| `game over` | `{ reason, stats }` | Game ended (death/escape/treasure) |
+| `active_games` | `{ games, total, page, limit }` | Paginated active games list |
+| `spectate_start` | `{ gameId, state }` | Initial state when spectating begins |
+| `spectator_update` | `{ gameId, state }` | Real-time game state for spectators |
+| `spectate_ended` | `{ gameId, reason }` | Game ended while spectating |
+
 ## Repository Layout
 
 ```
 src/
-├── index.js
+├── index.js              # Entry point, server setup
 ├── config/
+│   ├── environmentValidator.js
+│   └── paymentConfig.js
 ├── db/
+│   ├── databaseManager.js
+│   ├── dbcalls.js
+│   └── user.js
 ├── game/
-├── middleware/
+│   ├── dungeon.js
+│   ├── game.js
+│   ├── gameManager.js
+│   ├── gameModeManager.js
+│   ├── lightingAndFov.js
+│   ├── monster.js
+│   ├── movementManager.js
+│   └── player.js
 ├── network/
+│   ├── addressManager.js
+│   ├── broadcastManager.js
+│   ├── chatHandler.js
+│   ├── chatHistoryManager.js  # NEW: Persistent chat storage
+│   ├── connectionHandler.js
+│   ├── paymentHandlers.js
+│   ├── queueHandler.js
+│   ├── queueManager.js
+│   ├── rateLimiter.js
+│   ├── sessionManager.js
+│   ├── socketHandlers.js
+│   └── spectatorManager.js    # NEW: Live game spectating
 ├── payments/
+│   ├── moneroPayService.js
+│   ├── qrService.js
+│   └── walletRPCService.js
 ├── rpc/
+│   └── rpcService.js
 └── utils/
+    ├── errors.js
+    └── memoryManager.js
 html/
-└── index.html
+├── index.html
+├── admin.html
+└── js/
+    ├── core/
+    ├── display/
+    ├── input/
+    ├── network/
+    └── ui/
 test/
 └── *.test.js
 ```
 
 Refer to `REFACTORING_SUMMARY.md` for module-by-module details and migration history.
 
+## Architecture Highlights
+
+**Spectator System:**
+- Uses Socket.IO rooms (`spectate:{gameId}`, `lobby`) for efficient broadcasting
+- Game list cached for 2 seconds to handle 100+ concurrent games
+- State broadcasts every 3 seconds plus on every move
+- Spectators receive `game update` events identical to players
+
+**Chat History:**
+- PostgreSQL `chat_messages` table with 30-day retention
+- In-memory cache for fast retrieval
+- Automatic cleanup of old messages on startup
+
+**Rate Limiting:**
+- Per-IP sliding window for chat (12 messages/10s)
+- Connection rate limits with configurable thresholds
+- Queue position spam prevention
+
 ## Next Steps
 
-- Persist payment configuration updates for hot reloads.
-- Extend error normalization to remaining network modules.
-- Build a lightweight monitoring dashboard for live metrics.
+- ✅ Implement spectator mode for live game watching
+- ✅ Add persistent chat history for new users
+- Run full payment integration test with real wallet-rpc
+- Configure automated PostgreSQL backups
+- Set up log rotation and monitoring alerts
+- Load test rate limiting under production traffic patterns

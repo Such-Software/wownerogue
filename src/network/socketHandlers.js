@@ -14,6 +14,7 @@ const RateLimiter = require('./rateLimiter');
 const ConnectionHandler = require('./connectionHandler');
 const ChatHandler = require('./chatHandler');
 const QueueHandler = require('./queueHandler');
+const SpectatorManager = require('./spectatorManager');
 const MemoryManager = require('../utils/memoryManager');
 const { normalizeError } = require('../utils/errors');
 
@@ -120,7 +121,7 @@ class SocketHandlers {
             }
         });
 
-        // Initialize chat handler
+        // Initialize chat handler with database for persistent history
         this.chatHandler = new ChatHandler({
             io: this.io,
             broadcastManager: this.broadcastManager,
@@ -129,7 +130,13 @@ class SocketHandlers {
             paymentHandlers: this.paymentHandlers,
             queueManager: this.queueManager,
             gameModeManager: this.gameModeManager,
-            rateLimiter: this.rateLimiter
+            rateLimiter: this.rateLimiter,
+            db: this.gameModeManager?.db
+        });
+        
+        // Initialize chat history (async, non-blocking)
+        this.chatHandler.initialize().catch(err => {
+            console.error('Failed to initialize chat handler:', err.message);
         });
 
         // Initialize queue handler
@@ -143,6 +150,18 @@ class SocketHandlers {
             rateLimiter: this.rateLimiter
         });
 
+        // Initialize spectator manager for live game viewing
+        this.spectatorManager = new SpectatorManager({
+            io: this.io,
+            activeGames: this.activeGames,
+            broadcastManager: this.broadcastManager,
+            debugManager: this.debugManager
+        });
+        this.spectatorManager.initialize();
+        
+        // Wire spectator manager to game manager (for game over notifications)
+        this.gameManager.setSpectatorManager(this.spectatorManager);
+
         // Movement manager abstraction with memory cleanup
         this.playerMoveTimestamps = new Map();
         this.movementManager = new MovementManager({
@@ -150,7 +169,8 @@ class SocketHandlers {
             io: this.io,
             debugManager: this.debugManager,
             moveCooldown: this.MOVE_COOLDOWN,
-            postMoveHook: ({ socketId, game, moveResult }) => this.afterPlayerMove(socketId, game, moveResult)
+            postMoveHook: ({ socketId, game, moveResult }) => this.afterPlayerMove(socketId, game, moveResult),
+            spectatorManager: this.spectatorManager // Pass for spectator broadcasts
         });
 
         // Register memory cleanup functions
@@ -318,6 +338,21 @@ class SocketHandlers {
             socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
         }
 
+        // Send chat history to new user
+        if (this.chatHandler && typeof this.chatHandler.sendChatHistoryToUser === 'function') {
+            this.chatHandler.sendChatHistoryToUser(socket.id).catch(err => {
+                console.error('Failed to send chat history:', err.message);
+            });
+        }
+
+        // Join the lobby room for game list broadcasts
+        if (this.spectatorManager) {
+            this.spectatorManager.joinLobby(socket.id);
+            // Send initial game list
+            const gameList = this.spectatorManager.getActiveGamesList({ page: 1, pageSize: 20 });
+            socket.emit('active_games', gameList);
+        }
+
         // Register event handlers
         socket.on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
             handleGameQueue: (socket) => this.queueHandler.handleGameQueue(socket, (socketId) => this.connectionHandler.getUserBySocket(socketId)),
@@ -336,6 +371,11 @@ class SocketHandlers {
         socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
         socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
         socket.on('address:update', (data) => this.handleAddressUpdate(socket, data));
+        
+        // Spectator handlers
+        socket.on('get_active_games', (options) => this.handleGetActiveGames(socket, options));
+        socket.on('spectate_game', (data) => this.handleSpectateGame(socket, data));
+        socket.on('leave_spectate', () => this.handleLeaveSpectate(socket));
     }
 
     /**
@@ -411,6 +451,11 @@ class SocketHandlers {
             const game = this.gameManager.createGameForUser(memUser, 'standard');
             const state = game.getState();
             state.blockHeight = blockHeight;
+            
+            // Include provably fair commitment
+            if (game.getProofCommitment) {
+                state.proof = game.getProofCommitment();
+            }
 
             // Process start (credits deduction / payment link)
             if (this.gameModeManager) {
@@ -570,6 +615,11 @@ class SocketHandlers {
             if (this.chatHandler) {
                 this.chatHandler.clearAddressConfirmation(socket.id);
             }
+            
+            // Clean up spectator state
+            if (this.spectatorManager) {
+                this.spectatorManager.handleDisconnect(socket.id);
+            }
         });
     }
 
@@ -661,6 +711,86 @@ class SocketHandlers {
         }
     }
 
+    // ====== SPECTATOR HANDLERS ======
+
+    /**
+     * Handle request for active games list
+     */
+    handleGetActiveGames(socket, options = {}) {
+        try {
+            const gameList = this.spectatorManager.getActiveGamesList(options);
+            socket.emit('active_games', gameList);
+        } catch (err) {
+            console.error('handleGetActiveGames error:', err);
+            socket.emit('error', { message: 'Failed to get games list' });
+        }
+    }
+
+    /**
+     * Handle request to spectate a specific game
+     */
+    handleSpectateGame(socket, data) {
+        try {
+            if (!data || !data.gameId) {
+                socket.emit('spectate_error', { message: 'Game ID is required' });
+                return;
+            }
+
+            // Check if user is currently in a game (can't spectate while playing)
+            if (this.activeGames.has(socket.id)) {
+                socket.emit('spectate_error', { message: 'Cannot spectate while in a game' });
+                return;
+            }
+
+            // Leave lobby when starting to spectate
+            this.spectatorManager.leaveLobby(socket.id);
+
+            const result = this.spectatorManager.addSpectator(socket.id, data.gameId);
+            
+            if (result.success) {
+                socket.emit('spectate_start', {
+                    gameId: result.gameId,
+                    playerId: result.playerSocketId?.substring(0, 6),
+                    initialState: result.initialState,
+                    spectatorCount: result.spectatorCount
+                });
+                
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                    `👁️ Now spectating game by player ${result.playerSocketId?.substring(0, 6)}`);
+            } else {
+                socket.emit('spectate_error', { message: result.reason });
+                // Rejoin lobby if spectating failed
+                this.spectatorManager.joinLobby(socket.id);
+            }
+        } catch (err) {
+            console.error('handleSpectateGame error:', err);
+            socket.emit('spectate_error', { message: 'Failed to join game as spectator' });
+        }
+    }
+
+    /**
+     * Handle request to leave spectating
+     */
+    handleLeaveSpectate(socket) {
+        try {
+            const wasSpectating = this.spectatorManager.removeSpectator(socket.id);
+            
+            if (wasSpectating) {
+                socket.emit('spectate_ended', { reason: 'user_left' });
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', '👁️ Left spectator mode');
+            }
+            
+            // Rejoin lobby
+            this.spectatorManager.joinLobby(socket.id);
+            
+            // Send updated games list
+            const gameList = this.spectatorManager.getActiveGamesList({ page: 1, pageSize: 20 });
+            socket.emit('active_games', gameList);
+        } catch (err) {
+            console.error('handleLeaveSpectate error:', err);
+        }
+    }
+
     /**
      * Get comprehensive statistics
      */
@@ -672,7 +802,8 @@ class SocketHandlers {
             connections: this.connectionHandler.getStats(),
             chat: this.chatHandler.getStats(),
             games: this.gameManager.getStats(),
-            queue: this.queueHandler.getStats()
+            queue: this.queueHandler.getStats(),
+            spectators: this.spectatorManager ? this.spectatorManager.getStats() : null
         };
     }
 
@@ -685,6 +816,10 @@ class SocketHandlers {
         }
 
         // Shutdown components in reverse order of initialization
+        if (this.spectatorManager) {
+            this.spectatorManager.shutdown();
+        }
+
         if (this.chatHandler) {
             this.chatHandler.shutdown();
         }

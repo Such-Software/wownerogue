@@ -3,6 +3,7 @@
  * Issues and resumes anonymous session tokens to persist credits & payout address across reconnects.
  */
 const crypto = require('crypto');
+const { normalizeError } = require('../utils/errors');
 
 class SessionManager {
   constructor({ db, debugManager, gameModeManager }) {
@@ -72,8 +73,9 @@ class SessionManager {
         user: newUser
       };
     } catch (error) {
-      console.error('[SessionManager] Error in resumeOrCreate:', error);
-      throw error;
+      const normalized = normalizeError(error, 'Failed to resume or create session');
+      console.error('[SessionManager] Error in resumeOrCreate:', normalized.message);
+      throw normalized;
     }
   }
 
@@ -146,7 +148,8 @@ class SessionManager {
         console.log(`[SessionManager] Cleaned up ${result.rowCount} expired sessions`);
       }
     } catch (error) {
-      console.error('[SessionManager] Error cleaning up sessions:', error);
+      const normalized = normalizeError(error, 'Failed to cleanup expired sessions');
+      console.error('[SessionManager] Error cleaning up sessions:', normalized.message);
     }
   }
 

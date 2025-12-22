@@ -108,7 +108,9 @@ class Game {
     this.gameState = 'waiting';
     this.startBlock = null;
     this.player = new Player();
-    this.monster = new Monster();
+    this.monster = new Monster(0, 0, { 
+      visionRange: difficultyConfig.monster.visionRange || 12 
+    });
     this.monsterMoveAccumulator = 0; // For fractional monster moves
     this.fee = 0;
 

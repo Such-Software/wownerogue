@@ -75,6 +75,9 @@
             <button id="startButton" style="background: #0a5c0a; color: #ff0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; display: none;">
                 🎮 START GAME
             </button>
+            <button id="watchGamesButton" style="background: #053655; color: #0af; border: 2px solid #0af; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px;">
+                👁️ WATCH GAMES
+            </button>
             <button id="shopButton" style="background: #004400; color: #0f0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
                 🛒 SHOP
             </button>
@@ -219,8 +222,9 @@
                 // Initialize SocketHandlers (CRITICAL for receiving game_start events!)
                 if (typeof SocketHandlers !== 'undefined') {
                     console.log("Initializing SocketHandlers...");
-                    SocketHandlers.init();
+                    // IMPORTANT: AudioAlerts patches SocketHandlers methods, so must init BEFORE socket bindings
                     if (typeof AudioAlerts !== 'undefined') { AudioAlerts.init(); }
+                    SocketHandlers.init();
                 } else {
                     console.error("SocketHandlers object not found!");
                 }

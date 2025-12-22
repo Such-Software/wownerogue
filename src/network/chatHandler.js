@@ -3,8 +3,10 @@
  * Handles chat messages, commands, and chat-related rate limiting
  */
 
+const ChatHistoryManager = require('./chatHistoryManager');
+
 class ChatHandler {
-    constructor({ io, broadcastManager, debugManager, addressManager, paymentHandlers, queueManager, gameModeManager, rateLimiter }) {
+    constructor({ io, broadcastManager, debugManager, addressManager, paymentHandlers, queueManager, gameModeManager, rateLimiter, db }) {
         this.io = io;
         this.broadcastManager = broadcastManager;
         this.debugManager = debugManager;
@@ -14,11 +16,44 @@ class ChatHandler {
         this.gameModeManager = gameModeManager;
         this.rateLimiter = rateLimiter;
         
+        // Initialize chat history manager for persistent message storage
+        this.chatHistory = new ChatHistoryManager({
+            db: db || (gameModeManager?.db),
+            debugManager: debugManager,
+            maxHistoryMessages: 50
+        });
+        
         // Memory leak prevention - cleanup old timestamps
         this._chatLastSent = new Map();
         this.chatCleanupInterval = setInterval(() => this.cleanupChatTimestamps(), 300000); // 5 minutes
         
         this._awaitingAddressFor = new Set(); // Track users waiting for address confirmation
+    }
+
+    /**
+     * Initialize the chat handler (must be called after construction)
+     */
+    async initialize() {
+        await this.chatHistory.initialize();
+    }
+
+    /**
+     * Send chat history to a newly connected user
+     * @param {string} socketId - Socket ID of the new user
+     * @param {number} messageCount - Number of messages to send (default 50)
+     */
+    async sendChatHistoryToUser(socketId, messageCount = 50) {
+        try {
+            const messages = await this.chatHistory.getRecentMessages(messageCount);
+            if (messages.length > 0) {
+                this.io.to(socketId).emit('chat_history', { messages });
+                if (this.debugManager?.CONSOLE_LOGGING) {
+                    console.log(`📜 Sent ${messages.length} chat history messages to ${socketId}`);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to send chat history:', error.message);
+        }
     }
 
     /**
@@ -69,10 +104,12 @@ class ChatHandler {
     /**
      * Get chat statistics
      */
-    getStats() {
+    async getStats() {
+        const historyStats = await this.chatHistory.getStats();
         return {
             chatTimestamps: this._chatLastSent.size,
-            awaitingAddress: this._awaitingAddressFor.size
+            awaitingAddress: this._awaitingAddressFor.size,
+            chatHistory: historyStats
         };
     }
 
@@ -83,6 +120,9 @@ class ChatHandler {
         if (this.chatCleanupInterval) {
             clearInterval(this.chatCleanupInterval);
             this.chatCleanupInterval = null;
+        }
+        if (this.chatHistory) {
+            this.chatHistory.shutdown();
         }
     }
 
@@ -198,7 +238,19 @@ class ChatHandler {
 
         // Very light sanitization (escape < >)
         const safe = trimmed.replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;').slice(0, 300);
-        this.broadcastManager.broadcastChatMessage(socket.id.substring(0,6), safe, now, socket.id);
+        const username = socket.id.substring(0, 6);
+        
+        // Save message to history (async, don't block broadcast)
+        this.chatHistory.saveMessage({
+            socketId: socket.id,
+            username: username,
+            message: safe,
+            type: 'chat'
+        }).catch(err => {
+            console.error('Failed to save chat message:', err.message);
+        });
+        
+        this.broadcastManager.broadcastChatMessage(username, safe, now, socket.id);
     }
 
     /**

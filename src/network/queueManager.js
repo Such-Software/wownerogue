@@ -6,6 +6,9 @@
  *  - Starting games when a new block arrives
  *  - Preserving unconfirmed (mempool-only) entries across blocks
  */
+
+const { normalizeError } = require('../utils/errors');
+
 class QueueManager {
     constructor({ debugManager, broadcastManager, io, createGameForUser, getUserBySocket, activeGames, gameModeManager, consoleLogging }) {
         this.debugManager = debugManager;
@@ -84,11 +87,16 @@ class QueueManager {
                 const game = this.createGameForUser(currentUser, 'standard');
                 const gameState = game.getState();
                 gameState.blockHeight = blockHeight;
+                // Include provably fair commitment
+                if (game.getProofCommitment) {
+                    gameState.proof = game.getProofCommitment();
+                }
                 this.io.to(serverId).emit('game_start', gameState);
                 if (this.CONSOLE_LOGGING) console.log(`[QueueManager] Game started for ${serverId}`);
             } catch (error) {
-                console.error('[QueueManager] Error creating game:', error);
-                this.io.to(serverId).emit('message', 'Error starting game: ' + error.message);
+                const normalized = normalizeError(error, 'Failed to start game');
+                console.error('[QueueManager] Error creating game:', normalized.message);
+                this.io.to(serverId).emit('message', 'Error starting game: ' + normalized.message);
             }
         }
         if (remainingQueue.length > 0) {
@@ -132,12 +140,17 @@ class QueueManager {
             const game = this.createGameForUser(currentUser, 'standard');
             const gameState = game.getState();
             gameState.blockHeight = blockHeight;
+            // Include provably fair commitment
+            if (game.getProofCommitment) {
+                gameState.proof = game.getProofCommitment();
+            }
             this.io.to(serverId).emit('game_start', gameState);
             if (this.CONSOLE_LOGGING) console.log(`[QueueManager] (immediate) Game started for ${serverId} at block ${blockHeight}`);
             return true;
         } catch (err) {
-            console.error('[QueueManager] Error starting immediate game:', err);
-            this.io.to(serverId).emit('message', 'Error starting game: ' + err.message);
+            const normalized = normalizeError(err, 'Failed to start immediate game');
+            console.error('[QueueManager] Error starting immediate game:', normalized.message);
+            this.io.to(serverId).emit('message', 'Error starting game: ' + normalized.message);
             return false;
         }
     }

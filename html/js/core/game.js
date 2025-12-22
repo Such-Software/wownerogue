@@ -17,6 +17,8 @@ var Game = {
     _unconfirmedPayment: false,
     _unconfirmedPaymentInfo: null,
     _awaitingPayment: false,
+    _isSpectating: false, // True when viewing someone else's game
+    _gameActive: false, // True when game is running (playing or spectating)
 
     init: function() {
         // Update screen dimensions from options

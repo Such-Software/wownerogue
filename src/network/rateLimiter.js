@@ -237,6 +237,28 @@ class RateLimiter {
     }
 
     /**
+     * Get count of tracked entries (for dashboard)
+     */
+    getTrackedCount() {
+        return this.storage.size + this.ipStorage.size;
+    }
+
+    /**
+     * Get count of currently blocked users (rough estimate)
+     */
+    getBlockedCount() {
+        const now = Date.now();
+        let blocked = 0;
+        for (const [key, data] of this.storage.entries()) {
+            const limit = this._getLimitFromKey(key);
+            if (limit && data.count >= limit.max && (now - data.firstAttempt) < limit.window) {
+                blocked++;
+            }
+        }
+        return blocked;
+    }
+
+    /**
      * Shutdown the rate limiter (cleanup interval)
      */
     shutdown() {

@@ -3,13 +3,14 @@
  * Handles rate limiting and applying player movement to games.
  */
 class MovementManager {
-  constructor({ activeGames, io, debugManager, moveCooldown = 100, postMoveHook = null }) {
+  constructor({ activeGames, io, debugManager, moveCooldown = 100, postMoveHook = null, spectatorManager = null }) {
     this.activeGames = activeGames; // Map socketId -> Game
     this.io = io;
     this.debugManager = debugManager;
     this.moveCooldown = moveCooldown;
     this._lastMove = new Map(); // socketId -> timestamp
     this.postMoveHook = typeof postMoveHook === 'function' ? postMoveHook : null;
+    this.spectatorManager = spectatorManager; // For broadcasting to spectators
   }
 
   handleMove(socketId, moveData) {
@@ -58,6 +59,11 @@ class MovementManager {
     }
 
     this.io.to(socketId).emit('game_update', state);
+    
+    // Broadcast to spectators
+    if (this.spectatorManager && game.id) {
+      this.spectatorManager.broadcastToSpectators(game.id, state);
+    }
 
     // Handle special events from moveResult (escape / treasure)
     if (moveResult && moveResult.event) {
@@ -80,6 +86,11 @@ class MovementManager {
       state.blockHeight = this.debugManager.getCurrentBlockHeight();
     }
     this.io.to(socketId).emit('game_update', state);
+    
+    // Broadcast to spectators
+    if (this.spectatorManager && game.id) {
+      this.spectatorManager.broadcastToSpectators(game.id, state);
+    }
   }
 }
 
