@@ -442,6 +442,11 @@ const SocketHandlers = {
             UI.updateGameTitle(data.cryptoType);
         }
 
+        // Update ScreenManager with crypto type for welcome screen title
+        if (typeof ScreenManager !== 'undefined' && ScreenManager.setCryptoType) {
+            ScreenManager.setCryptoType(data.cryptoType);
+        }
+
         // Display testnet/stagenet warning if applicable
         if (data.testnetWarning) {
             SocketHandlers._showNetworkWarning(data.testnetWarning, data.network);
@@ -653,6 +658,12 @@ const SocketHandlers = {
         // Sync to ScreenManager for welcome screen display
         if (typeof ScreenManager !== 'undefined' && data.blockHeight) {
             ScreenManager._currentBlockHeight = data.blockHeight;
+            // Redraw welcome screen if not in a game, not spectating, and not showing waiting screen
+            if (typeof GameState !== 'undefined' && !GameState.isGameActive() && 
+                typeof Game !== 'undefined' && !Game._isSpectating &&
+                !ScreenManager.isShowingWaitingScreen()) {
+                ScreenManager.drawWelcomeScreen();
+            }
         }
         // Fallback: if status banner still says Connecting..., upgrade it
         const current = $('#statusValue').text();
@@ -783,6 +794,7 @@ const SocketHandlers = {
                         <strong>👁️ Live Games</strong>
                         <button id="gamesListClose" style="background: none; border: 1px solid #0f0; color: #0f0; cursor: pointer; padding: 2px 6px;">×</button>
                     </div>
+                    <div id="pendingGamesContent"></div>
                     <div id="gamesListContent"></div>
                     <div id="gamesListPagination" style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 10px; text-align: center;"></div>
                 </div>
@@ -803,13 +815,58 @@ const SocketHandlers = {
             });
         }
         
+        // Render pending games section
+        const $pendingContent = $('#pendingGamesContent');
+        $pendingContent.empty();
+        
+        if (data.pendingGames && data.pendingGames.length > 0) {
+            $pendingContent.append(`
+                <div style="color: #fa0; font-size: 11px; margin-bottom: 5px; border-bottom: 1px solid #550;">
+                    ⏳ Pending (${data.pendingGames.length})
+                </div>
+            `);
+            
+            data.pendingGames.forEach(function(pending) {
+                const waitTime = Math.floor((Date.now() - pending.queuedAt) / 1000);
+                const status = pending.waitingForConfirmation ? '⏳ Confirming' : '✅ Ready';
+                
+                $pendingContent.append(`
+                    <div style="
+                        padding: 6px;
+                        margin-bottom: 5px;
+                        background: rgba(60, 40, 0, 0.5);
+                        border: 1px solid #550;
+                        border-radius: 3px;
+                        font-size: 11px;
+                    ">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #fa0;">Player ${pending.playerId}</span>
+                            <span style="color: #888;">${waitTime}s ago</span>
+                        </div>
+                        <div style="color: #888; margin-top: 2px;">
+                            ${status} - waiting for next block
+                        </div>
+                    </div>
+                `);
+            });
+        }
+        
+        // Render active games section
         const $content = $('#gamesListContent');
         $content.empty();
         
         if (!data.games || data.games.length === 0) {
-            $content.html('<div style="color: #888; text-align: center; padding: 20px;">No active games</div>');
+            if (!data.pendingGames || data.pendingGames.length === 0) {
+                $content.html('<div style="color: #888; text-align: center; padding: 20px;">No active games</div>');
+            }
             return;
         }
+        
+        $content.append(`
+            <div style="color: #0f0; font-size: 11px; margin-bottom: 5px; margin-top: 10px; border-bottom: 1px solid #050;">
+                🎮 Live (${data.games.length})
+            </div>
+        `);
         
         // Render each game
         data.games.forEach(function(game) {

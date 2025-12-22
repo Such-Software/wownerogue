@@ -112,7 +112,14 @@ class GameManager {
                 proof: proofReveal
             });
 
-            // Notify spectators that the game has ended
+            // Persist completion details if DB available
+            await this._updateGameRecord(game, socketId, status, reason, moves, durationSeconds);
+            
+            // Clean up game from active games BEFORE notifying spectators
+            // This ensures the game list broadcast won't include this game
+            this.activeGames.delete(socketId);
+
+            // Notify spectators that the game has ended and broadcast updated list
             if (this.spectatorManager) {
                 this.spectatorManager.notifyGameEnded(game.id, {
                     status,
@@ -124,12 +131,6 @@ class GameManager {
                     treasure: game.player.hasTreasure || false
                 });
             }
-
-            // Persist completion details if DB available
-            await this._updateGameRecord(game, socketId, status, reason, moves, durationSeconds);
-            
-            // Clean up game from active games
-            this.activeGames.delete(socketId);
             
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log(`🎮 Game ${game.id} ended for ${socketId}: ${status} (${reason})`);

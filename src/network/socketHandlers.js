@@ -155,7 +155,8 @@ class SocketHandlers {
             io: this.io,
             activeGames: this.activeGames,
             broadcastManager: this.broadcastManager,
-            debugManager: this.debugManager
+            debugManager: this.debugManager,
+            queueManager: this.queueManager // For pending games list
         });
         this.spectatorManager.initialize();
         
@@ -295,6 +296,20 @@ class SocketHandlers {
      * Handles monster chasing logic and immediate game over if monster catches player.
      */
     afterPlayerMove(socketId, game, moveResult) {
+        // Check if player walked into monster (death by walking into monster)
+        if (moveResult && moveResult.event === 'monster_caught') {
+            const fakeSocket = { id: socketId };
+            this.handleGameOver(fakeSocket, game, 'lost', 'monster', 'You walked into the monster!', 0);
+            return;
+        }
+
+        // If player escaped, handle via game manager
+        if (moveResult && moveResult.event === 'escaped') {
+            const fakeSocket = { id: socketId };
+            this.handleGameOver(fakeSocket, game, 'won', 'escaped', 'You escaped the dungeon!', 0);
+            return;
+        }
+
         let monsterResult = null;
 
         // Move monster one step toward player each player action
@@ -306,17 +321,10 @@ class SocketHandlers {
             }
         }
 
-        // If the monster caught the player, end the game immediately
+        // If the monster caught the player after moving, end the game immediately
         if (monsterResult && monsterResult.event === 'monster_caught') {
             const fakeSocket = { id: socketId };
             this.handleGameOver(fakeSocket, game, 'lost', 'monster', 'You were caught by the monster!', 0);
-            return;
-        }
-
-        // If player escaped or triggered another event, handle via game manager
-        if (moveResult && moveResult.event === 'escaped') {
-            const fakeSocket = { id: socketId };
-            this.handleGameOver(fakeSocket, game, 'won', 'escaped', 'You escaped the dungeon!', 0);
             return;
         }
 

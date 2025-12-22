@@ -154,6 +154,20 @@ class QueueManager {
             return false;
         }
     }
+
+    /**
+     * Get list of pending games (players waiting in queue)
+     * Used by spectator system to show upcoming games
+     * @returns {Array} List of pending game entries
+     */
+    getPendingGamesList() {
+        return this._waitingPlayers.map(entry => ({
+            playerId: entry.serverId.substring(0, 6), // Anonymized
+            queuedAt: entry.entryTime,
+            isConfirmed: entry.confirmed,
+            waitingForConfirmation: entry.requiresConfirmation && !entry.confirmed
+        }));
+    }
 }
 
 module.exports = QueueManager;

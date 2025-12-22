@@ -10,17 +10,22 @@
  */
 
 class SpectatorManager {
-    constructor({ io, activeGames, broadcastManager, debugManager }) {
+    constructor({ io, activeGames, broadcastManager, debugManager, queueManager = null }) {
         this.io = io;
         this.activeGames = activeGames;
         this.broadcastManager = broadcastManager;
         this.debugManager = debugManager;
+        this.queueManager = queueManager; // For pending games list
 
         // Map of gameId -> Set of spectator socket IDs
         this._spectatorsByGame = new Map();
         
         // Map of socketId -> gameId (for quick lookup of what a spectator is watching)
         this._spectatorWatching = new Map();
+        
+        // Pending game subscriptions: Map of playerId -> Set of spectator socket IDs
+        // Spectators waiting for a pending game to start
+        this._pendingSubscriptions = new Map();
         
         // Cached game list for efficient broadcasting
         this._cachedGameList = [];
@@ -30,6 +35,13 @@ class SpectatorManager {
         // Periodic game list broadcast interval
         this._broadcastInterval = null;
         this._broadcastIntervalMs = 3000; // Broadcast every 3 seconds
+    }
+
+    /**
+     * Set queue manager (for late binding)
+     */
+    setQueueManager(queueManager) {
+        this.queueManager = queueManager;
     }
 
     /**
@@ -49,7 +61,7 @@ class SpectatorManager {
     /**
      * Get list of active games with spectator-safe info
      * @param {Object} options - Filtering/pagination options
-     * @returns {Array} List of active games with metadata
+     * @returns {Object} Object containing active games and pending games
      */
     getActiveGamesList(options = {}) {
         const { page = 1, pageSize = 20, sortBy = 'newest' } = options;
@@ -60,7 +72,7 @@ class SpectatorManager {
             return this._applyPagination(this._cachedGameList, page, pageSize);
         }
         
-        // Build fresh list
+        // Build fresh list of active games
         const games = [];
         for (const [socketId, game] of this.activeGames.entries()) {
             if (game && game.gameState === 'active') {
@@ -76,6 +88,17 @@ class SpectatorManager {
         this._gameListLastUpdate = now;
         
         return this._applyPagination(games, page, pageSize);
+    }
+
+    /**
+     * Get list of pending games (players waiting in queue)
+     * @returns {Array} List of pending games
+     */
+    getPendingGamesList() {
+        if (!this.queueManager || typeof this.queueManager.getPendingGamesList !== 'function') {
+            return [];
+        }
+        return this.queueManager.getPendingGamesList();
     }
 
     /**
@@ -302,25 +325,27 @@ class SpectatorManager {
      */
     notifyGameEnded(gameId, gameOverData) {
         const spectators = this._spectatorsByGame.get(gameId);
-        if (!spectators || spectators.size === 0) return;
         
-        // Emit game over to spectators
-        this.io.to(`spectate:${gameId}`).emit('spectate_ended', {
-            gameId: gameId,
-            reason: 'game_over',
-            gameOverData: gameOverData
-        });
-        
-        // Remove all spectators from this game's tracking
-        for (const spectatorId of spectators) {
-            this._spectatorWatching.delete(spectatorId);
-            const sock = this._getSocket(spectatorId);
-            if (sock) sock.leave(`spectate:${gameId}`);
+        // Emit game over to spectators if any
+        if (spectators && spectators.size > 0) {
+            this.io.to(`spectate:${gameId}`).emit('spectate_ended', {
+                gameId: gameId,
+                reason: 'game_over',
+                gameOverData: gameOverData
+            });
+            
+            // Remove all spectators from this game's tracking
+            for (const spectatorId of spectators) {
+                this._spectatorWatching.delete(spectatorId);
+                const sock = this._getSocket(spectatorId);
+                if (sock) sock.leave(`spectate:${gameId}`);
+            }
+            this._spectatorsByGame.delete(gameId);
         }
-        this._spectatorsByGame.delete(gameId);
         
-        // Invalidate cache
+        // Invalidate cache and immediately broadcast updated game list
         this._gameListLastUpdate = 0;
+        this._broadcastGameListToLobby();
     }
 
     /**
@@ -365,8 +390,14 @@ class SpectatorManager {
         // Get fresh game list
         const gameListData = this.getActiveGamesList({ page: 1, pageSize: 50 });
         
-        // Only broadcast if there are active games
-        if (gameListData.pagination.totalGames === 0) return;
+        // Get pending games
+        const pendingGames = this.getPendingGamesList();
+        
+        // Add pending games to the response
+        gameListData.pendingGames = pendingGames;
+        
+        // Only broadcast if there are active or pending games
+        if (gameListData.pagination.totalGames === 0 && pendingGames.length === 0) return;
         
         // Broadcast to a "lobby" room - users join this room when not in game
         this.io.to('lobby').emit('active_games', gameListData);

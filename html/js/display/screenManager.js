@@ -5,13 +5,32 @@ var ScreenManager = {
     _blockTimer: null,
     _updateInterval: null,  // Track the update interval separately
     _waitingForBlock: false,
+    _isShowingWaitingScreen: false,  // Track if waiting screen is active
+    _cryptoType: 'WOW',  // Default to WOW, updated on game mode info
+
+    // Get the game title based on crypto type
+    getGameTitle: function() {
+        return this._cryptoType === 'XMR' ? 'MONEROGUE' : 'WOWNEROGUE';
+    },
+
+    // Set crypto type (called from socket handlers)
+    setCryptoType: function(cryptoType) {
+        this._cryptoType = cryptoType || 'WOW';
+    },
+
+    // Check if waiting screen is currently being shown
+    isShowingWaitingScreen: function() {
+        return this._isShowingWaitingScreen;
+    },
 
     init: function(screenWidth, screenHeight) {
         this._screenWidth = screenWidth;
         this._screenHeight = screenHeight;
         this._currentBlockHeight = 0;
         this._waitingForBlock = false;
+        this._isShowingWaitingScreen = false;
         this._updateInterval = null;  // Initialize update interval tracker
+        this._cryptoType = 'WOW';
         
         // Initialize the waiting screen animator
         if (typeof WaitingScreenAnimator !== 'undefined') {
@@ -60,15 +79,19 @@ var ScreenManager = {
 
     drawWelcomeScreen: function() {
         if (!DisplayManager.ensureDisplay()) return;
+        
+        // Mark that we're NOT showing the waiting screen
+        this._isShowingWaitingScreen = false;
+        
         DisplayManager.clearDisplay();
         
         // Draw the border
         this.drawBorder();
         
-        // Draw content
+        // Draw content - use dynamic title based on crypto type
         let y = 3;
-        this.drawCenteredText(y, "WOWGUE");
-        y += 4;
+        this.drawCenteredText(y, this.getGameTitle());
+        y += 3;
         
         // Draw instructions
         this.drawCenteredText(y, "Type enter to queue!");
@@ -102,9 +125,11 @@ var ScreenManager = {
             y++;
         }
         
-        // Draw current block info
+        // Draw current block info on two lines
         y += 2;
-        this.drawCenteredText(y, `Current Block: ${this._currentBlockHeight}`);
+        this.drawCenteredText(y, "Current Block:");
+        y += 1;
+        this.drawCenteredText(y, `${this._currentBlockHeight}`);
         
         // Control HTML button visibility
         const startButton = document.getElementById('startButton');
@@ -228,6 +253,10 @@ var ScreenManager = {
 
     drawWaitingScreen: function(_internalLoopCall = false) {
         if (!DisplayManager.ensureDisplay()) return;
+        
+        // Mark that we're showing the waiting screen
+        this._isShowingWaitingScreen = true;
+        
         DisplayManager.clearDisplay();
         
         const animationEnabled = (typeof WaitingScreenAnimator !== 'undefined') ? 

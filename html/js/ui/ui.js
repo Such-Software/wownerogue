@@ -52,8 +52,8 @@ const UI = {
 
     updateGameTitle: function(cryptoType) {
         if (cryptoType === 'XMR') {
-            document.title = "XMROGUE - A Monero Roguelike";
-            this._gameTitleFull = "XMROGUE - A Monero Roguelike";
+            document.title = "Monerogue - A Monero Roguelike";
+            this._gameTitleFull = "MONEROGUE - A Monero Roguelike";
         } else {
             document.title = "Wownerogue - A Wownero Roguelike";
             this._gameTitleFull = "WOWNEROGUE - A Wownero Roguelike";
@@ -62,6 +62,11 @@ const UI = {
         // If the static banner is already visible (animation finished), update it immediately
         if ($('#staticbanner').is(':visible') && !$('#banner').is(':visible')) {
             $('#staticbanner').text(this._gameTitleFull);
+        }
+
+        // Also update ScreenManager for welcome screen display
+        if (typeof ScreenManager !== 'undefined' && ScreenManager.setCryptoType) {
+            ScreenManager.setCryptoType(cryptoType);
         }
     },
 

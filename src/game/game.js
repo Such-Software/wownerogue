@@ -168,14 +168,30 @@ class Game {
         this.dungeon.map[newY][newX] !== undefined && 
         (this.dungeon.map[newY][newX] === primaryFloor || this.dungeon.map[newY][newX] === secondaryFloor)) {
       
-  this.player.moveTo(newX, newY);
-  this.moveCount += 1;
+      this.player.moveTo(newX, newY);
+      this.moveCount += 1;
       if (CONSOLE_LOGGING) {
         console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
       }
       
       // Update FOV after moving
       this.updateFOV();
+      
+      // Check if player walked into monster (death by collision)
+      if (this.monster && this.monster.x === newX && this.monster.y === newY) {
+        this.gameState = 'lost';
+        if (CONSOLE_LOGGING) {
+          console.log(`💀 Player walked into monster at (${newX},${newY}) - GAME OVER`);
+        }
+        return { 
+          status: 'moved', 
+          event: 'monster_caught', 
+          player: this.player.getState(), 
+          monster: this.monster.getState(),
+          visibleTiles: this.visibleTiles, 
+          moves: this.moveCount 
+        };
+      }
       
       // Check for game events like finding treasure or exit
       if (this.dungeon.exit && this.player.isAt(this.dungeon.exit[0], this.dungeon.exit[1])) {
