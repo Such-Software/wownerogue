@@ -36,6 +36,7 @@ const debugManager = new DebugManager(broadcastManager);
 
 // Initialize payment system components (debugManager is now available)
 const databaseManager = new DatabaseManager();
+const db = databaseManager; // Alias for convenience in API endpoints
 const rpcService = new RpcService();
 const walletRPCService = new WalletRPCService(debugManager);
 const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager, paymentConfigManager);
@@ -274,6 +275,396 @@ app.get('/api/user/:socketId/payment-options', asyncHandler(async (req, res) => 
       cause: error
     });
   }
+}));
+
+// Get payment history for a user
+app.get('/api/user/:socketId/payments', asyncHandler(async (req, res) => {
+  const { socketId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const offset = parseInt(req.query.offset, 10) || 0;
+  
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId parameter is required.'
+    });
+  }
+
+  try {
+    const user = await gameModeManager.getOrCreateUser(socketId);
+    const result = await db.query(`
+      SELECT 
+        id, 
+        payment_type, 
+        expected_amount, 
+        status, 
+        credits_purchased,
+        created_at, 
+        confirmed_at,
+        description
+      FROM payments 
+      WHERE user_id = $1 
+      ORDER BY created_at DESC 
+      LIMIT $2 OFFSET $3
+    `, [user.id, limit, offset]);
+    
+    const countResult = await db.query(
+      `SELECT COUNT(*) as total FROM payments WHERE user_id = $1`,
+      [user.id]
+    );
+    
+    res.json({
+      payments: result.rows.map(row => ({
+        id: row.id,
+        type: row.payment_type,
+        amount: row.expected_amount,
+        amountFormatted: gameModeManager.formatAtomicHuman(row.expected_amount, 4),
+        status: row.status,
+        creditsReceived: row.credits_purchased || 0,
+        createdAt: row.created_at,
+        confirmedAt: row.confirmed_at,
+        description: row.description
+      })),
+      total: parseInt(countResult.rows[0].total, 10),
+      limit,
+      offset,
+      currency: gameModeManager.cryptoType
+    });
+  } catch (error) {
+    throw new AppError('Failed to retrieve payment history', {
+      statusCode: 500,
+      safeMessage: 'Unable to retrieve payment history.',
+      cause: error
+    });
+  }
+}));
+
+// Get payout history for a user
+app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
+  const { socketId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const offset = parseInt(req.query.offset, 10) || 0;
+  
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId parameter is required.'
+    });
+  }
+
+  try {
+    const user = await gameModeManager.getOrCreateUser(socketId);
+    const result = await db.query(`
+      SELECT 
+        p.id,
+        p.amount,
+        p.multiplier,
+        p.reason,
+        p.status,
+        p.tx_hash,
+        p.created_at,
+        p.processed_at,
+        g.outcome as game_outcome
+      FROM payouts p
+      LEFT JOIN games g ON p.game_id = g.id
+      WHERE p.user_id = $1 
+      ORDER BY p.created_at DESC 
+      LIMIT $2 OFFSET $3
+    `, [user.id, limit, offset]);
+    
+    const countResult = await db.query(
+      `SELECT COUNT(*) as total FROM payouts WHERE user_id = $1`,
+      [user.id]
+    );
+    
+    // Calculate total received (confirmed payouts)
+    const totalResult = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) as total_received FROM payouts WHERE user_id = $1 AND status = 'confirmed'`,
+      [user.id]
+    );
+    
+    res.json({
+      payouts: result.rows.map(row => ({
+        id: row.id,
+        amount: row.amount,
+        amountFormatted: gameModeManager.formatAtomicHuman(row.amount, 4),
+        multiplier: parseFloat(row.multiplier) || 0,
+        reason: row.reason,
+        status: row.status,
+        txHash: row.tx_hash,
+        createdAt: row.created_at,
+        processedAt: row.processed_at,
+        gameOutcome: row.game_outcome
+      })),
+      total: parseInt(countResult.rows[0].total, 10),
+      totalReceived: parseInt(totalResult.rows[0].total_received, 10),
+      totalReceivedFormatted: gameModeManager.formatAtomicHuman(totalResult.rows[0].total_received, 4),
+      limit,
+      offset,
+      currency: gameModeManager.cryptoType
+    });
+  } catch (error) {
+    throw new AppError('Failed to retrieve payout history', {
+      statusCode: 500,
+      safeMessage: 'Unable to retrieve payout history.',
+      cause: error
+    });
+  }
+}));
+
+// =============================================================================
+// Admin API Endpoints (requires ADMIN_API_KEY)
+// =============================================================================
+
+/**
+ * Admin authentication middleware
+ * Requires X-Admin-Key header to match ADMIN_API_KEY env variable
+ */
+const adminAuth = (req, res, next) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(503).json({ 
+      error: 'Admin API not configured',
+      message: 'Set ADMIN_API_KEY environment variable to enable admin endpoints.'
+    });
+  }
+  
+  const providedKey = req.headers['x-admin-key'];
+  if (!providedKey || providedKey !== adminKey) {
+    return res.status(401).json({ 
+      error: 'Unauthorized',
+      message: 'Invalid or missing X-Admin-Key header.'
+    });
+  }
+  
+  next();
+};
+
+/**
+ * POST /api/admin/refund/payment
+ * Refund a payment - marks it as refunded and optionally sends funds back
+ * Body: { paymentId: number, reason?: string, sendFunds?: boolean }
+ */
+app.post('/api/admin/refund/payment', adminAuth, asyncHandler(async (req, res) => {
+  const { paymentId, reason, sendFunds } = req.body || {};
+  
+  if (!paymentId || typeof paymentId !== 'number') {
+    throw new ValidationError('Invalid paymentId', {
+      safeMessage: 'paymentId (number) is required.'
+    });
+  }
+  
+  // Get payment record
+  const paymentResult = await db.query(`
+    SELECT p.*, u.payout_address, u.socket_id
+    FROM payments p
+    LEFT JOIN users u ON p.user_id = u.id
+    WHERE p.id = $1
+  `, [paymentId]);
+  
+  if (paymentResult.rows.length === 0) {
+    throw new NotFoundError('Payment not found', {
+      safeMessage: `Payment ${paymentId} not found.`
+    });
+  }
+  
+  const payment = paymentResult.rows[0];
+  
+  if (payment.status === 'refunded') {
+    return res.json({
+      success: false,
+      message: 'Payment already refunded.',
+      payment: { id: payment.id, status: payment.status }
+    });
+  }
+  
+  // Begin transaction
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    
+    // Mark payment as refunded
+    await client.query(`
+      UPDATE payments 
+      SET status = 'refunded', 
+          description = COALESCE(description, '') || ' | Refunded: ' || $2
+      WHERE id = $1
+    `, [paymentId, reason || 'Admin refund']);
+    
+    // If credits were purchased, deduct them
+    let creditsDeducted = 0;
+    if (payment.credits_purchased > 0 && payment.user_id) {
+      const userResult = await client.query(`
+        SELECT credits FROM users WHERE id = $1
+      `, [payment.user_id]);
+      
+      const currentCredits = userResult.rows[0]?.credits || 0;
+      creditsDeducted = Math.min(payment.credits_purchased, currentCredits);
+      
+      if (creditsDeducted > 0) {
+        const newBalance = currentCredits - creditsDeducted;
+        await client.query(`
+          UPDATE users SET credits = $1 WHERE id = $2
+        `, [newBalance, payment.user_id]);
+        
+        // Record credit transaction
+        await client.query(`
+          INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+          VALUES ($1, $2, $3, $4, 'refund')
+        `, [payment.user_id, -creditsDeducted, `Refund for payment ${paymentId}`, newBalance]);
+      }
+    }
+    
+    await client.query('COMMIT');
+    
+    // Optionally send funds back via wallet RPC
+    let fundsSent = false;
+    let txHash = null;
+    if (sendFunds && payment.payout_address && payment.expected_amount > 0) {
+      try {
+        if (walletRPCService && typeof walletRPCService.sendPayment === 'function') {
+          const result = await walletRPCService.sendPayment(
+            payment.payout_address, 
+            payment.expected_amount
+          );
+          fundsSent = true;
+          txHash = result?.tx_hash || null;
+        }
+      } catch (err) {
+        console.error('Failed to send refund funds:', err.message);
+        // Don't fail the request - refund is recorded, funds can be sent manually
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Payment refunded successfully.',
+      refund: {
+        paymentId,
+        originalAmount: payment.expected_amount,
+        originalAmountFormatted: gameModeManager.formatAtomicHuman(payment.expected_amount, 4),
+        creditsDeducted,
+        fundsSent,
+        txHash,
+        reason: reason || 'Admin refund'
+      }
+    });
+    
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+/**
+ * POST /api/admin/credits/adjust
+ * Adjust a user's credit balance (add or subtract)
+ * Body: { socketId: string, amount: number, reason?: string }
+ * amount can be positive (add) or negative (subtract)
+ */
+app.post('/api/admin/credits/adjust', adminAuth, asyncHandler(async (req, res) => {
+  const { socketId, amount, reason } = req.body || {};
+  
+  if (!socketId || typeof socketId !== 'string') {
+    throw new ValidationError('Invalid socketId', {
+      safeMessage: 'socketId (string) is required.'
+    });
+  }
+  
+  if (typeof amount !== 'number' || amount === 0) {
+    throw new ValidationError('Invalid amount', {
+      safeMessage: 'amount (non-zero number) is required. Positive to add, negative to subtract.'
+    });
+  }
+  
+  // Get user
+  const user = await gameModeManager.getOrCreateUser(socketId);
+  if (!user) {
+    throw new NotFoundError('User not found', {
+      safeMessage: `User with socket ${socketId} not found.`
+    });
+  }
+  
+  const currentCredits = user.credits || 0;
+  const newBalance = Math.max(0, currentCredits + amount); // Prevent negative balance
+  const actualAdjustment = newBalance - currentCredits;
+  
+  if (actualAdjustment === 0) {
+    return res.json({
+      success: false,
+      message: 'No adjustment made (would result in same balance).',
+      user: { credits: currentCredits }
+    });
+  }
+  
+  // Update credits
+  await db.query(`
+    UPDATE users SET credits = $1, updated_at = NOW() WHERE id = $2
+  `, [newBalance, user.id]);
+  
+  // Record transaction
+  const transactionType = actualAdjustment > 0 ? 'admin_credit' : 'admin_debit';
+  await db.query(`
+    INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+    VALUES ($1, $2, $3, $4, $5)
+  `, [user.id, actualAdjustment, reason || 'Admin adjustment', newBalance, transactionType]);
+  
+  // Notify user if connected
+  try {
+    io.to(socketId).emit('credits_update', { 
+      balance: newBalance,
+      creditsPerGame: gameModeManager.creditsPerGameCost
+    });
+  } catch (_) {}
+  
+  res.json({
+    success: true,
+    message: `Credits ${actualAdjustment > 0 ? 'added' : 'deducted'} successfully.`,
+    adjustment: {
+      userId: user.id,
+      previousBalance: currentCredits,
+      adjustment: actualAdjustment,
+      newBalance,
+      reason: reason || 'Admin adjustment'
+    }
+  });
+}));
+
+/**
+ * GET /api/admin/users/search
+ * Search for users by socket ID prefix or payout address
+ * Query: ?q=searchterm&limit=20
+ */
+app.get('/api/admin/users/search', adminAuth, asyncHandler(async (req, res) => {
+  const { q, limit = 20 } = req.query;
+  
+  if (!q || q.length < 3) {
+    throw new ValidationError('Invalid search query', {
+      safeMessage: 'Search query must be at least 3 characters.'
+    });
+  }
+  
+  const searchLimit = Math.min(parseInt(limit, 10) || 20, 100);
+  
+  const result = await db.query(`
+    SELECT id, socket_id, payout_address, credits, total_games_played, total_credits_purchased, created_at
+    FROM users
+    WHERE socket_id ILIKE $1 OR payout_address ILIKE $1
+    ORDER BY created_at DESC
+    LIMIT $2
+  `, [`%${q}%`, searchLimit]);
+  
+  res.json({
+    users: result.rows.map(u => ({
+      id: u.id,
+      socketId: u.socket_id,
+      payoutAddress: u.payout_address ? `${u.payout_address.substring(0, 10)}...` : null,
+      credits: u.credits || 0,
+      gamesPlayed: u.total_games_played || 0,
+      createdAt: u.created_at
+    })),
+    total: result.rows.length
+  });
 }));
 
 app.get('/api/game-modes', (req, res) => {

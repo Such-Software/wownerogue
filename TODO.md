@@ -44,7 +44,7 @@
 - [x] Chat history persisted and sent to new users ✅
 - [x] Spectator system functional with live game viewing ✅
 - [ ] **TLS/HTTPS**: Configure reverse proxy (Nginx/Caddy) with SSL certificates before exposing to real users.
-- [ ] **Database Backups**: Implement automated backup strategy for PostgreSQL.
+- [x] **Database Backups**: `scripts/backup_db.sh` + systemd timer for daily backups with 30-day retention (see `LOGS_AND_BACKUP.md`) ✅
 - [ ] **Manual Integration Test**: Run full payment flow with real `wownero-wallet-rpc` (not mocked).
-- [ ] **Rate Limit Tuning**: Review rate limits for production traffic patterns.
-- [ ] **Log Rotation**: Ensure logs don't fill disk in production.
+- [x] **Rate Limit Tuning**: Current defaults (60 games/hour, 100 payouts/day) suitable for launch ✅
+- [x] **Log Rotation**: Using systemd journald with configurable retention (see `LOGS_AND_BACKUP.md`) ✅

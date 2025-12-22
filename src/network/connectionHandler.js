@@ -222,9 +222,10 @@ class ConnectionHandler {
                 });
             }
 
-            // Credits convenience push
+            // Credits convenience push (include creditsPerGame for games remaining calculation)
             this.io.to(socket.id).emit('credits_update', { 
-                balance: sessionInfo.user.credits || 0 
+                balance: sessionInfo.user.credits || 0,
+                creditsPerGame: this.gameModeManager?.creditsPerGameCost || 1
             });
         } else {
             // fallback legacy welcome

@@ -157,7 +157,15 @@ const SocketHandlers = {
         }
     },
 
-    _updateCreditsDisplay: function(balance) {
+    // Default credits per game (overridden by game_mode_info)
+    _creditsPerGame: 1,
+    
+    _updateCreditsDisplay: function(balance, creditsPerGame) {
+        // Update stored creditsPerGame if provided
+        if (creditsPerGame && creditsPerGame > 0) {
+            SocketHandlers._creditsPerGame = creditsPerGame;
+        }
+        
         let el = document.getElementById('creditsDisplay');
         if (!el) {
             // Create a small unobtrusive badge in header if not present
@@ -167,7 +175,17 @@ const SocketHandlers = {
             el.style.cssText = 'position:absolute;top:4px;right:8px;font-size:12px;font-family:monospace;color:#0af;background:#111;padding:2px 6px;border:1px solid #044;border-radius:4px;';
             header.appendChild(el);
         }
-        el.textContent = 'Credits: ' + balance;
+        
+        // Calculate games remaining
+        const perGame = SocketHandlers._creditsPerGame || 1;
+        const gamesRemaining = Math.floor(balance / perGame);
+        
+        // Show credits and games remaining
+        if (gamesRemaining > 0) {
+            el.textContent = 'Credits: ' + balance + ' (' + gamesRemaining + ' game' + (gamesRemaining !== 1 ? 's' : '') + ')';
+        } else {
+            el.textContent = 'Credits: ' + balance;
+        }
     },
 
     onWelcome: function(msg) {
@@ -437,6 +455,11 @@ const SocketHandlers = {
 
     onGameModeInfo: function(data) {
         console.log('Game mode info received:', data);
+        
+        // Store creditsPerGame for calculating games remaining
+        if (data.creditsPerGame) {
+            SocketHandlers._creditsPerGame = data.creditsPerGame;
+        }
         
         if (typeof UI !== 'undefined' && UI.updateGameTitle) {
             UI.updateGameTitle(data.cryptoType);

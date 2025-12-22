@@ -1,0 +1,26 @@
+[Unit]
+Description=Wownerogue PostgreSQL Backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+# Run as the user who owns the application (adjust as needed)
+# User=wownerogue
+
+# Load environment from the application's .env file
+# Update this path to match your installation
+EnvironmentFile=/var/www/wownerogue/src/.env
+
+# Override backup-specific settings if needed
+Environment="BACKUP_DIR=/var/backups/wownerogue"
+Environment="RETENTION_DAYS=30"
+
+# Run the backup script
+# Update this path to match your installation
+ExecStart=/var/www/wownerogue/scripts/backup_db.sh
+
+# Working directory
+WorkingDirectory=/var/www/wownerogue/src
+
+[Install]
+WantedBy=multi-user.target
