@@ -1,5 +1,4 @@
 var axios = require('axios');
-var request = require('request');
 
 // Environment-based console logging control
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
@@ -35,22 +34,20 @@ if (CONSOLE_LOGGING) {
 }
 
 function daemonCall(method, params, callback, io) {
-    // Real blockchain call (now used for all cases)
+    // Real blockchain call using axios
     var body = constructCall(method, params);
-    request({
-        url: daemonURL,
-        method: 'POST',
-        headers: {"content-type": "application/json"},
-        json: body
-    }, function (error, res, body) {
-        if (error) {
-            if (CONSOLE_LOGGING) {
-                console.log("Daemon connection error:", error.message);
-            }
-            callback(null);
-            return;
+    axios.post(daemonURL, body, {
+        headers: { "content-type": "application/json" },
+        timeout: 10000
+    })
+    .then(function(response) {
+        callback(response.data);
+    })
+    .catch(function(error) {
+        if (CONSOLE_LOGGING) {
+            console.log("Daemon connection error:", error.message);
         }
-        callback(body);
+        callback(null);
     });
 }
 

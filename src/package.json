@@ -33,8 +33,7 @@
     "dotenv": "^16.0.3",
     "express": "^4.17.1",
     "pg": "^8.15.5",
-    "node-pg-migrate": "^7.0.2",
-    "request": "^2.88.0",
+    "node-pg-migrate": "^8.0.4",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "uuid": "^9.0.0"

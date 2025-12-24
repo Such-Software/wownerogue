@@ -199,6 +199,147 @@ Amounts use atomic units: 1 WOW = 10^11 atomic units.
 - [ ] Set up database backups
 - [ ] Configure log rotation
 
+### Create Dedicated User
+
+Create an isolated system user for security:
+
+```bash
+# Create system user with no login shell and dedicated home
+sudo useradd --system --shell /usr/sbin/nologin --home-dir /var/www/wownerogue --create-home wownerogue
+
+# Create .ssh directory for deploy key
+sudo mkdir -p /var/www/wownerogue/.ssh
+sudo chmod 700 /var/www/wownerogue/.ssh
+sudo chown wownerogue:wownerogue /var/www/wownerogue/.ssh
+
+# Create log directory
+sudo mkdir -p /var/log/wownerogue
+sudo chown wownerogue:wownerogue /var/log/wownerogue
+```
+
+### Setup Deploy Key and Clone Repository
+
+Generate an SSH deploy key for the wownerogue user:
+
+```bash
+# Generate deploy key (as root, since user has no shell)
+sudo ssh-keygen -t ed25519 -C "wownerogue-deploy" -f /var/www/wownerogue/.ssh/id_ed25519 -N ""
+
+# Set correct ownership and permissions
+sudo chown wownerogue:wownerogue /var/www/wownerogue/.ssh/id_ed25519*
+sudo chmod 600 /var/www/wownerogue/.ssh/id_ed25519
+sudo chmod 644 /var/www/wownerogue/.ssh/id_ed25519.pub
+
+# Display the public key
+sudo cat /var/www/wownerogue/.ssh/id_ed25519.pub
+```
+
+Add the deploy key to GitHub:
+1. Go to your repository → **Settings** → **Deploy keys**
+2. Click **Add deploy key**
+3. Paste the public key from the command above
+4. Leave "Allow write access" unchecked (read-only is sufficient)
+5. Click **Add key**
+
+Configure SSH for GitHub:
+
+```bash
+# Create SSH config for the wownerogue user
+sudo tee /var/www/wownerogue/.ssh/config << 'EOF'
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+EOF
+
+sudo chown wownerogue:wownerogue /var/www/wownerogue/.ssh/config
+sudo chmod 600 /var/www/wownerogue/.ssh/config
+```
+
+Clone the repository:
+
+```bash
+# Clone as the wownerogue user (replace YOUR_USERNAME with your GitHub username)
+sudo -u wownerogue git clone git@github.com:YOUR_USERNAME/wownerogue.git /var/www/wownerogue/app
+```
+
+### Install Node.js
+
+Install Node.js LTS using NodeSource (run as root):
+
+```bash
+# Install Node.js 22.x LTS (or check https://nodejs.org for current LTS)
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+
+# Verify installation
+node --version
+npm --version
+```
+
+Install dependencies and audit for vulnerabilities:
+
+```bash
+cd /var/www/wownerogue/app/src
+sudo -u wownerogue npm install
+
+# Check for known vulnerabilities
+sudo -u wownerogue npm audit
+
+# Auto-fix vulnerabilities where possible
+sudo -u wownerogue npm audit fix
+```
+
+To update the deployment later:
+
+```bash
+cd /var/www/wownerogue/app
+sudo -u wownerogue git pull
+cd src && sudo -u wownerogue npm install
+sudo -u wownerogue npm audit fix
+sudo systemctl restart wownerogue
+```
+
+### Set File Permissions
+
+```bash
+# Set ownership of application files
+sudo chown -R wownerogue:wownerogue /var/www/wownerogue
+
+# Restrict permissions (owner only, no world access)
+sudo chmod 750 /var/www/wownerogue
+sudo chmod 640 /var/www/wownerogue/src/.env
+```
+
+**Database permissions** - create a restricted PostgreSQL role:
+
+```sql
+-- Create role with minimal privileges
+CREATE USER wownerogue WITH PASSWORD 'secure-password-here';
+CREATE DATABASE wownerogue OWNER wownerogue;
+
+-- Revoke dangerous permissions
+REVOKE CREATE ON SCHEMA public FROM wownerogue;
+
+-- Grant only what's needed
+GRANT CONNECT ON DATABASE wownerogue TO wownerogue;
+GRANT USAGE ON SCHEMA public TO wownerogue;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO wownerogue;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO wownerogue;
+```
+
+**Filesystem isolation** (optional, for extra hardening):
+
+```bash
+# Prevent the user from accessing other users' home directories
+sudo chmod 700 /home/*
+
+# Mount application directory with noexec for uploads (if applicable)
+# Add to /etc/fstab if using separate partition
+```
+
 ### systemd Service
 
 ```ini
@@ -209,59 +350,39 @@ After=network.target postgresql.service
 [Service]
 Type=simple
 User=wownerogue
+Group=wownerogue
 WorkingDirectory=/var/www/wownerogue/src
 EnvironmentFile=/var/www/wownerogue/src/.env
 ExecStart=/usr/bin/node index.js
 Restart=on-failure
 RestartSec=10
 
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/www/wownerogue /var/log/wownerogue
+
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Nginx (TLS + WebSocket)
+The systemd hardening options:
+- `NoNewPrivileges` - prevents privilege escalation
+- `ProtectSystem=strict` - mounts filesystem read-only except allowed paths
+- `ProtectHome=yes` - hides /home, /root, /run/user
+- `PrivateTmp=yes` - isolates /tmp
+- `ReadWritePaths` - whitelists writable directories
 
-```nginx
-upstream wownerogue {
-    server 127.0.0.1:3000;
-    keepalive 64;
-}
+### Reverse Proxy
 
-server {
-    listen 443 ssl http2;
-    server_name play.yoursite.com;
+Use your existing reverse proxy (Nginx Proxy Manager, Caddy, Traefik, etc.) to forward traffic to port 3000. Key settings for WebSocket support:
 
-    ssl_certificate /etc/letsencrypt/live/play.yoursite.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/play.yoursite.com/privkey.pem;
-
-    location / {
-        root /var/www/wownerogue/html;
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /socket.io/ {
-        proxy_pass http://wownerogue;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_read_timeout 86400;
-    }
-
-    location ~ ^/(health|api|verify) {
-        proxy_pass http://wownerogue;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-    
-    # Protect admin dashboard
-    location /admin.html {
-        auth_basic "Admin";
-        auth_basic_user_file /etc/nginx/.htpasswd;
-        root /var/www/wownerogue/html;
-    }
-}
-```
+- Enable WebSocket proxying
+- Set timeout to at least 86400s for long-lived connections
+- Forward `/socket.io/` path to the backend
+- Optionally protect `/admin.html` with authentication
 
 ---
 

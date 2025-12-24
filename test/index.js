@@ -2,7 +2,7 @@ const express = require('express');
 var app = require('express')();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
-var rpc = require('./rpccalls.js');
+var rpc = require('../src/rpc/rpccalls.js');
 var db = require('./dbcalls.js');
 var user = require('./user');
 
