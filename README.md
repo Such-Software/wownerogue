@@ -310,7 +310,7 @@ sudo chown -R wownerogue:wownerogue /var/www/wownerogue
 
 # Restrict permissions (owner only, no world access)
 sudo chmod 750 /var/www/wownerogue
-sudo chmod 640 /var/www/wownerogue/src/.env
+sudo chmod 640 /var/www/wownerogue/app/src/.env
 ```
 
 **Database permissions** - create a restricted PostgreSQL role:
@@ -342,6 +342,8 @@ sudo chmod 700 /home/*
 
 ### systemd Service
 
+Save to `/etc/systemd/system/wownerogue.service`:
+
 ```ini
 [Unit]
 Description=Wownerogue Game Server
@@ -351,8 +353,9 @@ After=network.target postgresql.service
 Type=simple
 User=wownerogue
 Group=wownerogue
-WorkingDirectory=/var/www/wownerogue/src
-EnvironmentFile=/var/www/wownerogue/src/.env
+# Adjust paths if you cloned to a different location
+WorkingDirectory=/var/www/wownerogue/app/src
+EnvironmentFile=/var/www/wownerogue/app/src/.env
 ExecStart=/usr/bin/node index.js
 Restart=on-failure
 RestartSec=10
@@ -366,6 +369,20 @@ ReadWritePaths=/var/www/wownerogue /var/log/wownerogue
 
 [Install]
 WantedBy=multi-user.target
+```
+
+Then enable and start:
+
+```bash
+# Create .env from example first!
+sudo -u wownerogue cp /var/www/wownerogue/app/src/.env.example /var/www/wownerogue/app/src/.env
+sudo vim /var/www/wownerogue/app/src/.env  # Edit with your settings
+
+# Enable and start service
+sudo systemctl daemon-reload
+sudo systemctl enable wownerogue
+sudo systemctl start wownerogue
+sudo systemctl status wownerogue
 ```
 
 The systemd hardening options:
