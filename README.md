@@ -392,14 +392,35 @@ The systemd hardening options:
 - `PrivateTmp=yes` - isolates /tmp
 - `ReadWritePaths` - whitelists writable directories
 
-### Reverse Proxy
+### Reverse Proxy (Nginx Proxy Manager)
 
-Use your existing reverse proxy (Nginx Proxy Manager, Caddy, Traefik, etc.) to forward traffic to port 3000. Key settings for WebSocket support:
+If using Nginx Proxy Manager:
 
-- Enable WebSocket proxying
-- Set timeout to at least 86400s for long-lived connections
-- Forward `/socket.io/` path to the backend
-- Optionally protect `/admin.html` with authentication
+1. **Add Proxy Host**
+   - Domain Names: `yourdomain.com`
+   - Scheme: `http`
+   - Forward Hostname/IP: Your server's LAN IP (e.g., `192.168.1.100`)
+   - Forward Port: `3000`
+   - Enable "Websockets Support" toggle
+
+2. **SSL Tab**
+   - Request a new SSL certificate
+   - Enable "Force SSL"
+
+3. **Advanced Tab** - Paste this config for WebSocket support:
+
+```nginx
+location /socket.io/ {
+    proxy_pass http://192.168.1.100:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+}
+```
 
 ---
 

@@ -333,6 +333,17 @@ class GameModeManager {
         return result.rows[0] || null;
     }
 
+    /**
+     * Convert package info to JSON-safe format (BigInt price -> Number)
+     */
+    _serializePackageInfo(packageInfo) {
+        if (!packageInfo) return null;
+        return {
+            ...packageInfo,
+            price: typeof packageInfo.price === 'bigint' ? Number(packageInfo.price) : packageInfo.price
+        };
+    }
+
     _mapPaymentRowToRequest(row, paymentType, packageInfo) {
         if (!row) return null;
         const amount = Number(row.expected_amount);
@@ -345,7 +356,7 @@ class GameModeManager {
             expiresAt: row.expires_at,
             paymentType,
             description: row.description,
-            package: packageInfo || null,
+            package: this._serializePackageInfo(packageInfo),
             reused: true
         };
     }
@@ -876,7 +887,7 @@ class GameModeManager {
                 amountFormatted: this.formatAtomicHuman(amount, 4),
                 currency: this.cryptoType,
                 expiresAt: insertedRow?.expires_at || expiresAt,
-                package: packageInfo,
+                package: this._serializePackageInfo(packageInfo),
                 paymentType,
                 description,
                 reused: false
