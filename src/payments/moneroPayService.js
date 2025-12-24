@@ -196,16 +196,18 @@ class MoneroPayService {
      * Process pending payouts in batches
      */
     async processPendingPayouts() {
+        const maxRetries = parseInt(process.env.PAYOUT_MAX_RETRIES) || 3;
+        
         try {
             const maxBatchSize = parseInt(process.env.MAX_PAYOUT_BATCH_SIZE) || 50;
             
-            // Get pending payouts
+            // Get pending payouts that haven't exceeded retry limit
             const payouts = await this.db.query(`
                 SELECT * FROM payouts 
-                WHERE status = 'pending'
+                WHERE status = 'pending' AND (retry_count IS NULL OR retry_count < $1)
                 ORDER BY created_at ASC
-                LIMIT $1
-            `, [maxBatchSize]);
+                LIMIT $2
+            `, [maxRetries, maxBatchSize]);
 
             if (payouts.rows.length === 0) {
                 return { processed: 0, message: 'No pending payouts' };
@@ -264,12 +266,41 @@ class MoneroPayService {
         } catch (error) {
             console.error('❌ Failed to process payouts:', error.message);
             
-            // Mark failed payouts
-            await this.db.query(`
-                UPDATE payouts 
-                SET status = 'failed'
-                WHERE status = 'pending' AND created_at < NOW() - INTERVAL '1 hour'
+            // Increment retry count for pending payouts, mark as failed if max retries exceeded
+            const pendingPayouts = await this.db.query(`
+                SELECT id, retry_count FROM payouts 
+                WHERE status = 'pending'
             `);
+            
+            for (const payout of pendingPayouts.rows) {
+                const newRetryCount = (payout.retry_count || 0) + 1;
+                const errorMessage = error.message || 'Unknown error';
+                
+                if (newRetryCount >= maxRetries) {
+                    // Max retries exceeded - mark as permanently failed
+                    await this.db.query(`
+                        UPDATE payouts 
+                        SET status = 'failed',
+                            retry_count = $1,
+                            last_error = $2,
+                            last_retry_at = NOW()
+                        WHERE id = $3
+                    `, [newRetryCount, errorMessage, payout.id]);
+                    
+                    console.error(`💀 Payout ${payout.id} permanently failed after ${newRetryCount} attempts: ${errorMessage}`);
+                } else {
+                    // Increment retry count, will try again next batch
+                    await this.db.query(`
+                        UPDATE payouts 
+                        SET retry_count = $1,
+                            last_error = $2,
+                            last_retry_at = NOW()
+                        WHERE id = $3
+                    `, [newRetryCount, errorMessage, payout.id]);
+                    
+                    console.warn(`⚠️ Payout ${payout.id} failed (attempt ${newRetryCount}/${maxRetries}): ${errorMessage}`);
+                }
+            }
 
             throw error;
         }

@@ -682,6 +682,23 @@ app.get('/api/game-modes', (req, res) => {
   const directMode = config.modes.direct;
   const creditsMode = config.modes.credits;
 
+  // Include hosted by info if configured
+  let hostedBy = null;
+  if (process.env.HOSTED_BY) {
+    let hostname = process.env.HOSTED_BY_NAME;
+    if (!hostname) {
+      try {
+        hostname = new URL(process.env.HOSTED_BY).hostname;
+      } catch (e) {
+        hostname = process.env.HOSTED_BY; // Use raw value if URL parsing fails
+      }
+    }
+    hostedBy = {
+      url: process.env.HOSTED_BY,
+      name: hostname
+    };
+  }
+
   res.json({
     FREE: {
       name: 'Free Play',
@@ -703,7 +720,8 @@ app.get('/api/game-modes', (req, res) => {
       payoutMultiplier: creditsMode.enabled && config.payouts.rules.credits.enabled
         ? config.payouts.rules.credits.multipliers
         : 0
-    }
+    },
+    hostedBy
   });
 });
 

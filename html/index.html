@@ -33,6 +33,20 @@
                     const warn = document.getElementById('sessionWarning');
                     if (warn) warn.style.display = 'inline';
                 }
+                // Fetch server config and populate hosted-by footer
+                fetch('/api/game-modes')
+                    .then(function(res) { return res.json(); })
+                    .then(function(data) {
+                        if (data.hostedBy && data.hostedBy.url) {
+                            var container = document.getElementById('hosted-by-container');
+                            if (container) {
+                                container.innerHTML = ' | Hosted by: <a href="' + 
+                                    data.hostedBy.url + '" target="_blank" rel="noopener" style="color:#888;">' + 
+                                    (data.hostedBy.name || data.hostedBy.url) + '</a>';
+                            }
+                        }
+                    })
+                    .catch(function() { /* ignore errors */ });
             });
         })();
     </script>
@@ -202,7 +216,8 @@
 
         <!-- Footer -->
         <div class="footer">
-            Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move
+            <span>Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move</span>
+            <span id="hosted-by-container"></span>
         </div>
     </div>
 
