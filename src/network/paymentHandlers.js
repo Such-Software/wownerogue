@@ -47,8 +47,10 @@ class PaymentHandlers {
             return;
         }
         try {
-            const { gameMode } = data;
-            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, gameMode);
+            const { type, packageId } = data;
+            const paymentType = type || data.gameMode || 'single_game';
+            const options = { packageId };
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, options);
             this.io.to(socket.id).emit('payment_created', {
                 paymentId: paymentRequest.id,
                 address: paymentRequest.address,
@@ -56,7 +58,7 @@ class PaymentHandlers {
                 amountFormatted: paymentRequest.amountFormatted,
                 currency: this.gameModeManager.cryptoType,
                 package: paymentRequest.package,
-                gameMode: gameMode
+                paymentType: paymentType
             });
             if (this.debugManager.CONSOLE_LOGGING) console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount}`);
         } catch (e) {
@@ -66,8 +68,22 @@ class PaymentHandlers {
         }
     }
 
-    async createAndShowPaymentRequest(socket) {
+    async createAndShowPaymentRequest(socket, options = {}) {
         if (!this.gameModeManager) return;
+        
+        // If both direct and credits modes are enabled, let the user choose
+        const bothModesEnabled = this.gameModeManager.directModeEnabled && this.gameModeManager.creditsModeEnabled;
+        const forceShowOptions = options.showOptions === true;
+        
+        if (bothModesEnabled && !options.paymentType) {
+            // Send event to show payment options modal on client
+            this.io.to(socket.id).emit('show_payment_options', {
+                reason: 'choose_payment_method',
+                message: 'Choose how you want to play'
+            });
+            return;
+        }
+        
         try {
             // Ensure payout address exists for modes that may payout (PAID_SINGLE or PAID_CREDITS with payouts)
             const mode = this.gameModeManager.gameMode;
@@ -89,16 +105,23 @@ class PaymentHandlers {
             // caller (SocketHandlers) will handle user existence; keep method generic
             const gameMode = this.gameModeManager.gameMode;
             const cryptoType = this.gameModeManager.cryptoType;
-            let paymentType;
+            let paymentType = options.paymentType;
             let amount;
             let description;
 
-            if (gameMode === 'PAID_SINGLE') {
-                paymentType = 'single_game';
+            // Determine payment type if not specified
+            if (!paymentType) {
+                if (gameMode === 'PAID_SINGLE' || this.gameModeManager.directModeEnabled) {
+                    paymentType = 'single_game';
+                } else if (gameMode === 'PAID_CREDITS') {
+                    paymentType = 'credits_package';
+                }
+            }
+
+            if (paymentType === 'single_game') {
                 amount = this.gameModeManager.singleGamePrice;
                 description = 'Single game entry';
-            } else if (gameMode === 'PAID_CREDITS') {
-                paymentType = 'credits_package';
+            } else if (paymentType === 'credits_package') {
                 const primaryPackage = this.gameModeManager.getPrimaryCreditPackage();
                 amount = Number(primaryPackage?.price ?? this.gameModeManager.creditsPackagePrice);
                 const credits = primaryPackage?.credits ?? this.gameModeManager.creditsPerGameCost * 10;
@@ -108,7 +131,10 @@ class PaymentHandlers {
                 return;
             }
 
-            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, { reuseExisting: true });
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, { 
+                reuseExisting: true,
+                packageId: options.packageId 
+            });
             const reused = !!paymentRequest.reused;
             const formattedAmount = paymentRequest.amountFormatted ?? this.gameModeManager.formatAtomicHuman(amount, 3);
             let qrDataUrl = null;

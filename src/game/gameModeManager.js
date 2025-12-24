@@ -824,6 +824,7 @@ class GameModeManager {
         try {
             const user = await this.getOrCreateUser(socketId);
             const reuseExisting = options.reuseExisting !== false;
+            const requestedPackageId = options.packageId;
 
             let amount;
             let description;
@@ -836,12 +837,26 @@ class GameModeManager {
                     break;
                 }
                 case 'credits_package': {
-                    const primaryPackage = this.getPrimaryCreditPackage();
-                    const packagePrice = primaryPackage?.price ?? this.creditsPackagePrice;
-                    amount = Number(packagePrice);
-                    packageInfo = primaryPackage;
-                    const creditCount = primaryPackage?.credits ?? 10;
-                    description = `Wowngeon ${creditCount} credits package (${this.cryptoType})`;
+                    // Find the requested package, or fall back to primary
+                    const packages = this.configSnapshot?.modes?.credits?.packages || [];
+                    let selectedPackage = null;
+                    
+                    if (requestedPackageId && packages.length > 0) {
+                        selectedPackage = packages.find(p => p.id === requestedPackageId);
+                    }
+                    
+                    // Fall back to first package if not found
+                    if (!selectedPackage) {
+                        selectedPackage = this.getPrimaryCreditPackage();
+                    }
+                    
+                    const packagePrice = selectedPackage?.price ?? this.creditsPackagePrice;
+                    amount = typeof packagePrice === 'bigint' ? Number(packagePrice) : Number(packagePrice);
+                    packageInfo = selectedPackage;
+                    const creditCount = selectedPackage?.credits ?? 10;
+                    const bonusCredits = selectedPackage?.bonus ?? 0;
+                    const bonusText = bonusCredits > 0 ? ` (+${bonusCredits} bonus)` : '';
+                    description = `Wowngeon ${creditCount}${bonusText} credits package (${this.cryptoType})`;
                     break;
                 }
                 default:
@@ -1003,6 +1018,19 @@ class GameModeManager {
             ? `⚠️ STAGENET MODE: This server is using ${this.network} XMR. Do NOT send real mainnet XMR! Only ${this.network} XMR will be accepted.`
             : null;
         
+        // Serialize all credit packages (convert BigInt prices to Number)
+        const packages = this.configSnapshot?.modes?.credits?.packages || [];
+        const creditPackages = packages.map(pkg => ({
+            id: pkg.id,
+            credits: pkg.credits,
+            price: typeof pkg.price === 'bigint' ? Number(pkg.price) : pkg.price,
+            bonus: pkg.bonus || 0,
+            priceFormatted: this.formatAtomicHuman(
+                typeof pkg.price === 'bigint' ? Number(pkg.price) : pkg.price, 
+                2
+            )
+        }));
+        
         return {
             mode: this.gameMode,
             cryptoType: this.cryptoType,
@@ -1010,13 +1038,20 @@ class GameModeManager {
             isTestNetwork: this.isTestNetwork,
             testnetWarning: testnetWarning,
             singleGamePrice: this.singleGamePrice,
+            singleGamePriceFormatted: this.formatAtomicHuman(this.singleGamePrice, 2),
             creditsPackagePrice: this.creditsPackagePrice,
             creditsPerGame: this.creditsPerGameCost,
+            creditPackages: creditPackages,
+            creditsPayoutBaseValue: this.creditsPayoutBaseValue,
             paymentsEnabled: this.paymentsEnabled,
             directModeEnabled: this.directModeEnabled,
             creditsModeEnabled: this.creditsModeEnabled,
             directPayoutsEnabled: this.directPayoutMultipliers.escape > 0,
             creditsPayoutsEnabled: this.creditsPayoutEnabled,
+            payoutMultipliers: {
+                direct: this.directPayoutMultipliers,
+                credits: this.creditPayoutMultipliers
+            },
             features: {
                 paymentRequired: this.paymentsEnabled,
                 creditsSystem: this.creditsModeEnabled,

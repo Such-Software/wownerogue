@@ -92,6 +92,7 @@ const SocketHandlers = {
         socket.on('payment_created', this.onPaymentCreated);
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
+        socket.on('show_payment_options', this.onShowPaymentOptions);
     socket.on('credits_update', this.onCreditsUpdate);
         
         // Block height handler
@@ -600,6 +601,14 @@ const SocketHandlers = {
             if (qrHolder) {
                 qrHolder.textContent = 'QR unavailable';
             }
+        }
+    },
+
+    onShowPaymentOptions: function(data) {
+        console.log('Show payment options:', data);
+        // Show the payment options modal so user can choose how to play
+        if (typeof PaymentUI !== 'undefined') {
+            PaymentUI.show();
         }
     },
 
