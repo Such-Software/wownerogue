@@ -242,6 +242,11 @@ class GameModeManager {
             : (multipliers.escape ?? 0);
 
         const amount = Math.round(base * multiplier);
+        
+        console.log(`🧮 calculatePayout: mode=${normalizedMode}, usingCredits=${usingCredits}, treasureFound=${treasureFound}`);
+        console.log(`   base=${base}, multipliers=${JSON.stringify(multipliers)}, chosen multiplier=${multiplier}`);
+        console.log(`   final amount=${amount} (base * multiplier = ${base} * ${multiplier})`);
+        
         return { amount, multiplier, base };
     }
 

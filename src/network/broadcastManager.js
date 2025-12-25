@@ -25,11 +25,11 @@ class BroadcastManager {
             count = this.io.engine.clientsCount || 0;
         }
         
-        // Only broadcast if count changed to avoid spam
-        if (count !== this._lastUserCount) {
-            this._lastUserCount = count;
-            this.io.emit('user_count', { count });
-        }
+        console.log(`👥 Broadcasting user count: ${count} (last was ${this._lastUserCount})`);
+        
+        // Always broadcast to ensure new clients get the count
+        this._lastUserCount = count;
+        this.io.emit('user_count', { count });
     }
 
     /**

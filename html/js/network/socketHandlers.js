@@ -706,6 +706,7 @@ const SocketHandlers = {
     },
 
     onUserCount: function(data) {
+        console.log('👥 User count received:', data);
         if (!data || typeof data.count !== 'number') return;
         SocketHandlers._updateUserCountDisplay(data.count);
     },
