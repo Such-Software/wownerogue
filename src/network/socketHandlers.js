@@ -370,7 +370,13 @@ class SocketHandlers {
     socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         socket.on('disconnect', () => this.handleDisconnect(socket));
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
-        socket.on('register_client', (data) => this.connectionHandler.handleRegisterClient(socket, data));
+        socket.on('register_client', (data) => {
+            this.connectionHandler.handleRegisterClient(socket, data);
+            // Re-send game mode info after client registers handlers (fixes race condition)
+            if (this.gameModeManager) {
+                socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
+            }
+        });
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
