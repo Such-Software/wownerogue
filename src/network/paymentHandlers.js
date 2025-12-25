@@ -51,6 +51,7 @@ class PaymentHandlers {
             const paymentType = type || data.gameMode || 'single_game';
             const options = { packageId, reuseExisting: true };
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, options);
+            const cryptoType = this.gameModeManager.cryptoType;
             
             // Generate QR code
             let qrDataUrl = null;
@@ -59,7 +60,7 @@ class PaymentHandlers {
                 qrDataUrl = await generatePaymentQR(
                     paymentRequest.address,
                     paymentRequest.amount,
-                    this.gameModeManager.cryptoType,
+                    cryptoType,
                     paymentType === 'credits_package' ? 'Credits package' : 'Single game',
                     this.gameModeManager.currencyDecimals
                 );
@@ -73,13 +74,25 @@ class PaymentHandlers {
                 amount: paymentRequest.amount,
                 amountFormatted: paymentRequest.amountFormatted,
                 humanAmount: paymentRequest.amountFormatted,
-                currency: this.gameModeManager.cryptoType,
-                cryptoType: this.gameModeManager.cryptoType,
+                currency: cryptoType,
+                cryptoType: cryptoType,
                 package: paymentRequest.package,
                 paymentType: paymentType,
                 qr: qrDataUrl,
                 reused: !!paymentRequest.reused
             });
+            
+            // CRITICAL: Start payment monitoring!
+            // Stop any existing monitoring for this socket first
+            this.stopMonitoringForSocket(socket.id);
+            
+            // Get current user for queue management
+            const currentUser = this.queueManager?.getUserBySocket ? 
+                this.queueManager.getUserBySocket(socket.id) : { serverId: socket.id };
+            
+            // Start monitoring for payment
+            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser, paymentType);
+            
             if (this.debugManager.CONSOLE_LOGGING) console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount}`);
         } catch (e) {
             const err = normalizeError(e, 'Failed to create payment request');
