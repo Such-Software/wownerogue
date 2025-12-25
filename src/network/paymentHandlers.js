@@ -49,16 +49,36 @@ class PaymentHandlers {
         try {
             const { type, packageId } = data;
             const paymentType = type || data.gameMode || 'single_game';
-            const options = { packageId };
+            const options = { packageId, reuseExisting: true };
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, options);
+            
+            // Generate QR code
+            let qrDataUrl = null;
+            try {
+                const { generatePaymentQR } = require('../payments/qrService');
+                qrDataUrl = await generatePaymentQR(
+                    paymentRequest.address,
+                    paymentRequest.amount,
+                    this.gameModeManager.cryptoType,
+                    paymentType === 'credits_package' ? 'Credits package' : 'Single game',
+                    this.gameModeManager.currencyDecimals
+                );
+            } catch (qrErr) {
+                console.warn('QR generation failed:', qrErr.message);
+            }
+            
             this.io.to(socket.id).emit('payment_created', {
                 paymentId: paymentRequest.id,
                 address: paymentRequest.address,
                 amount: paymentRequest.amount,
                 amountFormatted: paymentRequest.amountFormatted,
+                humanAmount: paymentRequest.amountFormatted,
                 currency: this.gameModeManager.cryptoType,
+                cryptoType: this.gameModeManager.cryptoType,
                 package: paymentRequest.package,
-                paymentType: paymentType
+                paymentType: paymentType,
+                qr: qrDataUrl,
+                reused: !!paymentRequest.reused
             });
             if (this.debugManager.CONSOLE_LOGGING) console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount}`);
         } catch (e) {
