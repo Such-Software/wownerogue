@@ -64,6 +64,9 @@ class ConnectionHandler {
             // Send current state
             this._sendConnectionStatus(socket);
 
+            // Broadcast updated user count to all clients
+            this.broadcastManager.broadcastUserCount();
+
             return { sessionInfo, memUser };
 
         } catch (error) {
@@ -111,6 +114,9 @@ class ConnectionHandler {
         
         // Clean up user records
         user.removeUser(socket.client.id);
+        
+        // Broadcast updated user count to all clients
+        this.broadcastManager.broadcastUserCount();
         
         // Call additional cleanup if provided
         if (additionalCleanup && typeof additionalCleanup === 'function') {

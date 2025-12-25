@@ -8,9 +8,22 @@ class BroadcastManager {
     constructor(io) {
         this.io = io;
         this._lastBroadcastBlock = null;
+        this._lastUserCount = -1;
     }
 
     // ====== GLOBAL BROADCASTS (All Clients) ======
+
+    /**
+     * Broadcast connected user count to all clients
+     */
+    broadcastUserCount() {
+        const count = this.io.engine ? this.io.engine.clientsCount : 0;
+        // Only broadcast if count changed to avoid spam
+        if (count !== this._lastUserCount) {
+            this._lastUserCount = count;
+            this.io.emit('user_count', { count });
+        }
+    }
 
     /**
      * Broadcast block height to all connected clients

@@ -94,6 +94,7 @@ const SocketHandlers = {
         socket.on('payment_detected', this.onPaymentDetected);
         socket.on('show_payment_options', this.onShowPaymentOptions);
     socket.on('credits_update', this.onCreditsUpdate);
+        socket.on('user_count', this.onUserCount);
         
         // Block height handler
         socket.on('blockheight', this.onBlockHeight);
@@ -701,6 +702,29 @@ const SocketHandlers = {
         const current = $('#statusValue').text();
         if (current === 'Connecting...') {
             SocketHandlers._setBannerStatus('Ready', '#0f0');
+        }
+    },
+
+    onUserCount: function(data) {
+        if (!data || typeof data.count !== 'number') return;
+        SocketHandlers._updateUserCountDisplay(data.count);
+    },
+
+    _updateUserCountDisplay: function(count) {
+        let el = document.getElementById('userCountDisplay');
+        if (!el) {
+            // Create display element next to connection status
+            const statusDiv = document.querySelector('.status') || document.getElementById('connectionStatus')?.parentElement;
+            if (statusDiv) {
+                el = document.createElement('div');
+                el.id = 'userCountDisplay';
+                el.style.cssText = 'font-size:12px;color:#0af;margin-top:2px;';
+                statusDiv.appendChild(el);
+            }
+        }
+        if (el) {
+            const plural = count === 1 ? '' : 's';
+            el.innerHTML = `👥 <span style="color:#4ade80;">${count}</span> player${plural} online`;
         }
     },
 

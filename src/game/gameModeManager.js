@@ -73,8 +73,8 @@ class GameModeManager {
         this.singleGamePrice = parseAtomicEnvValue(process.env.SINGLE_GAME_PRICE, this.singleGamePrice);
         this.creditsPackagePrice = parseAtomicEnvValue(process.env.CREDITS_PACKAGE_PRICE, this.creditsPackagePrice);
         this.creditsPerGameCost = parseAtomicEnvValue(process.env.CREDITS_PER_GAME, 1) || 1;
-        this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUT_ENABLED || 'false');
-        this.creditsPayoutBaseValue = this.singleGamePrice;
+        this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUTS_ENABLED || process.env.CREDITS_PAYOUT_ENABLED || 'false');
+        this.creditsPayoutBaseValue = parseAtomicEnvValue(process.env.CREDITS_PAYOUT_BASE, this.singleGamePrice);
         process.env.CREDITS_PER_GAME = String(this.creditsPerGameCost);
 
         const directEscape = Number(process.env.DIRECT_PAYOUT_ESCAPE);
@@ -370,7 +370,7 @@ class GameModeManager {
         console.log(`🧮 Payout multipliers - direct: ${JSON.stringify(this.directPayoutMultipliers)}, credits: ${JSON.stringify(this.creditPayoutMultipliers)}`);
         console.log(`🔁 Mode availability - direct: ${this.directModeEnabled}, credits: ${this.creditsModeEnabled}, preferCreditsFirst: ${this.preferCreditsFirst}`);
         if (this.creditsPayoutEnabled) {
-            console.log('🎁 Credits payout mode ENABLED (will pay rewards in PAID_CREDITS).');
+            console.log(`🎁 Credits payout mode ENABLED - base value: ${this.creditsPayoutBaseValue} atomic (~${this.formatAtomic(this.creditsPayoutBaseValue)} ${this.cryptoType})`);
         }
         console.log(`⚙️ Payments enabled: ${this.paymentsEnabled}`);
     }
@@ -1011,6 +1011,9 @@ class GameModeManager {
      * Get game mode info for frontend
      */
     getGameModeInfo() {
+        // Debug: Log credits payout base value being sent
+        console.log(`📤 getGameModeInfo: creditsPayoutBaseValue = ${this.creditsPayoutBaseValue} (${this.formatAtomic(this.creditsPayoutBaseValue)} ${this.cryptoType})`);
+        
         // Determine if we should show a testnet warning
         // Only for XMR on stagenet/testnet - WOW only has mainnet
         const showTestnetWarning = this.cryptoType === 'XMR' && this.isTestNetwork;
