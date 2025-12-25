@@ -344,6 +344,7 @@ const PaymentUI = {
     },
     
     show: function() {
+        this.render(); // Ensure options are up-to-date with current config
         $('#payment-ui').show();
         $('.game-modes').show();
         $('#payment-details').hide();
