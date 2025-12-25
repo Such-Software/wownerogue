@@ -17,7 +17,14 @@ class BroadcastManager {
      * Broadcast connected user count to all clients
      */
     broadcastUserCount() {
-        const count = this.io.engine ? this.io.engine.clientsCount : 0;
+        // Try multiple ways to get the count
+        let count = 0;
+        if (this.io.sockets && this.io.sockets.sockets) {
+            count = this.io.sockets.sockets.size || 0;
+        } else if (this.io.engine) {
+            count = this.io.engine.clientsCount || 0;
+        }
+        
         // Only broadcast if count changed to avoid spam
         if (count !== this._lastUserCount) {
             this._lastUserCount = count;

@@ -64,8 +64,8 @@ class ConnectionHandler {
             // Send current state
             this._sendConnectionStatus(socket);
 
-            // Broadcast updated user count to all clients
-            this.broadcastManager.broadcastUserCount();
+            // Broadcast updated user count to all clients (small delay to ensure socket is registered)
+            setTimeout(() => this.broadcastManager.broadcastUserCount(), 100);
 
             return { sessionInfo, memUser };
 
