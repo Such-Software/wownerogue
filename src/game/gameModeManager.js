@@ -70,7 +70,8 @@ class GameModeManager {
         this.setLegacyGameMode(process.env.GAME_MODE || 'FREE');
         this.cryptoType = process.env.CRYPTO_TYPE || this.cryptoType;
         this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
-        this.singleGamePrice = parseAtomicEnvValue(process.env.SINGLE_GAME_PRICE, this.singleGamePrice);
+        // Support both DIRECT_GAME_PRICE and legacy SINGLE_GAME_PRICE
+        this.singleGamePrice = parseAtomicEnvValue(process.env.DIRECT_GAME_PRICE || process.env.SINGLE_GAME_PRICE, this.singleGamePrice);
         this.creditsPackagePrice = parseAtomicEnvValue(process.env.CREDITS_PACKAGE_PRICE, this.creditsPackagePrice);
         this.creditsPerGameCost = parseAtomicEnvValue(process.env.CREDITS_PER_GAME, 1) || 1;
         this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUTS_ENABLED || process.env.CREDITS_PAYOUT_ENABLED || 'false');
@@ -370,6 +371,7 @@ class GameModeManager {
         console.log(`🎮 Game Mode Manager ${context}: ${this.gameMode} mode`);
         console.log(`💰 Currency: ${this.cryptoType} (decimals: ${this.currencyDecimals})`);
         console.log(`💵 Single game price: ${this.singleGamePrice} atomic units (~${this.formatAtomic(this.singleGamePrice)} ${this.cryptoType})`);
+        console.log(`💵 Credits payout base: ${this.creditsPayoutBaseValue} atomic units (~${this.formatAtomic(this.creditsPayoutBaseValue)} ${this.cryptoType})`);
         console.log(`🎫 Credits package price: ${this.creditsPackagePrice} atomic units (~${this.formatAtomic(this.creditsPackagePrice)} ${this.cryptoType})`);
         console.log(`🎯 Credits per game cost: ${this.creditsPerGameCost}`);
         console.log(`🧮 Payout multipliers - direct: ${JSON.stringify(this.directPayoutMultipliers)}, credits: ${JSON.stringify(this.creditPayoutMultipliers)}`);
