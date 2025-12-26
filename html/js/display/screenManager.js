@@ -100,11 +100,15 @@ var ScreenManager = {
         
         // Draw legend with special tile handling
         const display = DisplayManager.getDisplay();
+        // Use dynamic treasure tile based on crypto type
+        const treasureTile = (typeof GameTiles !== 'undefined' && GameTiles.getTreasureTile) 
+            ? GameTiles.getTreasureTile() 
+            : (this._cryptoType === 'XMR' ? '$M' : '$W');
         const legendItems = [
             { tile: "@2", text: "This is you" },
             { tile: ">", text: " Escape the dungeon" }, 
             { tile: "~", text: " Avoid the monster" },
-            { tile: "$M", text: "Secure the bag" }
+            { tile: treasureTile, text: "Secure the bag" }
         ];
         
         const centerX = Math.floor(this._screenWidth / 2) - 10;

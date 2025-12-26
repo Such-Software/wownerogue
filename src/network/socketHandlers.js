@@ -378,6 +378,7 @@ class SocketHandlers {
             }
         });
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
+        socket.on('early_entry', () => this.handleEarlyEntry(socket)); // Early entry without waiting for block
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
         // Payment system handlers
@@ -487,6 +488,28 @@ class SocketHandlers {
         } catch (err) {
             console.error('handleAutoStart error:', err);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Unexpected error starting game.');
+        }
+    }
+
+    /**
+     * Handle early entry request - start game immediately without waiting for block
+     * Only available for free mode and credits mode (not direct payment mode)
+     */
+    async handleEarlyEntry(socket) {
+        try {
+            const result = await this.queueHandler.handleEarlyEntry(
+                socket, 
+                this.connectionHandler.getUserBySocket.bind(this.connectionHandler)
+            );
+            
+            if (result.success) {
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`⚡ Early entry successful for ${socket.id}`);
+                }
+            }
+        } catch (err) {
+            console.error('handleEarlyEntry error:', err);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Unexpected error with early entry.');
         }
     }
 

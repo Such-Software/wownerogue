@@ -10,6 +10,29 @@ const SocketHandlers = {
         el.text(text);
         if (color) el.css('color', color);
     },
+
+    _updateAddressButtonStatus: function(hasAddress) {
+        const $btn = $('#manageAddressButton');
+        if (!$btn.length) return;
+        
+        if (hasAddress) {
+            // Address is set - show green indicator
+            $btn.css({
+                'background': '#053655',
+                'color': '#0ff',
+                'border-color': '#0ff'
+            });
+            $btn.html('✅ Payout Address Set');
+        } else {
+            // No address - show warning indicator (yellow/orange)
+            $btn.css({
+                'background': '#553300',
+                'color': '#ffa500',
+                'border-color': '#ffa500'
+            });
+            $btn.html('⚠️ Set Payout Address');
+        }
+    },
     
     init: function() {
         if (this._initialized) {
@@ -99,6 +122,10 @@ const SocketHandlers = {
         // Block height handler
         socket.on('blockheight', this.onBlockHeight);
         
+        // Early entry handlers
+        socket.on('early_entry_success', this.onEarlyEntrySuccess);
+        socket.on('early_entry_error', this.onEarlyEntryError);
+        
         // Spectator handlers
         socket.on('active_games', this.onActiveGames);
         socket.on('spectate_start', this.onSpectateStart);
@@ -131,6 +158,8 @@ const SocketHandlers = {
             try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('New session established. Token stored.'));
             UI.scrollChat();
+            // New session = no address set yet
+            SocketHandlers._updateAddressButtonStatus(false);
         }
     },
 
@@ -149,6 +178,9 @@ const SocketHandlers = {
             if (typeof AddressModal !== 'undefined') {
                 AddressModal.setCurrentAddress(data.payoutAddress);
             }
+            SocketHandlers._updateAddressButtonStatus(true);
+        } else {
+            SocketHandlers._updateAddressButtonStatus(false);
         }
     },
 
@@ -273,6 +305,11 @@ const SocketHandlers = {
 
     onQueueJoined: function(data) {
         console.log('Queue joined:', data);
+        
+        // Mark as queued and update early entry button
+        SocketHandlers._isQueued = true;
+        SocketHandlers._updateEarlyEntryButton();
+        
         const currentBlockFallback = (typeof data.currentBlock === 'number' && data.currentBlock > 0)
             ? data.currentBlock
             : (typeof UI !== 'undefined' && typeof UI._currentBlockHeight === 'number' && UI._currentBlockHeight > 0
@@ -295,6 +332,10 @@ const SocketHandlers = {
     },
 
     onGameStart: function(data) {
+        // Clear queued state
+        SocketHandlers._isQueued = false;
+        SocketHandlers._updateEarlyEntryButton();
+        
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
         // Display provably fair commitment if present
@@ -403,6 +444,10 @@ const SocketHandlers = {
     },
 
     onQueueCancelled: function(data) {
+        // Clear queued state
+        SocketHandlers._isQueued = false;
+        SocketHandlers._updateEarlyEntryButton();
+        
         $('#messages').append($('<li style="color: #ff0;">').text("Queue entry cancelled."));
         
         if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) {
@@ -438,6 +483,10 @@ const SocketHandlers = {
         if (typeof AddressModal !== 'undefined') {
             AddressModal.onConfirmed(data);
         }
+        // Update button to show address is set (unless cancelled)
+        if (!data.cancelled && data.address) {
+            SocketHandlers._updateAddressButtonStatus(true);
+        }
     },
 
     onAddressPrompt: function(data) {
@@ -462,6 +511,10 @@ const SocketHandlers = {
         if (data.creditsPerGame) {
             SocketHandlers._creditsPerGame = data.creditsPerGame;
         }
+        
+        // Store game mode and early entry config
+        SocketHandlers._gameMode = data.mode;
+        SocketHandlers._earlyEntryConfig = data.earlyEntry || { enabled: false };
         
         if (typeof UI !== 'undefined' && UI.updateGameTitle) {
             UI.updateGameTitle(data.cryptoType);
@@ -488,6 +541,14 @@ const SocketHandlers = {
                 $('#shopButton').hide();
             }
         }
+
+        // Update HelpModal with config
+        if (typeof HelpModal !== 'undefined') {
+            HelpModal.updateConfig(data);
+        }
+        
+        // Update early entry button visibility
+        SocketHandlers._updateEarlyEntryButton();
     },
 
     _showNetworkWarning: function(message, network) {
@@ -1033,6 +1094,133 @@ const SocketHandlers = {
 
     _hideSpectatorControls: function() {
         $('#spectatorControls').hide();
+    },
+
+    // =====================
+    // Early Entry Functions
+    // =====================
+    
+    _gameMode: null,
+    _earlyEntryConfig: { enabled: false },
+    _isQueued: false,
+    
+    /**
+     * Check if early entry is currently allowed based on mode and config
+     */
+    isEarlyEntryAllowed: function() {
+        const config = this._earlyEntryConfig;
+        if (!config || !config.enabled) return false;
+        
+        const mode = this._gameMode;
+        if (mode === 'FREE' && config.allowInFreeMode) return true;
+        if (mode === 'PAID_CREDITS' && config.allowInCreditsMode) return true;
+        
+        return false;
+    },
+    
+    /**
+     * Update early entry button visibility based on current state
+     */
+    _updateEarlyEntryButton: function() {
+        let $btn = $('#earlyEntryButton');
+        
+        // Create button if it doesn't exist
+        if (!$btn.length) {
+            $btn = $(`
+                <button id="earlyEntryButton" style="
+                    display: none;
+                    background: linear-gradient(180deg, #662200, #441100);
+                    border: 2px solid #ff6600;
+                    color: #ffcc00;
+                    padding: 8px 16px;
+                    font-family: monospace;
+                    font-size: 14px;
+                    cursor: pointer;
+                    margin: 5px;
+                    border-radius: 4px;
+                    text-shadow: 0 0 5px #ff3300;
+                    animation: earlyEntryPulse 2s infinite;
+                ">⚡ ENTER NOW (RISKY!) ⚡</button>
+            `);
+            
+            // Add CSS animation
+            if (!$('#earlyEntryStyles').length) {
+                $('head').append(`
+                    <style id="earlyEntryStyles">
+                        @keyframes earlyEntryPulse {
+                            0%, 100% { box-shadow: 0 0 5px #ff6600; }
+                            50% { box-shadow: 0 0 15px #ff6600, 0 0 25px #ff3300; }
+                        }
+                        #earlyEntryButton:hover {
+                            background: linear-gradient(180deg, #883300, #551100) !important;
+                            transform: scale(1.05);
+                        }
+                    </style>
+                `);
+            }
+            
+            // Insert near animation toggle button
+            const $animBtn = $('#animationToggleButton');
+            if ($animBtn.length) {
+                $animBtn.after($btn);
+            } else {
+                // Fallback - add to header area
+                $('#header').append($btn);
+            }
+            
+            // Click handler
+            $btn.on('click', function() {
+                SocketHandlers.requestEarlyEntry();
+            });
+        }
+        
+        // Show/hide based on whether we're queued and early entry is allowed
+        if (this._isQueued && this.isEarlyEntryAllowed()) {
+            $btn.show();
+        } else {
+            $btn.hide();
+        }
+    },
+    
+    /**
+     * Request early entry from the server
+     */
+    requestEarlyEntry: function() {
+        if (!window.socket) return;
+        
+        // Disable button to prevent double-clicks
+        const $btn = $('#earlyEntryButton');
+        $btn.prop('disabled', true).text('⏳ Entering...');
+        
+        socket.emit('early_entry');
+    },
+    
+    /**
+     * Handle early entry success
+     */
+    onEarlyEntrySuccess: function(data) {
+        console.log('Early entry success:', data);
+        SocketHandlers._isQueued = false;
+        SocketHandlers._updateEarlyEntryButton();
+        
+        // The game_start event will follow - just show feedback
+        $('#messages').append($('<li class="status" style="color:#ff6600;">').text('⚡ Early entry! Race to escape before the next block!'));
+        UI.scrollChat();
+    },
+    
+    /**
+     * Handle early entry error
+     */
+    onEarlyEntryError: function(data) {
+        console.error('Early entry error:', data);
+        
+        // Re-enable button
+        const $btn = $('#earlyEntryButton');
+        $btn.prop('disabled', false).text('⚡ ENTER NOW (RISKY!) ⚡');
+        
+        const message = data?.message || 'Early entry not available';
+        $('#messages').append($('<li class="error" style="color:#f00;">').text('Early entry failed: ' + message));
+        UI.scrollChat();
     }
 };
 

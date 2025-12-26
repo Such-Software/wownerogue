@@ -120,6 +120,147 @@ class QueueHandler {
         };
     }
 
+    /**
+     * Check if early entry is allowed for the current mode
+     * @returns {Object} { allowed: boolean, reason: string }
+     */
+    isEarlyEntryAllowed() {
+        if (!this.gameModeManager) {
+            return { allowed: true, reason: 'No game mode manager' };
+        }
+
+        const config = this.gameModeManager.configSnapshot;
+        const earlyEntry = config?.earlyEntry;
+        
+        // Check master toggle
+        if (!earlyEntry?.enabled) {
+            return { allowed: false, reason: 'Early entry is disabled' };
+        }
+
+        const mode = this.gameModeManager.gameMode;
+        
+        // Check mode-specific toggles
+        if (mode === 'FREE' && !earlyEntry.allowInFreeMode) {
+            return { allowed: false, reason: 'Early entry not allowed in free mode' };
+        }
+        
+        if (mode === 'PAID_CREDITS' && !earlyEntry.allowInCreditsMode) {
+            return { allowed: false, reason: 'Early entry not allowed in credits mode' };
+        }
+        
+        // PAID_SINGLE (direct payment) should NOT allow early entry - players paid for a full block
+        if (mode === 'PAID_SINGLE') {
+            return { allowed: false, reason: 'Early entry not allowed for direct payment games' };
+        }
+
+        return { allowed: true, reason: `Early entry allowed for ${mode}` };
+    }
+
+    /**
+     * Handle early entry request - start game immediately without waiting for next block
+     * Risk: Player will die if next block is found before they escape
+     */
+    async handleEarlyEntry(socket, getUserBySocket) {
+        try {
+            // Rate limiting
+            const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:queue');
+            if (!rateLimitResult.allowed) {
+                const msg = `Please wait ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds before trying again.`;
+                socket.emit('early_entry_error', { message: msg });
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', msg);
+                return { success: false, reason: 'rate_limited' };
+            }
+
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`⚡ Player ${socket.id} requested early entry`);
+            }
+
+            // Check if early entry is allowed
+            const earlyEntryCheck = this.isEarlyEntryAllowed();
+            if (!earlyEntryCheck.allowed) {
+                socket.emit('early_entry_error', { message: earlyEntryCheck.reason });
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', earlyEntryCheck.reason);
+                return { success: false, reason: earlyEntryCheck.reason };
+            }
+
+            const currentUser = getUserBySocket(socket.id);
+            if (!currentUser) {
+                const msg = 'Error: Could not start game. Please try again.';
+                socket.emit('early_entry_error', { message: msg });
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', msg);
+                return { success: false, reason: 'user_not_found' };
+            }
+
+            // Check if already in queue
+            if (this.queueManager.isPlayerQueued(socket.id)) {
+                const msg = 'You are already in the queue! Use early entry only when not queued.';
+                socket.emit('early_entry_error', { message: msg });
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', msg);
+                return { success: false, reason: 'already_queued' };
+            }
+
+            // Check if already in a game
+            if (this.activeGames.has(socket.id)) {
+                const msg = 'You are already in a game!';
+                socket.emit('early_entry_error', { message: msg });
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', msg);
+                return { success: false, reason: 'already_in_game' };
+            }
+
+            // Check payment eligibility
+            const paymentCheckResult = await this._checkPaymentEligibility(socket.id);
+            if (!paymentCheckResult.allowed) {
+                switch (paymentCheckResult.action) {
+                    case 'set_address':
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
+                        break;
+                    case 'make_payment':
+                        await this.paymentHandlers.createAndShowPaymentRequest(socket);
+                        break;
+                    default:
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
+                            paymentCheckResult.reason || 'Not allowed to start game');
+                }
+                return { success: false, reason: paymentCheckResult.reason };
+            }
+
+            // Record the attempt
+            await this.rateLimiter.recordAttempt(socket.id, 'game:queue');
+
+            // Start the game immediately
+            const currentBlock = this.debugManager.getCurrentBlockHeight();
+            
+            // For early entry, the player's blockRec is set to current block
+            // This means they will die when the NEXT block is found (currentBlock + 1)
+            const result = await this.queueManager.startEarlyGame(socket.id, currentUser, currentBlock);
+            
+            if (result.success) {
+                // Emit early entry success event
+                socket.emit('early_entry_success', { blockHeight: currentBlock });
+                
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                    `⚡ Early entry! Game started on block ${currentBlock}. Escape before block ${currentBlock + 1}!`);
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`⚡ EARLY ENTRY: Player ${socket.id} started on block ${currentBlock}`);
+                }
+                return { success: true, blockHeight: currentBlock };
+            } else {
+                // Emit early entry error event
+                socket.emit('early_entry_error', { message: result.reason || 'Failed to start early game' });
+                
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', result.reason || 'Failed to start early game');
+                return { success: false, reason: result.reason };
+            }
+
+        } catch (error) {
+            const normalized = normalizeError(error, 'Failed to start early game');
+            console.error('handleEarlyEntry error:', normalized.message);
+            socket.emit('early_entry_error', { message: normalized.message });
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', normalized.message);
+            return { success: false, reason: normalized.message };
+        }
+    }
+
     // Private helper methods
 
     /**

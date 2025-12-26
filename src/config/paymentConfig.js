@@ -13,6 +13,13 @@ const DEFAULT_CONFIG = Object.freeze({
         minPayment: 1000000000n, // 0.01 WOW in atomic units
         maxPayment: 100000000000000n // 1,000 WOW in atomic units
     },
+    // Early entry allows free/credits mode players to start immediately without waiting for next block
+    // Risk: If next block is found before they escape, they lose (timeout)
+    earlyEntry: {
+        enabled: true,           // Master toggle for early entry feature
+        allowInFreeMode: true,   // Allow early entry in free mode
+        allowInCreditsMode: true // Allow early entry when using credits
+    },
     modes: {
         direct: {
             enabled: true,

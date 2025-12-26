@@ -18,6 +18,13 @@
 - [x] **Active Games List**: Real-time game list with pagination, sorting, and auto-refresh ✅
 - [x] **Spectate UI**: "Watch Games" button, live game panel, and spectator controls ✅
 - [x] **Spectator Broadcasts**: Game updates broadcast to spectators via Socket.IO rooms ✅
+- [x] **Help Modal**: Added instructions modal with game rules, controls, and payment mode info ✅
+- [x] **Dynamic Treasure Icon**: Treasure tile now shows $W (Wownero) or $M (Monero) based on crypto type ✅
+- [x] **Address Status Indicator**: Payout address button shows warning when no address is set ✅
+
+## User Feedback (Beta Tester - Dec 2025)
+- [ ] **History Panel Bug**: User reported payout not showing in History after winning with treasure (needs investigation - may be timing/status issue with "confirmed" vs "pending" payouts)
+- [x] **Early Dungeon Entry**: Allow credits/free mode users to enter dungeon immediately without waiting for next block (risky - they die if block found before escape). Toggleable via config. ✅
 
 ## Improvements / Refactoring
 - [x] **Error Handling**: Extended `normalizeError` to queueHandler, queueManager, sessionManager ✅
@@ -35,7 +42,7 @@
 - [x] **Deployment Guide**: README includes production deployment with Nginx/Caddy configs and systemd ✅
 
 ## Pre-Beta Checklist
-- [x] All 38 tests pass (8 test suites) ✅
+- [x] All 47 tests pass (9 test suites) ✅
 - [x] Health check endpoint available at `/health` ✅
 - [x] REST endpoints implemented: `/api/user/:socketId/credits`, `/api/user/:socketId/mode`, `/api/user/:socketId/address` ✅
 - [x] Payout eligibility shown per payment mode in UI ✅

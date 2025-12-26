@@ -156,6 +156,55 @@ class QueueManager {
     }
 
     /**
+     * Start a game immediately for early entry (not from queue)
+     * Used when player opts for early entry without waiting for block
+     * @param {string} serverId - Socket ID
+     * @param {Object} currentUser - User object
+     * @param {number} blockHeight - Current block height
+     * @returns {Object} { success: boolean, reason?: string }
+     */
+    async startEarlyGame(serverId, currentUser, blockHeight) {
+        if (!currentUser) {
+            return { success: false, reason: 'User not found' };
+        }
+
+        // Check if already in a game
+        if (this.activeGames && this.activeGames.has(serverId)) {
+            return { success: false, reason: 'Already in a game' };
+        }
+
+        // Set blockRec to current block - player dies when next block (currentBlock + 1) is found
+        currentUser.blockRec = blockHeight;
+        currentUser.isEarlyEntry = true; // Mark as early entry for potential special handling
+
+        try {
+            const game = this.createGameForUser(currentUser, 'standard', { earlyEntry: true });
+            const gameState = game.getState();
+            gameState.blockHeight = blockHeight;
+            gameState.isEarlyEntry = true;
+            gameState.deathBlock = blockHeight + 1; // Explicit death block for client display
+
+            // Include provably fair commitment
+            if (game.getProofCommitment) {
+                gameState.proof = game.getProofCommitment();
+            }
+
+            this.io.to(serverId).emit('game_start', gameState);
+            
+            if (this.CONSOLE_LOGGING) {
+                console.log(`[QueueManager] ⚡ Early entry game started for ${serverId} at block ${blockHeight} (dies at ${blockHeight + 1})`);
+            }
+            
+            return { success: true };
+        } catch (err) {
+            const normalized = normalizeError(err, 'Failed to start early game');
+            console.error('[QueueManager] Error starting early game:', normalized.message);
+            this.io.to(serverId).emit('message', 'Error starting game: ' + normalized.message);
+            return { success: false, reason: normalized.message };
+        }
+    }
+
+    /**
      * Get list of pending games (players waiting in queue)
      * Used by spectator system to show upcoming games
      * @returns {Array} List of pending game entries

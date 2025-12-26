@@ -155,6 +155,12 @@ window.GameTiles = {
     },
     
     getTreasureTile: function() {
+        // Dynamically return treasure tile based on crypto type
+        // Check ScreenManager for the current crypto type
+        if (typeof ScreenManager !== 'undefined' && ScreenManager._cryptoType) {
+            return ScreenManager._cryptoType === 'XMR' ? '$M' : '$W';
+        }
+        // Fallback to static config
         return options.gameConfig.treasureType;
     },
     

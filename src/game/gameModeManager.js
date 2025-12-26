@@ -12,6 +12,7 @@ const {
     getDecimalDivisor
 } = require('./helpers/gameModeUtils');
 const { ValidationError, normalizeError } = require('../utils/errors');
+const paymentConfig = require('../config/paymentConfig');
 
 const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW depending on currency decimals
 const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
@@ -1066,6 +1067,11 @@ class GameModeManager {
                 paymentRequired: this.paymentsEnabled,
                 creditsSystem: this.creditsModeEnabled,
                 payouts: this.directPayoutMultipliers.escape > 0 || this.creditPayoutMultipliers.escape > 0
+            },
+            earlyEntry: {
+                enabled: paymentConfig.earlyEntry?.enabled ?? false,
+                allowInFreeMode: paymentConfig.earlyEntry?.allowInFreeMode ?? false,
+                allowInCreditsMode: paymentConfig.earlyEntry?.allowInCreditsMode ?? false
             }
         };
     }
