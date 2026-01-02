@@ -222,17 +222,28 @@ class ConnectionHandler {
 
             // If payout address already set, echo confirmation for UI convenience
             if (sessionInfo.user.payout_address) {
-                this.io.to(socket.id).emit('address_confirmed', { 
-                    address: sessionInfo.user.payout_address, 
-                    message: 'Payout address restored.' 
+                this.io.to(socket.id).emit('address_confirmed', {
+                    address: sessionInfo.user.payout_address,
+                    message: 'Payout address restored.'
                 });
             }
 
             // Credits convenience push (include creditsPerGame for games remaining calculation)
-            this.io.to(socket.id).emit('credits_update', { 
+            this.io.to(socket.id).emit('credits_update', {
                 balance: sessionInfo.user.credits || 0,
                 creditsPerGame: this.gameModeManager?.creditsPerGameCost || 1
             });
+
+            // Notify user if credits were recovered from unprocessed payments
+            if (sessionInfo.recovered && sessionInfo.recovered.creditsRecovered > 0) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'success',
+                    `💰 Payment recovered! ${sessionInfo.recovered.creditsRecovered} credits have been added to your balance.`);
+                this.io.to(socket.id).emit('credits_recovered', {
+                    creditsRecovered: sessionInfo.recovered.creditsRecovered,
+                    paymentsProcessed: sessionInfo.recovered.paymentsProcessed,
+                    newBalance: sessionInfo.user.credits || 0
+                });
+            }
         } else {
             // fallback legacy welcome
             this.io.to(socket.client.id).emit('welcome', socket.client.id);

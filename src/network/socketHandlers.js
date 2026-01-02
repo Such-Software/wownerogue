@@ -481,6 +481,10 @@ class SocketHandlers {
                     this.broadcastManager.sendStatusUpdate(socket.id, 'error', startRes.reason || 'Failed to start game.');
                     return;
                 }
+                // Emit credits_update if credits were spent
+                if (startRes.creditsRemaining !== undefined) {
+                    this.io.to(socket.id).emit('credits_update', { balance: startRes.creditsRemaining });
+                }
             }
 
             this.io.to(socket.id).emit('game_start', state);
@@ -712,8 +716,8 @@ class SocketHandlers {
     /**
      * Start games for waiting players when a new block is found
      */
-    startGamesForWaiting(blockHeight) {
-        return this.queueHandler.startGamesForWaiting(blockHeight);
+    async startGamesForWaiting(blockHeight) {
+        return await this.queueHandler.startGamesForWaiting(blockHeight);
     }
 
     /**

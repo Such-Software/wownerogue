@@ -32,7 +32,7 @@ class SessionManager {
 
         if (result.rows.length > 0) {
           const user = result.rows[0];
-          
+
           // Update last seen and socket_id
           await this.db.query(
             'UPDATE users SET socket_id = $1, last_seen = NOW() WHERE id = $2',
@@ -41,7 +41,18 @@ class SessionManager {
 
           // Update cache
           this.sessions.set(socketId, user);
-          
+
+          // Check for unprocessed payments (payment recovery)
+          const recovered = await this.recoverPendingPayments(user.id, socketId);
+          if (recovered.creditsRecovered > 0) {
+            // Refresh user data after recovery
+            const refreshed = await this.db.query('SELECT * FROM users WHERE id = $1', [user.id]);
+            if (refreshed.rows.length > 0) {
+              this.sessions.set(socketId, refreshed.rows[0]);
+              user.credits = refreshed.rows[0].credits;
+            }
+          }
+
           if (this.debugManager.CONSOLE_LOGGING) console.log(`[SessionManager] Resumed session for user ${user.id}`);
           return {
             resumed: true,
@@ -49,7 +60,8 @@ class SessionManager {
             user: {
               ...user,
               socket_id: socketId
-            }
+            },
+            recovered
           };
         }
       }
@@ -131,6 +143,84 @@ class SessionManager {
         break;
       }
     }
+  }
+
+  /**
+   * Recover unprocessed confirmed payments for a user who disconnected
+   * This handles credits_package payments that were confirmed but credits weren't added
+   */
+  async recoverPendingPayments(userId, socketId) {
+    const result = { creditsRecovered: 0, paymentsProcessed: 0 };
+
+    try {
+      // Find confirmed credits_package payments that have no credits_purchased or 0
+      // These are payments where the user disconnected before confirmation was processed
+      const unprocessedPayments = await this.db.query(`
+        SELECT p.id, p.payment_type, p.description, p.expected_amount, p.confirmed_at
+        FROM payments p
+        WHERE p.user_id = $1
+          AND p.status = 'confirmed'
+          AND p.payment_type = 'credits_package'
+          AND (p.credits_purchased IS NULL OR p.credits_purchased = 0)
+          AND p.confirmed_at > NOW() - INTERVAL '24 hours'
+        ORDER BY p.confirmed_at ASC
+      `, [userId]);
+
+      if (unprocessedPayments.rows.length === 0) {
+        return result;
+      }
+
+      for (const payment of unprocessedPayments.rows) {
+        try {
+          // Parse credits from description (e.g., "Wowngeon 10 credits package (WOW)")
+          let creditsToAdd = 10; // Default fallback
+          const desc = payment.description || '';
+          const match = desc.match(/(\d+)\s*credits?/i);
+          if (match) {
+            creditsToAdd = parseInt(match[1], 10) || 10;
+          }
+
+          // Add credits to user
+          const updateResult = await this.db.query(`
+            UPDATE users
+            SET credits = credits + $1,
+                total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1
+            WHERE id = $2
+            RETURNING credits
+          `, [creditsToAdd, userId]);
+
+          const newBalance = updateResult.rows[0]?.credits ?? 0;
+
+          // Mark payment as processed
+          await this.db.query(`
+            UPDATE payments
+            SET credits_purchased = $1
+            WHERE id = $2
+          `, [creditsToAdd, payment.id]);
+
+          // Record credit transaction
+          await this.db.query(`
+            INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+            VALUES ($1, $2, 'package_purchase_recovered', $3, 'purchase')
+          `, [userId, creditsToAdd, newBalance]);
+
+          result.creditsRecovered += creditsToAdd;
+          result.paymentsProcessed++;
+
+          console.log(`💰 [PaymentRecovery] Recovered ${creditsToAdd} credits for user ${userId} from payment ${payment.id}`);
+        } catch (paymentError) {
+          console.error(`[PaymentRecovery] Failed to process payment ${payment.id}:`, paymentError.message);
+        }
+      }
+
+      if (result.creditsRecovered > 0) {
+        console.log(`💰 [PaymentRecovery] Total recovered for user ${userId}: ${result.creditsRecovered} credits from ${result.paymentsProcessed} payments`);
+      }
+    } catch (error) {
+      console.error('[PaymentRecovery] Error recovering payments:', error.message);
+    }
+
+    return result;
   }
 
   async cleanupExpiredSessions() {

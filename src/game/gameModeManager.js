@@ -719,9 +719,7 @@ class GameModeManager {
             INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
             VALUES ($1, $2, 'game_entry', $3, 'spend')
         `, [user.id, -creditsToSpend, remainingCredits]);
-        
-        // Emit credits update
-        try { this.io && this.io.to(socketId).emit('credits_update', { balance: remainingCredits }); } catch(_) {}
+
         console.log(`🎫 Deducted ${creditsToSpend} credit(s) from user ${user.id}, ${remainingCredits} remaining`);
         
         return { 
@@ -788,16 +786,64 @@ class GameModeManager {
             if (payoutEligibleMode && outcome === 'escaped' && game.payout_address) {
                 const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedMode, { treasureFound });
                 if (payoutAmount > 0) {
-                    await this.walletService.processPayout({
-                        userId: game.user_id,
-                        gameId,
-                        address: game.payout_address,
-                        amount: payoutAmount,
-                        multiplier,
-                        description: `Game ${gameId} payout`
-                    });
-                
-                    console.log(`💸 Created payout: ${payoutAmount} atomic units for game ${gameId} (multiplier ${multiplier}x)`);
+                    try {
+                        const payoutResult = await this.walletService.processPayout({
+                            userId: game.user_id,
+                            gameId,
+                            address: game.payout_address,
+                            amount: payoutAmount,
+                            multiplier,
+                            description: `Game ${gameId} payout`
+                        });
+
+                        // Record payout in database
+                        const reason = treasureFound ? 'escape_with_treasure' : 'escape';
+                        await this.db.query(`
+                            INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, tx_hash, fee, created_at, processed_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+                        `, [
+                            game.user_id,
+                            gameId,
+                            game.payout_address,
+                            payoutAmount,
+                            multiplier,
+                            reason,
+                            payoutResult.success ? 'completed' : 'failed',
+                            payoutResult.txHash || null,
+                            payoutResult.fee || null
+                        ]);
+
+                        // Update user's total_amount_won
+                        if (payoutResult.success) {
+                            await this.db.query(`
+                                UPDATE users
+                                SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
+                                    total_payouts_received = COALESCE(total_payouts_received, 0) + 1
+                                WHERE id = $2
+                            `, [payoutAmount, game.user_id]);
+                        }
+
+                        console.log(`💸 Payout ${payoutResult.success ? 'sent' : 'failed'}: ${payoutAmount} atomic units for game ${gameId} (multiplier ${multiplier}x)`);
+                    } catch (payoutError) {
+                        console.error(`❌ Payout processing failed for game ${gameId}:`, payoutError.message);
+                        // Record failed payout attempt
+                        try {
+                            await this.db.query(`
+                                INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, error_message, created_at)
+                                VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, NOW())
+                            `, [
+                                game.user_id,
+                                gameId,
+                                game.payout_address,
+                                payoutAmount,
+                                multiplier,
+                                treasureFound ? 'escape_with_treasure' : 'escape',
+                                payoutError.message
+                            ]);
+                        } catch (dbErr) {
+                            console.error('Failed to record payout error:', dbErr.message);
+                        }
+                    }
                 }
             }
             

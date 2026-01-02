@@ -56,7 +56,7 @@ class QueueManager {
     getQueueLength() { return this._waitingPlayers.length; }
     getQueuePosition(serverId) { const i = this.getPlayerIndex(serverId); return i === -1 ? -1 : i + 1; }
 
-    startGamesForWaiting(blockHeight) {
+    async startGamesForWaiting(blockHeight) {
         if (this.CONSOLE_LOGGING) {
             console.log(`[QueueManager] Starting games for ${this._waitingPlayers.length} waiting players at block ${blockHeight}`);
         }
@@ -91,6 +91,22 @@ class QueueManager {
                 if (game.getProofCommitment) {
                     gameState.proof = game.getProofCommitment();
                 }
+
+                // Process game start (credits deduction / payment link)
+                if (this.gameModeManager) {
+                    const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
+                    if (!startRes.success) {
+                        // Abort game
+                        if (this.activeGames) this.activeGames.delete(serverId);
+                        this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
+                        continue;
+                    }
+                    // Emit credits_update if credits were spent
+                    if (startRes.creditsRemaining !== undefined) {
+                        this.io.to(serverId).emit('credits_update', { balance: startRes.creditsRemaining });
+                    }
+                }
+
                 this.io.to(serverId).emit('game_start', gameState);
                 if (this.CONSOLE_LOGGING) console.log(`[QueueManager] Game started for ${serverId}`);
             } catch (error) {
@@ -123,7 +139,7 @@ class QueueManager {
      * the block tick already processed). This prevents an additional full-block wait.
      * Returns true if a game was started.
      */
-    startGameImmediately(serverId, blockHeight) {
+    async startGameImmediately(serverId, blockHeight) {
         const idx = this.getPlayerIndex(serverId);
         if (idx === -1) return false; // not queued
         const entry = this._waitingPlayers[idx];
@@ -144,6 +160,22 @@ class QueueManager {
             if (game.getProofCommitment) {
                 gameState.proof = game.getProofCommitment();
             }
+
+            // Process game start (credits deduction / payment link)
+            if (this.gameModeManager) {
+                const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
+                if (!startRes.success) {
+                    // Abort game
+                    if (this.activeGames) this.activeGames.delete(serverId);
+                    this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
+                    return false;
+                }
+                // Emit credits_update if credits were spent
+                if (startRes.creditsRemaining !== undefined) {
+                    this.io.to(serverId).emit('credits_update', { balance: startRes.creditsRemaining });
+                }
+            }
+
             this.io.to(serverId).emit('game_start', gameState);
             if (this.CONSOLE_LOGGING) console.log(`[QueueManager] (immediate) Game started for ${serverId} at block ${blockHeight}`);
             return true;
@@ -189,12 +221,26 @@ class QueueManager {
                 gameState.proof = game.getProofCommitment();
             }
 
+            // Process game start (credits deduction / payment link)
+            if (this.gameModeManager) {
+                const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
+                if (!startRes.success) {
+                    // Abort game
+                    if (this.activeGames) this.activeGames.delete(serverId);
+                    return { success: false, reason: startRes.reason || 'Payment processing failed' };
+                }
+                // Emit credits_update if credits were spent
+                if (startRes.creditsRemaining !== undefined) {
+                    this.io.to(serverId).emit('credits_update', { balance: startRes.creditsRemaining });
+                }
+            }
+
             this.io.to(serverId).emit('game_start', gameState);
-            
+
             if (this.CONSOLE_LOGGING) {
                 console.log(`[QueueManager] ⚡ Early entry game started for ${serverId} at block ${blockHeight} (dies at ${blockHeight + 1})`);
             }
-            
+
             return { success: true };
         } catch (err) {
             const normalized = normalizeError(err, 'Failed to start early game');

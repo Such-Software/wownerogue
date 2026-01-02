@@ -106,8 +106,8 @@ class QueueHandler {
     /**
      * Start games for waiting players when a new block is found
      */
-    startGamesForWaiting(blockHeight) {
-        return this.queueManager.startGamesForWaiting(blockHeight);
+    async startGamesForWaiting(blockHeight) {
+        return await this.queueManager.startGamesForWaiting(blockHeight);
     }
 
     /**

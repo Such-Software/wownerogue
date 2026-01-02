@@ -282,7 +282,7 @@ class PaymentHandlers {
                         // Attempt immediate game start so user doesn't wait another full block
                         const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
                         if (currentBlock !== null) {
-                            const started = this.queueManager.startGameImmediately(socket.id, currentBlock);
+                            const started = await this.queueManager.startGameImmediately(socket.id, currentBlock);
                             if (!started && this.debugManager.CONSOLE_LOGGING) {
                                 console.log(`[PaymentHandlers] Immediate start skipped (not queued or still unconfirmed) for ${socket.id}`);
                             }
@@ -304,33 +304,6 @@ class PaymentHandlers {
         }, 30 * 60 * 1000);
         // Store & unref so tests / process can exit
         this._expiryTimeouts.set(socket.id, expiryTimeout);
-    }
-
-    async handlePaymentDetected(socketId, paymentRequest, paymentStatus) {
-        const currentUser = this.queueManager.getUserBySocket ? this.queueManager.getUserBySocket(socketId) : null;
-        if (!currentUser) return;
-        const existingIndex = this.queueManager.getPlayerIndex(socketId);
-        if (existingIndex !== -1) { this.broadcastManager.sendStatusUpdate(socketId, 'info', 'Payment confirmed, already queued!'); return; }
-        if (this.queueManager.activeGames && this.queueManager.activeGames.has(socketId)) { this.broadcastManager.sendStatusUpdate(socketId, 'info', 'Payment confirmed, but you are already in a game!'); return; }
-        this.queueManager.addPlayer({ serverId: socketId, clientId: currentUser.clientId, paymentId: paymentRequest.id, requiresConfirmation: paymentStatus.in_mempool && !paymentStatus.confirmed, confirmed: paymentStatus.confirmed });
-        const currentBlock = this.debugManager.getCurrentBlockHeight();
-        const nextBlock = currentBlock + 1;
-        if (paymentStatus.in_mempool && !paymentStatus.confirmed) {
-            this.broadcastManager.sendStatusUpdate(socketId, 'success', `💰 PAYMENT DETECTED (MEMPOOL)\n\n✅ Added to queue.\n🕒 Starts at block ${nextBlock}.\n📦 Current block: ${currentBlock}`);
-            this.broadcastManager.sendStatusUpdate(socketId, 'info', 'Waiting for block confirmation...');
-        } else if (paymentStatus.confirmed) {
-            this.broadcastManager.sendStatusUpdate(socketId, 'success', `💰 PAYMENT CONFIRMED IN BLOCK\n\n✅ Added to queue.\n🕒 Starts at block ${nextBlock}.\n📦 Current block: ${currentBlock}`);
-        }
-        const newBalRes = await this.db.query('SELECT credits FROM users WHERE id = $1', [currentUser.id]);
-        const remaining = newBalRes.rows[0] ? newBalRes.rows[0].credits : currentUser.credits;
-        if (this.io) {
-            this.io.to(socketId).emit('credits_update', { balance: remaining });
-        }
-        if (!this.confirmedPayments.has(paymentRequest.id)) {
-            this.confirmedPayments.add(paymentRequest.id);
-            this.io.to(socketId).emit('payment_confirmed', { paymentId: paymentRequest.id, status: paymentStatus, nextBlock, currentBlock });
-            this._confirmedTimestamps.set(paymentRequest.id, Date.now());
-        }
     }
 
     /**
