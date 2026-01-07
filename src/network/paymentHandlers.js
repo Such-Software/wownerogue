@@ -7,13 +7,14 @@
 const { normalizeError } = require('../utils/errors');
 
 class PaymentHandlers {
-    constructor({ io, gameModeManager, walletService, debugManager, queueManager, broadcastManager }) {
+    constructor({ io, gameModeManager, walletService, debugManager, queueManager, broadcastManager, sessionManager }) {
         this.io = io;
         this.gameModeManager = gameModeManager;
         this.walletService = walletService;
         this.debugManager = debugManager;
         this.queueManager = queueManager;
         this.broadcastManager = broadcastManager;
+        this.sessionManager = sessionManager;
         this.mempoolNotified = new Set();
         this.paymentMonitors = new Map();
         // Track pending payment metadata per socket (may reuse existing)
@@ -239,7 +240,20 @@ class PaymentHandlers {
                 socket.emit('payment_detected', { paymentId: paymentRequest.id, message: 'Payment detected in mempool! Adding you to the game queue...', amount: status.amount, confirmations: 0 });
                 const existingIdx = this.queueManager.getPlayerIndex(socket.id);
                 if (existingIdx === -1) {
-                    this.queueManager.addPlayer({ serverId: socket.id, clientId: currentUser ? currentUser.clientId : null, paymentId: paymentRequest.id, requiresConfirmation: true, confirmed: false });
+                    // Try to get DB userId from session
+                    let userId = null;
+                    if (this.sessionManager?.sessions?.has(socket.id)) {
+                        userId = this.sessionManager.sessions.get(socket.id).id;
+                    }
+
+                    this.queueManager.addPlayer({ 
+                        serverId: socket.id, 
+                        clientId: currentUser ? currentUser.clientId : null, 
+                        userId: userId,
+                        paymentId: paymentRequest.id, 
+                        requiresConfirmation: true, 
+                        confirmed: false 
+                    });
                 }
                 socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
             } else if (status.confirmed) {

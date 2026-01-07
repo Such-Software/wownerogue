@@ -215,7 +215,7 @@ const InputHandler = {
             } else {
                 // If not showing waiting screen, add helpful message to chat if missing address
                 if (addressRequired && !hasAddress) {
-                    $('#messages').append($('<li style="color: #ffa500;">').text("⚠️ Please set a payout address before starting."));
+                    $('#messages').append($('<li style="color: #ffa500;">').text("⚠️ Please set a payout address using the button below before starting."));
                     UI.scrollChat();
                 }
             }

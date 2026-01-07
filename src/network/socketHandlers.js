@@ -98,7 +98,8 @@ class SocketHandlers {
             walletService: this.walletService,
             debugManager: this.debugManager,
             queueManager: this.queueManager,
-            broadcastManager: this.broadcastManager
+            broadcastManager: this.broadcastManager,
+            sessionManager: this.sessionManager
         });
 
         // Address / payout handling encapsulated in AddressManager
@@ -341,6 +342,26 @@ class SocketHandlers {
         const connectionResult = await this.connectionHandler.handleConnection(socket);
         if (!connectionResult) return; // Connection was rejected or failed
 
+        const { sessionInfo } = connectionResult;
+
+        // Restore queue status if session resumed
+        if (sessionInfo && sessionInfo.resumed && sessionInfo.user && this.queueManager) {
+            const wasUpdated = this.queueManager.updateSocketId(sessionInfo.user.id, socket.id);
+            if (wasUpdated) {
+                const position = this.queueManager.getQueuePosition(socket.id);
+                if (position !== -1) {
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'queue', 
+                        `Welcome back! You are still in the queue at position ${position}.`);
+                    socket.emit('queue_joined', { 
+                        position: position,
+                        message: `Welcome back! You are still in queue.`,
+                        currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null,
+                        nextBlock: (this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : 0) + 1
+                    });
+                }
+            }
+        }
+
         // Send game mode info to client
         if (this.gameModeManager) {
             socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
@@ -428,7 +449,7 @@ class SocketHandlers {
                     try {
                         const dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
                         if (!dbUser.payout_address) {
-                            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm. Payment request will appear automatically.');
+                            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Use the "Manage Payout Address" button or paste your payout address here and type confirm. Payment request will appear automatically.');
                             return;
                         }
                     } catch (e) {
@@ -649,8 +670,18 @@ class SocketHandlers {
             // Clean up active games
             this.activeGames.delete(socket.id);
             
-            // Remove from queue manager (idempotent)
-            this.queueManager.removePlayer(socket.id);
+            // Remove from queue manager if not a "valuable" entry (persistent session or payment)
+            // This allows users who paid but disconnected to stay in the queue for session resumption
+            if (this.queueManager && typeof this.queueManager.removePlayer === 'function') {
+                if (this.queueManager.isValuableEntry && !this.queueManager.isValuableEntry(socket.id)) {
+                    this.queueManager.removePlayer(socket.id);
+                } else if (this.debugManager.CONSOLE_LOGGING && this.queueManager.isValuableEntry && this.queueManager.isValuableEntry(socket.id)) {
+                    console.log(`[SocketHandlers] Preserving queue entry for ${socket.id} (user has session/payment)`);
+                } else if (!this.queueManager.isValuableEntry) {
+                    // Fallback for safety if method not found
+                    this.queueManager.removePlayer(socket.id);
+                }
+            }
             
             // Clear any pending address confirmations
             if (this.chatHandler) {

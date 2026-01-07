@@ -73,10 +73,20 @@ class QueueHandler {
             // Record the queue attempt
             await this.rateLimiter.recordAttempt(socket.id, 'game:queue');
 
+            // Get session info to pass userId
+            let userId = null;
+            if (this.paymentHandlers?.gameModeManager?.getOrCreateUser) {
+                try {
+                    const dbUser = await this.paymentHandlers.gameModeManager.getOrCreateUser(socket.id);
+                    userId = dbUser.id;
+                } catch (e) {}
+            }
+
             // Add to waiting queue (in free mode or already authorized paid mode)
             this.queueManager.addPlayer({
                 serverId: socket.id,
                 clientId: currentUser.clientId,
+                userId: userId,
                 requiresConfirmation: false,
                 confirmed: true
             });

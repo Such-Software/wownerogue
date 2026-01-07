@@ -27,9 +27,19 @@ class QueryValidator {
         }
 
         // Check for dangerous patterns in the query text itself
-        const upperText = text.toUpperCase();
         for (const keyword of this.dangerousKeywords) {
-            if (upperText.includes(keyword)) {
+            // Use regex to avoid false positives (e.g., "DESCRIPTION" containing "SCRIPT")
+            // Alphanumeric keywords use word boundaries; others use literal match
+            let regex;
+            if (/^[A-Z0-9_]+$/i.test(keyword)) {
+                regex = new RegExp(`\\b${keyword}\\b`, 'i');
+            } else {
+                // Escape special characters for literal match
+                const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                regex = new RegExp(escaped, 'i');
+            }
+
+            if (regex.test(text)) {
                 // Allow legitimate DDL in migrations only
                 const stack = new Error().stack;
                 if (!stack.includes('migrations')) {

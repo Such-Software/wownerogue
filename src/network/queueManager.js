@@ -22,12 +22,37 @@ class QueueManager {
         this._waitingPlayers = []; // internal queue
     }
 
-    addPlayer({ serverId, clientId, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true }) {
+    addPlayer({ serverId, clientId, userId = null, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true }) {
         if (this.getPlayerIndex(serverId) !== -1) return; // already queued
-        this._waitingPlayers.push({ serverId, clientId, entryTime, paymentId, requiresConfirmation, confirmed });
+        this._waitingPlayers.push({ serverId, clientId, userId, entryTime, paymentId, requiresConfirmation, confirmed });
         if (this.CONSOLE_LOGGING) {
-            console.log(`[QueueManager] Added player ${serverId} (confirmed=${confirmed}, requiresConfirmation=${requiresConfirmation}). Queue length: ${this._waitingPlayers.length}`);
+            console.log(`[QueueManager] Added player ${serverId} (userId=${userId}, confirmed=${confirmed}, requiresConfirmation=${requiresConfirmation}). Queue length: ${this._waitingPlayers.length}`);
         }
+    }
+
+    /**
+     * Update the serverId (socket.id) for a queued player when their session resumes
+     */
+    updateSocketId(userId, newSocketId) {
+        const entry = this._waitingPlayers.find(p => p.userId === userId);
+        if (entry) {
+            if (this.CONSOLE_LOGGING) {
+                console.log(`[QueueManager] Updating socket ID for user ${userId}: ${entry.serverId} -> ${newSocketId}`);
+            }
+            entry.serverId = newSocketId;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Check if a player entry has persistent data that should be preserved on disconnect
+     */
+    isValuableEntry(serverId) {
+        const idx = this.getPlayerIndex(serverId);
+        if (idx === -1) return false;
+        const entry = this._waitingPlayers[idx];
+        return !!(entry.paymentId || entry.userId);
     }
 
     removePlayer(serverId) {
