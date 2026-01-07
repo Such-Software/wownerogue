@@ -277,6 +277,8 @@ var Game = {
     },
 
     stopWaitingScreen: function() {
+        this._awaitingPayment = false;
+        this._unconfirmedPayment = false;
         ScreenManager.stopWaitingScreen();
     },
 

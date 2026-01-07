@@ -142,7 +142,25 @@ const InputHandler = {
                     socket.emit('chat message', 'enter');
                     
                     if (isDebugMode || ScreenManager.canEnterGame()) {
-                        if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                        // Check if we should show waiting screen
+                        const addressRequired = typeof SocketHandlers !== 'undefined' && SocketHandlers.payoutAddressRequired();
+                        const hasAddress = typeof SocketHandlers !== 'undefined' && SocketHandlers._hasPayoutAddress;
+                        const canAfford = typeof SocketHandlers !== 'undefined' && SocketHandlers.canAffordGame();
+                        const isFree = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'FREE';
+
+                        // Only show waiting screen if address is set (if required) and they can afford it (if credits)
+                        const shouldShowWaiting = isFree || (canAfford && (!addressRequired || hasAddress));
+
+                        if (shouldShowWaiting && typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                            // Optimistically set awaiting payment if needed
+                            const isPaidCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'PAID_CREDITS';
+                            const hasEnoughCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._creditsBalance >= (SocketHandlers._creditsPerGame || 1);
+                            
+                            if (!isFree && typeof Game !== 'undefined' && !Game._unconfirmedPayment) {
+                                if (!(isPaidCredits && hasEnoughCredits)) {
+                                    Game._awaitingPayment = true;
+                                }
+                            }
                             ScreenManager.drawWaitingScreen();
                         }
                     } else {
@@ -167,10 +185,41 @@ const InputHandler = {
         $('#startButton').click(function(e) {
             // Attempt immediate start
             socket.emit('auto_start');
-            // We optimistically show waiting screen; if server later responds with payment requirement, audio handler will fire on payment_created
-            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                ScreenManager.drawWaitingScreen();
+
+            // Check if we should show waiting screen
+            const addressRequired = typeof SocketHandlers !== 'undefined' && SocketHandlers.payoutAddressRequired();
+            const hasAddress = typeof SocketHandlers !== 'undefined' && SocketHandlers._hasPayoutAddress;
+            const canAfford = typeof SocketHandlers !== 'undefined' && SocketHandlers.canAffordGame();
+            const isFree = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'FREE';
+
+            // We only show waiting screen if:
+            // 1. It's free mode
+            // 2. We have address (if required) AND (it's direct pay OR we have credits)
+            const shouldShowWaiting = isFree || (canAfford && (!addressRequired || hasAddress));
+
+            if (shouldShowWaiting) {
+                // If in a paid mode but no payment detected yet, optimistically set awaiting payment
+                // UNLESS it is credits mode and we already have enough credits
+                const isPaidCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'PAID_CREDITS';
+                const hasEnoughCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._creditsBalance >= (SocketHandlers._creditsPerGame || 1);
+                
+                if (!isFree && typeof Game !== 'undefined' && !Game._unconfirmedPayment) {
+                    if (!(isPaidCredits && hasEnoughCredits)) {
+                        Game._awaitingPayment = true;
+                    }
+                }
+
+                if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                    ScreenManager.drawWaitingScreen();
+                }
+            } else {
+                // If not showing waiting screen, add helpful message to chat if missing address
+                if (addressRequired && !hasAddress) {
+                    $('#messages').append($('<li style="color: #ffa500;">').text("⚠️ Please set a payout address before starting."));
+                    UI.scrollChat();
+                }
             }
+
             $('#messages').append($('<li style="color: #0f0;">').text("🖱️ Game start requested..."));
             UI.scrollChat();
         });

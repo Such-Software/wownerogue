@@ -11,8 +11,31 @@ const SocketHandlers = {
         if (color) el.css('color', color);
     },
 
+    _hasPayoutAddress: false,
+    _creditsBalance: 0,
+    _gameMode: 'free',
+
+    _directPayoutsEnabled: false,
+    _paymentsEnabled: false,
+
+    payoutAddressRequired: function() {
+        if (this._gameMode === 'PAID_SINGLE' && this._directPayoutsEnabled) return true;
+        if (this._gameMode === 'PAID_CREDITS' && this._creditsPayoutsEnabled) return true;
+        return false;
+    },
+
+    canAffordGame: function() {
+        if (this._gameMode === 'FREE') return true;
+        if (this._gameMode === 'PAID_SINGLE') return true; // Payment will be requested
+        if (this._gameMode === 'PAID_CREDITS') {
+            return this._creditsBalance >= (this._creditsPerGame || 1);
+        }
+        return false;
+    },
+
     _updateAddressButtonStatus: function(hasAddress) {
         const $btn = $('#manageAddressButton');
+        this._hasPayoutAddress = !!hasAddress;
         if (!$btn.length) return;
         
         if (hasAddress) {
@@ -195,6 +218,9 @@ const SocketHandlers = {
     _creditsPerGame: 1,
     
     _updateCreditsDisplay: function(balance, creditsPerGame) {
+        // Store current balance
+        this._creditsBalance = balance;
+
         // Update stored creditsPerGame if provided
         if (creditsPerGame && creditsPerGame > 0) {
             SocketHandlers._creditsPerGame = creditsPerGame;
@@ -296,7 +322,15 @@ const SocketHandlers = {
         if (data.status === 'waiting') {
             $('#messages').append($('<li style="color:#ff0;">').text(data.message));
             
-            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+            // Check if we should show waiting screen
+            const addressRequired = SocketHandlers.payoutAddressRequired();
+            const hasAddress = SocketHandlers._hasPayoutAddress;
+            const canAfford = SocketHandlers.canAffordGame();
+            const isFree = SocketHandlers._gameMode === 'FREE';
+
+            const shouldShowWaiting = isFree || (canAfford && (!addressRequired || hasAddress));
+
+            if (shouldShowWaiting && typeof Game !== 'undefined' && Game.drawWaitingScreen) {
                 Game.drawWaitingScreen();
             }
         }
@@ -515,6 +549,9 @@ const SocketHandlers = {
         // Store game mode and early entry config
         SocketHandlers._gameMode = data.mode;
         SocketHandlers._earlyEntryConfig = data.earlyEntry || { enabled: false };
+        SocketHandlers._creditsPayoutsEnabled = !!data.creditsPayoutsEnabled;
+        SocketHandlers._directPayoutsEnabled = !!data.directPayoutsEnabled;
+        SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
         
         if (typeof UI !== 'undefined' && UI.updateGameTitle) {
             UI.updateGameTitle(data.cryptoType);
@@ -632,6 +669,11 @@ const SocketHandlers = {
         }, 100);
         SocketHandlers._setBannerStatus('Pay', '#0af');
         if (typeof Game !== 'undefined' && Game._paymentRequested) Game._paymentRequested();
+        
+        // Show waiting screen (which will now say "Awaiting payment")
+        if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+            Game.drawWaitingScreen();
+        }
 
         // Sidebar QR (persistent) - create/update separate from chat scroll
         if (data.qr) {
