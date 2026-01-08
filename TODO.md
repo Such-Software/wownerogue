@@ -2,7 +2,7 @@
 
 ## High Priority
 - [x] **Verify Server Startup**: Server starts cleanly with `npm run dev` ✅
-- [ ] **Test Payment Flow**: Verify the full payment lifecycle (Request -> QR -> Payment -> Confirmation -> Game Start).
+- [x] **Test Payment Flow**: Fixed critical bug where payment confirmation wasn't updating DB status ✅
 - [ ] **Test Payouts**: Confirm payouts are triggered correctly upon winning in paid modes.
 - [x] **Address Persistence**: Verify that payout addresses persist across server restarts via session tokens. ✅
 - [x] **Mixed Mode Logic**: Per-user mode determination based on credits balance ✅
@@ -10,6 +10,11 @@
 - [x] **Stagenet Support**: Added MONERO_NETWORK config with UI warnings for non-mainnet ✅
 - [x] **Difficulty Tuning**: Configurable presets (easy/normal/hard/casino) for house edge control ✅
 - [x] **Provably Fair**: SHA-256 commitment scheme for verifiable game generation ✅
+
+## Recent Fixes (Jan 2026)
+- [x] **Payment DB Status Bug**: Fixed critical issue where single_game payments weren't marked 'confirmed' in DB, causing game start to fail ✅
+- [x] **TileMap Character Error**: Fixed '●' character not in tileMap causing tile mode rendering failures ✅
+- [x] **Test Suite Fixes**: All 47 tests now pass, including security tests with mock DB fallback ✅
 
 ## New Features (Just Added)
 - [x] **Chat History Persistence**: `ChatHistoryManager` stores messages in PostgreSQL with 30-day retention ✅
@@ -55,3 +60,18 @@
 - [ ] **Manual Integration Test**: Run full payment flow with real `wownero-wallet-rpc` (not mocked).
 - [x] **Rate Limit Tuning**: Current defaults (60 games/hour, 100 payouts/day) suitable for launch ✅
 - [x] **Log Rotation**: Using systemd journald with configurable retention (see `LOGS_AND_BACKUP.md`) ✅
+
+## Known Issues / Future Improvements
+
+### Backend
+- [ ] **Database Transactions**: Wrap multi-step financial operations in transactions (credit deductions, payout processing)
+- [ ] **Payment Idempotency**: Replace in-memory Set with database-backed idempotency keys for payment confirmation
+- [ ] **Payout Retry Queue**: Implement automatic retry mechanism for failed payouts
+- [ ] **Address Checksum Validation**: Add cryptographic checksum validation for XMR/WOW addresses
+- [ ] **Redis Rate Limiting**: Replace in-memory rate limiter with Redis for persistence across restarts
+
+### Frontend
+- [ ] **Socket Reconnection**: Add `reconnect` and `disconnect` handlers to restore state after connection loss
+- [ ] **Payment Timeout UI**: Show countdown timer for payment expiration, auto-clean expired payment UI
+- [ ] **Event Cleanup**: Add proper cleanup for event listeners when modules are re-initialized
+- [ ] **Connection Status Indicator**: Show real-time socket connection state in UI

@@ -63,7 +63,13 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
         amount: 1000,
         amountFormatted: '0.001',
         expiresAt: new Date(Date.now()+60000)
-      })
+      }),
+      // Mock processGameStart for QueueManager.startGameImmediately
+      processGameStart: async () => ({ success: true, effectiveMode: 'PAID_SINGLE' }),
+      // Mock db for PaymentHandlers DB update on confirmation
+      db: {
+        query: async () => ({ rows: [] })
+      }
     };
 
     // Wallet service mock with manual callback control
@@ -102,20 +108,20 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
 
     expect(monitorCallback).toBeDefined();
 
-    // Simulate mempool detection first
-    monitorCallback({ in_mempool: true, confirmed: false, amount: 1000, confirmations: 0 });
+    // Simulate mempool detection first (callback is async, so we need to await it)
+    await monitorCallback({ in_mempool: true, confirmed: false, amount: 1000, confirmations: 0 });
     // Should have queued the player but not started a game
     expect(queueManager.getQueueLength()).toBe(1);
     expect(events.filter(e => e.event === 'game_start').length).toBe(0);
 
     // Simulate block tick BEFORE confirmation (should skip unconfirmed)
-    queueManager.startGamesForWaiting(blockHeight);
+    await queueManager.startGamesForWaiting(blockHeight);
     expect(events.filter(e => e.event === 'game_start').length).toBe(0);
     // Entry should still be in queue (re-queued)
     expect(queueManager.getQueueLength()).toBe(1);
 
-    // Now simulate confirmation after the block
-    monitorCallback({ in_mempool: true, confirmed: true, amount: 1000, confirmations: 1 });
+    // Now simulate confirmation after the block (await the async callback)
+    await monitorCallback({ in_mempool: true, confirmed: true, amount: 1000, confirmations: 1 });
 
     // Immediate game start expected
     const gameStarts = events.filter(e => e.event === 'game_start');

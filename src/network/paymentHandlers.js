@@ -291,6 +291,24 @@ class PaymentHandlers {
                         }
                     } else {
                         // single_game payment - standard flow
+                        // CRITICAL: Update payment status in DB BEFORE trying to start the game
+                        // This ensures processGameStart can find the confirmed payment
+                        try {
+                            if (this.gameModeManager && this.gameModeManager.db) {
+                                await this.gameModeManager.db.query(`
+                                    UPDATE payments 
+                                    SET status = 'confirmed',
+                                        confirmed_at = NOW()
+                                    WHERE id = $1 AND status = 'pending'
+                                `, [paymentRequest.id]);
+                                if (this.debugManager.CONSOLE_LOGGING) {
+                                    console.log(`[PaymentHandlers] Updated payment ${paymentRequest.id} status to confirmed in DB`);
+                                }
+                            }
+                        } catch (dbErr) {
+                            console.error('[PaymentHandlers] Failed to update payment status in DB:', dbErr.message);
+                        }
+                        
                         socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
                         this.queueManager.markConfirmed(socket.id);
                         // Attempt immediate game start so user doesn't wait another full block

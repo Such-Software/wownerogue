@@ -272,7 +272,7 @@ var Game = {
             }
             // Small pulsing dot
             const pulse = 0.4 + Math.sin(Date.now()/300)*0.4;
-            display.draw(xStart - 2, y, '●', `rgba(120,200,255,${pulse})`, 'transparent');
+            display.draw(xStart - 2, y, '*', `rgba(120,200,255,${pulse})`, 'transparent');
         }
     },
 
