@@ -520,8 +520,8 @@ class SocketHandlers {
                 }
 
                 if (!canStart.allowed) {
-                    // Trigger payment request automatically
-                    if (canStart.action === 'make_payment' || canStart.action === 'purchase_credits') {
+                    // Trigger payment request automatically for any payment-related action
+                    if (canStart.action === 'make_payment' || canStart.action === 'purchase_credits' || canStart.action === 'choose_payment') {
                         await this.paymentHandlers.createAndShowPaymentRequest(socket);
                         return;
                     }
