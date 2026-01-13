@@ -3,7 +3,7 @@
 ## High Priority
 - [x] **Verify Server Startup**: Server starts cleanly with `npm run dev` ✅
 - [x] **Test Payment Flow**: Fixed critical bug where payment confirmation wasn't updating DB status ✅
-- [ ] **Test Payouts**: Confirm payouts are triggered correctly upon winning in paid modes.
+- [x] **Test Payouts**: Payout flow verified with duplicate prevention and proper mode tracking ✅
 - [x] **Address Persistence**: Verify that payout addresses persist across server restarts via session tokens. ✅
 - [x] **Mixed Mode Logic**: Per-user mode determination based on credits balance ✅
 - [x] **Credits Package Bug**: Credits correctly parsed from package info on confirmation ✅
@@ -14,7 +14,11 @@
 ## Recent Fixes (Jan 2026)
 - [x] **Payment DB Status Bug**: Fixed critical issue where single_game payments weren't marked 'confirmed' in DB, causing game start to fail ✅
 - [x] **TileMap Character Error**: Fixed '●' character not in tileMap causing tile mode rendering failures ✅
-- [x] **Test Suite Fixes**: All 47 tests now pass, including security tests with mock DB fallback ✅
+- [x] **Test Suite Fixes**: All 106 tests now pass (10 test suites) ✅
+- [x] **Credit Deduction Bug**: Fixed race condition where credits could go negative - now uses `WHERE credits >= $1` ✅
+- [x] **Payout Mode Bug**: Fixed `completeGame` using global `gameMode` instead of recorded `payment_mode` from game record ✅
+- [x] **Duplicate Payout Prevention**: Added check for existing payout before processing to prevent double-payouts ✅
+- [x] **Dead Code Cleanup**: Removed unused MoneroPayService (was never used, WalletRPCService is the actual service) ✅
 
 ## New Features (Just Added)
 - [x] **Chat History Persistence**: `ChatHistoryManager` stores messages in PostgreSQL with 30-day retention ✅
@@ -47,7 +51,7 @@
 - [x] **Deployment Guide**: README includes production deployment with Nginx/Caddy configs and systemd ✅
 
 ## Pre-Beta Checklist
-- [x] All 47 tests pass (9 test suites) ✅
+- [x] All 106 tests pass (10 test suites) ✅
 - [x] Health check endpoint available at `/health` ✅
 - [x] REST endpoints implemented: `/api/user/:socketId/credits`, `/api/user/:socketId/mode`, `/api/user/:socketId/address` ✅
 - [x] Payout eligibility shown per payment mode in UI ✅

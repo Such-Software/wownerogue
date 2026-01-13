@@ -61,7 +61,7 @@ CREATE TABLE payments (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
     socket_id VARCHAR(255),
-    subaddress VARCHAR(95) NOT NULL, -- MoneroPay subaddress
+    subaddress VARCHAR(95) NOT NULL, -- Wallet RPC generated subaddress
     expected_amount BIGINT NOT NULL, -- In atomic units
     received_amount BIGINT DEFAULT 0, -- In atomic units
     payment_type VARCHAR(20) NOT NULL, -- single_game, credits_package

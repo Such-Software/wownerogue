@@ -20,7 +20,7 @@ const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
 class GameModeManager {
     constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null) {
         this.db = databaseManager;
-        this.walletService = walletRPCService; // Changed from moneroPayService
+        this.walletService = walletRPCService;
         this.debugManager = debugManager;
         this.paymentConfigManager = paymentConfigManager || null;
 
@@ -699,14 +699,25 @@ class GameModeManager {
 
     async _processGameStartWithCredits(user, socketId, gameId) {
         const creditsToSpend = this.creditsPerGameCost;
+        // Use a conditional update to prevent credits going negative
         const updateRes = await this.db.query(`
             UPDATE users 
             SET credits = credits - $1,
                 total_games_played = total_games_played + 1,
                 updated_at = NOW()
-            WHERE id = $2
+            WHERE id = $2 AND credits >= $1
             RETURNING credits
         `, [creditsToSpend, user.id]);
+        
+        // If no rows were updated, user doesn't have enough credits
+        if (updateRes.rows.length === 0) {
+            return { 
+                success: false, 
+                reason: 'Insufficient credits',
+                creditsRequired: creditsToSpend,
+                creditsAvailable: user.credits
+            };
+        }
         const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - creditsToSpend);
         
         // Record the game mode used
@@ -1137,8 +1148,30 @@ class GameModeManager {
         }
 
         try {
-            // Update/record game completion in DB (simplified; reuse processGameCompletion if schema matches)
-            // If a games table exists with at least id & user reference, mark completion.
+            // Retrieve the game record to get the actual payment_mode used at game start
+            let recordedPaymentMode = this.gameMode; // fallback to global
+            let gameDbId = null;
+            try {
+                const gameRecord = await this.db.query(`
+                    SELECT id, payment_mode FROM games
+                    WHERE dungeon_seed = $1 AND socket_id = $2
+                    LIMIT 1
+                `, [gameId, socketId]);
+                if (gameRecord.rows.length > 0) {
+                    gameDbId = gameRecord.rows[0].id;
+                    recordedPaymentMode = (gameRecord.rows[0].payment_mode || this.gameMode).toUpperCase();
+                    // Normalize to expected values
+                    if (recordedPaymentMode === 'DIRECT') recordedPaymentMode = 'PAID_SINGLE';
+                    if (recordedPaymentMode === 'CREDITS') recordedPaymentMode = 'PAID_CREDITS';
+                }
+            } catch (e) {
+                // Non-fatal, use fallback
+                if (process.env.NODE_ENV === 'development') {
+                    console.warn('Game record lookup warning:', e.message);
+                }
+            }
+
+            // Update/record game completion in DB
             try {
                 await this.db.query(`
                     UPDATE games SET status = $1, treasure_found = $2, moves_made = COALESCE($3, moves_made), duration_seconds = COALESCE($4, duration_seconds), completed_at = NOW()
@@ -1158,10 +1191,21 @@ class GameModeManager {
                 }
             }
 
-            // Handle payouts only in PAID_SINGLE mode and only on win (escaped)
-            const payoutEligibleStartMode = (this.gameMode === 'PAID_SINGLE') || (this.gameMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
+            // Handle payouts based on the actual recorded payment mode, not the current global setting
+            const payoutEligibleStartMode = (recordedPaymentMode === 'PAID_SINGLE') || (recordedPaymentMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
             if (payoutEligibleStartMode && won) {
-                const { amount: payoutAmount, multiplier } = this.calculatePayout(this.gameMode, { treasureFound });
+                const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedPaymentMode, { treasureFound });
+
+                // Check if payout was already processed for this game (prevent duplicates)
+                if (gameDbId) {
+                    const existingPayout = await this.db.query(`
+                        SELECT id FROM payouts WHERE game_id = $1 AND status IN ('pending', 'completed')
+                    `, [gameDbId]);
+                    if (existingPayout.rows.length > 0) {
+                        console.log(`⚠️ Payout already exists for game ${gameId}, skipping duplicate`);
+                        return { success: true, mode: recordedPaymentMode, payout: null, reason: 'Payout already processed', score: metrics.score ?? null };
+                    }
+                }
 
                 // Look up user record for payout address
                 const userResult = await this.db.query(`SELECT * FROM users WHERE socket_id = $1 LIMIT 1`, [socketId]);
@@ -1178,7 +1222,7 @@ class GameModeManager {
                         });
                         return {
                             success: true,
-                            mode: this.gameMode,
+                            mode: recordedPaymentMode,
                             payout: {
                                 amount: payoutAmount,
                                 multiplier,
@@ -1189,14 +1233,14 @@ class GameModeManager {
                     } catch (payoutErr) {
                         const normalizedPayout = normalizeError(payoutErr, 'Failed to send payout');
                         console.error('❌ Error creating payout:', normalizedPayout.message);
-                        return { success: true, mode: this.gameMode, payout: null, payoutError: normalizedPayout.safeMessage, score: metrics.score ?? null };
+                        return { success: true, mode: recordedPaymentMode, payout: null, payoutError: normalizedPayout.safeMessage, score: metrics.score ?? null };
                     }
                 }
-                return { success: true, mode: this.gameMode, payout: null, reason: 'No payout address', score: metrics.score ?? null };
+                return { success: true, mode: recordedPaymentMode, payout: null, reason: 'No payout address', score: metrics.score ?? null };
             }
 
             // Credits mode: decrement nothing here (already handled start). Optionally could award stats.
-            return { success: true, mode: this.gameMode, payout: null, score: metrics.score ?? null };
+            return { success: true, mode: recordedPaymentMode, payout: null, score: metrics.score ?? null };
         } catch (err) {
             const normalized = normalizeError(err, 'Failed to complete game');
             console.error('❌ completeGame error:', normalized.message);
