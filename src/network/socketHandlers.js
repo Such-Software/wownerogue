@@ -15,6 +15,7 @@ const ConnectionHandler = require('./connectionHandler');
 const ChatHandler = require('./chatHandler');
 const QueueHandler = require('./queueHandler');
 const SpectatorManager = require('./spectatorManager');
+const SuspendedGameManager = require('./suspendedGameManager');
 const MemoryManager = require('../utils/memoryManager');
 const { normalizeError } = require('../utils/errors');
 
@@ -163,6 +164,13 @@ class SocketHandlers {
         
         // Wire spectator manager to game manager (for game over notifications)
         this.gameManager.setSpectatorManager(this.spectatorManager);
+
+        // Initialize suspended game manager for reconnection support
+        this.suspendedGameManager = new SuspendedGameManager({
+            debugManager: this.debugManager,
+            activeGames: this.activeGames,
+            cleanupTimeoutMs: 300000 // 5 minutes to reconnect before game is lost
+        });
 
         // Movement manager abstraction with memory cleanup
         this.playerMoveTimestamps = new Map();
@@ -343,9 +351,50 @@ class SocketHandlers {
         if (!connectionResult) return; // Connection was rejected or failed
 
         const { sessionInfo } = connectionResult;
+        const dbUserId = sessionInfo?.user?.id;
+        
+        // Check for suspended game to restore (must happen BEFORE queue restoration)
+        let restoredGame = null;
+        if (sessionInfo && sessionInfo.resumed && dbUserId && this.suspendedGameManager) {
+            if (this.suspendedGameManager.hasSuspendedGame(dbUserId)) {
+                const memUser = this.connectionHandler.getUserBySocket(socket.id);
+                const restored = this.suspendedGameManager.restoreGame(dbUserId, socket.id, memUser);
+                
+                if (restored) {
+                    restoredGame = restored.game;
+                    const suspendedState = restored.suspendedState;
+                    
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`🔄 [handleConnection] Restored game ${restoredGame.id} for user ${dbUserId}`);
+                    }
+                    
+                    // Re-emit the game state to the reconnecting client
+                    const gameState = restoredGame.getState();
+                    gameState.restored = true;
+                    gameState.restoredMessage = 'Game restored! Continue playing.';
+                    
+                    // Include provably fair commitment
+                    if (restoredGame.getProofCommitment) {
+                        gameState.proof = restoredGame.getProofCommitment();
+                    }
+                    
+                    // Send game_start to resume the game on client
+                    socket.emit('game_start', gameState);
+                    
+                    // Also send a status message
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
+                        'Welcome back! Your game has been restored.');
+                    
+                    // Restore payment monitoring if it was active
+                    if (suspendedState.paymentMonitoringActive && this.paymentHandlers) {
+                        this._restorePaymentMonitoring(socket, dbUserId);
+                    }
+                }
+            }
+        }
 
-        // Restore queue status if session resumed
-        if (sessionInfo && sessionInfo.resumed && sessionInfo.user && this.queueManager) {
+        // Restore queue status if session resumed (only if no game was restored)
+        if (!restoredGame && sessionInfo && sessionInfo.resumed && sessionInfo.user && this.queueManager) {
             const wasUpdated = this.queueManager.updateSocketId(sessionInfo.user.id, socket.id);
             if (wasUpdated) {
                 const position = this.queueManager.getQueuePosition(socket.id);
@@ -358,6 +407,9 @@ class SocketHandlers {
                         currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null,
                         nextBlock: (this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : 0) + 1
                     });
+                    
+                    // Check for pending payment and restore monitoring
+                    this._restorePaymentMonitoring(socket, dbUserId);
                 }
             }
         }
@@ -653,44 +705,77 @@ class SocketHandlers {
 
     /**
      * Handle client disconnection with proper cleanup
+     * Preserves game state for reconnection when user has a valid session
      */
     handleDisconnect(socket) {
         // Use connection handler for main disconnect logic
-        this.connectionHandler.handleDisconnect(socket, (socket) => {
-            // Additional cleanup specific to socket handlers
+        this.connectionHandler.handleDisconnect(socket, async (socket) => {
+            const socketId = socket.id;
             
-            // Clean up payment monitoring
+            // Try to get DB user ID for session-based preservation
+            let dbUserId = null;
+            if (this.sessionManager) {
+                try {
+                    const user = await this.sessionManager.getBySocket(socketId);
+                    dbUserId = user?.id;
+                } catch (e) {
+                    // Non-fatal, proceed without DB user
+                }
+            }
+            
+            // Check if user has an active game that should be suspended
+            const activeGame = this.activeGames.get(socketId);
+            if (activeGame && dbUserId && this.suspendedGameManager) {
+                // Suspend the game for potential reconnection
+                const suspended = this.suspendedGameManager.suspendGame(dbUserId, socketId, activeGame, {
+                    paymentMonitoringActive: this.paymentHandlers?.hasActiveMonitoring?.(socketId) || false
+                });
+                
+                if (suspended) {
+                    // Remove from activeGames (now in suspended state)
+                    this.activeGames.delete(socketId);
+                    
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`[SocketHandlers] Game suspended for user ${dbUserId} (socket: ${socketId})`);
+                    }
+                } else {
+                    // Couldn't suspend, just delete
+                    this.activeGames.delete(socketId);
+                }
+            } else {
+                // No DB user or no game, just clean up
+                this.activeGames.delete(socketId);
+            }
+            
+            // Clean up payment monitoring (but remember it was active for restoration)
             if (this.paymentHandlers && typeof this.paymentHandlers.stopMonitoringForSocket === 'function') {
-                this.paymentHandlers.stopMonitoringForSocket(socket.id);
+                this.paymentHandlers.stopMonitoringForSocket(socketId);
             }
             
             // Clean up movement timestamps
-            this.playerMoveTimestamps.delete(socket.id);
+            this.playerMoveTimestamps.delete(socketId);
             
-            // Clean up active games
-            this.activeGames.delete(socket.id);
-            
-            // Remove from queue manager if not a "valuable" entry (persistent session or payment)
-            // This allows users who paid but disconnected to stay in the queue for session resumption
+            // Preserve queue entry for users with session/payment
+            // The queue entry's socketId will be updated on reconnection
             if (this.queueManager && typeof this.queueManager.removePlayer === 'function') {
-                if (this.queueManager.isValuableEntry && !this.queueManager.isValuableEntry(socket.id)) {
-                    this.queueManager.removePlayer(socket.id);
-                } else if (this.debugManager.CONSOLE_LOGGING && this.queueManager.isValuableEntry && this.queueManager.isValuableEntry(socket.id)) {
-                    console.log(`[SocketHandlers] Preserving queue entry for ${socket.id} (user has session/payment)`);
+                if (this.queueManager.isValuableEntry && !this.queueManager.isValuableEntry(socketId)) {
+                    this.queueManager.removePlayer(socketId);
+                } else if (this.debugManager.CONSOLE_LOGGING && this.queueManager.isValuableEntry && this.queueManager.isValuableEntry(socketId)) {
+                    console.log(`[SocketHandlers] Preserving queue entry for ${socketId} (user has session/payment)`);
                 } else if (!this.queueManager.isValuableEntry) {
                     // Fallback for safety if method not found
-                    this.queueManager.removePlayer(socket.id);
+                    this.queueManager.removePlayer(socketId);
                 }
             }
             
             // Clear any pending address confirmations
             if (this.chatHandler) {
-                this.chatHandler.clearAddressConfirmation(socket.id);
+                this.chatHandler.clearAddressConfirmation(socketId);
             }
             
             // Clean up spectator state
             if (this.spectatorManager) {
-                this.spectatorManager.handleDisconnect(socket.id);
+                this.spectatorManager.handleDisconnect(socketId);
             }
         });
     }
@@ -708,6 +793,117 @@ class SocketHandlers {
             serverTime: Date.now(),
             socketId: socket.client.id
         });
+    }
+
+    /**
+     * Restore payment monitoring for a reconnecting user.
+     * Queries DB for pending payments and restarts monitoring if found.
+     * @param {Object} socket - The socket connection
+     * @param {number} dbUserId - The DB user ID
+     */
+    async _restorePaymentMonitoring(socket, dbUserId) {
+        if (!dbUserId || !this.paymentHandlers || !this.gameModeManager) {
+            return;
+        }
+
+        try {
+            // Query for pending (unpaid) payment requests for this user
+            const pendingResult = await this.gameModeManager.db.query(`
+                SELECT id, address, expected_amount, payment_type, description, expires_at,
+                       crypto_type
+                FROM payments
+                WHERE user_id = $1
+                  AND status = 'pending'
+                  AND expires_at > NOW()
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [dbUserId]);
+
+            if (pendingResult.rows.length === 0) {
+                // No pending payment to restore
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`[RestorePayment] No pending payment for user ${dbUserId}`);
+                }
+                return;
+            }
+
+            const payment = pendingResult.rows[0];
+            const cryptoType = payment.crypto_type || this.gameModeManager.cryptoType;
+            const formattedAmount = this.gameModeManager.formatAtomicHuman 
+                ? this.gameModeManager.formatAtomicHuman(payment.expected_amount, 3)
+                : payment.expected_amount;
+
+            // Generate QR code
+            let qrDataUrl = null;
+            try {
+                const { generatePaymentQR } = require('../payments/qrService');
+                qrDataUrl = await generatePaymentQR(
+                    payment.address,
+                    payment.expected_amount,
+                    cryptoType,
+                    payment.description || 'Restored payment',
+                    this.gameModeManager.currencyDecimals
+                );
+            } catch (qrErr) {
+                console.warn('QR generation failed during restore:', qrErr.message);
+            }
+
+            // Re-emit payment_created to the client
+            socket.emit('payment_created', {
+                paymentId: payment.id,
+                address: payment.address,
+                amount: payment.expected_amount,
+                amountFormatted: formattedAmount,
+                humanAmount: formattedAmount,
+                paymentType: payment.payment_type,
+                cryptoType: cryptoType,
+                description: payment.description,
+                expiresAt: payment.expires_at,
+                qr: qrDataUrl,
+                restored: true
+            });
+
+            // Get current user object for queue operations
+            const currentUser = this.connectionHandler.getUserBySocket(socket.id) || { serverId: socket.id };
+
+            // Create a mock paymentRequest object for _monitorAddress
+            const paymentRequest = {
+                id: payment.id,
+                address: payment.address,
+                amount: payment.expected_amount,
+                amountFormatted: formattedAmount,
+                package: null
+            };
+
+            // Restart payment monitoring
+            // First stop any existing monitoring (unlikely but safe)
+            this.paymentHandlers.stopMonitoringForSocket(socket.id);
+            
+            // Restart monitoring via paymentHandlers internal method
+            if (typeof this.paymentHandlers._monitorAddress === 'function') {
+                this.paymentHandlers._monitorAddress(
+                    socket, 
+                    paymentRequest, 
+                    payment.expected_amount, 
+                    cryptoType, 
+                    currentUser, 
+                    payment.payment_type
+                );
+            }
+
+            // Send status update
+            this.broadcastManager.sendStatusUpdate(
+                socket.id,
+                'payment',
+                `🔁 Restored pending payment request.\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${payment.address}`
+            );
+
+            if (this.debugManager.CONSOLE_LOGGING) {
+                console.log(`💳 [RestorePayment] Restored monitoring for user ${dbUserId}, payment ${payment.id}`);
+            }
+        } catch (error) {
+            console.error(`[RestorePayment] Error restoring payment for user ${dbUserId}:`, error.message);
+        }
     }
 
     // Helper methods

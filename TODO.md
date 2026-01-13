@@ -19,6 +19,7 @@
 - [x] **Payout Mode Bug**: Fixed `completeGame` using global `gameMode` instead of recorded `payment_mode` from game record ✅
 - [x] **Duplicate Payout Prevention**: Added check for existing payout before processing to prevent double-payouts ✅
 - [x] **Dead Code Cleanup**: Removed unused MoneroPayService (was never used, WalletRPCService is the actual service) ✅
+- [x] **Game Reconnection/Resume**: Added `SuspendedGameManager` to preserve and restore games when users disconnect and reconnect. Users in dungeon or awaiting payment can now resume seamlessly ✅
 
 ## New Features (Just Added)
 - [x] **Chat History Persistence**: `ChatHistoryManager` stores messages in PostgreSQL with 30-day retention ✅

@@ -369,6 +369,15 @@ class PaymentHandlers {
     }
 
     /**
+     * Check if a socket has active payment monitoring
+     * @param {string} socketId - The socket ID to check
+     * @returns {boolean} True if monitoring is active
+     */
+    hasActiveMonitoring(socketId) {
+        return this.socketPaymentMap.has(socketId);
+    }
+
+    /**
      * Stop monitoring (if any) for a given socket (disconnect/expiry)
      */
     stopMonitoringForSocket(socketId) {
