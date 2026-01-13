@@ -458,37 +458,43 @@ var WaitingScreenAnimator = {
             }
         }
         
-        // 👹👹👹 MONSTER PACK - Draw glow FIRST, then monsters on top
-        // Phase 1: Draw all monster glows
+        // 👹👹👹 MONSTER PACK - Spread out formation, no overlapping
+        // Only draw monsters that are on valid integer grid positions
+        const drawnPositions = new Set(); // Track drawn positions to avoid overlap
+        
         for (let i = 0; i < anim.monsters.length; i++) {
             const m = anim.monsters[i];
-            if (m.x >= roomStartX - 1 && m.x <= roomEndX + 1 && m.y >= roomStartY && m.y <= roomEndY) {
-                const floorTile = GameTiles.getFloorTile();
-                // Red glow around monster (draw first so monster appears on top)
-                for (let sx = m.x - 1; sx <= m.x + 1; sx++) {
-                    for (let sy = m.y - 1; sy <= m.y + 1; sy++) {
-                        if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
-                            if (!(sx === m.x && sy === m.y)) {
-                                const glowIntensity = 0.15 + Math.sin(time / 200 + i) * 0.1;
-                                display.draw(sx, sy, floorTile, `rgba(200, 50, 50, ${glowIntensity})`, "transparent");
-                            }
+            // Round to grid position
+            const gridX = Math.round(m.x);
+            const gridY = Math.round(m.y);
+            const posKey = `${gridX},${gridY}`;
+            
+            // Skip if position already has a monster or out of bounds
+            if (drawnPositions.has(posKey)) continue;
+            if (gridX < roomStartX - 1 || gridX > roomEndX + 1) continue;
+            if (gridY < roomStartY || gridY > roomEndY) continue;
+            
+            drawnPositions.add(posKey);
+            
+            // Draw red glow around this monster position
+            const floorTile = GameTiles.getFloorTile();
+            for (let sx = gridX - 1; sx <= gridX + 1; sx++) {
+                for (let sy = gridY - 1; sy <= gridY + 1; sy++) {
+                    if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
+                        if (!(sx === gridX && sy === gridY)) {
+                            const glowIntensity = 0.2 + Math.sin(time / 200 + i) * 0.1;
+                            display.draw(sx, sy, floorTile, `rgba(180, 40, 40, ${glowIntensity})`, "transparent");
                         }
                     }
                 }
             }
-        }
-        // Phase 2: Draw all monsters on top of glow
-        for (let i = 0; i < anim.monsters.length; i++) {
-            const m = anim.monsters[i];
-            if (m.x >= roomStartX - 1 && m.x <= roomEndX + 1 && m.y >= roomStartY && m.y <= roomEndY) {
-                const menacePulse = 0.4 + Math.sin(time / 150 + i) * 0.4;
-                const fearColor = `rgba(255, 30, 30, ${menacePulse})`;
-                
-                const floorTile = GameTiles.getFloorTile();
-                const monsterTile = GameTiles.getMonsterTile();
-                display.draw(m.x, m.y, [floorTile, monsterTile], 
-                    [`rgba(100, 80, 60, 0.1)`, fearColor], ["transparent", "transparent"]);
-            }
+            
+            // Draw monster on top
+            const menacePulse = 0.5 + Math.sin(time / 150 + i * 0.7) * 0.4;
+            const fearColor = `rgba(255, 40, 40, ${menacePulse})`;
+            const monsterTile = GameTiles.getMonsterTile();
+            display.draw(gridX, gridY, [floorTile, monsterTile], 
+                [`rgba(100, 80, 60, 0.1)`, fearColor], ["transparent", "transparent"]);
         }
         
         // DEATH EFFECT when devoured - expanding red flash
@@ -529,15 +535,19 @@ var WaitingScreenAnimator = {
         
         // ESCAPE SUCCESS indicator
         if (anim.phase === 'escaped') {
-            // Draw "ESCAPED!" text - simple version without emojis
+            // Draw "ESCAPED!" text using floor tiles as background
             const escapeY = Math.floor(screenHeight / 2) + 3;
             const escapeText = "ESCAPED!";
             const startX = Math.floor((screenWidth - escapeText.length) / 2);
-            const successPulse = 0.7 + Math.sin(time / 150) * 0.3;
+            const successPulse = 0.8 + Math.sin(time / 150) * 0.2;
+            const floorTile = GameTiles.getFloorTile();
             
             for (let i = 0; i < escapeText.length; i++) {
                 const char = escapeText[i];
-                display.draw(startX + i, escapeY, char, `rgba(255, 220, 100, ${successPulse})`, "transparent");
+                // Draw floor tile first, then letter on top
+                display.draw(startX + i, escapeY, [floorTile, char], 
+                    [`rgba(100, 80, 60, 0.1)`, `rgba(255, 220, 100, ${successPulse})`], 
+                    ["transparent", "transparent"]);
             }
         }
     },
@@ -568,33 +578,26 @@ var WaitingScreenAnimator = {
             case 'grab':
                 // Brief pause to show player got treasure
                 if (anim.frameCount - anim.grabFrame > 8) {
-                    // Spawn monster pack from the edges
+                    // Spawn monster pack in a spread-out formation
                     anim.monsters = [];
-                    const monsterCount = 4 + Math.floor(Math.random() * 3); // 4-6 monsters
+                    const monsterCount = 3; // Fewer monsters, better spaced
+                    
+                    // Spawn in a V-formation behind the player
+                    const spawnX = roomStartX + 2;
+                    const formations = [
+                        {x: spawnX, y: 12},          // Center
+                        {x: spawnX - 1, y: 10},      // Top-left
+                        {x: spawnX - 1, y: 14},      // Bottom-left
+                    ];
                     
                     for (let i = 0; i < monsterCount; i++) {
-                        // Monsters spawn from various directions
-                        const side = i % 4;
-                        let mx, my;
-                        switch(side) {
-                            case 0: // Left
-                                mx = roomStartX - 1;
-                                my = 10 + Math.floor(Math.random() * 5);
-                                break;
-                            case 1: // Right  
-                                mx = roomEndX + 1;
-                                my = 10 + Math.floor(Math.random() * 5);
-                                break;
-                            case 2: // Top-ish
-                                mx = 15 + Math.floor(Math.random() * 20);
-                                my = 8;
-                                break;
-                            case 3: // Bottom-ish
-                                mx = 15 + Math.floor(Math.random() * 20);
-                                my = 16;
-                                break;
-                        }
-                        anim.monsters.push({x: mx, y: my, speed: 0.8 + Math.random() * 0.4});
+                        const pos = formations[i];
+                        anim.monsters.push({
+                            x: pos.x, 
+                            y: pos.y, 
+                            speed: 1.2 + i * 0.1,  // Slight speed variation
+                            targetY: 12 + (i - 1) * 2  // Spread vertically during chase
+                        });
                     }
                     
                     anim.phase = anim.outcome; // 'escape' or 'devoured'
@@ -610,34 +613,40 @@ var WaitingScreenAnimator = {
                     anim.escapedFrame = anim.frameCount;
                 }
                 
-                // Monsters chase but stay slightly behind
-                for (const m of anim.monsters) {
-                    if (m.x < anim.playerX - 3) {
+                // Monsters chase in formation, staying spread out
+                for (let i = 0; i < anim.monsters.length; i++) {
+                    const m = anim.monsters[i];
+                    // Chase horizontally, stay behind player
+                    if (m.x < anim.playerX - 4) {
                         m.x += m.speed;
                     }
-                    // Move toward player's Y
-                    if (m.y < anim.playerY) m.y += 0.3;
-                    else if (m.y > anim.playerY) m.y -= 0.3;
+                    // Maintain vertical spread
+                    const targetY = m.targetY || (12 + (i - 1) * 2);
+                    if (m.y < targetY - 0.5) m.y += 0.4;
+                    else if (m.y > targetY + 0.5) m.y -= 0.4;
                 }
                 break;
                 
             case 'devoured':
-                // Monsters converge on player and destroy them
-                let allConverged = true;
-                for (const m of anim.monsters) {
+                // Monsters converge on player in stages
+                let closeCount = 0;
+                for (let i = 0; i < anim.monsters.length; i++) {
+                    const m = anim.monsters[i];
                     const dx = anim.playerX - m.x;
                     const dy = anim.playerY - m.y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
                     
-                    if (dist > 1) {
-                        allConverged = false;
-                        m.x += (dx / dist) * m.speed;
-                        m.y += (dy / dist) * m.speed * 0.6;
+                    if (dist > 1.5) {
+                        // Move toward player but maintain some spacing
+                        m.x += (dx / dist) * m.speed * 0.8;
+                        m.y += (dy / dist) * m.speed * 0.5;
+                    } else {
+                        closeCount++;
                     }
                 }
                 
-                if (allConverged && anim.playerX !== -1) {
-                    // Player is devoured!
+                // Player is devoured when surrounded
+                if (closeCount >= 2 && anim.playerX !== -1) {
                     anim.deathX = anim.playerX;
                     anim.deathY = anim.playerY;
                     anim.deathFrame = anim.frameCount;
