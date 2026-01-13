@@ -15,11 +15,25 @@ var WaitingScreenAnimator = {
         frameCount: 0,
         direction: 1
     },
+    // Separate animation state for "Awaiting payment" treasure hunt
+    _paymentAnimation: {
+        playerX: 8,
+        playerY: 12,
+        treasureX: 25,
+        treasureY: 12,
+        monsters: [], // pack of monsters {x, y}
+        phase: 'approach', // approach, grab, escape, devoured
+        frameCount: 0,
+        outcome: 'escape', // pre-determined: 'escape' or 'devoured'
+        treasureScale: 1.0, // for pulsing effect
+        hasTreasure: false
+    },
 
     init: function() {
         this._animationEnabled = true;
         this._waitingAnimationInterval = null;
         this.resetAnimation();
+        this.resetPaymentAnimation();
     },
 
     drawStaticWaitingScreen: function(screenWidth, screenHeight, drawBorderFn, drawCenteredTextFn) {
@@ -75,12 +89,20 @@ var WaitingScreenAnimator = {
         // Draw border
         drawBorderFn();
         
+        // Check if we're in "Awaiting payment" mode - use treasure hunt animation
+        const isAwaitingPayment = typeof Game !== 'undefined' && Game._awaitingPayment;
+        
+        if (isAwaitingPayment) {
+            // Use the treasure hunt animation for payment waiting
+            this.drawPaymentAnimation(screenWidth, screenHeight, drawCenteredTextFn);
+            return;
+        }
+        
         // Fixed-position animated text
         let y = Math.floor(screenHeight / 2) - 8;
         let baseText = "Awaiting next block";
         if (typeof Game !== 'undefined') {
-            if (Game._awaitingPayment) baseText = 'Awaiting payment';
-            else if (Game._unconfirmedPayment) baseText = 'Awaiting next block'; // mempool seen
+            if (Game._unconfirmedPayment) baseText = 'Awaiting next block'; // mempool seen
         }
         const dots = ".".repeat((Math.floor(Date.now() / 500) % 4));
         const paddedDots = dots.padEnd(3, " ");
@@ -293,6 +315,362 @@ var WaitingScreenAnimator = {
         display.draw(roomEndX + 1, 12, '>', exitGlow, "transparent");
     },
 
+    // ========== PAYMENT WAITING ANIMATION ==========
+    // Special "treasure hunt" animation shown while awaiting payment
+    // Player runs for BIG pulsating treasure, always gets it,
+    // then either escapes or gets overwhelmed by a monster pack
+    
+    drawPaymentAnimation: function(screenWidth, screenHeight, drawCenteredTextFn) {
+        const display = DisplayManager.getDisplay();
+        const anim = this._paymentAnimation;
+        const time = Date.now();
+        
+        // Fixed-position animated text
+        let y = Math.floor(screenHeight / 2) - 8;
+        const dots = ".".repeat((Math.floor(time / 500) % 4));
+        const paddedDots = dots.padEnd(3, " ");
+        drawCenteredTextFn(y, `Awaiting payment${paddedDots}`);
+        
+        // Room dimensions
+        const roomStartX = 6;
+        const roomEndX = 44;
+        const roomStartY = 8;
+        const roomEndY = 16;
+        
+        // 🏛️ BASE DUNGEON FLOOR
+        for (let x = roomStartX; x <= roomEndX; x++) {
+            for (let dy = roomStartY; dy <= roomEndY; dy++) {
+                if (x >= 0 && x < screenWidth && dy >= 0 && dy < screenHeight) {
+                    const floorTile = GameTiles.getFloorTile(true);
+                    const baseAlpha = 0.1 + Math.sin(x * 0.2 + dy * 0.3) * 0.05;
+                    display.draw(x, dy, floorTile, `rgba(100, 80, 60, ${baseAlpha})`, "transparent");
+                }
+            }
+        }
+        
+        // 🧱 DUNGEON WALLS
+        for (let x = roomStartX; x <= roomEndX; x++) {
+            if (x >= 0 && x < screenWidth) {
+                const wallGlow = 0.2 + Math.sin(time * 0.001 + x * 0.1) * 0.1;
+                display.draw(x, roomStartY - 1, "#", `rgba(80, 70, 50, ${wallGlow})`, "transparent");
+                display.draw(x, roomEndY + 1, "#", `rgba(80, 70, 50, ${wallGlow})`, "transparent");
+            }
+        }
+        for (let dy = roomStartY; dy <= roomEndY; dy++) {
+            if (dy >= 0 && dy < screenHeight) {
+                const wallGlow = 0.2 + Math.sin(time * 0.001 + dy * 0.1) * 0.1;
+                display.draw(roomStartX - 1, dy, "#", `rgba(80, 70, 50, ${wallGlow})`, "transparent");
+                display.draw(roomEndX + 1, dy, "#", `rgba(80, 70, 50, ${wallGlow})`, "transparent");
+            }
+        }
+        
+        // 🔥 TORCHES for atmosphere
+        const torchPositions = [
+            {x: roomStartX - 1, y: roomStartY + 2},
+            {x: roomEndX + 1, y: roomStartY + 2},
+            {x: roomStartX - 1, y: roomEndY - 2},
+            {x: roomEndX + 1, y: roomEndY - 2}
+        ];
+        
+        for (let i = 0; i < torchPositions.length; i++) {
+            const torch = torchPositions[i];
+            if (torch.x >= 0 && torch.x < screenWidth && torch.y >= 0 && torch.y < screenHeight) {
+                const flameIntensity = 0.6 + Math.sin(time / 200 + i) * 0.4;
+                const flameColor = `rgba(255, ${100 + flameIntensity * 100}, 20, ${flameIntensity})`;
+                const wallGlow = 0.2 + Math.sin(time * 0.001 + torch.x * 0.1) * 0.1;
+                const wallColor = `rgba(80, 70, 50, ${wallGlow})`;
+                display.draw(torch.x, torch.y, ["#", "torch"], [wallColor, flameColor], ["transparent", "transparent"]);
+            }
+        }
+        
+        // Update animation state
+        this.updatePaymentAnimation();
+        
+        // 💎💎💎 MEGA TREASURE - BIG pulsating with intense golden glow
+        if (!anim.hasTreasure && anim.treasureX >= roomStartX && anim.treasureX <= roomEndX) {
+            // Intense pulsing effect - the treasure is CALLING to the player
+            const megaPulse = 0.7 + Math.sin(time / 150) * 0.3;
+            const shimmer = 0.5 + Math.sin(time / 80) * 0.5;
+            
+            // Massive golden aura around treasure (3-tile radius)
+            for (let tx = anim.treasureX - 3; tx <= anim.treasureX + 3; tx++) {
+                for (let ty = anim.treasureY - 2; ty <= anim.treasureY + 2; ty++) {
+                    if (tx >= roomStartX && tx <= roomEndX && ty >= roomStartY && ty <= roomEndY) {
+                        const dist = Math.sqrt((tx - anim.treasureX) ** 2 + (ty - anim.treasureY) ** 2);
+                        if (dist <= 3 && dist > 0) {
+                            const auraIntensity = Math.max(0, (3 - dist) / 3) * megaPulse * 0.4;
+                            const floorTile = GameTiles.getFloorTile();
+                            display.draw(tx, ty, floorTile, `rgba(255, 200, 50, ${auraIntensity})`, "transparent");
+                        }
+                    }
+                }
+            }
+            
+            // Sparkle ring around treasure
+            const sparkleRadius = 2;
+            for (let angle = 0; angle < 8; angle++) {
+                const sparkleAngle = (angle / 8) * Math.PI * 2 + time / 500;
+                const sx = Math.round(anim.treasureX + Math.cos(sparkleAngle) * sparkleRadius);
+                const sy = Math.round(anim.treasureY + Math.sin(sparkleAngle) * sparkleRadius * 0.6);
+                if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
+                    const sparkleIntensity = 0.3 + Math.sin(time / 100 + angle) * 0.3;
+                    if (sparkleIntensity > 0.2) {
+                        display.draw(sx, sy, "*", `rgba(255, 255, 200, ${sparkleIntensity})`, "transparent");
+                    }
+                }
+            }
+            
+            // The treasure itself - LARGE and glowing
+            const treasureGlow = `rgba(255, 215, 0, ${megaPulse})`;
+            const floorTile = GameTiles.getFloorTile();
+            display.draw(anim.treasureX, anim.treasureY, [floorTile, GameTiles.getTreasureTile()], 
+                [`rgba(100, 80, 60, 0.1)`, treasureGlow], ["transparent", "transparent"]);
+        }
+        
+        // 🧙‍♂️ HEROIC PLAYER
+        if (anim.playerX >= roomStartX && anim.playerX <= roomEndX + 2) {
+            const heroGlow = anim.hasTreasure 
+                ? 0.6 + Math.sin(time / 200) * 0.3  // Brighter when has treasure
+                : 0.4 + Math.sin(time / 300) * 0.2;
+            
+            // If player has treasure, show golden glow instead of blue
+            const heroColor = anim.hasTreasure 
+                ? `rgba(255, 200, 50, ${heroGlow})`  // Golden when carrying treasure
+                : `rgba(100, 150, 255, ${heroGlow})`;
+            
+            const floorTile = GameTiles.getFloorTile();
+            display.draw(anim.playerX, anim.playerY, [floorTile, "@"], 
+                [`rgba(100, 80, 60, 0.1)`, heroColor], ["transparent", "transparent"]);
+            
+            // Determination aura when running for treasure
+            if (anim.phase === 'approach' || anim.phase === 'escape') {
+                const ringPulse = 0.3 + Math.sin(time / 200) * 0.2;
+                const ringColor = anim.hasTreasure 
+                    ? `rgba(255, 220, 100, ${ringPulse})`
+                    : `rgba(180, 230, 255, ${ringPulse})`;
+                    
+                const ringOffsets = [{dx: -1, dy: 0}, {dx: 1, dy: 0}, {dx: 0, dy: -1}, {dx: 0, dy: 1}];
+                for (const off of ringOffsets) {
+                    const rx = anim.playerX + off.dx;
+                    const ry = anim.playerY + off.dy;
+                    if (rx >= roomStartX && rx <= roomEndX && ry >= roomStartY && ry <= roomEndY) {
+                        display.draw(rx, ry, floorTile, ringColor, 'transparent');
+                    }
+                }
+            }
+        }
+        
+        // 👹👹👹 MONSTER PACK - Multiple monsters descending
+        for (let i = 0; i < anim.monsters.length; i++) {
+            const m = anim.monsters[i];
+            if (m.x >= roomStartX - 1 && m.x <= roomEndX + 1 && m.y >= roomStartY && m.y <= roomEndY) {
+                const menacePulse = 0.4 + Math.sin(time / 150 + i) * 0.4;
+                const fearColor = `rgba(255, 30, 30, ${menacePulse})`;
+                
+                const floorTile = GameTiles.getFloorTile();
+                display.draw(m.x, m.y, [floorTile, "~"], 
+                    [`rgba(100, 80, 60, 0.1)`, fearColor], ["transparent", "transparent"]);
+                
+                // Shadow around each monster
+                const shadowRadius = 1.5;
+                for (let sx = m.x - 1; sx <= m.x + 1; sx++) {
+                    for (let sy = m.y - 1; sy <= m.y + 1; sy++) {
+                        if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
+                            const dist = Math.sqrt((sx - m.x) ** 2 + (sy - m.y) ** 2);
+                            if (dist <= shadowRadius && !(sx === m.x && sy === m.y)) {
+                                const shadowIntensity = 0.15 + Math.sin(time / 200 + i) * 0.1;
+                                display.draw(sx, sy, floorTile, `rgba(80, 0, 0, ${shadowIntensity})`, "transparent");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 💀 DEATH EFFECT when devoured
+        if (anim.phase === 'devoured' && anim.playerX === -1) {
+            const deathX = anim.deathX || 25;
+            const deathY = anim.deathY || 12;
+            const deathAge = anim.frameCount - (anim.deathFrame || 0);
+            
+            // Expanding skull/bone particles
+            if (deathAge < 30) {
+                const expandRadius = 1 + deathAge * 0.2;
+                const fadeOut = Math.max(0, 1 - deathAge / 30);
+                
+                for (let angle = 0; angle < 6; angle++) {
+                    const particleAngle = (angle / 6) * Math.PI * 2;
+                    const px = Math.round(deathX + Math.cos(particleAngle) * expandRadius);
+                    const py = Math.round(deathY + Math.sin(particleAngle) * expandRadius * 0.5);
+                    if (px >= roomStartX && px <= roomEndX && py >= roomStartY && py <= roomEndY) {
+                        const particleChar = angle % 2 === 0 ? "%" : "*";
+                        display.draw(px, py, particleChar, `rgba(255, 50, 50, ${fadeOut * 0.8})`, "transparent");
+                    }
+                }
+                
+                // Central skull briefly
+                if (deathAge < 15) {
+                    display.draw(deathX, deathY, "☠", `rgba(255, 255, 255, ${fadeOut})`, "transparent");
+                }
+            }
+        }
+        
+        // 🚪 PORTALS
+        const portalPulse = 0.3 + Math.sin(time / 400) * 0.2;
+        const entranceGlow = `rgba(50, 255, 50, ${portalPulse})`;
+        const exitGlow = `rgba(255, 100, 255, ${portalPulse})`;
+        display.draw(roomStartX - 1, 12, '<', entranceGlow, "transparent");
+        display.draw(roomEndX + 1, 12, '>', exitGlow, "transparent");
+        
+        // 🏆 ESCAPE SUCCESS indicator
+        if (anim.phase === 'escaped') {
+            const successPulse = 0.6 + Math.sin(time / 150) * 0.4;
+            drawCenteredTextFn(y + 10, "✨ ESCAPED! ✨");
+        }
+    },
+    
+    updatePaymentAnimation: function() {
+        const anim = this._paymentAnimation;
+        anim.frameCount++;
+        
+        // Animate every 5 frames for smooth but readable movement
+        if (anim.frameCount % 5 !== 0) return;
+        
+        const roomStartX = 6;
+        const roomEndX = 44;
+        
+        switch(anim.phase) {
+            case 'approach':
+                // Player moves toward treasure
+                if (anim.playerX < anim.treasureX - 1) {
+                    anim.playerX++;
+                } else {
+                    // Player grabs treasure!
+                    anim.hasTreasure = true;
+                    anim.phase = 'grab';
+                    anim.grabFrame = anim.frameCount;
+                }
+                break;
+                
+            case 'grab':
+                // Brief pause to show player got treasure
+                if (anim.frameCount - anim.grabFrame > 8) {
+                    // Spawn monster pack from the edges
+                    anim.monsters = [];
+                    const monsterCount = 4 + Math.floor(Math.random() * 3); // 4-6 monsters
+                    
+                    for (let i = 0; i < monsterCount; i++) {
+                        // Monsters spawn from various directions
+                        const side = i % 4;
+                        let mx, my;
+                        switch(side) {
+                            case 0: // Left
+                                mx = roomStartX - 1;
+                                my = 10 + Math.floor(Math.random() * 5);
+                                break;
+                            case 1: // Right  
+                                mx = roomEndX + 1;
+                                my = 10 + Math.floor(Math.random() * 5);
+                                break;
+                            case 2: // Top-ish
+                                mx = 15 + Math.floor(Math.random() * 20);
+                                my = 8;
+                                break;
+                            case 3: // Bottom-ish
+                                mx = 15 + Math.floor(Math.random() * 20);
+                                my = 16;
+                                break;
+                        }
+                        anim.monsters.push({x: mx, y: my, speed: 0.8 + Math.random() * 0.4});
+                    }
+                    
+                    anim.phase = anim.outcome; // 'escape' or 'devoured'
+                }
+                break;
+                
+            case 'escape':
+                // Player runs toward exit, monsters chase but player escapes
+                if (anim.playerX < roomEndX + 2) {
+                    anim.playerX += 2; // Player moves fast when escaping!
+                } else {
+                    anim.phase = 'escaped';
+                    anim.escapedFrame = anim.frameCount;
+                }
+                
+                // Monsters chase but stay slightly behind
+                for (const m of anim.monsters) {
+                    if (m.x < anim.playerX - 3) {
+                        m.x += m.speed;
+                    }
+                    // Move toward player's Y
+                    if (m.y < anim.playerY) m.y += 0.3;
+                    else if (m.y > anim.playerY) m.y -= 0.3;
+                }
+                break;
+                
+            case 'devoured':
+                // Monsters converge on player and destroy them
+                let allConverged = true;
+                for (const m of anim.monsters) {
+                    const dx = anim.playerX - m.x;
+                    const dy = anim.playerY - m.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist > 1) {
+                        allConverged = false;
+                        m.x += (dx / dist) * m.speed;
+                        m.y += (dy / dist) * m.speed * 0.6;
+                    }
+                }
+                
+                if (allConverged && anim.playerX !== -1) {
+                    // Player is devoured!
+                    anim.deathX = anim.playerX;
+                    anim.deathY = anim.playerY;
+                    anim.deathFrame = anim.frameCount;
+                    anim.playerX = -1; // Player vanishes
+                }
+                
+                // After death animation, reset
+                if (anim.playerX === -1 && anim.frameCount - anim.deathFrame > 40) {
+                    this.resetPaymentAnimation();
+                }
+                break;
+                
+            case 'escaped':
+                // Brief celebration then reset
+                if (anim.frameCount - anim.escapedFrame > 25) {
+                    this.resetPaymentAnimation();
+                }
+                // Monsters wander off
+                for (const m of anim.monsters) {
+                    m.x += (Math.random() - 0.5) * 2;
+                }
+                break;
+        }
+    },
+    
+    resetPaymentAnimation: function() {
+        // Determine outcome for this cycle (60% escape, 40% devoured)
+        const outcome = Math.random() < 0.6 ? 'escape' : 'devoured';
+        
+        // Slight variation in starting positions
+        const playerStart = 8 + Math.floor(Math.random() * 3);
+        const treasurePos = 22 + Math.floor(Math.random() * 8);
+        
+        this._paymentAnimation = {
+            playerX: playerStart,
+            playerY: 12,
+            treasureX: treasurePos,
+            treasureY: 12,
+            monsters: [],
+            phase: 'approach',
+            frameCount: 0,
+            outcome: outcome,
+            hasTreasure: false
+        };
+    },
+
     updateAnimation: function() {
         const anim = this._waitingAnimation;
         anim.frameCount++;
@@ -459,6 +837,7 @@ var WaitingScreenAnimator = {
         }
         this._animating = false;
         this.resetAnimation();
+        this.resetPaymentAnimation();
     },
 
     isAnimationEnabled: function() {
