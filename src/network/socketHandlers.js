@@ -499,7 +499,11 @@ class SocketHandlers {
                 const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
                 if (payoutEligible) {
                     try {
-                        const dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
+                        // Use session cache first (populated during connection/resume), then fall back to DB
+                        let dbUser = this.sessionManager ? await this.sessionManager.getBySocket(socket.id) : null;
+                        if (!dbUser) {
+                            dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
+                        }
                         if (!dbUser.payout_address) {
                             this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Use the "Manage Payout Address" button or paste your payout address here and type confirm. Payment request will appear automatically.');
                             return;
