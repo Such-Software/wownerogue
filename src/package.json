@@ -14,14 +14,14 @@
   },
   "config": {
     "debug": {
-      "enabled": false,
-      "console_logging": false,
-      "debug_hotkeys": false,
+      "enabled": true,
+      "console_logging": true,
+      "debug_hotkeys": true,
       "simulated_blocks": false
     },
     "production": {
       "enabled": true,
-      "console_logging": true,
+      "console_logging": false,
       "debug_hotkeys": false,
       "simulated_blocks": false
     }

@@ -310,14 +310,44 @@ class PaymentHandlers {
                         }
                         
                         socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
-                        this.queueManager.markConfirmed(socket.id);
+                        
+                        // IMPORTANT: If payment confirmed before mempool detection (fast blocks), 
+                        // the player may not be in the queue yet. Add them now with confirmed=true.
+                        const existingIdx = this.queueManager.getPlayerIndex(socket.id);
+                        if (existingIdx === -1) {
+                            console.log(`[PaymentHandlers] Payment confirmed but player not in queue - adding now (socket: ${socket.id})`);
+                            // Try to get DB userId from session
+                            let userId = null;
+                            if (this.sessionManager?.sessions?.has(socket.id)) {
+                                userId = this.sessionManager.sessions.get(socket.id).id;
+                            }
+                            this.queueManager.addPlayer({ 
+                                serverId: socket.id, 
+                                clientId: currentUser ? currentUser.clientId : null, 
+                                userId: userId,
+                                paymentId: paymentRequest.id, 
+                                requiresConfirmation: false, // Already confirmed
+                                confirmed: true 
+                            });
+                        } else {
+                            // Player was in queue from mempool detection, just mark confirmed
+                            this.queueManager.markConfirmed(socket.id);
+                        }
+                        
                         // Attempt immediate game start so user doesn't wait another full block
                         const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
                         if (currentBlock !== null) {
                             const started = await this.queueManager.startGameImmediately(socket.id, currentBlock);
-                            if (!started && this.debugManager.CONSOLE_LOGGING) {
-                                console.log(`[PaymentHandlers] Immediate start skipped (not queued or still unconfirmed) for ${socket.id}`);
+                            if (!started) {
+                                console.log(`[PaymentHandlers] Immediate start failed for ${socket.id} - player will start on next block`);
+                                if (this.debugManager.CONSOLE_LOGGING) {
+                                    this.queueManager.debugDumpQueue();
+                                }
+                            } else {
+                                console.log(`[PaymentHandlers] ✅ Immediate game start successful for ${socket.id}`);
                             }
+                        } else {
+                            console.log(`[PaymentHandlers] No block height available - player will start on next block`);
                         }
                     }
                 }

@@ -370,6 +370,9 @@ const SocketHandlers = {
         SocketHandlers._isQueued = false;
         SocketHandlers._updateEarlyEntryButton();
         
+        // Hide any lingering QR code
+        SocketHandlers.hidePaymentQR();
+        
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
         // Display provably fair commitment if present
@@ -683,12 +686,14 @@ const SocketHandlers = {
                 if (statusDiv) {
                     qrHolder = document.createElement('div');
                     qrHolder.id = 'paymentQRContainer';
-                    qrHolder.style.cssText = 'margin-top:6px;padding:8px;border:1px solid #0f0;background:#000;display:block;width:calc(100% - 18px);text-align:center;';
+                    qrHolder.style.cssText = 'position:relative;margin-top:6px;padding:8px;border:1px solid #0f0;background:#000;display:block;width:calc(100% - 18px);text-align:center;';
                     statusDiv.appendChild(qrHolder);
                 }
             }
             if (qrHolder) {
-                qrHolder.innerHTML = '<img style="image-rendering:pixelated;width:100%;height:auto;display:block;margin:0 auto;max-width:320px;" src="' + data.qr + '" alt="Payment QR" />';
+                // Create close button
+                const closeBtn = '<div onclick="SocketHandlers.hidePaymentQR()" style="position:absolute;top:4px;right:8px;cursor:pointer;font-size:16px;color:#0f0;font-weight:bold;z-index:10;" title="Close QR code">✕</div>';
+                qrHolder.innerHTML = closeBtn + '<img style="image-rendering:pixelated;width:100%;height:auto;display:block;margin:0 auto;max-width:320px;" src="' + data.qr + '" alt="Payment QR" />';
             }
         } else {
             console.warn('Payment created but no QR data supplied by server.');
@@ -705,6 +710,14 @@ const SocketHandlers = {
             if (qrHolder) {
                 qrHolder.textContent = 'QR unavailable';
             }
+        }
+    },
+    
+    // Helper to hide/remove the payment QR code container
+    hidePaymentQR: function() {
+        const qrHolder = document.getElementById('paymentQRContainer');
+        if (qrHolder) {
+            qrHolder.remove();
         }
     },
 
@@ -726,6 +739,9 @@ const SocketHandlers = {
         if (SocketHandlers._lastDisplayedConfirmation === data.paymentId) return;
         SocketHandlers._lastDisplayedConfirmation = data.paymentId;
         SocketHandlers._confirmationTimestamps[data.paymentId] = Date.now();
+
+        // Hide the QR code now that payment is confirmed
+        SocketHandlers.hidePaymentQR();
 
         if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
             Game.drawWaitingScreen();
@@ -751,6 +767,10 @@ const SocketHandlers = {
         if (SocketHandlers._mempoolShownForPayment.has(data.paymentId)) return;
         SocketHandlers._mempoolShownForPayment.add(data.paymentId);
         SocketHandlers._mempoolTimestamps[data.paymentId] = Date.now();
+
+        // Hide the QR code now that payment was detected
+        SocketHandlers.hidePaymentQR();
+
         if (typeof Game !== 'undefined') {
             Game._pendingPaymentDetected(data);
             if (Game.drawWaitingScreen) Game.drawWaitingScreen();
