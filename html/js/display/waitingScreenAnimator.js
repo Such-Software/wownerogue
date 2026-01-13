@@ -231,8 +231,9 @@ var WaitingScreenAnimator = {
             
             // Use tile stack: floor + player for proper layering
             const floorTile = GameTiles.getFloorTile();
+            const playerTile = GameTiles.getPlayerTile();
             const baseAlpha = 0.1 + Math.sin(anim.playerX * 0.2 + anim.playerY * 0.3) * 0.05;
-            const ch = [floorTile, "@"];
+            const ch = [floorTile, playerTile];
             const fg = [`rgba(100, 80, 60, ${baseAlpha})`, heroColor];
             const bg = ["transparent", "transparent"];
             display.draw(anim.playerX, anim.playerY, ch, fg, bg);
@@ -283,23 +284,23 @@ var WaitingScreenAnimator = {
             
             // Use tile stack: floor + monster for proper layering
             const floorTile = GameTiles.getFloorTile();
+            const monsterTile = GameTiles.getMonsterTile();
             const baseAlpha = 0.1 + Math.sin(anim.monsterX * 0.2 + anim.monsterY * 0.3) * 0.05;
-            const ch = [floorTile, "~"];
+            const ch = [floorTile, monsterTile];
             const fg = [`rgba(100, 80, 60, ${baseAlpha})`, fearColor];
             const bg = ["transparent", "transparent"];
             display.draw(anim.monsterX, anim.monsterY, ch, fg, bg);
             
-            // Spreading darkness around monster
-            const shadowRadius = 2 + Math.sin(time / 220) * 0.5;
+            // Red glow around monster (using floor tiles, not shadows)
             for (let sx = anim.monsterX - 2; sx <= anim.monsterX + 2; sx++) {
                 for (let sy = anim.monsterY - 2; sy <= anim.monsterY + 2; sy++) {
                     if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
                         const dist = Math.sqrt((sx - anim.monsterX) ** 2 + (sy - anim.monsterY) ** 2);
-                        if (dist <= shadowRadius && !(sx === anim.monsterX && sy === anim.monsterY)) {
-                            const shadowIntensity = Math.max(0, (shadowRadius - dist) / shadowRadius * 0.3);
-                            const darkPulse = Math.sin(time / 300 + dist) * 0.1;
+                        if (dist <= 2 && !(sx === anim.monsterX && sy === anim.monsterY)) {
+                            const glowIntensity = Math.max(0, (2 - dist) / 2 * 0.25);
+                            const glowPulse = Math.sin(time / 300 + dist) * 0.1;
                             const floorTile = GameTiles.getFloorTile();
-                            display.draw(sx, sy, floorTile, `rgba(100, 0, 0, ${shadowIntensity + darkPulse})`, "transparent");
+                            display.draw(sx, sy, floorTile, `rgba(200, 50, 50, ${glowIntensity + glowPulse})`, "transparent");
                         }
                     }
                 }
@@ -406,16 +407,18 @@ var WaitingScreenAnimator = {
                 }
             }
             
-            // Sparkle ring around treasure
+            // Sparkle ring around treasure - use floor tiles with bright golden color
             const sparkleRadius = 2;
             for (let angle = 0; angle < 8; angle++) {
                 const sparkleAngle = (angle / 8) * Math.PI * 2 + time / 500;
                 const sx = Math.round(anim.treasureX + Math.cos(sparkleAngle) * sparkleRadius);
                 const sy = Math.round(anim.treasureY + Math.sin(sparkleAngle) * sparkleRadius * 0.6);
                 if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
-                    const sparkleIntensity = 0.3 + Math.sin(time / 100 + angle) * 0.3;
-                    if (sparkleIntensity > 0.2) {
-                        display.draw(sx, sy, "*", `rgba(255, 255, 200, ${sparkleIntensity})`, "transparent");
+                    const sparkleIntensity = 0.5 + Math.sin(time / 100 + angle) * 0.4;
+                    if (sparkleIntensity > 0.3) {
+                        const floorTile = GameTiles.getFloorTile();
+                        // Bright white-gold sparkle effect on floor tile
+                        display.draw(sx, sy, floorTile, `rgba(255, 255, 180, ${sparkleIntensity})`, "transparent");
                     }
                 }
             }
@@ -439,7 +442,8 @@ var WaitingScreenAnimator = {
                 : `rgba(100, 150, 255, ${heroGlow})`;
             
             const floorTile = GameTiles.getFloorTile();
-            display.draw(anim.playerX, anim.playerY, [floorTile, "@"], 
+            const playerTile = GameTiles.getPlayerTile();
+            display.draw(anim.playerX, anim.playerY, [floorTile, playerTile], 
                 [`rgba(100, 80, 60, 0.1)`, heroColor], ["transparent", "transparent"]);
             
             // Determination aura when running for treasure
@@ -468,18 +472,17 @@ var WaitingScreenAnimator = {
                 const fearColor = `rgba(255, 30, 30, ${menacePulse})`;
                 
                 const floorTile = GameTiles.getFloorTile();
-                display.draw(m.x, m.y, [floorTile, "~"], 
+                const monsterTile = GameTiles.getMonsterTile();
+                display.draw(m.x, m.y, [floorTile, monsterTile], 
                     [`rgba(100, 80, 60, 0.1)`, fearColor], ["transparent", "transparent"]);
                 
-                // Shadow around each monster
-                const shadowRadius = 1.5;
+                // Red glow around monster (no black boxes - just colored floor)
                 for (let sx = m.x - 1; sx <= m.x + 1; sx++) {
                     for (let sy = m.y - 1; sy <= m.y + 1; sy++) {
                         if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
-                            const dist = Math.sqrt((sx - m.x) ** 2 + (sy - m.y) ** 2);
-                            if (dist <= shadowRadius && !(sx === m.x && sy === m.y)) {
-                                const shadowIntensity = 0.15 + Math.sin(time / 200 + i) * 0.1;
-                                display.draw(sx, sy, floorTile, `rgba(80, 0, 0, ${shadowIntensity})`, "transparent");
+                            if (!(sx === m.x && sy === m.y)) {
+                                const glowIntensity = 0.15 + Math.sin(time / 200 + i) * 0.1;
+                                display.draw(sx, sy, floorTile, `rgba(200, 50, 50, ${glowIntensity})`, "transparent");
                             }
                         }
                     }
@@ -487,30 +490,31 @@ var WaitingScreenAnimator = {
             }
         }
         
-        // 💀 DEATH EFFECT when devoured
+        // DEATH EFFECT when devoured - expanding red flash
         if (anim.phase === 'devoured' && anim.playerX === -1) {
             const deathX = anim.deathX || 25;
             const deathY = anim.deathY || 12;
             const deathAge = anim.frameCount - (anim.deathFrame || 0);
             
-            // Expanding skull/bone particles
+            // Expanding red shockwave using floor tiles
             if (deathAge < 30) {
-                const expandRadius = 1 + deathAge * 0.2;
+                const expandRadius = 1 + deathAge * 0.15;
                 const fadeOut = Math.max(0, 1 - deathAge / 30);
+                const floorTile = GameTiles.getFloorTile();
                 
-                for (let angle = 0; angle < 6; angle++) {
-                    const particleAngle = (angle / 6) * Math.PI * 2;
+                for (let angle = 0; angle < 8; angle++) {
+                    const particleAngle = (angle / 8) * Math.PI * 2;
                     const px = Math.round(deathX + Math.cos(particleAngle) * expandRadius);
                     const py = Math.round(deathY + Math.sin(particleAngle) * expandRadius * 0.5);
                     if (px >= roomStartX && px <= roomEndX && py >= roomStartY && py <= roomEndY) {
-                        const particleChar = angle % 2 === 0 ? "%" : "*";
-                        display.draw(px, py, particleChar, `rgba(255, 50, 50, ${fadeOut * 0.8})`, "transparent");
+                        // Bright red flash expanding outward
+                        display.draw(px, py, floorTile, `rgba(255, 80, 80, ${fadeOut * 0.9})`, "transparent");
                     }
                 }
                 
-                // Central skull briefly
+                // Central bright flash
                 if (deathAge < 15) {
-                    display.draw(deathX, deathY, "☠", `rgba(255, 255, 255, ${fadeOut})`, "transparent");
+                    display.draw(deathX, deathY, floorTile, `rgba(255, 200, 200, ${fadeOut})`, "transparent");
                 }
             }
         }
@@ -522,10 +526,18 @@ var WaitingScreenAnimator = {
         display.draw(roomStartX - 1, 12, '<', entranceGlow, "transparent");
         display.draw(roomEndX + 1, 12, '>', exitGlow, "transparent");
         
-        // 🏆 ESCAPE SUCCESS indicator
+        // ESCAPE SUCCESS indicator
         if (anim.phase === 'escaped') {
-            const successPulse = 0.6 + Math.sin(time / 150) * 0.4;
-            drawCenteredTextFn(y + 10, "✨ ESCAPED! ✨");
+            // Draw "ESCAPED!" text - simple version without emojis
+            const escapeY = Math.floor(screenHeight / 2) + 3;
+            const escapeText = "ESCAPED!";
+            const startX = Math.floor((screenWidth - escapeText.length) / 2);
+            const successPulse = 0.7 + Math.sin(time / 150) * 0.3;
+            
+            for (let i = 0; i < escapeText.length; i++) {
+                const char = escapeText[i];
+                display.draw(startX + i, escapeY, char, `rgba(255, 220, 100, ${successPulse})`, "transparent");
+            }
         }
     },
     
