@@ -744,7 +744,7 @@ class GameModeManager {
     async _processGameStartWithPayment(user, payment, gameId) {
         await this.db.query(`
             UPDATE games 
-            SET payment_id = $1, payment_mode = 'direct'
+            SET payment_id = $1
             WHERE id = $2
         `, [payment.id, gameId]);
         
