@@ -189,22 +189,66 @@ var WaitingScreenAnimator = {
         this.updateAnimation();
         const anim = this._waitingAnimation;
         
-        // 💎 LEGENDARY TREASURE - Pulsating with magical energy
-        if (anim.treasureX >= 0 && anim.treasureX < screenWidth) {
-            // Treasure magical effects - golden glow with sparkles
-            const treasurePulse = 0.6 + Math.sin(time / 250) * 0.4;
-            const magicShimmer = Math.sin(time / 100) * 0.3 + 0.7;
-            
-            // Main treasure glow with tile stack
-            const treasureGlow = `rgba(255, 215, 0, ${treasurePulse})`;
+        // ===== PHASE 1: DRAW ALL GLOW EFFECTS FIRST =====
+        // This ensures glow appears behind entities
+        
+        // Monster red glow (draw first so monster appears on top)
+        if (anim.monsterX >= 0 && anim.monsterX < screenWidth) {
             const floorTile = GameTiles.getFloorTile();
-            const baseAlpha = 0.1 + Math.sin(anim.treasureX * 0.2 + anim.treasureY * 0.3) * 0.05;
-            const ch = [floorTile, GameTiles.getTreasureTile()];
-            const fg = [`rgba(100, 80, 60, ${baseAlpha})`, treasureGlow];
-            const bg = ["transparent", "transparent"];
-            display.draw(anim.treasureX, anim.treasureY, ch, fg, bg);
-            
-            // Magic sparkles around treasure
+            for (let sx = anim.monsterX - 2; sx <= anim.monsterX + 2; sx++) {
+                for (let sy = anim.monsterY - 2; sy <= anim.monsterY + 2; sy++) {
+                    if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
+                        const dist = Math.sqrt((sx - anim.monsterX) ** 2 + (sy - anim.monsterY) ** 2);
+                        if (dist <= 2 && !(sx === anim.monsterX && sy === anim.monsterY)) {
+                            const glowIntensity = Math.max(0, (2 - dist) / 2 * 0.25);
+                            const glowPulse = Math.sin(time / 300 + dist) * 0.1;
+                            display.draw(sx, sy, floorTile, `rgba(200, 50, 50, ${glowIntensity + glowPulse})`, "transparent");
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Player aura glow (draw before player)
+        if (anim.playerX >= 0 && anim.playerX < screenWidth) {
+            if (anim.phase === 'enter' || anim.phase === 'escape' || anim.phase === 'chase') {
+                const ringPulse = 0.35 + Math.sin(time / 250) * 0.25;
+                const innerPulse = 0.15 + Math.sin(time / 180 + 1.2) * 0.15;
+                const ringColor = (alpha) => `rgba(180, 230, 255, ${alpha})`;
+                const floorTile = GameTiles.getFloorTile();
+
+                // 8-way surrounding ring
+                const ringOffsets = [
+                    {dx: -1, dy: 0}, {dx: 1, dy: 0}, {dx: 0, dy: -1}, {dx: 0, dy: 1},
+                    {dx: -1, dy: -1}, {dx: 1, dy: -1}, {dx: -1, dy: 1}, {dx: 1, dy: 1}
+                ];
+                for (let i = 0; i < ringOffsets.length; i++) {
+                    const rx = anim.playerX + ringOffsets[i].dx;
+                    const ry = anim.playerY + ringOffsets[i].dy;
+                    if (rx >= roomStartX && rx <= roomEndX && ry >= roomStartY && ry <= roomEndY) {
+                        const phaseShift = (i / ringOffsets.length) * Math.PI * 2;
+                        const alpha = (ringPulse * 0.6) + Math.sin(time / 300 + phaseShift) * 0.15;
+                        display.draw(rx, ry, floorTile, ringColor(Math.max(0, alpha)), 'transparent');
+                    }
+                }
+
+                // Trailing footprint path
+                for (let trail = 1; trail <= 3; trail++) {
+                    const tx = anim.playerX - trail;
+                    const ty = anim.playerY;
+                    if (tx >= roomStartX && tx <= roomEndX && ty >= roomStartY && ty <= roomEndY) {
+                        const decay = Math.max(0, 0.5 - trail * 0.15);
+                        const alpha = innerPulse * decay;
+                        if (alpha > 0.03) {
+                            display.draw(tx, ty, floorTile, `rgba(120, 200, 255, ${alpha})`, 'transparent');
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Treasure sparkles glow (draw before treasure)
+        if (anim.treasureX >= 0 && anim.treasureX < screenWidth) {
             const sparklePositions = [
                 {x: anim.treasureX - 1, y: anim.treasureY - 1},
                 {x: anim.treasureX + 1, y: anim.treasureY + 1},
@@ -223,88 +267,38 @@ var WaitingScreenAnimator = {
             }
         }
         
-        // 🧙‍♂️ HEROIC PLAYER - Glowing with determination
+        // ===== PHASE 2: DRAW ENTITIES ON TOP OF GLOW =====
+        
+        // 💎 LEGENDARY TREASURE
+        if (anim.treasureX >= 0 && anim.treasureX < screenWidth) {
+            const treasurePulse = 0.6 + Math.sin(time / 250) * 0.4;
+            const treasureGlow = `rgba(255, 215, 0, ${treasurePulse})`;
+            const floorTile = GameTiles.getFloorTile();
+            const baseAlpha = 0.1 + Math.sin(anim.treasureX * 0.2 + anim.treasureY * 0.3) * 0.05;
+            display.draw(anim.treasureX, anim.treasureY, [floorTile, GameTiles.getTreasureTile()], 
+                [`rgba(100, 80, 60, ${baseAlpha})`, treasureGlow], ["transparent", "transparent"]);
+        }
+        
+        // 🧙‍♂️ HEROIC PLAYER
         if (anim.playerX >= 0 && anim.playerX < screenWidth) {
-            // Player aura - heroic blue/white glow
             const heroGlow = 0.4 + Math.sin(time / 300) * 0.2;
             const heroColor = `rgba(100, 150, 255, ${heroGlow})`;
-            
-            // Use tile stack: floor + player for proper layering
             const floorTile = GameTiles.getFloorTile();
             const playerTile = GameTiles.getPlayerTile();
             const baseAlpha = 0.1 + Math.sin(anim.playerX * 0.2 + anim.playerY * 0.3) * 0.05;
-            const ch = [floorTile, playerTile];
-            const fg = [`rgba(100, 80, 60, ${baseAlpha})`, heroColor];
-            const bg = ["transparent", "transparent"];
-            display.draw(anim.playerX, anim.playerY, ch, fg, bg);
-            
-            // Bright ethereal footsteps / halo around player to indicate "primed" status
-            if (anim.phase === 'enter' || anim.phase === 'escape' || anim.phase === 'chase') {
-                const ringPulse = 0.35 + Math.sin(time / 250) * 0.25; // stronger, faster pulse
-                const innerPulse = 0.15 + Math.sin(time / 180 + 1.2) * 0.15;
-                const ringColor = (alpha) => `rgba(180, 230, 255, ${alpha})`;
-                const floorTile = GameTiles.getFloorTile();
-
-                // 8-way surrounding ring
-                const ringOffsets = [
-                    {dx: -1, dy: 0}, {dx: 1, dy: 0}, {dx: 0, dy: -1}, {dx: 0, dy: 1}, // cardinal
-                    {dx: -1, dy: -1}, {dx: 1, dy: -1}, {dx: -1, dy: 1}, {dx: 1, dy: 1} // diagonal
-                ];
-                for (let i = 0; i < ringOffsets.length; i++) {
-                    const rx = anim.playerX + ringOffsets[i].dx;
-                    const ry = anim.playerY + ringOffsets[i].dy;
-                    if (rx >= roomStartX && rx <= roomEndX && ry >= roomStartY && ry <= roomEndY) {
-                        // subtle variation per tile
-                        const phaseShift = (i / ringOffsets.length) * Math.PI * 2;
-                        const alpha = (ringPulse * 0.6) + Math.sin(time / 300 + phaseShift) * 0.15;
-                        display.draw(rx, ry, floorTile, ringColor(Math.max(0, alpha)), 'transparent');
-                    }
-                }
-
-                // Trailing footprint path (a few tiles behind)
-                for (let trail = 1; trail <= 3; trail++) {
-                    const tx = anim.playerX - trail;
-                    const ty = anim.playerY;
-                    if (tx >= roomStartX && tx <= roomEndX && ty >= roomStartY && ty <= roomEndY) {
-                        const decay = Math.max(0, 0.5 - trail * 0.15);
-                        const alpha = innerPulse * decay;
-                        if (alpha > 0.03) {
-                            display.draw(tx, ty, floorTile, `rgba(120, 200, 255, ${alpha})`, 'transparent');
-                        }
-                    }
-                }
-            }
+            display.draw(anim.playerX, anim.playerY, [floorTile, playerTile], 
+                [`rgba(100, 80, 60, ${baseAlpha})`, heroColor], ["transparent", "transparent"]);
         }
         
-        // 👹 TERRIFYING MONSTER - Darkness incarnate with red menace
+        // 👹 TERRIFYING MONSTER
         if (anim.monsterX >= 0 && anim.monsterX < screenWidth) {
-            // Monster's menacing red glow - more intense than before
             const menacePulse = 0.3 + Math.sin(time / 180) * 0.4;
             const fearColor = `rgba(255, 30, 30, ${menacePulse})`;
-            
-            // Use tile stack: floor + monster for proper layering
             const floorTile = GameTiles.getFloorTile();
             const monsterTile = GameTiles.getMonsterTile();
             const baseAlpha = 0.1 + Math.sin(anim.monsterX * 0.2 + anim.monsterY * 0.3) * 0.05;
-            const ch = [floorTile, monsterTile];
-            const fg = [`rgba(100, 80, 60, ${baseAlpha})`, fearColor];
-            const bg = ["transparent", "transparent"];
-            display.draw(anim.monsterX, anim.monsterY, ch, fg, bg);
-            
-            // Red glow around monster (using floor tiles, not shadows)
-            for (let sx = anim.monsterX - 2; sx <= anim.monsterX + 2; sx++) {
-                for (let sy = anim.monsterY - 2; sy <= anim.monsterY + 2; sy++) {
-                    if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
-                        const dist = Math.sqrt((sx - anim.monsterX) ** 2 + (sy - anim.monsterY) ** 2);
-                        if (dist <= 2 && !(sx === anim.monsterX && sy === anim.monsterY)) {
-                            const glowIntensity = Math.max(0, (2 - dist) / 2 * 0.25);
-                            const glowPulse = Math.sin(time / 300 + dist) * 0.1;
-                            const floorTile = GameTiles.getFloorTile();
-                            display.draw(sx, sy, floorTile, `rgba(200, 50, 50, ${glowIntensity + glowPulse})`, "transparent");
-                        }
-                    }
-                }
-            }
+            display.draw(anim.monsterX, anim.monsterY, [floorTile, monsterTile], 
+                [`rgba(100, 80, 60, ${baseAlpha})`, fearColor], ["transparent", "transparent"]);
         }
         
         // 🚪 MYSTICAL PORTALS - Entrance and exit with swirling energy
@@ -464,19 +458,13 @@ var WaitingScreenAnimator = {
             }
         }
         
-        // 👹👹👹 MONSTER PACK - Multiple monsters descending
+        // 👹👹👹 MONSTER PACK - Draw glow FIRST, then monsters on top
+        // Phase 1: Draw all monster glows
         for (let i = 0; i < anim.monsters.length; i++) {
             const m = anim.monsters[i];
             if (m.x >= roomStartX - 1 && m.x <= roomEndX + 1 && m.y >= roomStartY && m.y <= roomEndY) {
-                const menacePulse = 0.4 + Math.sin(time / 150 + i) * 0.4;
-                const fearColor = `rgba(255, 30, 30, ${menacePulse})`;
-                
                 const floorTile = GameTiles.getFloorTile();
-                const monsterTile = GameTiles.getMonsterTile();
-                display.draw(m.x, m.y, [floorTile, monsterTile], 
-                    [`rgba(100, 80, 60, 0.1)`, fearColor], ["transparent", "transparent"]);
-                
-                // Red glow around monster (no black boxes - just colored floor)
+                // Red glow around monster (draw first so monster appears on top)
                 for (let sx = m.x - 1; sx <= m.x + 1; sx++) {
                     for (let sy = m.y - 1; sy <= m.y + 1; sy++) {
                         if (sx >= roomStartX && sx <= roomEndX && sy >= roomStartY && sy <= roomEndY) {
@@ -487,6 +475,19 @@ var WaitingScreenAnimator = {
                         }
                     }
                 }
+            }
+        }
+        // Phase 2: Draw all monsters on top of glow
+        for (let i = 0; i < anim.monsters.length; i++) {
+            const m = anim.monsters[i];
+            if (m.x >= roomStartX - 1 && m.x <= roomEndX + 1 && m.y >= roomStartY && m.y <= roomEndY) {
+                const menacePulse = 0.4 + Math.sin(time / 150 + i) * 0.4;
+                const fearColor = `rgba(255, 30, 30, ${menacePulse})`;
+                
+                const floorTile = GameTiles.getFloorTile();
+                const monsterTile = GameTiles.getMonsterTile();
+                display.draw(m.x, m.y, [floorTile, monsterTile], 
+                    [`rgba(100, 80, 60, 0.1)`, fearColor], ["transparent", "transparent"]);
             }
         }
         
