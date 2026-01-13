@@ -326,11 +326,29 @@ var WaitingScreenAnimator = {
         const paddedDots = dots.padEnd(3, " ");
         drawCenteredTextFn(y, `Awaiting payment${paddedDots}`);
         
-        // Room dimensions
-        const roomStartX = 6;
-        const roomEndX = 44;
-        const roomStartY = 8;
-        const roomEndY = 16;
+        // Room dimensions - relative to actual screen size
+        const roomStartX = 1;
+        const roomEndX = screenWidth - 2;
+        const roomStartY = Math.floor(screenHeight / 2) - 4;
+        const roomEndY = Math.floor(screenHeight / 2) + 4;
+        const centerY = Math.floor(screenHeight / 2);
+        
+        // Store room bounds for animation updates
+        anim.roomStartX = roomStartX;
+        anim.roomEndX = roomEndX;
+        anim.roomStartY = roomStartY;
+        anim.roomEndY = roomEndY;
+        
+        // Sync Y positions to actual screen center (handles first frame after reset)
+        if (anim.playerY !== centerY) {
+            anim.playerY = centerY;
+            anim.treasureY = centerY;
+        }
+        
+        // Ensure treasure is within visible bounds
+        if (anim.treasureX > roomEndX - 3) {
+            anim.treasureX = roomEndX - 3;
+        }
         
         // 🏛️ BASE DUNGEON FLOOR
         for (let x = roomStartX; x <= roomEndX; x++) {
@@ -359,12 +377,12 @@ var WaitingScreenAnimator = {
             }
         }
         
-        // 🔥 TORCHES for atmosphere
+        // 🔥 TORCHES for atmosphere (positioned relative to room)
         const torchPositions = [
-            {x: roomStartX - 1, y: roomStartY + 2},
-            {x: roomEndX + 1, y: roomStartY + 2},
-            {x: roomStartX - 1, y: roomEndY - 2},
-            {x: roomEndX + 1, y: roomEndY - 2}
+            {x: roomStartX - 1, y: roomStartY + 1},
+            {x: roomEndX + 1, y: roomStartY + 1},
+            {x: roomStartX - 1, y: roomEndY - 1},
+            {x: roomEndX + 1, y: roomEndY - 1}
         ];
         
         for (let i = 0; i < torchPositions.length; i++) {
@@ -526,12 +544,12 @@ var WaitingScreenAnimator = {
             }
         }
         
-        // 🚪 PORTALS
+        // 🚪 PORTALS (positioned at room center height)
         const portalPulse = 0.3 + Math.sin(time / 400) * 0.2;
         const entranceGlow = `rgba(50, 255, 50, ${portalPulse})`;
         const exitGlow = `rgba(255, 100, 255, ${portalPulse})`;
-        display.draw(roomStartX - 1, 12, '<', entranceGlow, "transparent");
-        display.draw(roomEndX + 1, 12, '>', exitGlow, "transparent");
+        display.draw(roomStartX - 1, centerY, '<', entranceGlow, "transparent");
+        display.draw(roomEndX + 1, centerY, '>', exitGlow, "transparent");
         
         // ESCAPE SUCCESS indicator
         if (anim.phase === 'escaped') {
@@ -559,8 +577,10 @@ var WaitingScreenAnimator = {
         // Animate every 5 frames for smooth but readable movement
         if (anim.frameCount % 5 !== 0) return;
         
-        const roomStartX = 6;
-        const roomEndX = 44;
+        // Use stored room bounds (set by drawPaymentAnimation)
+        const roomStartX = anim.roomStartX || 1;
+        const roomEndX = anim.roomEndX || 23;
+        const centerY = anim.playerY; // Use player's Y as center reference
         
         switch(anim.phase) {
             case 'approach':
@@ -582,12 +602,12 @@ var WaitingScreenAnimator = {
                     anim.monsters = [];
                     const monsterCount = 3; // Fewer monsters, better spaced
                     
-                    // Spawn in a V-formation behind the player
-                    const spawnX = roomStartX + 2;
+                    // Spawn in a V-formation behind the player (left side of screen)
+                    const spawnX = roomStartX + 1;
                     const formations = [
-                        {x: spawnX, y: 12},          // Center
-                        {x: spawnX - 1, y: 10},      // Top-left
-                        {x: spawnX - 1, y: 14},      // Bottom-left
+                        {x: spawnX, y: centerY},          // Center
+                        {x: spawnX, y: centerY - 2},      // Top
+                        {x: spawnX, y: centerY + 2},      // Bottom
                     ];
                     
                     for (let i = 0; i < monsterCount; i++) {
@@ -596,7 +616,7 @@ var WaitingScreenAnimator = {
                             x: pos.x, 
                             y: pos.y, 
                             speed: 1.2 + i * 0.1,  // Slight speed variation
-                            targetY: 12 + (i - 1) * 2  // Spread vertically during chase
+                            targetY: centerY + (i - 1) * 2  // Spread vertically during chase
                         });
                     }
                     
@@ -606,7 +626,7 @@ var WaitingScreenAnimator = {
                 
             case 'escape':
                 // Player runs toward exit, monsters chase but player escapes
-                if (anim.playerX < roomEndX + 2) {
+                if (anim.playerX < roomEndX) {
                     anim.playerX += 2; // Player moves fast when escaping!
                 } else {
                     anim.phase = 'escaped';
@@ -621,7 +641,7 @@ var WaitingScreenAnimator = {
                         m.x += m.speed;
                     }
                     // Maintain vertical spread
-                    const targetY = m.targetY || (12 + (i - 1) * 2);
+                    const targetY = m.targetY || (centerY + (i - 1) * 2);
                     if (m.y < targetY - 0.5) m.y += 0.4;
                     else if (m.y > targetY + 0.5) m.y -= 0.4;
                 }
@@ -676,20 +696,27 @@ var WaitingScreenAnimator = {
         // Determine outcome for this cycle (60% escape, 40% devoured)
         const outcome = Math.random() < 0.6 ? 'escape' : 'devoured';
         
-        // Slight variation in starting positions
-        const playerStart = 8 + Math.floor(Math.random() * 3);
-        const treasurePos = 22 + Math.floor(Math.random() * 8);
+        // Use sensible defaults - will be updated with actual screen size on first draw
+        // Player starts on left, treasure in middle-right area
+        const playerStart = 3;
+        const treasurePos = 15 + Math.floor(Math.random() * 4); // 15-18 (visible on 25-wide screen)
+        const centerY = 9; // Will be recalculated based on actual screen height
         
         this._paymentAnimation = {
             playerX: playerStart,
-            playerY: 12,
+            playerY: centerY,
             treasureX: treasurePos,
-            treasureY: 12,
+            treasureY: centerY,
             monsters: [],
             phase: 'approach',
             frameCount: 0,
             outcome: outcome,
-            hasTreasure: false
+            hasTreasure: false,
+            // Room bounds - will be set properly on first draw
+            roomStartX: 1,
+            roomEndX: 23,
+            roomStartY: 5,
+            roomEndY: 13
         };
     },
 
