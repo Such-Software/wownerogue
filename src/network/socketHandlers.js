@@ -499,11 +499,8 @@ class SocketHandlers {
                 const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
                 if (payoutEligible) {
                     try {
-                        // Use session cache first (populated during connection/resume), then fall back to DB
-                        let dbUser = this.sessionManager ? await this.sessionManager.getBySocket(socket.id) : null;
-                        if (!dbUser) {
-                            dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
-                        }
+                        // Always do fresh DB lookup for payout address (cache may be stale after address update)
+                        const dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
                         if (!dbUser.payout_address) {
                             this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Use the "Manage Payout Address" button or paste your payout address here and type confirm. Payment request will appear automatically.');
                             return;
@@ -813,8 +810,7 @@ class SocketHandlers {
         try {
             // Query for pending (unpaid) payment requests for this user
             const pendingResult = await this.gameModeManager.db.query(`
-                SELECT id, address, expected_amount, payment_type, description, expires_at,
-                       crypto_type
+                SELECT id, subaddress, expected_amount, payment_type, description, expires_at
                 FROM payments
                 WHERE user_id = $1
                   AND status = 'pending'
@@ -832,7 +828,7 @@ class SocketHandlers {
             }
 
             const payment = pendingResult.rows[0];
-            const cryptoType = payment.crypto_type || this.gameModeManager.cryptoType;
+            const cryptoType = this.gameModeManager.cryptoType;
             const formattedAmount = this.gameModeManager.formatAtomicHuman 
                 ? this.gameModeManager.formatAtomicHuman(payment.expected_amount, 3)
                 : payment.expected_amount;
@@ -842,7 +838,7 @@ class SocketHandlers {
             try {
                 const { generatePaymentQR } = require('../payments/qrService');
                 qrDataUrl = await generatePaymentQR(
-                    payment.address,
+                    payment.subaddress,
                     payment.expected_amount,
                     cryptoType,
                     payment.description || 'Restored payment',
@@ -855,7 +851,7 @@ class SocketHandlers {
             // Re-emit payment_created to the client
             socket.emit('payment_created', {
                 paymentId: payment.id,
-                address: payment.address,
+                address: payment.subaddress,
                 amount: payment.expected_amount,
                 amountFormatted: formattedAmount,
                 humanAmount: formattedAmount,
@@ -873,7 +869,7 @@ class SocketHandlers {
             // Create a mock paymentRequest object for _monitorAddress
             const paymentRequest = {
                 id: payment.id,
-                address: payment.address,
+                address: payment.subaddress,
                 amount: payment.expected_amount,
                 amountFormatted: formattedAmount,
                 package: null
@@ -899,7 +895,7 @@ class SocketHandlers {
             this.broadcastManager.sendStatusUpdate(
                 socket.id,
                 'payment',
-                `🔁 Restored pending payment request.\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${payment.address}`
+                `🔁 Restored pending payment request.\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${payment.subaddress}`
             );
 
             if (this.debugManager.CONSOLE_LOGGING) {

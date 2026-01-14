@@ -5,10 +5,15 @@
  */
 
 class BroadcastManager {
-    constructor(io) {
+    constructor(io, debugManager = null) {
         this.io = io;
+        this.debugManager = debugManager;
         this._lastBroadcastBlock = null;
         this._lastUserCount = -1;
+    }
+
+    setDebugManager(debugManager) {
+        this.debugManager = debugManager;
     }
 
     // ====== GLOBAL BROADCASTS (All Clients) ======
@@ -39,7 +44,9 @@ class BroadcastManager {
     broadcastBlockHeight(blockHeight) {
         // Only log when the height actually changes to avoid per-client spam
         if (blockHeight !== this._lastBroadcastBlock) {
-            console.log(`📡 Broadcasting block height ${blockHeight} to all clients`);
+            if (this.debugManager?.CONSOLE_LOGGING) {
+                console.log(`📡 Broadcasting block height ${blockHeight} to all clients`);
+            }
             this._lastBroadcastBlock = blockHeight;
         }
         this.io.emit('blockheight', { blockHeight });

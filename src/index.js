@@ -33,6 +33,7 @@ process.env.GAME_MODE = paymentConfigManager.getLegacyGameMode();
 // Initialize modular components first
 const broadcastManager = new BroadcastManager(io);
 const debugManager = new DebugManager(broadcastManager);
+broadcastManager.setDebugManager(debugManager);
 
 // Initialize payment system components (debugManager is now available)
 const databaseManager = new DatabaseManager();
