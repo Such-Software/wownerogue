@@ -218,14 +218,15 @@ class ConnectionHandler {
                 });
             } else {
                 this.io.to(socket.id).emit('session_token', { token: sessionInfo.token });
-            }
-
-            // If payout address already set, echo confirmation for UI convenience
-            if (sessionInfo.user.payout_address) {
-                this.io.to(socket.id).emit('address_confirmed', {
-                    address: sessionInfo.user.payout_address,
-                    message: 'Payout address restored.'
-                });
+                
+                // Only emit address_confirmed for NEW sessions (not resumed ones)
+                // Resumed sessions already get payoutAddress in session_resumed
+                if (sessionInfo.user.payout_address) {
+                    this.io.to(socket.id).emit('address_confirmed', {
+                        address: sessionInfo.user.payout_address,
+                        message: 'Payout address restored.'
+                    });
+                }
             }
 
             // Credits convenience push (include creditsPerGame for games remaining calculation)
