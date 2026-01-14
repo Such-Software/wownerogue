@@ -107,10 +107,10 @@ const TransactionHistory = {
         
         const currency = payouts.currency || payments.currency || 'WOW';
         const totalReceived = payouts.totalReceivedFormatted || '0';
-        const totalPayments = payments.total || 0;
+        const totalPaid = payments.totalPaidFormatted || '0';
         
         $('#total-received').text(totalReceived + ' ' + currency);
-        $('#total-payments').text(totalPayments);
+        $('#total-payments').text(totalPaid + ' ' + currency);
     },
     
     _renderPayouts: function() {

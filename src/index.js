@@ -308,9 +308,13 @@ app.get('/api/user/:socketId/payments', asyncHandler(async (req, res) => {
     `, [user.id, limit, offset]);
     
     const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM payments WHERE user_id = $1`,
+      `SELECT COUNT(*) as total, 
+              COALESCE(SUM(CASE WHEN status = 'confirmed' THEN expected_amount ELSE 0 END), 0) as total_paid 
+       FROM payments WHERE user_id = $1`,
       [user.id]
     );
+    
+    const totalPaid = parseInt(countResult.rows[0].total_paid, 10) || 0;
     
     res.json({
       payments: result.rows.map(row => ({
@@ -325,6 +329,8 @@ app.get('/api/user/:socketId/payments', asyncHandler(async (req, res) => {
         description: row.description
       })),
       total: parseInt(countResult.rows[0].total, 10),
+      totalPaid: totalPaid,
+      totalPaidFormatted: gameModeManager.formatAtomicHuman(totalPaid, 4),
       limit,
       offset,
       currency: gameModeManager.cryptoType
