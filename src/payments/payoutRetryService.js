@@ -66,9 +66,8 @@ class PayoutRetryService {
             // 2. Status is 'failed' with retry_count < maxRetries
             // Exclude very recent failures (wait at least 1 minute before retry)
             const result = await this.db.query(`
-                SELECT p.*, g.payout_address as game_payout_address
+                SELECT p.*
                 FROM payouts p
-                LEFT JOIN games g ON p.game_id = g.id
                 WHERE (
                     (p.status = 'pending' AND p.created_at < NOW() - INTERVAL '2 minutes')
                     OR (p.status = 'failed' AND p.retry_count < $1 AND (p.last_retry_at IS NULL OR p.last_retry_at < NOW() - INTERVAL '1 minute'))
@@ -152,15 +151,14 @@ class PayoutRetryService {
             }
 
             // Attempt the payout
-            const address = payout_address || payout.game_payout_address;
-            if (!address) {
+            if (!payout_address) {
                 throw new AppError(`No payout address found for payout ${id}`);
             }
 
             const payoutResult = await this.walletService.processPayout({
                 userId: user_id,
                 gameId: game_id,
-                address,
+                address: payout_address,
                 amount,
                 multiplier,
                 description: `Retry payout ${id} for game ${game_id}`
