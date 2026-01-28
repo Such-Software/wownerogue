@@ -236,8 +236,14 @@ class ChatHandler {
 
         this._chatLastSent.set(socket.id, now);
 
-        // Very light sanitization (escape < >)
-        const safe = trimmed.replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;').slice(0, 300);
+        // Complete HTML entity escaping to prevent XSS
+        const safe = trimmed
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .slice(0, 300);
         const username = socket.id.substring(0, 6);
         
         // Save message to history (async, don't block broadcast)

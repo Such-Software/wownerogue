@@ -318,6 +318,33 @@ class WalletRPCService {
         return truncated;
     }
 
+    /**
+     * Validate a payout address using wallet RPC
+     * @param {string} address - The address to validate
+     * @returns {Object} - { valid: boolean, integrated: boolean, subaddress: boolean }
+     */
+    async validateAddress(address) {
+        try {
+            if (!address || typeof address !== 'string') {
+                return { valid: false, error: 'Address is empty or not a string' };
+            }
+
+            const response = await this.rpcCall('validate_address', {
+                address: address.trim(),
+                any_net_type: false // Strict - must match wallet's network
+            });
+
+            return {
+                valid: response.result?.valid === true,
+                integrated: response.result?.integrated === true,
+                subaddress: response.result?.subaddress === true,
+                nettype: response.result?.nettype
+            };
+        } catch (error) {
+            return { valid: false, error: error.message };
+        }
+    }
+
     async processPayout({
         address,
         amount,
@@ -331,6 +358,14 @@ class WalletRPCService {
             if (!address || typeof address !== 'string') {
                 throw new AppError('Payout address was not provided or invalid', {
                     safeMessage: 'Invalid payout address supplied.'
+                });
+            }
+
+            // Validate address with wallet RPC before attempting transfer
+            const validation = await this.validateAddress(address);
+            if (!validation.valid) {
+                throw new AppError(`Invalid payout address: ${validation.error || 'validation failed'}`, {
+                    safeMessage: 'The payout address is invalid or not recognized by the wallet.'
                 });
             }
 
@@ -390,6 +425,47 @@ class WalletRPCService {
             const meta = { userId, gameId, address: address?.substring?.(0, 10) + '...', amount };
             console.error('❌ Failed to process payout:', wrapped.message, meta);
             throw wrapped;
+        }
+    }
+
+    /**
+     * Check if a transaction exists in the blockchain or mempool
+     * Used by retry service to avoid double-spending
+     * @param {string} txHash - The transaction hash to check
+     * @returns {Object} - { exists: boolean, confirmed: boolean, in_mempool: boolean }
+     */
+    async checkTransactionStatus(txHash) {
+        try {
+            if (!txHash || typeof txHash !== 'string') {
+                return { exists: false, confirmed: false, in_mempool: false };
+            }
+
+            // Use get_transfer_by_txid to check if transaction exists
+            const response = await this.rpcCall('get_transfer_by_txid', {
+                txid: txHash,
+                account_index: this.accountIndex
+            });
+
+            if (response.result?.transfer) {
+                const transfer = response.result.transfer;
+                return {
+                    exists: true,
+                    confirmed: transfer.confirmations > 0,
+                    in_mempool: transfer.confirmations === 0,
+                    confirmations: transfer.confirmations || 0,
+                    amount: transfer.amount,
+                    fee: transfer.fee
+                };
+            }
+
+            return { exists: false, confirmed: false, in_mempool: false };
+        } catch (error) {
+            // If the RPC fails with "Transaction not found" style error, tx doesn't exist
+            if (error.message?.includes('not found') || error.details?.message?.includes('not found')) {
+                return { exists: false, confirmed: false, in_mempool: false };
+            }
+            // For other errors, we can't be sure, so throw
+            throw error;
         }
     }
 

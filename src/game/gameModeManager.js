@@ -797,7 +797,26 @@ class GameModeManager {
             if (payoutEligibleMode && outcome === 'escaped' && game.payout_address) {
                 const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedMode, { treasureFound });
                 if (payoutAmount > 0) {
+                    const reason = treasureFound ? 'escape_with_treasure' : 'escape';
+                    let payoutId = null;
+
                     try {
+                        // Step 1: Create pending payout record FIRST (ensures we have a record even if RPC succeeds but server crashes)
+                        const insertResult = await this.db.query(`
+                            INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, created_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
+                            RETURNING id
+                        `, [
+                            game.user_id,
+                            gameId,
+                            game.payout_address,
+                            payoutAmount,
+                            multiplier,
+                            reason
+                        ]);
+                        payoutId = insertResult.rows[0].id;
+
+                        // Step 2: Attempt wallet RPC transfer
                         const payoutResult = await this.walletService.processPayout({
                             userId: game.user_id,
                             gameId,
@@ -807,52 +826,75 @@ class GameModeManager {
                             description: `Game ${gameId} payout`
                         });
 
-                        // Record payout in database
-                        const reason = treasureFound ? 'escape_with_treasure' : 'escape';
-                        await this.db.query(`
-                            INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, tx_hash, fee, created_at, processed_at)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-                        `, [
-                            game.user_id,
-                            gameId,
-                            game.payout_address,
-                            payoutAmount,
-                            multiplier,
-                            reason,
-                            payoutResult.success ? 'completed' : 'failed',
-                            payoutResult.txHash || null,
-                            payoutResult.fee || null
-                        ]);
-
-                        // Update user's total_amount_won
-                        if (payoutResult.success) {
+                        // Step 3: IMMEDIATELY store tx_hash if RPC succeeded (BEFORE transaction)
+                        // This ensures we never lose the tx_hash even if subsequent DB operations fail
+                        // The retry service can then check blockchain status using this hash
+                        if (payoutResult.success && payoutResult.txHash) {
                             await this.db.query(`
-                                UPDATE users
-                                SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
-                                    total_payouts_received = COALESCE(total_payouts_received, 0) + 1
-                                WHERE id = $2
-                            `, [payoutAmount, game.user_id]);
+                                UPDATE payouts
+                                SET tx_hash = $1, fee = $2
+                                WHERE id = $3
+                            `, [payoutResult.txHash, payoutResult.fee || null, payoutId]);
                         }
+
+                        // Step 4: Update status and user stats (within transaction for atomicity)
+                        await this.db.withTransaction(async (client) => {
+                            await client.query(`
+                                UPDATE payouts
+                                SET status = $1, processed_at = NOW()
+                                WHERE id = $2
+                            `, [
+                                payoutResult.success ? 'completed' : 'failed',
+                                payoutId
+                            ]);
+
+                            // Update user's total_amount_won if successful
+                            if (payoutResult.success) {
+                                await client.query(`
+                                    UPDATE users
+                                    SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
+                                        total_payouts_received = COALESCE(total_payouts_received, 0) + 1
+                                    WHERE id = $2
+                                `, [payoutAmount, game.user_id]);
+                            }
+                        });
 
                         console.log(`💸 Payout ${payoutResult.success ? 'sent' : 'failed'}: ${payoutAmount} atomic units for game ${gameId} (multiplier ${multiplier}x)`);
                     } catch (payoutError) {
                         console.error(`❌ Payout processing failed for game ${gameId}:`, payoutError.message);
-                        // Record failed payout attempt
-                        try {
-                            await this.db.query(`
-                                INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, error_message, created_at)
-                                VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, NOW())
-                            `, [
-                                game.user_id,
-                                gameId,
-                                game.payout_address,
-                                payoutAmount,
-                                multiplier,
-                                treasureFound ? 'escape_with_treasure' : 'escape',
-                                payoutError.message
-                            ]);
-                        } catch (dbErr) {
-                            console.error('Failed to record payout error:', dbErr.message);
+                        // Update payout record with failure (if it exists)
+                        if (payoutId) {
+                            try {
+                                await this.db.query(`
+                                    UPDATE payouts
+                                    SET status = 'failed',
+                                        error_message = $1,
+                                        retry_count = COALESCE(retry_count, 0),
+                                        last_error = $1,
+                                        last_retry_at = NOW()
+                                    WHERE id = $2
+                                `, [payoutError.message, payoutId]);
+                            } catch (dbErr) {
+                                console.error('Failed to update payout error:', dbErr.message);
+                            }
+                        } else {
+                            // Payout record wasn't created, insert failed record
+                            try {
+                                await this.db.query(`
+                                    INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, error_message, created_at)
+                                    VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, NOW())
+                                `, [
+                                    game.user_id,
+                                    gameId,
+                                    game.payout_address,
+                                    payoutAmount,
+                                    multiplier,
+                                    reason,
+                                    payoutError.message
+                                ]);
+                            } catch (dbErr) {
+                                console.error('Failed to record payout error:', dbErr.message);
+                            }
                         }
                     }
                 }

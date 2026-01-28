@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 var app = express();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
@@ -10,6 +11,7 @@ require('dotenv').config();
 // Import payment system components
 const DatabaseManager = require('./db/databaseManager');
 const WalletRPCService = require('./payments/walletRPCService');
+const PayoutRetryService = require('./payments/payoutRetryService');
 const GameModeManager = require('./game/gameModeManager');
 const RpcService = require('./rpc/rpcService');
 const PaymentConfigManager = require('./config/paymentConfig');
@@ -418,6 +420,169 @@ app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
 }));
 
 // =============================================================================
+// Smirk Wallet Authentication Endpoints
+// =============================================================================
+
+/**
+ * POST /api/auth/smirk/challenge
+ * Generate a challenge for Smirk wallet signature verification
+ * Body: { socketId: string }
+ */
+app.post('/api/auth/smirk/challenge', asyncHandler(async (req, res) => {
+  const { socketId } = req.body || {};
+
+  if (!socketId || typeof socketId !== 'string') {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId is required to generate a challenge.'
+    });
+  }
+
+  // Generate a cryptographically secure challenge
+  const challenge = crypto.randomBytes(32).toString('hex');
+
+  // Store challenge in database (expires in 5 minutes)
+  await db.query(`
+    INSERT INTO smirk_challenges (challenge, socket_id)
+    VALUES ($1, $2)
+  `, [challenge, socketId]);
+
+  // Clean up old/expired challenges periodically
+  await db.query(`
+    DELETE FROM smirk_challenges
+    WHERE expires_at < NOW() OR (used = TRUE AND created_at < NOW() - INTERVAL '1 hour')
+  `);
+
+  res.json({
+    challenge,
+    expiresIn: 300 // 5 minutes in seconds
+  });
+}));
+
+/**
+ * POST /api/auth/smirk/verify
+ * Verify a Smirk wallet signature and link to user session
+ * Body: { socketId: string, challenge: string, publicKey: string, signature: string }
+ */
+app.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
+  const { socketId, challenge, publicKey, signature } = req.body || {};
+
+  if (!socketId || !challenge || !publicKey || !signature) {
+    throw new ValidationError('Missing required fields', {
+      safeMessage: 'socketId, challenge, publicKey, and signature are required.'
+    });
+  }
+
+  // 1. Verify challenge exists, is not used, and has not expired
+  const challengeResult = await db.query(`
+    SELECT * FROM smirk_challenges
+    WHERE challenge = $1 AND socket_id = $2 AND used = FALSE AND expires_at > NOW()
+  `, [challenge, socketId]);
+
+  if (challengeResult.rows.length === 0) {
+    throw new ValidationError('Invalid or expired challenge', {
+      safeMessage: 'The challenge is invalid, expired, or has already been used.'
+    });
+  }
+
+  // 2. Mark challenge as used immediately (prevent replay attacks)
+  await db.query(`
+    UPDATE smirk_challenges SET used = TRUE WHERE id = $1
+  `, [challengeResult.rows[0].id]);
+
+  // 3. Verify signature using tweetnacl
+  // The signature should be the challenge signed by the wallet's private key
+  let isValidSignature = false;
+  try {
+    const nacl = require('tweetnacl');
+    const challengeBytes = Buffer.from(challenge, 'hex');
+    const signatureBytes = Buffer.from(signature, 'hex');
+    const publicKeyBytes = Buffer.from(publicKey, 'hex');
+
+    // tweetnacl.sign.detached.verify(message, signature, publicKey)
+    isValidSignature = nacl.sign.detached.verify(challengeBytes, signatureBytes, publicKeyBytes);
+  } catch (verifyError) {
+    console.error('Signature verification error:', verifyError.message);
+    throw new ValidationError('Signature verification failed', {
+      safeMessage: 'Unable to verify the wallet signature.'
+    });
+  }
+
+  if (!isValidSignature) {
+    throw new ValidationError('Invalid signature', {
+      safeMessage: 'The wallet signature is invalid.'
+    });
+  }
+
+  // 4. Link public key to user session
+  const userResult = await db.query(`
+    SELECT id FROM users WHERE socket_id = $1
+  `, [socketId]);
+
+  if (userResult.rows.length === 0) {
+    throw new NotFoundError('User session not found', {
+      safeMessage: 'No active session found. Please connect to the game first.'
+    });
+  }
+
+  const userId = userResult.rows[0].id;
+
+  // Check if this public key is already linked to another user
+  const existingLink = await db.query(`
+    SELECT id FROM users WHERE smirk_public_key = $1 AND id != $2
+  `, [publicKey, userId]);
+
+  if (existingLink.rows.length > 0) {
+    throw new ValidationError('Wallet already linked', {
+      safeMessage: 'This wallet is already linked to another account.'
+    });
+  }
+
+  // Link the wallet to this user
+  await db.query(`
+    UPDATE users SET smirk_public_key = $1 WHERE id = $2
+  `, [publicKey, userId]);
+
+  res.json({
+    success: true,
+    linked: true,
+    message: 'Smirk wallet linked successfully'
+  });
+}));
+
+/**
+ * GET /api/auth/smirk/status
+ * Check if a session has a linked Smirk wallet
+ * Query: socketId=string
+ */
+app.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
+  const { socketId } = req.query;
+
+  if (!socketId) {
+    throw new ValidationError('Missing socketId', {
+      safeMessage: 'socketId query parameter is required.'
+    });
+  }
+
+  const result = await db.query(`
+    SELECT smirk_public_key, payout_address FROM users WHERE socket_id = $1
+  `, [socketId]);
+
+  if (result.rows.length === 0) {
+    res.json({
+      linked: false,
+      hasPayoutAddress: false
+    });
+    return;
+  }
+
+  const user = result.rows[0];
+  res.json({
+    linked: !!user.smirk_public_key,
+    hasPayoutAddress: !!user.payout_address
+  });
+}));
+
+// =============================================================================
 // Admin API Endpoints (requires ADMIN_API_KEY)
 // =============================================================================
 
@@ -435,8 +600,10 @@ const adminAuth = (req, res, next) => {
   }
   
   const providedKey = req.headers['x-admin-key'];
-  if (!providedKey || providedKey !== adminKey) {
-    return res.status(401).json({ 
+  if (!providedKey ||
+      providedKey.length !== adminKey.length ||
+      !crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(adminKey))) {
+    return res.status(401).json({
       error: 'Unauthorized',
       message: 'Invalid or missing X-Admin-Key header.'
     });
@@ -976,6 +1143,18 @@ async function startServer() {
                     console.error('Error in batch payout processing:', error);
                 }
             }, payoutIntervalMs);
+
+            // Start payout retry service for failed/stuck payouts
+            const maxRetries = Number(process.env.PAYOUT_MAX_RETRIES) || 3;
+            const retryIntervalMs = Number(process.env.PAYOUT_RETRY_INTERVAL_MS) || 300000; // 5 minutes
+            const payoutRetryService = new PayoutRetryService({
+                db: databaseManager,
+                walletService: walletRPCService,
+                debugManager,
+                maxRetries,
+                retryIntervalMs
+            });
+            payoutRetryService.start();
         }
         
     } catch (error) {

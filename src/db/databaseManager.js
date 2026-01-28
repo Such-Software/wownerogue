@@ -219,6 +219,27 @@ class DatabaseManager {
     }
 
     /**
+     * Execute a callback within a database transaction
+     * Automatically handles BEGIN, COMMIT, and ROLLBACK
+     * @param {Function} callback - Async function that receives the client
+     * @returns {Promise<any>} - Result from the callback
+     */
+    async withTransaction(callback) {
+        const client = await this.getClient();
+        try {
+            await client.query('BEGIN');
+            const result = await callback(client);
+            await client.query('COMMIT');
+            return result;
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    /**
      * Close database connection
      */
     async close() {

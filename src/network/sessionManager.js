@@ -180,34 +180,56 @@ class SessionManager {
             creditsToAdd = parseInt(match[1], 10) || 10;
           }
 
-          // Add credits to user
-          const updateResult = await this.db.query(`
-            UPDATE users
-            SET credits = credits + $1,
-                total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1
-            WHERE id = $2
-            RETURNING credits
-          `, [creditsToAdd, userId]);
+          // CRITICAL: Use transaction with row lock to prevent double-credit race condition
+          // This ensures only one instance can process a payment at a time
+          const recovered = await this.db.withTransaction(async (client) => {
+            // Lock the payment row and re-check if it's still unprocessed
+            const lockResult = await client.query(`
+              SELECT id, credits_purchased
+              FROM payments
+              WHERE id = $1
+              FOR UPDATE
+            `, [payment.id]);
 
-          const newBalance = updateResult.rows[0]?.credits ?? 0;
+            // If already processed (by another instance), skip
+            if (!lockResult.rows[0] || (lockResult.rows[0].credits_purchased && lockResult.rows[0].credits_purchased > 0)) {
+              return null; // Already processed
+            }
 
-          // Mark payment as processed
-          await this.db.query(`
-            UPDATE payments
-            SET credits_purchased = $1
-            WHERE id = $2
-          `, [creditsToAdd, payment.id]);
+            // Add credits to user
+            const updateResult = await client.query(`
+              UPDATE users
+              SET credits = credits + $1,
+                  total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1
+              WHERE id = $2
+              RETURNING credits
+            `, [creditsToAdd, userId]);
 
-          // Record credit transaction
-          await this.db.query(`
-            INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
-            VALUES ($1, $2, 'package_purchase_recovered', $3, 'purchase')
-          `, [userId, creditsToAdd, newBalance]);
+            const newBalance = updateResult.rows[0]?.credits ?? 0;
 
-          result.creditsRecovered += creditsToAdd;
-          result.paymentsProcessed++;
+            // Mark payment as processed (atomically with credit add)
+            await client.query(`
+              UPDATE payments
+              SET credits_purchased = $1
+              WHERE id = $2
+            `, [creditsToAdd, payment.id]);
 
-          console.log(`💰 [PaymentRecovery] Recovered ${creditsToAdd} credits for user ${userId} from payment ${payment.id}`);
+            // Record credit transaction
+            await client.query(`
+              INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+              VALUES ($1, $2, 'package_purchase_recovered', $3, 'purchase')
+            `, [userId, creditsToAdd, newBalance]);
+
+            return { creditsToAdd, newBalance };
+          });
+
+          if (recovered) {
+            result.creditsRecovered += recovered.creditsToAdd;
+            result.paymentsProcessed++;
+            console.log(`💰 [PaymentRecovery] Recovered ${recovered.creditsToAdd} credits for user ${userId} from payment ${payment.id}`);
+          } else {
+            console.log(`ℹ️ [PaymentRecovery] Payment ${payment.id} already processed by another instance`);
+          }
         } catch (paymentError) {
           console.error(`[PaymentRecovery] Failed to process payment ${payment.id}:`, paymentError.message);
         }
