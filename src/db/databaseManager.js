@@ -85,8 +85,8 @@ class DatabaseManager {
                 host: process.env.DB_HOST || 'localhost',
                 port: process.env.DB_PORT || 5432,
                 database: process.env.DB_NAME || 'wownerogue',
-                user: process.env.DB_USER || 'jw',
-                password: process.env.DB_PASSWORD || 'jw',
+                user: process.env.DB_USER || 'wownerogue',
+                password: process.env.DB_PASSWORD,
                 max: 20, // Maximum number of clients in the pool
                 idleTimeoutMillis: 30000,
                 connectionTimeoutMillis: 2000,

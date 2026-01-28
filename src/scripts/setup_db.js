@@ -2,8 +2,8 @@ require('dotenv').config({ path: '../.env' });
 const { Client } = require('pg');
 
 const DB_CONFIG = {
-    user: process.env.DB_USER || 'jw',
-    password: process.env.DB_PASSWORD || 'jw',
+    user: process.env.DB_USER || 'wownerogue',
+    password: process.env.DB_PASSWORD,
     host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'wownerogue'

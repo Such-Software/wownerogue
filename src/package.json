@@ -26,7 +26,7 @@
       "simulated_blocks": false
     }
   },
-  "author": "jw",
+  "author": "",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.9.0",

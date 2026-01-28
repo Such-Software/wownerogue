@@ -9,8 +9,8 @@ const CONSOLE_LOGGING = true; // Temporarily enable for debugging
 
 class RPCService {
     constructor() {
-        this.primaryEndpoint = process.env.PRIMARY_RPC_ENDPOINT || 'http://jw-nodes:18081';
-        this.fallbackEndpoint = process.env.FALLBACK_RPC_ENDPOINT || 'http://jw-nodes:18081';
+        this.primaryEndpoint = process.env.PRIMARY_RPC_ENDPOINT || 'http://127.0.0.1:34568';
+        this.fallbackEndpoint = process.env.FALLBACK_RPC_ENDPOINT || 'http://127.0.0.1:34568';
         this.currentEndpoint = this.primaryEndpoint;
         this.failoverActive = false;
         this.lastBlockHeight = 0;
