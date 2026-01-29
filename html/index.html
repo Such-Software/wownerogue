@@ -224,6 +224,21 @@
             <h2 id="addressModalTitle">Manage Payout Address</h2>
             <p class="modal-description">Enter your Wownero (WOW) or Monero (XMR) address below. This will be used for payouts when you escape.</p>
             <p class="modal-description" style="font-size:11px; color:#888; margin-top:8px; padding:6px; background:rgba(255,200,0,0.1); border-radius:4px;">💡 <strong>Session Info:</strong> Your address and credits are tied to a browser session token stored locally. They will persist across page refreshes but will be lost if you clear cookies, use incognito mode, or switch browsers.</p>
+
+            <!-- Smirk Wallet Integration -->
+            <div id="smirkSection" style="margin: 15px 0; padding: 12px; background: rgba(26,26,77,0.5); border: 1px solid #3a3a7d; border-radius: 6px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-size: 1.2em;">🔐</span>
+                    <strong style="color: #aaf;">Connect with Smirk Wallet</strong>
+                </div>
+                <p style="font-size: 11px; color: #999; margin-bottom: 10px;">Automatically set your payout address by connecting your Smirk browser wallet.</p>
+                <div id="smirkButtonContainer">
+                    <!-- Will be populated by smirkAuth.js -->
+                </div>
+            </div>
+
+            <div style="text-align: center; color: #666; margin: 10px 0; font-size: 12px;">— or enter manually —</div>
+
             <form id="addressModalForm">
                 <label for="addressModalInput" class="modal-label">Payout Address</label>
                 <textarea id="addressModalInput" autocomplete="off" spellcheck="false" rows="3" placeholder="Paste your payout address here"></textarea>

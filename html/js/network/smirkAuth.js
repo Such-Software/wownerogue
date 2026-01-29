@@ -231,45 +231,63 @@ const SmirkAuth = {
      * Should be called after DOM is ready and socket is connected
      */
     init() {
-        // Only show button if Smirk extension is available
-        if (!this.isAvailable()) {
-            console.log('Smirk extension not detected, button will not be shown');
+        const container = $('#smirkButtonContainer');
+        if (!container.length) {
+            console.log('Smirk button container not found');
             return;
         }
 
-        // Check if button already exists
-        if ($('#smirkLoginBtn').length > 0) {
-            return;
-        }
+        // Clear any existing content
+        container.empty();
 
-        // Create button
-        const btn = this._createButton();
+        if (this.isAvailable()) {
+            // Smirk extension IS installed - show connect button
+            const btn = this._createButton();
+            btn.on('click', () => this._handleClick(btn));
+            container.append(btn);
 
-        // Add click handler
-        btn.on('click', () => this._handleClick(btn));
+            // Check if already linked on page load
+            this.checkStatus().then(status => {
+                if (status.linked) {
+                    this._updateButton(btn, 'connected');
+                }
+            });
 
-        // Insert after the address button (if it exists) or after the help button
-        const addressBtn = $('#manageAddressButton');
-        if (addressBtn.length > 0) {
-            addressBtn.after(btn);
+            console.log('Smirk extension detected, connect button shown');
         } else {
-            const helpBtn = $('#helpButton');
-            if (helpBtn.length > 0) {
-                helpBtn.after(btn);
-            } else {
-                // Fallback: append to status area
-                $('#status').append(btn);
-            }
+            // Smirk extension NOT installed - show install link
+            const installLink = $('<a>')
+                .attr('href', 'https://smirk.cash')
+                .attr('target', '_blank')
+                .attr('rel', 'noopener noreferrer')
+                .css({
+                    'display': 'inline-block',
+                    'background': '#2a2a5d',
+                    'color': '#aaf',
+                    'border': '1px solid #3a3a7d',
+                    'padding': '8px 16px',
+                    'border-radius': '4px',
+                    'text-decoration': 'none',
+                    'font-size': '12px',
+                    'width': '100%',
+                    'text-align': 'center',
+                    'box-sizing': 'border-box'
+                })
+                .text('Get Smirk Wallet →')
+                .hover(
+                    function() { $(this).css('background', '#3a3a7d'); },
+                    function() { $(this).css('background', '#2a2a5d'); }
+                );
+
+            container.append(installLink);
+
+            const hint = $('<p>')
+                .css({ 'font-size': '10px', 'color': '#666', 'margin-top': '6px', 'margin-bottom': '0' })
+                .text('Install the Smirk browser extension, then refresh this page.');
+            container.append(hint);
+
+            console.log('Smirk extension not detected, showing install link');
         }
-
-        // Check if already linked on page load
-        this.checkStatus().then(status => {
-            if (status.linked) {
-                this._updateButton(btn, 'connected');
-            }
-        });
-
-        console.log('Smirk authentication module initialized');
     }
 };
 
