@@ -688,24 +688,45 @@ app.post('/api/admin/refund/payment', adminAuth, asyncHandler(async (req, res) =
     // If credits were purchased, deduct them
     let creditsDeducted = 0;
     if (payment.credits_purchased > 0 && payment.user_id) {
+      // SECURITY: Use FOR UPDATE to lock the row and prevent race conditions
       const userResult = await client.query(`
-        SELECT credits FROM users WHERE id = $1
+        SELECT credits FROM users WHERE id = $1 FOR UPDATE
       `, [payment.user_id]);
-      
+
       const currentCredits = userResult.rows[0]?.credits || 0;
       creditsDeducted = Math.min(payment.credits_purchased, currentCredits);
-      
+
       if (creditsDeducted > 0) {
-        const newBalance = currentCredits - creditsDeducted;
-        await client.query(`
-          UPDATE users SET credits = $1 WHERE id = $2
-        `, [newBalance, payment.user_id]);
-        
+        // SECURITY: Use atomic decrement with guard to prevent negative balance
+        const updateResult = await client.query(`
+          UPDATE users SET credits = credits - $1 WHERE id = $2 AND credits >= $1
+          RETURNING credits
+        `, [creditsDeducted, payment.user_id]);
+
+        let newBalance = updateResult.rows[0]?.credits;
+
+        // If update failed (race condition changed credits), recalculate
+        if (updateResult.rows.length === 0) {
+          const recheckResult = await client.query(`SELECT credits FROM users WHERE id = $1 FOR UPDATE`, [payment.user_id]);
+          const actualCredits = recheckResult.rows[0]?.credits || 0;
+          creditsDeducted = Math.min(payment.credits_purchased, actualCredits);
+          if (creditsDeducted > 0) {
+            const retryResult = await client.query(`
+              UPDATE users SET credits = credits - $1 WHERE id = $2 AND credits >= $1 RETURNING credits
+            `, [creditsDeducted, payment.user_id]);
+            newBalance = retryResult.rows[0]?.credits ?? (actualCredits - creditsDeducted);
+          } else {
+            newBalance = actualCredits;
+          }
+        }
+
         // Record credit transaction
-        await client.query(`
-          INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
-          VALUES ($1, $2, $3, $4, 'refund')
-        `, [payment.user_id, -creditsDeducted, `Refund for payment ${paymentId}`, newBalance]);
+        if (creditsDeducted > 0) {
+          await client.query(`
+            INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+            VALUES ($1, $2, $3, $4, 'refund')
+          `, [payment.user_id, -creditsDeducted, `Refund for payment ${paymentId}`, newBalance]);
+        }
       }
     }
     
@@ -782,21 +803,53 @@ app.post('/api/admin/credits/adjust', adminAuth, asyncHandler(async (req, res) =
   }
   
   const currentCredits = user.credits || 0;
-  const newBalance = Math.max(0, currentCredits + amount); // Prevent negative balance
-  const actualAdjustment = newBalance - currentCredits;
-  
+
+  // SECURITY: Use atomic UPDATE to prevent race conditions
+  // For negative adjustments, ensure user has enough credits
+  let updateResult;
+  let actualAdjustment;
+  let newBalance;
+
+  if (amount < 0) {
+    // Deduction: atomic check that credits >= amount to deduct
+    const deductAmount = Math.abs(amount);
+    updateResult = await db.query(`
+      UPDATE users
+      SET credits = credits - $1, updated_at = NOW()
+      WHERE id = $2 AND credits >= $1
+      RETURNING credits
+    `, [deductAmount, user.id]);
+
+    if (updateResult.rows.length === 0) {
+      return res.json({
+        success: false,
+        message: `Cannot deduct ${deductAmount} credits - user only has ${currentCredits} credits.`,
+        user: { credits: currentCredits }
+      });
+    }
+
+    newBalance = updateResult.rows[0].credits;
+    actualAdjustment = newBalance - currentCredits;
+  } else {
+    // Addition: always succeeds
+    updateResult = await db.query(`
+      UPDATE users
+      SET credits = credits + $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING credits
+    `, [amount, user.id]);
+
+    newBalance = updateResult.rows[0]?.credits ?? (currentCredits + amount);
+    actualAdjustment = amount;
+  }
+
   if (actualAdjustment === 0) {
     return res.json({
       success: false,
-      message: 'No adjustment made (would result in same balance).',
+      message: 'No adjustment made.',
       user: { credits: currentCredits }
     });
   }
-  
-  // Update credits
-  await db.query(`
-    UPDATE users SET credits = $1, updated_at = NOW() WHERE id = $2
-  `, [newBalance, user.id]);
   
   // Record transaction
   const transactionType = actualAdjustment > 0 ? 'admin_credit' : 'admin_debit';

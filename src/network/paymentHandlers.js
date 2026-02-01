@@ -257,98 +257,121 @@ class PaymentHandlers {
                 }
                 socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
             } else if (status.confirmed) {
-                if (!this.confirmedPayments.has(paymentRequest.id)) {
-                    this.confirmedPayments.add(paymentRequest.id);
-                    this._confirmedTimestamps.set(paymentRequest.id, Date.now());
-                    
-                    // Handle credits_package: add credits to user
-                    const mapping = this.socketPaymentMap.get(socket.id);
-                    if (mapping && mapping.paymentType === 'credits_package' && this.gameModeManager) {
-                        try {
-                            const creditsResult = await this.gameModeManager.processCreditsPackageConfirmation(
-                                socket.id,
-                                paymentRequest.id,
-                                mapping.package
-                            );
-                            if (creditsResult.success) {
-                                socket.emit('credits_update', { balance: creditsResult.newBalance });
-                                socket.emit('payment_confirmed', { 
-                                    paymentId: paymentRequest.id, 
-                                    message: `Payment confirmed! Added ${creditsResult.creditsAdded} credits. New balance: ${creditsResult.newBalance}`,
-                                    creditsAdded: creditsResult.creditsAdded,
-                                    newBalance: creditsResult.newBalance,
-                                    confirmations: status.confirmations 
-                                });
-                                this.broadcastManager.sendStatusUpdate(socket.id, 'success', 
-                                    `✅ CREDITS PURCHASED!\n\n+${creditsResult.creditsAdded} credits added.\nNew balance: ${creditsResult.newBalance} credits.\n\nType 'enter' to start a game!`);
-                            } else {
-                                console.error('Failed to process credits package:', creditsResult.reason);
-                                socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed but failed to add credits. Contact support.', confirmations: status.confirmations });
+                // SECURITY: Use in-memory Set as fast-path, but DB is source of truth
+                // This prevents double-processing on server restart
+                if (this.confirmedPayments.has(paymentRequest.id)) {
+                    // Already processed in this session, skip
+                    this.stopMonitoringForSocket(socket.id);
+                    return;
+                }
+
+                // Mark in memory to prevent duplicate processing within this session
+                this.confirmedPayments.add(paymentRequest.id);
+                this._confirmedTimestamps.set(paymentRequest.id, Date.now());
+
+                // Handle credits_package: add credits to user
+                const mapping = this.socketPaymentMap.get(socket.id);
+                if (mapping && mapping.paymentType === 'credits_package' && this.gameModeManager) {
+                    try {
+                        // processCreditsPackageConfirmation now atomically checks status='pending'
+                        const creditsResult = await this.gameModeManager.processCreditsPackageConfirmation(
+                            socket.id,
+                            paymentRequest.id,
+                            mapping.package
+                        );
+                        if (creditsResult.success) {
+                            socket.emit('credits_update', { balance: creditsResult.newBalance });
+                            socket.emit('payment_confirmed', {
+                                paymentId: paymentRequest.id,
+                                message: `Payment confirmed! Added ${creditsResult.creditsAdded} credits. New balance: ${creditsResult.newBalance}`,
+                                creditsAdded: creditsResult.creditsAdded,
+                                newBalance: creditsResult.newBalance,
+                                confirmations: status.confirmations
+                            });
+                            this.broadcastManager.sendStatusUpdate(socket.id, 'success',
+                                `✅ CREDITS PURCHASED!\n\n+${creditsResult.creditsAdded} credits added.\nNew balance: ${creditsResult.newBalance} credits.\n\nType 'enter' to start a game!`);
+                        } else if (creditsResult.alreadyProcessed) {
+                            // Payment was already confirmed (e.g., after server restart) - just notify user
+                            console.log(`[PaymentHandlers] Payment ${paymentRequest.id} already processed, skipping duplicate`);
+                            socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment already processed.', confirmations: status.confirmations });
+                        } else {
+                            console.error('Failed to process credits package:', creditsResult.reason);
+                            socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed but failed to add credits. Contact support.', confirmations: status.confirmations });
+                        }
+                    } catch (e) {
+                        console.error('Error processing credits package confirmation:', e.message);
+                        socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
+                    }
+                } else {
+                    // single_game payment - standard flow
+                    // CRITICAL: Atomically update payment status and check if we actually updated it
+                    // This prevents double-processing on server restart
+                    let wasUpdated = false;
+                    try {
+                        if (this.gameModeManager && this.gameModeManager.db) {
+                            const updateResult = await this.gameModeManager.db.query(`
+                                UPDATE payments
+                                SET status = 'confirmed',
+                                    confirmed_at = NOW()
+                                WHERE id = $1 AND status = 'pending'
+                                RETURNING id
+                            `, [paymentRequest.id]);
+                            wasUpdated = updateResult.rows.length > 0;
+                            if (this.debugManager.CONSOLE_LOGGING) {
+                                console.log(`[PaymentHandlers] Payment ${paymentRequest.id} status update: ${wasUpdated ? 'success' : 'already confirmed'}`);
                             }
-                        } catch (e) {
-                            console.error('Error processing credits package confirmation:', e.message);
-                            socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
+                        }
+                    } catch (dbErr) {
+                        console.error('[PaymentHandlers] Failed to update payment status in DB:', dbErr.message);
+                    }
+
+                    // Only proceed with game logic if we actually confirmed this payment
+                    if (!wasUpdated) {
+                        console.log(`[PaymentHandlers] Payment ${paymentRequest.id} already confirmed, skipping duplicate processing`);
+                        socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment already processed.', confirmations: status.confirmations });
+                        this.stopMonitoringForSocket(socket.id);
+                        return;
+                    }
+
+                    socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
+
+                    // IMPORTANT: If payment confirmed before mempool detection (fast blocks),
+                    // the player may not be in the queue yet. Add them now with confirmed=true.
+                    const existingIdx = this.queueManager.getPlayerIndex(socket.id);
+                    if (existingIdx === -1) {
+                        console.log(`[PaymentHandlers] Payment confirmed but player not in queue - adding now (socket: ${socket.id})`);
+                        // Try to get DB userId from session
+                        let userId = null;
+                        if (this.sessionManager?.sessions?.has(socket.id)) {
+                            userId = this.sessionManager.sessions.get(socket.id).id;
+                        }
+                        this.queueManager.addPlayer({
+                            serverId: socket.id,
+                            clientId: currentUser ? currentUser.clientId : null,
+                            userId: userId,
+                            paymentId: paymentRequest.id,
+                            requiresConfirmation: false, // Already confirmed
+                            confirmed: true
+                        });
+                    } else {
+                        // Player was in queue from mempool detection, just mark confirmed
+                        this.queueManager.markConfirmed(socket.id);
+                    }
+
+                    // Attempt immediate game start so user doesn't wait another full block
+                    const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
+                    if (currentBlock !== null) {
+                        const started = await this.queueManager.startGameImmediately(socket.id, currentBlock);
+                        if (!started) {
+                            console.log(`[PaymentHandlers] Immediate start failed for ${socket.id} - player will start on next block`);
+                            if (this.debugManager.CONSOLE_LOGGING) {
+                                this.queueManager.debugDumpQueue();
+                            }
+                        } else {
+                            console.log(`[PaymentHandlers] ✅ Immediate game start successful for ${socket.id}`);
                         }
                     } else {
-                        // single_game payment - standard flow
-                        // CRITICAL: Update payment status in DB BEFORE trying to start the game
-                        // This ensures processGameStart can find the confirmed payment
-                        try {
-                            if (this.gameModeManager && this.gameModeManager.db) {
-                                await this.gameModeManager.db.query(`
-                                    UPDATE payments 
-                                    SET status = 'confirmed',
-                                        confirmed_at = NOW()
-                                    WHERE id = $1 AND status = 'pending'
-                                `, [paymentRequest.id]);
-                                if (this.debugManager.CONSOLE_LOGGING) {
-                                    console.log(`[PaymentHandlers] Updated payment ${paymentRequest.id} status to confirmed in DB`);
-                                }
-                            }
-                        } catch (dbErr) {
-                            console.error('[PaymentHandlers] Failed to update payment status in DB:', dbErr.message);
-                        }
-                        
-                        socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
-                        
-                        // IMPORTANT: If payment confirmed before mempool detection (fast blocks), 
-                        // the player may not be in the queue yet. Add them now with confirmed=true.
-                        const existingIdx = this.queueManager.getPlayerIndex(socket.id);
-                        if (existingIdx === -1) {
-                            console.log(`[PaymentHandlers] Payment confirmed but player not in queue - adding now (socket: ${socket.id})`);
-                            // Try to get DB userId from session
-                            let userId = null;
-                            if (this.sessionManager?.sessions?.has(socket.id)) {
-                                userId = this.sessionManager.sessions.get(socket.id).id;
-                            }
-                            this.queueManager.addPlayer({ 
-                                serverId: socket.id, 
-                                clientId: currentUser ? currentUser.clientId : null, 
-                                userId: userId,
-                                paymentId: paymentRequest.id, 
-                                requiresConfirmation: false, // Already confirmed
-                                confirmed: true 
-                            });
-                        } else {
-                            // Player was in queue from mempool detection, just mark confirmed
-                            this.queueManager.markConfirmed(socket.id);
-                        }
-                        
-                        // Attempt immediate game start so user doesn't wait another full block
-                        const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
-                        if (currentBlock !== null) {
-                            const started = await this.queueManager.startGameImmediately(socket.id, currentBlock);
-                            if (!started) {
-                                console.log(`[PaymentHandlers] Immediate start failed for ${socket.id} - player will start on next block`);
-                                if (this.debugManager.CONSOLE_LOGGING) {
-                                    this.queueManager.debugDumpQueue();
-                                }
-                            } else {
-                                console.log(`[PaymentHandlers] ✅ Immediate game start successful for ${socket.id}`);
-                            }
-                        } else {
-                            console.log(`[PaymentHandlers] No block height available - player will start on next block`);
-                        }
+                        console.log(`[PaymentHandlers] No block height available - player will start on next block`);
                     }
                 }
                 // Clean up monitoring for this socket (even if duplicate)

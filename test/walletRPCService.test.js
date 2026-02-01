@@ -136,18 +136,23 @@ describe('WalletRPCService.processPayout', () => {
   });
 
   test('validates amount is positive', async () => {
-    await expect(svc.processPayout({ 
-      address: 'wow1addr', 
-      amount: 0 
+    // Mock validateAddress to pass so we can test amount validation
+    svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
+
+    await expect(svc.processPayout({
+      address: 'wow1addr',
+      amount: 0
     })).rejects.toThrow(/amount/i);
 
-    await expect(svc.processPayout({ 
-      address: 'wow1addr', 
-      amount: -100 
+    await expect(svc.processPayout({
+      address: 'wow1addr',
+      amount: -100
     })).rejects.toThrow(/amount/i);
   });
 
   test('calls transfer RPC with correct parameters', async () => {
+    // Mock validateAddress to return valid
+    svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockResolvedValueOnce({
       result: {
         tx_hash: 'abc123def456',
@@ -183,6 +188,7 @@ describe('WalletRPCService.processPayout', () => {
   });
 
   test('includes subaddr_indices when subaddressIndex specified', async () => {
+    svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockResolvedValueOnce({
       result: { tx_hash: 'xyz', tx_key: 'key', fee: 100 }
     });
@@ -201,6 +207,7 @@ describe('WalletRPCService.processPayout', () => {
   });
 
   test('does not include subaddr_indices for invalid index values', async () => {
+    svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockResolvedValueOnce({
       result: { tx_hash: 'xyz', tx_key: 'key', fee: 100 }
     });
@@ -219,6 +226,7 @@ describe('WalletRPCService.processPayout', () => {
   });
 
   test('handles RPC failure and wraps error', async () => {
+    svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockRejectedValueOnce(new Error('Insufficient balance'));
 
     await expect(svc.processPayout({

@@ -7,7 +7,14 @@ const GameModeManager = require('../src/game/gameModeManager');
 
 // Mock dependencies
 const createMockDb = () => ({
-    query: jest.fn()
+    query: jest.fn(),
+    // Mock withTransaction to execute the callback with a mock client
+    withTransaction: jest.fn().mockImplementation(async (callback) => {
+        const mockClient = {
+            query: jest.fn().mockResolvedValue({ rows: [] })
+        };
+        return callback(mockClient);
+    })
 });
 
 const createMockWalletService = () => ({
@@ -287,20 +294,26 @@ describe('Payment & Payout Comprehensive Tests', () => {
             });
 
             // Game record lookup
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payment_mode: 'direct' }] 
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1, payment_mode: 'direct' }]
             });
             // Game update
             mockDb.query.mockResolvedValueOnce({ rows: [] });
             // Check for existing payout
             mockDb.query.mockResolvedValueOnce({ rows: [] });
             // User lookup
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payout_address: 'wow1testaddress' }] 
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1, payout_address: 'wow1testaddress' }]
             });
+            // INSERT payout (pending record) - returns new payout id
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 999 }]
+            });
+            // UPDATE payouts (store tx_hash)
+            mockDb.query.mockResolvedValueOnce({ rows: [] });
 
             const result = await gmm.completeGame('socket1', 'game123', true, false, { moves: 50 });
-            
+
             expect(result.success).toBe(true);
             expect(result.payout).toBeDefined();
             expect(result.payout.amount).toBe(200000000000);
@@ -320,17 +333,23 @@ describe('Payment & Payout Comprehensive Tests', () => {
                 fee: 1000000
             });
 
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payment_mode: 'direct' }] 
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1, payment_mode: 'direct' }]
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payout_address: 'wow1testaddress' }] 
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1, payout_address: 'wow1testaddress' }]
             });
+            // INSERT payout (pending record)
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 999 }]
+            });
+            // UPDATE payouts (store tx_hash)
+            mockDb.query.mockResolvedValueOnce({ rows: [] });
 
             const result = await gmm.completeGame('socket1', 'game123', true, true, { moves: 30 });
-            
+
             expect(result.payout.amount).toBe(300000000000); // 3x for treasure
             expect(result.payout.multiplier).toBe(3);
             expect(result.payout.treasure).toBe(true);
@@ -395,20 +414,27 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
             mockWalletService.processPayout.mockResolvedValueOnce({
                 success: true,
-                txHash: 'xyz789'
+                txHash: 'xyz789',
+                fee: 1000000
             });
 
-            mockDb.query.mockResolvedValueOnce({ 
+            mockDb.query.mockResolvedValueOnce({
                 rows: [{ id: 1, payment_mode: 'credits' }] // Game was started with credits
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payout_address: 'wow1testaddress' }] 
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1, payout_address: 'wow1testaddress' }]
             });
+            // INSERT payout (pending record)
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 999 }]
+            });
+            // UPDATE payouts (store tx_hash)
+            mockDb.query.mockResolvedValueOnce({ rows: [] });
 
             const result = await gmm.completeGame('socket1', 'game123', true, false, {});
-            
+
             // Should use credits multipliers, not direct
             expect(result.payout.amount).toBe(75000000000); // 50000000000 * 1.5
             expect(result.payout.multiplier).toBe(1.5);

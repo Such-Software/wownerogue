@@ -254,15 +254,16 @@ class GameModeManager {
 
     /**
      * Process a confirmed credits package payment - add credits to user
+     * SECURITY: Uses atomic check-and-update to prevent double-crediting on server restart
      * @param {string} socketId - Socket ID of the user
      * @param {number} paymentId - Payment record ID
      * @param {object} packageInfo - Package info (credits, bonus, etc.)
-     * @returns {object} Result with success, creditsAdded, newBalance
+     * @returns {object} Result with success, creditsAdded, newBalance, alreadyProcessed
      */
     async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null) {
         try {
             const user = await this.getOrCreateUser(socketId);
-            
+
             // Determine credits to add from package or fallback
             let creditsToAdd = 10; // Default fallback
             if (packageInfo && packageInfo.credits) {
@@ -270,9 +271,18 @@ class GameModeManager {
             } else {
                 // Try to get from payment record description
                 const paymentResult = await this.db.query(`
-                    SELECT description FROM payments WHERE id = $1
+                    SELECT description, status FROM payments WHERE id = $1
                 `, [paymentId]);
                 if (paymentResult.rows.length > 0) {
+                    // SECURITY: Check if already confirmed (prevents double-crediting)
+                    if (paymentResult.rows[0].status === 'confirmed') {
+                        console.log(`⚠️ Payment ${paymentId} already confirmed, skipping duplicate processing`);
+                        return {
+                            success: false,
+                            alreadyProcessed: true,
+                            reason: 'Payment already processed'
+                        };
+                    }
                     const desc = paymentResult.rows[0].description || '';
                     const match = desc.match(/(\d+)\s*credits?/i);
                     if (match) {
@@ -281,9 +291,31 @@ class GameModeManager {
                 }
             }
 
-            // Update user credits
+            // SECURITY: Atomically update payment status from 'pending' to 'confirmed'
+            // Only proceeds if the payment was actually pending (prevents double-crediting)
+            const paymentUpdateResult = await this.db.query(`
+                UPDATE payments
+                SET status = 'confirmed',
+                    credits_purchased = $1,
+                    confirmed_at = NOW()
+                WHERE id = $2 AND status = 'pending'
+                RETURNING id
+            `, [creditsToAdd, paymentId]);
+
+            // If no rows were updated, payment was already processed
+            if (paymentUpdateResult.rows.length === 0) {
+                console.log(`⚠️ Payment ${paymentId} already confirmed (atomic check), skipping duplicate`);
+                return {
+                    success: false,
+                    alreadyProcessed: true,
+                    reason: 'Payment already processed'
+                };
+            }
+
+            // Payment successfully marked as confirmed - now add credits
+            // Use atomic increment to prevent race conditions
             const updateResult = await this.db.query(`
-                UPDATE users 
+                UPDATE users
                 SET credits = credits + $1,
                     total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1,
                     updated_at = NOW()
@@ -292,15 +324,6 @@ class GameModeManager {
             `, [creditsToAdd, user.id]);
 
             const newBalance = updateResult.rows[0]?.credits ?? (user.credits + creditsToAdd);
-
-            // Mark payment as processed
-            await this.db.query(`
-                UPDATE payments 
-                SET status = 'confirmed',
-                    credits_purchased = $1,
-                    confirmed_at = NOW()
-                WHERE id = $2
-            `, [creditsToAdd, paymentId]);
 
             // Record credit transaction
             await this.db.query(`
@@ -1253,8 +1276,26 @@ class GameModeManager {
                 const userResult = await this.db.query(`SELECT * FROM users WHERE socket_id = $1 LIMIT 1`, [socketId]);
                 const userRow = userResult.rows[0];
                 if (userRow && userRow.payout_address) {
+                    // SECURITY: Use safe payout pattern - create pending record FIRST, then RPC, then store tx_hash
+                    let payoutId = null;
                     try {
-                        await this.walletService.processPayout({
+                        // Step 1: Create pending payout record FIRST (ensures we have a record even if RPC succeeds but server crashes)
+                        const insertResult = await this.db.query(`
+                            INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, created_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
+                            RETURNING id
+                        `, [
+                            userRow.id,
+                            gameDbId, // Use DB id if available
+                            userRow.payout_address,
+                            payoutAmount,
+                            multiplier,
+                            treasureFound ? 'escape_with_treasure' : 'escape'
+                        ]);
+                        payoutId = insertResult.rows[0].id;
+
+                        // Step 2: Attempt wallet RPC transfer
+                        const payoutResult = await this.walletService.processPayout({
                             userId: userRow.id,
                             gameId,
                             address: userRow.payout_address,
@@ -1262,19 +1303,62 @@ class GameModeManager {
                             multiplier,
                             description: `Game ${gameId} payout`
                         });
+
+                        // Step 3: IMMEDIATELY store tx_hash if RPC succeeded (BEFORE any transaction)
+                        // This ensures we never lose the tx_hash even if subsequent DB operations fail
+                        if (payoutResult.success && payoutResult.txHash) {
+                            await this.db.query(`
+                                UPDATE payouts SET tx_hash = $1, fee = $2 WHERE id = $3
+                            `, [payoutResult.txHash, payoutResult.fee || null, payoutId]);
+                        }
+
+                        // Step 4: Update status and user stats atomically
+                        await this.db.withTransaction(async (client) => {
+                            await client.query(`
+                                UPDATE payouts
+                                SET status = $1, processed_at = NOW()
+                                WHERE id = $2
+                            `, [payoutResult.success ? 'completed' : 'failed', payoutId]);
+
+                            if (payoutResult.success) {
+                                await client.query(`
+                                    UPDATE users
+                                    SET total_amount_won = total_amount_won + $1,
+                                        total_payouts_received = COALESCE(total_payouts_received, 0) + 1
+                                    WHERE id = $2
+                                `, [payoutAmount, userRow.id]);
+                            }
+                        });
+
                         return {
                             success: true,
                             mode: recordedPaymentMode,
                             payout: {
                                 amount: payoutAmount,
                                 multiplier,
-                                treasure: treasureFound
+                                treasure: treasureFound,
+                                txHash: payoutResult.txHash
                             },
                             score: metrics.score ?? null
                         };
                     } catch (payoutErr) {
                         const normalizedPayout = normalizeError(payoutErr, 'Failed to send payout');
                         console.error('❌ Error creating payout:', normalizedPayout.message);
+                        // Update payout record with failure if it exists
+                        if (payoutId) {
+                            try {
+                                await this.db.query(`
+                                    UPDATE payouts
+                                    SET status = 'failed',
+                                        error_message = $1,
+                                        last_error = $1,
+                                        last_retry_at = NOW()
+                                    WHERE id = $2
+                                `, [payoutErr.message, payoutId]);
+                            } catch (dbErr) {
+                                console.error('Failed to update payout error:', dbErr.message);
+                            }
+                        }
                         return { success: true, mode: recordedPaymentMode, payout: null, payoutError: normalizedPayout.safeMessage, score: metrics.score ?? null };
                     }
                 }

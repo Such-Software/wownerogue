@@ -67,8 +67,15 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
       // Mock processGameStart for QueueManager.startGameImmediately
       processGameStart: async () => ({ success: true, effectiveMode: 'PAID_SINGLE' }),
       // Mock db for PaymentHandlers DB update on confirmation
+      // The security fix requires UPDATE to return rows to confirm the payment was updated
       db: {
-        query: async () => ({ rows: [] })
+        query: async (sql) => {
+          // If this is the UPDATE payments query, return a row to indicate success
+          if (sql && sql.includes('UPDATE payments') && sql.includes('RETURNING')) {
+            return { rows: [{ id: 'pay-1' }] };
+          }
+          return { rows: [] };
+        }
       }
     };
 
