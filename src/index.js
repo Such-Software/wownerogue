@@ -49,6 +49,7 @@ gameModeManager.io = io;
 
 // Initialize remaining components
 const activeGames = new Map(); // Maps socketId to Game objects
+let alertService = null; // Initialized later when payment system starts
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
@@ -201,18 +202,21 @@ app.post('/api/user/:socketId/address', asyncHandler(async (req, res) => {
 app.get('/health', async (req, res) => {
   const memUsage = process.memoryUsage();
 
-  // Get wallet balance if healthy
+  // Get wallet balance - always attempt
   let walletBalance = null;
   let lowBalanceWarning = false;
   const lowBalanceThreshold = parseInt(process.env.LOW_BALANCE_THRESHOLD) || 100000000000; // 0.1 XMR default
 
-  if (walletRPCService.isHealthy) {
-    try {
-      walletBalance = await walletRPCService.getBalance();
+  try {
+    walletBalance = await walletRPCService.getBalance();
+    if (walletBalance.error) {
+      console.warn('Wallet balance returned error:', walletBalance.error);
+    } else {
       lowBalanceWarning = walletBalance.unlocked_balance < lowBalanceThreshold;
-    } catch (e) {
-      // Ignore balance fetch errors
     }
+  } catch (e) {
+    console.error('Failed to get wallet balance for health check:', e.message);
+    walletBalance = { balance: 0, unlocked_balance: 0, error: e.message };
   }
 
   const health = {
@@ -823,6 +827,38 @@ app.post('/api/admin/credits/adjust', adminAuth, asyncHandler(async (req, res) =
 }));
 
 /**
+ * POST /api/admin/alerts/test-email
+ * Send a test email to verify alert service configuration
+ * Requires: X-Admin-Key header
+ */
+app.post('/api/admin/alerts/test-email', adminAuth, asyncHandler(async (req, res) => {
+  if (!alertService) {
+    return res.status(503).json({
+      success: false,
+      message: 'Alert service not initialized. Payment system may not be enabled.'
+    });
+  }
+
+  const result = await alertService.sendAlert('test_email', {
+    subject: `🧪 Wownerogue Alert Test - ${process.env.NODE_ENV || 'development'}`,
+    html: `
+      <h2>Alert Service Test</h2>
+      <p>If you received this email, the alert notifications are working correctly!</p>
+      <hr>
+      <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
+      <p><strong>Time:</strong> ${new Date().toISOString()}</p>
+      <p><strong>Server:</strong> ${process.env.CRYPTO_TYPE || 'WOW'}</p>
+    `
+  });
+
+  res.json({
+    success: result.sent,
+    message: result.sent ? 'Test email sent successfully!' : (result.reason || 'Failed to send'),
+    details: result
+  });
+}));
+
+/**
  * GET /api/admin/users/search
  * Search for users by socket ID prefix or payout address
  * Query: ?q=searchterm&limit=20
@@ -896,14 +932,16 @@ app.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res) =>
     WHERE created_at > NOW() - INTERVAL '24 hours'
   `);
 
-  // Get wallet balance
+  // Get wallet balance - always attempt, even if isHealthy is false
   let walletBalance = null;
-  if (walletRPCService.isHealthy) {
-    try {
-      walletBalance = await walletRPCService.getBalance();
-    } catch (e) {
-      // Ignore
+  try {
+    walletBalance = await walletRPCService.getBalance();
+    if (walletBalance.error) {
+      console.warn('Wallet balance returned error:', walletBalance.error);
     }
+  } catch (e) {
+    console.error('Failed to get wallet balance for admin stats:', e.message);
+    walletBalance = { balance: 0, unlocked_balance: 0, error: e.message };
   }
 
   const user = userStats.rows[0];
@@ -1515,7 +1553,7 @@ async function startServer() {
             const maxRetries = Number(process.env.PAYOUT_MAX_RETRIES) || 3;
             const retryIntervalMs = Number(process.env.PAYOUT_RETRY_INTERVAL_MS) || 300000; // 5 minutes
             // Initialize alert service for email notifications
-            const alertService = new AlertService({
+            alertService = new AlertService({
                 walletService: walletRPCService,
                 db: databaseManager,
                 debugManager

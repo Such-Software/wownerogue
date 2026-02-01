@@ -498,17 +498,28 @@
 
                 // Wallet balance
                 if (overview.walletBalance) {
-                    const bal = overview.walletBalance.unlocked_balance || 0;
-                    const formatted = (bal / 1e12).toFixed(4);
-                    document.getElementById('statBalance').textContent = formatted;
-                    document.getElementById('statUnlocked').textContent = `Unlocked: ${formatted}`;
-
                     const walletEl = document.getElementById('walletStatus');
-                    walletEl.className = 'wallet-status' + (bal < 100000000000 ? ' warning' : ' healthy');
-                    document.getElementById('walletBalance').textContent = `${formatted} ${window.location.hostname.includes('monerogue') ? 'XMR' : 'WOW'}`;
+                    const cryptoType = window.location.hostname.includes('monerogue') ? 'XMR' : 'WOW';
+
+                    if (overview.walletBalance.error) {
+                        // Wallet RPC error - show error state
+                        document.getElementById('statBalance').textContent = 'Error';
+                        document.getElementById('statUnlocked').textContent = overview.walletBalance.error;
+                        document.getElementById('statUnlocked').title = overview.walletBalance.error;
+                        walletEl.className = 'wallet-status disconnected';
+                        document.getElementById('walletBalance').textContent = 'RPC Error';
+                    } else {
+                        // Wallet connected - show balance
+                        const bal = overview.walletBalance.unlocked_balance || 0;
+                        const formatted = (bal / 1e12).toFixed(4);
+                        document.getElementById('statBalance').textContent = formatted;
+                        document.getElementById('statUnlocked').textContent = `Unlocked: ${formatted}`;
+                        walletEl.className = 'wallet-status' + (bal < 100000000000 ? ' warning' : ' healthy');
+                        document.getElementById('walletBalance').textContent = `${formatted} ${cryptoType}`;
+                    }
                 } else {
                     document.getElementById('statBalance').textContent = '-';
-                    document.getElementById('walletBalance').textContent = 'Disconnected';
+                    document.getElementById('walletBalance').textContent = 'Not configured';
                     document.getElementById('walletStatus').className = 'wallet-status disconnected';
                 }
 
