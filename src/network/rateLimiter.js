@@ -43,13 +43,14 @@ class RateLimiter {
 
         const now = Date.now();
         const key = `${userId}:${action}`;
-        
+
         // Check user-based limits
         const userResult = this._checkSingleLimit(key, limit, now);
-        
-        // Check IP-based limits if IP provided and it's a connection-type action
+
+        // Check IP-based limits if IP provided
+        // Apply to: connection actions, payment actions, and game actions
         let ipResult = { allowed: true, remaining: Infinity, retryAfter: 0 };
-        if (ip && action.startsWith('connection:')) {
+        if (ip && this._shouldApplyIpLimit(action)) {
             const ipKey = `${ip}:${action}`;
             ipResult = this._checkSingleLimit(ipKey, limit, now, this.ipStorage);
         }
@@ -69,6 +70,23 @@ class RateLimiter {
     }
 
     /**
+     * Determine if an action should have IP-based rate limiting applied
+     * @param {string} action - Action type
+     * @returns {boolean}
+     */
+    _shouldApplyIpLimit(action) {
+        // Actions that should be rate limited by IP (in addition to socket ID)
+        // This prevents abuse when users reconnect to bypass socket-based limits
+        const ipLimitedPrefixes = [
+            'connection:',   // Connection attempts
+            'payment:',      // Payment creation/operations
+            'game:',         // Game start/queue operations
+            'address:'       // Address changes
+        ];
+        return ipLimitedPrefixes.some(prefix => action.startsWith(prefix));
+    }
+
+    /**
      * Record an action attempt (increment counter)
      * @param {string} userId - User identifier
      * @param {string} action - Action type
@@ -77,12 +95,12 @@ class RateLimiter {
     async recordAttempt(userId, action, ip = null) {
         const now = Date.now();
         const key = `${userId}:${action}`;
-        
+
         // Record user attempt
         this._recordSingleAttempt(key, now);
-        
-        // Record IP attempt for connection actions
-        if (ip && action.startsWith('connection:')) {
+
+        // Record IP attempt for actions that should have IP-based limiting
+        if (ip && this._shouldApplyIpLimit(action)) {
             const ipKey = `${ip}:${action}`;
             this._recordSingleAttempt(ipKey, now, this.ipStorage);
         }

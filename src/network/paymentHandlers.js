@@ -47,6 +47,19 @@ class PaymentHandlers {
             this.io.to(socket.id).emit('payment_error', { error: 'Payment system not available' });
             return;
         }
+
+        // Check if house balance is critically low before proceeding with payment
+        if (this.gameModeManager.alertService) {
+            const balanceCheck = await this.gameModeManager.alertService.checkBalanceForGameStart();
+            if (balanceCheck.halted) {
+                this.io.to(socket.id).emit('balance_critical', {
+                    reason: 'low_balance',
+                    message: balanceCheck.reason || 'Sorry, the house balance is too low to initiate new games. Please try again later.'
+                });
+                return;
+            }
+        }
+
         try {
             const { type, packageId } = data;
             const paymentType = type || data.gameMode || 'single_game';
@@ -104,7 +117,19 @@ class PaymentHandlers {
 
     async createAndShowPaymentRequest(socket, options = {}) {
         if (!this.gameModeManager) return;
-        
+
+        // Check if house balance is critically low before proceeding with payment
+        if (this.gameModeManager.alertService) {
+            const balanceCheck = await this.gameModeManager.alertService.checkBalanceForGameStart();
+            if (balanceCheck.halted) {
+                this.io.to(socket.id).emit('balance_critical', {
+                    reason: 'low_balance',
+                    message: balanceCheck.reason || 'Sorry, the house balance is too low to initiate new games. Please try again later.'
+                });
+                return;
+            }
+        }
+
         // If both direct and credits modes are enabled, let the user choose
         const bothModesEnabled = this.gameModeManager.directModeEnabled && this.gameModeManager.creditsModeEnabled;
         const forceShowOptions = options.showOptions === true;

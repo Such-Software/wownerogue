@@ -139,6 +139,7 @@ const SocketHandlers = {
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
         socket.on('show_payment_options', this.onShowPaymentOptions);
+        socket.on('balance_critical', this.onBalanceCritical);
     socket.on('credits_update', this.onCreditsUpdate);
         socket.on('user_count', this.onUserCount);
         
@@ -727,6 +728,90 @@ const SocketHandlers = {
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.show();
         }
+    },
+
+    onBalanceCritical: function(data) {
+        console.warn('Balance critical - games halted:', data);
+
+        const message = data?.message || 'Sorry, the house balance is too low to initiate new games. Please try again later.';
+
+        // Show a modal to the user
+        SocketHandlers._showBalanceCriticalModal(message);
+
+        // Also show in chat
+        $('#messages').append($('<li class="error" style="color: #ff6600; font-weight: bold;">').text('⚠️ ' + message));
+        UI.scrollChat();
+
+        SocketHandlers._setBannerStatus('Unavailable', '#ff6600');
+    },
+
+    _showBalanceCriticalModal: function(message) {
+        // Remove any existing modal
+        $('#balanceCriticalModal').remove();
+
+        const $modal = $(`
+            <div id="balanceCriticalModal" style="
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.85);
+                z-index: 2000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            ">
+                <div style="
+                    background: linear-gradient(180deg, #220000, #110000);
+                    border: 3px solid #ff3300;
+                    border-radius: 10px;
+                    padding: 30px 40px;
+                    max-width: 450px;
+                    text-align: center;
+                    color: #fff;
+                    font-family: monospace;
+                    box-shadow: 0 0 30px rgba(255, 51, 0, 0.5);
+                ">
+                    <div style="font-size: 48px; margin-bottom: 15px;">⚠️</div>
+                    <h2 style="color: #ff6600; margin: 0 0 20px 0; font-size: 20px;">Service Temporarily Unavailable</h2>
+                    <p style="color: #ffcc99; margin: 0 0 25px 0; line-height: 1.6; font-size: 14px;">
+                        ${message}
+                    </p>
+                    <button id="balanceCriticalOK" style="
+                        background: linear-gradient(180deg, #663300, #331100);
+                        border: 2px solid #ff6600;
+                        color: #ffcc00;
+                        padding: 12px 30px;
+                        font-family: monospace;
+                        font-size: 14px;
+                        cursor: pointer;
+                        border-radius: 5px;
+                    ">OK</button>
+                </div>
+            </div>
+        `);
+
+        $('body').append($modal);
+
+        // Close handlers
+        $modal.on('click', '#balanceCriticalOK', function() {
+            $modal.fadeOut(200, function() { $modal.remove(); });
+        });
+
+        // Also close on clicking outside
+        $modal.on('click', function(e) {
+            if (e.target === $modal[0]) {
+                $modal.fadeOut(200, function() { $modal.remove(); });
+            }
+        });
+
+        // Close on ESC key
+        $(document).one('keydown.balanceCritical', function(e) {
+            if (e.key === 'Escape') {
+                $modal.fadeOut(200, function() { $modal.remove(); });
+            }
+        });
     },
 
     _lastDisplayedConfirmation: null,

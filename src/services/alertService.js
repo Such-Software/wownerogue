@@ -19,9 +19,16 @@ class AlertService {
         this.adminEmail = process.env.ADMIN_EMAIL;
         this.fromEmail = process.env.ALERT_FROM_EMAIL || 'alerts@monerogue.app';
 
-        // Thresholds
-        this.lowBalanceThreshold = parseInt(process.env.LOW_BALANCE_THRESHOLD) || 100000000000; // 0.1 XMR
+        // Balance thresholds (atomic units)
+        // BALANCE_WARN: sends email alert
+        // BALANCE_CRITICAL: sends email AND halts new games
+        this.balanceWarnThreshold = parseInt(process.env.BALANCE_WARN) || parseInt(process.env.LOW_BALANCE_THRESHOLD) || 100000000000; // 0.1 XMR default
+        this.balanceCriticalThreshold = parseInt(process.env.BALANCE_CRITICAL) || 10000000000; // 0.01 XMR default
         this.highPendingThreshold = parseInt(process.env.HIGH_PENDING_THRESHOLD) || 10;
+
+        // Track critical balance state for game halt
+        this.isBalanceCritical = false;
+        this.lastBalanceCheck = null;
 
         // Cooldowns (prevent alert spam)
         this.alertCooldown = parseInt(process.env.ALERT_COOLDOWN_MS) || 3600000; // 1 hour
@@ -83,7 +90,9 @@ class AlertService {
     }
 
     /**
-     * Check wallet balance and alert if low
+     * Check wallet balance and alert if low or critical
+     * BALANCE_WARN: sends email alert
+     * BALANCE_CRITICAL: sends email AND sets isBalanceCritical flag (halts new games)
      */
     async checkWalletBalance() {
         if (!this.walletService?.isHealthy) {
@@ -92,23 +101,37 @@ class AlertService {
 
         try {
             const balance = await this.walletService.getBalance();
+            const unlockedBalance = balance.unlocked_balance || 0;
+            this.lastBalanceCheck = Date.now();
 
-            if (balance.unlocked_balance < this.lowBalanceThreshold) {
-                const balanceFormatted = (balance.unlocked_balance / 1e12).toFixed(6);
-                const thresholdFormatted = (this.lowBalanceThreshold / 1e12).toFixed(6);
-                const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
+            const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
+            const decimals = cryptoType === 'WOW' ? 11 : 12;
+            const divisor = Math.pow(10, decimals);
 
-                await this.sendAlert('low_balance', {
-                    subject: `⚠️ Wallet Balance Low - ${balanceFormatted} ${cryptoType}`,
+            const balanceFormatted = (unlockedBalance / divisor).toFixed(6);
+
+            // Check CRITICAL threshold first (more severe)
+            if (unlockedBalance < this.balanceCriticalThreshold) {
+                // Set critical flag - this will halt new games
+                if (!this.isBalanceCritical) {
+                    this.isBalanceCritical = true;
+                    console.warn(`🚨 CRITICAL: Wallet balance is critically low (${balanceFormatted} ${cryptoType}). New games are HALTED.`);
+                }
+
+                const thresholdFormatted = (this.balanceCriticalThreshold / divisor).toFixed(6);
+
+                await this.sendAlert('balance_critical', {
+                    subject: `🚨 CRITICAL: Wallet Balance Depleted - ${balanceFormatted} ${cryptoType}`,
                     html: `
-                        <h2>Low Wallet Balance Warning</h2>
-                        <p>The payout wallet balance is running low:</p>
+                        <h2 style="color: #dc3545;">🚨 CRITICAL: Wallet Balance Depleted</h2>
+                        <p><strong>NEW GAMES HAVE BEEN HALTED.</strong></p>
+                        <p>The payout wallet balance is critically low:</p>
                         <ul>
                             <li><strong>Current Balance:</strong> ${balanceFormatted} ${cryptoType}</li>
-                            <li><strong>Unlocked:</strong> ${balanceFormatted} ${cryptoType}</li>
-                            <li><strong>Threshold:</strong> ${thresholdFormatted} ${cryptoType}</li>
+                            <li><strong>Critical Threshold:</strong> ${thresholdFormatted} ${cryptoType}</li>
                         </ul>
-                        <p>Please top up the wallet to ensure payouts can continue.</p>
+                        <p style="color: #dc3545;"><strong>Users cannot start new paid games until the wallet is topped up.</strong></p>
+                        <p>Please add funds immediately to restore service.</p>
                         <hr>
                         <p style="color: #666; font-size: 12px;">
                             Server: ${process.env.NODE_ENV || 'development'}<br>
@@ -117,8 +140,85 @@ class AlertService {
                     `
                 });
             }
+            // Check WARN threshold (less severe)
+            else if (unlockedBalance < this.balanceWarnThreshold) {
+                // Clear critical flag if we were critical but now just warning
+                if (this.isBalanceCritical) {
+                    this.isBalanceCritical = false;
+                    console.log(`✅ Wallet balance restored above critical threshold. Games can resume.`);
+                }
+
+                const thresholdFormatted = (this.balanceWarnThreshold / divisor).toFixed(6);
+
+                await this.sendAlert('balance_warn', {
+                    subject: `⚠️ Wallet Balance Low - ${balanceFormatted} ${cryptoType}`,
+                    html: `
+                        <h2>⚠️ Low Wallet Balance Warning</h2>
+                        <p>The payout wallet balance is running low:</p>
+                        <ul>
+                            <li><strong>Current Balance:</strong> ${balanceFormatted} ${cryptoType}</li>
+                            <li><strong>Warning Threshold:</strong> ${thresholdFormatted} ${cryptoType}</li>
+                            <li><strong>Critical Threshold:</strong> ${(this.balanceCriticalThreshold / divisor).toFixed(6)} ${cryptoType}</li>
+                        </ul>
+                        <p>Please top up the wallet soon to avoid service interruption.</p>
+                        <p>If balance drops below the critical threshold, new games will be automatically halted.</p>
+                        <hr>
+                        <p style="color: #666; font-size: 12px;">
+                            Server: ${process.env.NODE_ENV || 'development'}<br>
+                            Time: ${new Date().toISOString()}
+                        </p>
+                    `
+                });
+            } else {
+                // Balance is healthy - clear critical flag if set
+                if (this.isBalanceCritical) {
+                    this.isBalanceCritical = false;
+                    console.log(`✅ Wallet balance restored above thresholds. Games can resume.`);
+                }
+            }
         } catch (error) {
             console.error('Failed to check wallet balance for alerts:', error.message);
+        }
+    }
+
+    /**
+     * Check if new paid games should be halted due to critical balance
+     * @returns {boolean} true if games should be halted
+     */
+    shouldHaltGames() {
+        return this.isBalanceCritical;
+    }
+
+    /**
+     * Force refresh the balance check (useful when called before game start)
+     * @returns {Object} { halted: boolean, reason?: string }
+     */
+    async checkBalanceForGameStart() {
+        if (!this.walletService?.isHealthy) {
+            return { halted: true, reason: 'Wallet service is unavailable. Please try again later.' };
+        }
+
+        try {
+            const balance = await this.walletService.getBalance();
+            const unlockedBalance = balance.unlocked_balance || 0;
+
+            if (unlockedBalance < this.balanceCriticalThreshold) {
+                this.isBalanceCritical = true;
+                const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
+                const decimals = cryptoType === 'WOW' ? 11 : 12;
+                const balanceFormatted = (unlockedBalance / Math.pow(10, decimals)).toFixed(4);
+                return {
+                    halted: true,
+                    reason: `Sorry, the house balance is too low to initiate new games (${balanceFormatted} ${cryptoType}). Please try again later.`
+                };
+            }
+
+            this.isBalanceCritical = false;
+            return { halted: false };
+        } catch (error) {
+            console.error('Failed to check balance for game start:', error.message);
+            // On error, don't halt games - let them proceed
+            return { halted: false };
         }
     }
 

@@ -1612,6 +1612,9 @@ async function startServer() {
                 debugManager
             });
 
+            // Make alertService available to gameModeManager/paymentHandlers for balance checks
+            gameModeManager.alertService = alertService;
+
             const payoutRetryService = new PayoutRetryService({
                 db: databaseManager,
                 walletService: walletRPCService,
