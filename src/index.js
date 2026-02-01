@@ -12,6 +12,7 @@ require('dotenv').config();
 const DatabaseManager = require('./db/databaseManager');
 const WalletRPCService = require('./payments/walletRPCService');
 const PayoutRetryService = require('./payments/payoutRetryService');
+const AlertService = require('./services/alertService');
 const GameModeManager = require('./game/gameModeManager');
 const RpcService = require('./rpc/rpcService');
 const PaymentConfigManager = require('./config/paymentConfig');
@@ -197,15 +198,30 @@ app.post('/api/user/:socketId/address', asyncHandler(async (req, res) => {
 }));
 
 // Health check endpoint - enhanced for monitoring dashboard
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const memUsage = process.memoryUsage();
+
+  // Get wallet balance if healthy
+  let walletBalance = null;
+  let lowBalanceWarning = false;
+  const lowBalanceThreshold = parseInt(process.env.LOW_BALANCE_THRESHOLD) || 100000000000; // 0.1 XMR default
+
+  if (walletRPCService.isHealthy) {
+    try {
+      walletBalance = await walletRPCService.getBalance();
+      lowBalanceWarning = walletBalance.unlocked_balance < lowBalanceThreshold;
+    } catch (e) {
+      // Ignore balance fetch errors
+    }
+  }
+
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     nodeVersion: process.version,
     environment: process.env.NODE_ENV || 'development',
-    
+
     // Memory details
     memory: {
       heapUsed: memUsage.heapUsed,
@@ -213,7 +229,7 @@ app.get('/health', (req, res) => {
       rss: memUsage.rss,
       external: memUsage.external || 0
     },
-    
+
     // Game statistics
     games: {
       active: activeGames.size,
@@ -221,32 +237,34 @@ app.get('/health', (req, res) => {
       connected: io.sockets.sockets.size || 0,
       mode: gameModeManager.gameMode
     },
-    
+
     // Blockchain
     blockHeight: debugManager.getCurrentBlockHeight(),
     blockSource: process.env.BLOCK_SOURCE || 'daemon',
     network: process.env.MONERO_NETWORK || 'mainnet',
-    
+
     // Wallet status
     wallet: {
       available: gameModeManager.paymentsEnabled,
       status: walletRPCService.isHealthy ? 'connected' : 'disconnected',
       endpoint: process.env.PRIMARY_WALLET_ENDPOINT ? '...' + process.env.PRIMARY_WALLET_ENDPOINT.slice(-15) : null,
-      pendingPayouts: 0 // Could track this in gameModeManager
+      pendingPayouts: 0,
+      balance: walletBalance,
+      lowBalanceWarning
     },
-    
+
     // Rate limiter stats (if available)
     rateLimiter: socketHandlers?.rateLimiter ? {
       trackedEntries: socketHandlers.rateLimiter.getTrackedCount?.() || 0,
       blockedCount: socketHandlers.rateLimiter.getBlockedCount?.() || 0
     } : null,
-    
+
     // Limits
     limits: {
       maxGamesPerHour: parseInt(process.env.MAX_GAMES_PER_HOUR) || 60,
       maxPayoutsPerDay: parseInt(process.env.MAX_PAYOUTS_PER_DAY) || 100
     },
-    
+
     // Legacy fields for compatibility
     gameMode: gameModeManager.gameMode,
     paymentsEnabled: gameModeManager.paymentsEnabled,
@@ -841,6 +859,354 @@ app.get('/api/admin/users/search', adminAuth, asyncHandler(async (req, res) => {
   });
 }));
 
+// =============================================================================
+// Admin Stats Endpoints
+// =============================================================================
+
+// GET /api/admin/stats/overview - Server-wide statistics
+app.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res) => {
+  // Get user counts
+  const userStats = await db.query(`
+    SELECT
+      COUNT(*) as total_users,
+      SUM(total_games_played) as total_games,
+      SUM(total_games_won) as total_wins,
+      SUM(total_amount_won) as total_payout_volume,
+      COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as new_users_24h
+    FROM users
+  `);
+
+  // Get payout counts
+  const payoutStats = await db.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'pending') as pending_payouts,
+      COUNT(*) FILTER (WHERE status = 'failed') as failed_payouts,
+      COUNT(*) FILTER (WHERE status = 'completed') as completed_payouts,
+      COUNT(*) FILTER (WHERE status = 'completed' AND processed_at > NOW() - INTERVAL '24 hours') as payouts_24h
+    FROM payouts
+  `);
+
+  // Get game counts for last 24h
+  const gameStats = await db.query(`
+    SELECT
+      COUNT(*) as games_24h,
+      COUNT(*) FILTER (WHERE status = 'won') as wins_24h,
+      COUNT(*) FILTER (WHERE status = 'lost') as losses_24h
+    FROM games
+    WHERE created_at > NOW() - INTERVAL '24 hours'
+  `);
+
+  // Get wallet balance
+  let walletBalance = null;
+  if (walletRPCService.isHealthy) {
+    try {
+      walletBalance = await walletRPCService.getBalance();
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  const user = userStats.rows[0];
+  const payout = payoutStats.rows[0];
+  const game = gameStats.rows[0];
+
+  res.json({
+    totalUsers: parseInt(user.total_users) || 0,
+    totalGamesPlayed: parseInt(user.total_games) || 0,
+    totalGamesWon: parseInt(user.total_wins) || 0,
+    totalPayoutVolume: user.total_payout_volume || '0',
+    pendingPayouts: parseInt(payout.pending_payouts) || 0,
+    failedPayouts: parseInt(payout.failed_payouts) || 0,
+    completedPayouts: parseInt(payout.completed_payouts) || 0,
+    walletBalance: walletBalance,
+    last24h: {
+      games: parseInt(game.games_24h) || 0,
+      wins: parseInt(game.wins_24h) || 0,
+      losses: parseInt(game.losses_24h) || 0,
+      payouts: parseInt(payout.payouts_24h) || 0,
+      newUsers: parseInt(user.new_users_24h) || 0
+    }
+  });
+}));
+
+// GET /api/admin/stats/payouts - Payout details
+app.get('/api/admin/stats/payouts', adminAuth, asyncHandler(async (req, res) => {
+  const { status, limit = 50, offset = 0 } = req.query;
+  const limitNum = Math.min(parseInt(limit) || 50, 200);
+  const offsetNum = parseInt(offset) || 0;
+
+  let whereClause = '';
+  const params = [limitNum, offsetNum];
+
+  if (status && ['pending', 'failed', 'completed', 'permanently_failed'].includes(status)) {
+    whereClause = 'WHERE status = $3';
+    params.push(status);
+  }
+
+  const result = await db.query(`
+    SELECT p.id, p.game_id, p.user_id, p.amount, p.payout_address, p.status,
+           p.tx_hash, p.fee, p.retry_count, p.last_error, p.created_at, p.processed_at
+    FROM payouts p
+    ${whereClause}
+    ORDER BY p.created_at DESC
+    LIMIT $1 OFFSET $2
+  `, params);
+
+  // Get totals
+  const totals = await db.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'pending') as pending_count,
+      COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
+      COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
+      COUNT(*) FILTER (WHERE status = 'permanently_failed') as permanently_failed_count,
+      COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as total_volume
+    FROM payouts
+  `);
+
+  res.json({
+    payouts: result.rows.map(p => ({
+      id: p.id,
+      gameId: p.game_id,
+      userId: p.user_id,
+      amount: p.amount,
+      address: p.payout_address,
+      status: p.status,
+      txHash: p.tx_hash,
+      fee: p.fee,
+      retryCount: p.retry_count,
+      lastError: p.last_error,
+      createdAt: p.created_at,
+      processedAt: p.processed_at
+    })),
+    totals: {
+      pending: parseInt(totals.rows[0].pending_count) || 0,
+      failed: parseInt(totals.rows[0].failed_count) || 0,
+      completed: parseInt(totals.rows[0].completed_count) || 0,
+      permanentlyFailed: parseInt(totals.rows[0].permanently_failed_count) || 0,
+      totalVolume: totals.rows[0].total_volume || '0'
+    }
+  });
+}));
+
+// GET /api/admin/stats/games - Game statistics
+app.get('/api/admin/stats/games', adminAuth, asyncHandler(async (req, res) => {
+  const { period = '24h', limit = 50 } = req.query;
+  const limitNum = Math.min(parseInt(limit) || 50, 200);
+
+  // Parse period
+  let interval = '24 hours';
+  if (period === '7d') interval = '7 days';
+  else if (period === '30d') interval = '30 days';
+
+  // Summary stats
+  const summary = await db.query(`
+    SELECT
+      COUNT(*) as total,
+      COUNT(*) FILTER (WHERE status = 'won') as won,
+      COUNT(*) FILTER (WHERE status = 'lost') as lost,
+      COUNT(*) FILTER (WHERE outcome = 'escaped') as escaped,
+      COUNT(*) FILTER (WHERE outcome = 'caught_by_monster') as caught,
+      COUNT(*) FILTER (WHERE outcome = 'expired') as expired,
+      AVG(duration_seconds) as avg_duration
+    FROM games
+    WHERE created_at > NOW() - INTERVAL '${interval}'
+  `);
+
+  // By game mode
+  const byMode = await db.query(`
+    SELECT game_mode, COUNT(*) as count
+    FROM games
+    WHERE created_at > NOW() - INTERVAL '${interval}'
+    GROUP BY game_mode
+  `);
+
+  // Top winners
+  const topWinners = await db.query(`
+    SELECT u.socket_id, u.total_games_won as wins, u.total_amount_won as total_won
+    FROM users u
+    WHERE u.total_games_won > 0
+    ORDER BY u.total_amount_won DESC
+    LIMIT 10
+  `);
+
+  // Recent games
+  const recentGames = await db.query(`
+    SELECT g.id, g.game_mode, g.status, g.outcome, g.duration_seconds, g.created_at,
+           p.amount as payout_amount
+    FROM games g
+    LEFT JOIN payouts p ON p.game_id = g.id AND p.status = 'completed'
+    ORDER BY g.created_at DESC
+    LIMIT $1
+  `, [limitNum]);
+
+  const s = summary.rows[0];
+  const modeMap = {};
+  byMode.rows.forEach(r => { modeMap[r.game_mode] = parseInt(r.count) || 0; });
+
+  res.json({
+    summary: {
+      total: parseInt(s.total) || 0,
+      won: parseInt(s.won) || 0,
+      lost: parseInt(s.lost) || 0,
+      escaped: parseInt(s.escaped) || 0,
+      caught: parseInt(s.caught) || 0,
+      expired: parseInt(s.expired) || 0
+    },
+    avgDuration: parseFloat(s.avg_duration) || 0,
+    byMode: modeMap,
+    topWinners: topWinners.rows.map(w => ({
+      socketId: w.socket_id?.substring(0, 20) + '...',
+      wins: parseInt(w.wins) || 0,
+      totalWon: w.total_won || '0'
+    })),
+    recentGames: recentGames.rows.map(g => ({
+      id: g.id,
+      mode: g.game_mode,
+      status: g.status,
+      outcome: g.outcome,
+      duration: g.duration_seconds,
+      payoutAmount: g.payout_amount,
+      createdAt: g.created_at
+    }))
+  });
+}));
+
+// GET /api/admin/users - Paginated user list
+app.get('/api/admin/users', adminAuth, asyncHandler(async (req, res) => {
+  const { search, limit = 50, offset = 0 } = req.query;
+  const limitNum = Math.min(parseInt(limit) || 50, 200);
+  const offsetNum = parseInt(offset) || 0;
+
+  let whereClause = '';
+  const params = [limitNum, offsetNum];
+
+  if (search && search.length >= 3) {
+    whereClause = 'WHERE socket_id ILIKE $3 OR payout_address ILIKE $3';
+    params.push(`%${search}%`);
+  }
+
+  const result = await db.query(`
+    SELECT id, socket_id, payout_address, credits, total_games_played, total_games_won,
+           total_amount_paid, total_amount_won, total_credits_purchased, created_at
+    FROM users
+    ${whereClause}
+    ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
+  `, params);
+
+  const countResult = await db.query(`
+    SELECT COUNT(*) as total FROM users ${whereClause}
+  `, search && search.length >= 3 ? [`%${search}%`] : []);
+
+  res.json({
+    users: result.rows.map(u => ({
+      id: u.id,
+      socketId: u.socket_id,
+      payoutAddress: u.payout_address ? `${u.payout_address.substring(0, 15)}...` : null,
+      credits: u.credits || 0,
+      gamesPlayed: parseInt(u.total_games_played) || 0,
+      gamesWon: parseInt(u.total_games_won) || 0,
+      totalPaid: u.total_amount_paid || '0',
+      totalWon: u.total_amount_won || '0',
+      creditsPurchased: parseInt(u.total_credits_purchased) || 0,
+      createdAt: u.created_at
+    })),
+    total: parseInt(countResult.rows[0]?.total) || 0,
+    limit: limitNum,
+    offset: offsetNum
+  });
+}));
+
+// GET /api/admin/users/:id - Detailed user info
+app.get('/api/admin/users/:id', adminAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const userResult = await db.query(`
+    SELECT * FROM users WHERE id = $1
+  `, [id]);
+
+  if (!userResult.rows.length) {
+    throw new NotFoundError('User not found');
+  }
+
+  const user = userResult.rows[0];
+
+  // Get user's games
+  const gamesResult = await db.query(`
+    SELECT id, game_mode, status, outcome, treasure_found, moves_made, duration_seconds, created_at
+    FROM games
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 50
+  `, [id]);
+
+  // Get user's payments
+  const paymentsResult = await db.query(`
+    SELECT id, amount, status, tx_hash, credits_purchased, created_at
+    FROM payments
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 50
+  `, [id]);
+
+  // Get user's payouts
+  const payoutsResult = await db.query(`
+    SELECT id, amount, status, tx_hash, fee, payout_address, created_at, processed_at
+    FROM payouts
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 50
+  `, [id]);
+
+  res.json({
+    user: {
+      id: user.id,
+      socketId: user.socket_id,
+      payoutAddress: user.payout_address,
+      credits: user.credits || 0,
+      gamesPlayed: parseInt(user.total_games_played) || 0,
+      gamesWon: parseInt(user.total_games_won) || 0,
+      totalPaid: user.total_amount_paid || '0',
+      totalWon: user.total_amount_won || '0',
+      creditsPurchased: parseInt(user.total_credits_purchased) || 0,
+      createdAt: user.created_at
+    },
+    games: gamesResult.rows,
+    payments: paymentsResult.rows,
+    payouts: payoutsResult.rows
+  });
+}));
+
+// POST /api/admin/payouts/:id/retry - Manually retry a failed payout
+app.post('/api/admin/payouts/:id/retry', adminAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const payoutResult = await db.query(`
+    SELECT * FROM payouts WHERE id = $1
+  `, [id]);
+
+  if (!payoutResult.rows.length) {
+    throw new NotFoundError('Payout not found');
+  }
+
+  const payout = payoutResult.rows[0];
+
+  if (payout.status === 'completed') {
+    throw new ValidationError('Payout already completed');
+  }
+
+  // Reset status to pending for retry
+  await db.query(`
+    UPDATE payouts SET status = 'pending', last_error = 'Manual retry requested' WHERE id = $1
+  `, [id]);
+
+  res.json({
+    success: true,
+    message: 'Payout queued for retry',
+    payoutId: id
+  });
+}));
+
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();
   const decimals = Number(config.currency?.decimals ?? 12);
@@ -1110,8 +1476,9 @@ async function startServer() {
         });
         
         // Start HTTP server
-        http.listen(3000, function() {
-            console.log('🚀 Wownerogue server listening on *:3000');
+        const PORT = process.env.PORT || 3000;
+        http.listen(PORT, function() {
+            console.log(`🚀 Wownerogue server listening on *:${PORT}`);
             console.log(`🐛 Debug mode: ${debugManager.getDebugStatus().debugMode ? 'ENABLED' : 'DISABLED'}`);
             console.log(`💰 Payment system: ${paymentSystemReady ? 'ENABLED' : 'FREE MODE ONLY'}`);
             const summary = paymentConfigManager.summarize();
@@ -1147,14 +1514,25 @@ async function startServer() {
             // Start payout retry service for failed/stuck payouts
             const maxRetries = Number(process.env.PAYOUT_MAX_RETRIES) || 3;
             const retryIntervalMs = Number(process.env.PAYOUT_RETRY_INTERVAL_MS) || 300000; // 5 minutes
+            // Initialize alert service for email notifications
+            const alertService = new AlertService({
+                walletService: walletRPCService,
+                db: databaseManager,
+                debugManager
+            });
+
             const payoutRetryService = new PayoutRetryService({
                 db: databaseManager,
                 walletService: walletRPCService,
                 debugManager,
                 maxRetries,
-                retryIntervalMs
+                retryIntervalMs,
+                alertService // Pass alert service for failure notifications
             });
             payoutRetryService.start();
+
+            // Start periodic alert checks (every 5 minutes)
+            alertService.startPeriodicChecks(300000);
         }
         
     } catch (error) {

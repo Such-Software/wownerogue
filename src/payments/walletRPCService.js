@@ -319,6 +319,30 @@ class WalletRPCService {
     }
 
     /**
+     * Get wallet balance for admin monitoring
+     * @returns {Object} - { balance: bigint, unlocked_balance: bigint } in atomic units
+     */
+    async getBalance() {
+        try {
+            const response = await this.rpcCall('get_balance', {
+                account_index: this.accountIndex
+            });
+
+            return {
+                balance: response.result?.balance || 0,
+                unlocked_balance: response.result?.unlocked_balance || 0
+            };
+        } catch (error) {
+            console.error('❌ Failed to get wallet balance:', error.message);
+            return {
+                balance: 0,
+                unlocked_balance: 0,
+                error: error.message
+            };
+        }
+    }
+
+    /**
      * Validate a payout address using wallet RPC
      * @param {string} address - The address to validate
      * @returns {Object} - { valid: boolean, integrated: boolean, subaddress: boolean }

@@ -38,6 +38,7 @@
     "socket.io-client": "^4.8.1",
     "uuid": "^9.0.0"
     ,"qrcode": "^1.5.3",
+    "resend": "^4.0.0",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {

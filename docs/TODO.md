@@ -66,13 +66,59 @@
 - [x] **Rate Limit Tuning**: Current defaults (60 games/hour, 100 payouts/day) suitable for launch ✅
 - [x] **Log Rotation**: Using systemd journald with configurable retention (see `LOGS_AND_BACKUP.md`) ✅
 
+## Security Audit Fixes (Jan 2026)
+- [x] **XSS Vulnerability**: Complete HTML entity escaping in chat handler (`&`, `<`, `>`, `"`, `'`)
+- [x] **tx_hash Idempotency**: UNIQUE partial indexes on payments/payouts tables (migration 008)
+- [x] **Timing-Safe Auth**: Admin API uses `crypto.timingSafeEqual()` for key comparison
+- [x] **Transactional Payouts**: Payout flow creates pending record first, updates atomically
+- [x] **Payout Retry Service**: Auto-retries failed payouts (max 3 attempts, 5-min interval)
+- [x] **Address Validation**: `validateAddress()` called before every payout attempt
+- [x] **Transaction Status Check**: `checkTransactionStatus()` verifies blockchain before retry
+
+## Smirk Wallet Integration (Jan 2026)
+- [x] **Database Schema**: `smirk_public_key` column, `smirk_challenges` table (migration 009)
+- [x] **Auth Endpoints**: `/api/auth/smirk/challenge`, `/verify`, `/status`
+- [x] **Frontend Module**: `smirkAuth.js` with extension detection and login flow
+- [x] **Address Modal**: Shows Smirk connect button or install link
+
+## Admin Dashboard (Jan 2026)
+- [x] **Alert Service**: Email alerts via Resend for low balance, disconnects, failed payouts
+- [x] **Stats Endpoints**: `/api/admin/stats/overview`, `/payouts`, `/games`, `/users`
+- [x] **Admin UI**: Full dashboard at `/admin.html` with charts and tables
+- [x] **Payout Retry**: Manual retry button in admin dashboard
+
+## Pre-Production Testing Checklist
+
+### Security Verification
+- [ ] Chat XSS: `<script>` and `"onclick=` render as plain text
+- [ ] Duplicate tx_hash insertion fails with constraint error
+- [ ] Payout creates pending record before RPC call
+- [ ] Failed payouts have records for retry
+- [ ] Retry service processes failed payouts (check logs)
+
+### Smirk Integration Verification
+- [ ] "Connect Smirk" button appears when extension installed
+- [ ] "Get Smirk Wallet" link appears when extension NOT installed
+- [ ] Challenge generated and stored in DB
+- [ ] Signature verification links public key to user
+- [ ] Payout address auto-populated from wallet
+- [ ] Anonymous sessions still work (backwards compatible)
+
+### End-to-End Testing
+- [ ] Play full game with Smirk login
+- [ ] Win and receive payout to Smirk address
+- [ ] Verify payout recorded in transaction history
+- [ ] Manual integration test with real wallet-rpc
+
+---
+
 ## Known Issues / Future Improvements
 
 ### Backend
-- [ ] **Database Transactions**: Wrap multi-step financial operations in transactions (credit deductions, payout processing)
+- [x] **Database Transactions**: `withTransaction()` helper for atomic financial operations ✅
 - [ ] **Payment Idempotency**: Replace in-memory Set with database-backed idempotency keys for payment confirmation
-- [ ] **Payout Retry Queue**: Implement automatic retry mechanism for failed payouts
-- [ ] **Address Checksum Validation**: Add cryptographic checksum validation for XMR/WOW addresses
+- [x] **Payout Retry Queue**: Automatic retry mechanism via `payoutRetryService.js` ✅
+- [x] **Address Validation**: Wallet RPC `validate_address` method ✅
 - [ ] **Redis Rate Limiting**: Replace in-memory rate limiter with Redis for persistence across restarts
 
 ### Frontend

@@ -8,12 +8,13 @@
 const { AppError } = require('../utils/errors');
 
 class PayoutRetryService {
-    constructor({ db, walletService, debugManager, maxRetries = 3, retryIntervalMs = 300000 }) {
+    constructor({ db, walletService, debugManager, maxRetries = 3, retryIntervalMs = 300000, alertService = null }) {
         this.db = db;
         this.walletService = walletService;
         this.debugManager = debugManager;
         this.maxRetries = maxRetries;
         this.retryIntervalMs = retryIntervalMs; // Default: 5 minutes
+        this.alertService = alertService; // For sending failure notifications
         this.isProcessing = false;
         this.retryTimer = null;
     }
@@ -208,6 +209,22 @@ class PayoutRetryService {
 
             if (newStatus === 'permanently_failed') {
                 console.error(`❌ Payout ${id} permanently failed after ${newRetryCount} attempts: ${error.message}`);
+
+                // Send email alert for permanent failure
+                if (this.alertService) {
+                    try {
+                        await this.alertService.alertPayoutFailed({
+                            id,
+                            game_id,
+                            amount,
+                            payout_address,
+                            retry_count: newRetryCount,
+                            last_error: error.message
+                        });
+                    } catch (alertError) {
+                        console.error('Failed to send payout failure alert:', alertError.message);
+                    }
+                }
             } else {
                 console.warn(`⚠️ Payout ${id} retry failed (attempt ${newRetryCount}/${this.maxRetries}): ${error.message}`);
             }
