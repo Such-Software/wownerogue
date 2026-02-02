@@ -280,6 +280,7 @@
             <!-- Tabs -->
             <div class="tabs">
                 <button class="tab-btn active" data-tab="overview">Overview</button>
+                <button class="tab-btn" data-tab="queue">Queue</button>
                 <button class="tab-btn" data-tab="payouts">Payouts</button>
                 <button class="tab-btn" data-tab="games">Games</button>
                 <button class="tab-btn" data-tab="users">Users</button>
@@ -290,6 +291,34 @@
                 <div class="chart-container">
                     <h3>Game Outcomes (Last 24h)</h3>
                     <canvas id="outcomesChart" height="100"></canvas>
+                </div>
+            </div>
+
+            <!-- Tab: Queue -->
+            <div id="tab-queue" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Game Queue</h3>
+                        <button onclick="refreshQueue()" style="background:#055; color:#0f0; border:1px solid #0f0; padding:4px 10px; cursor:pointer;">🔄 Refresh</button>
+                    </div>
+                    <p style="color:#888; margin: 10px 0; font-size:12px;">
+                        Entries waiting more than 10 minutes are highlighted in orange. Remove stuck entries that will never confirm.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Server ID</th>
+                                <th>Waiting</th>
+                                <th>Payment ID</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueTable">
+                            <tr><td colspan="6" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -467,7 +496,8 @@
             document.getElementById(`tab-${tab}`).classList.add('active');
 
             // Load data for tab
-            if (tab === 'payouts') loadPayouts();
+            if (tab === 'queue') loadQueue();
+            else if (tab === 'payouts') loadPayouts();
             else if (tab === 'games') loadGames();
             else if (tab === 'users') loadUsers();
         }
@@ -561,6 +591,84 @@
                     }
                 }
             });
+        }
+
+        // Queue management functions
+        async function loadQueue() {
+            try {
+                const res = await fetch('/api/admin/queue', { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+
+                const tbody = document.getElementById('queueTable');
+                if (!data.queue?.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading" style="color:#0f0;">Queue is empty - no waiting players</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.queue.map(entry => {
+                    const isStuck = entry.waitingSeconds > 600; // > 10 minutes
+                    const rowStyle = isStuck ? 'background: rgba(255,100,0,0.2);' : '';
+                    const statusText = entry.confirmed ? '✅ Confirmed' :
+                                      entry.requiresConfirmation ? '⏳ Awaiting Confirmation' : '🎮 Ready';
+
+                    const formatWait = (sec) => {
+                        if (sec < 60) return sec + 's';
+                        if (sec < 3600) return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+                        return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+                    };
+
+                    return \`
+                        <tr style="\${rowStyle}">
+                            <td>\${entry.position}</td>
+                            <td title="\${entry.serverId}">\${entry.serverId.substring(0, 12)}...</td>
+                            <td style="\${isStuck ? 'color:#f80; font-weight:bold;' : ''}">\${formatWait(entry.waitingSeconds)}</td>
+                            <td>\${entry.paymentId || '-'}</td>
+                            <td>\${statusText}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="removeQueueEntry('\${entry.serverId}')" style="background:#500; color:#f88; border:1px solid #f55; padding:3px 8px; cursor:pointer;">
+                                    Remove
+                                </button>
+                            </td>
+                        </tr>
+                    \`;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load queue:', e);
+                document.getElementById('queueTable').innerHTML = '<tr><td colspan="6" class="loading" style="color:#f00;">Failed to load queue</td></tr>';
+            }
+        }
+
+        function refreshQueue() {
+            loadQueue();
+        }
+
+        async function removeQueueEntry(serverId) {
+            if (!confirm(\`Remove queue entry for \${serverId.substring(0, 12)}...? This will cancel their queue position.\`)) return;
+
+            const reason = prompt('Reason for removal (optional):') || 'Admin removal';
+
+            try {
+                const res = await fetch('/api/admin/queue/remove', {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ serverId, reason })
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    alert('Queue entry removed successfully');
+                    loadQueue();
+                    loadDashboard(); // Refresh overview stats
+                } else {
+                    alert('Error: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to remove queue entry: ' + e.message);
+            }
         }
 
         async function loadPayouts() {

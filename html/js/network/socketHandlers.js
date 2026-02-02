@@ -556,7 +556,13 @@ const SocketHandlers = {
         SocketHandlers._creditsPayoutsEnabled = !!data.creditsPayoutsEnabled;
         SocketHandlers._directPayoutsEnabled = !!data.directPayoutsEnabled;
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
-        
+        SocketHandlers._smirkEnabled = data.smirkEnabled !== false; // Default to true if not specified
+
+        // Initialize Smirk auth if enabled and not already initialized
+        if (SocketHandlers._smirkEnabled && typeof SmirkAuth !== 'undefined' && !SmirkAuth._initialized) {
+            SmirkAuth.init();
+        }
+
         if (typeof UI !== 'undefined' && UI.updateGameTitle) {
             UI.updateGameTitle(data.cryptoType);
         }

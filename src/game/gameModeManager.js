@@ -1194,7 +1194,9 @@ class GameModeManager {
                 enabled: paymentConfig.earlyEntry?.enabled ?? false,
                 allowInFreeMode: paymentConfig.earlyEntry?.allowInFreeMode ?? false,
                 allowInCreditsMode: paymentConfig.earlyEntry?.allowInCreditsMode ?? false
-            }
+            },
+            // Smirk wallet integration (disabled for Monero stagenet)
+            smirkEnabled: process.env.SMIRK_ENABLED !== 'false'
         };
     }
 

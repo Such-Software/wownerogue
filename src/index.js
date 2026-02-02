@@ -444,7 +444,11 @@ app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
 // =============================================================================
 // Smirk Wallet Authentication Endpoints
 // =============================================================================
+// Smirk is a browser extension wallet for Wownero/Monero.
+// Disable for Monero stagenet deployments (Smirk doesn't support stagenet).
+const smirkEnabled = process.env.SMIRK_ENABLED !== 'false';
 
+if (smirkEnabled) {
 /**
  * POST /api/auth/smirk/challenge
  * Generate a challenge for Smirk wallet signature verification
@@ -603,6 +607,8 @@ app.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
     hasPayoutAddress: !!user.payout_address
   });
 }));
+
+} // End of smirkEnabled block
 
 // =============================================================================
 // Admin API Endpoints (requires ADMIN_API_KEY)
@@ -908,6 +914,85 @@ app.post('/api/admin/alerts/test-email', adminAuth, asyncHandler(async (req, res
     success: result.sent,
     message: result.sent ? 'Test email sent successfully!' : (result.reason || 'Failed to send'),
     details: result
+  });
+}));
+
+// =============================================================================
+// Admin Queue Management
+// =============================================================================
+
+/**
+ * GET /api/admin/queue
+ * Get current queue details for admin dashboard
+ * Returns full queue entries (not anonymized)
+ */
+app.get('/api/admin/queue', adminAuth, asyncHandler(async (req, res) => {
+  if (!socketHandlers?.queueManager) {
+    return res.status(503).json({
+      success: false,
+      message: 'Queue manager not available'
+    });
+  }
+
+  const queueDetails = socketHandlers.queueManager.getQueueDetailsForAdmin();
+
+  res.json({
+    success: true,
+    queue: queueDetails,
+    count: queueDetails.length
+  });
+}));
+
+/**
+ * POST /api/admin/queue/remove
+ * Remove a stuck queue entry by serverId
+ * Body: { serverId: string, reason?: string }
+ */
+app.post('/api/admin/queue/remove', adminAuth, asyncHandler(async (req, res) => {
+  const { serverId, reason } = req.body || {};
+
+  if (!serverId || typeof serverId !== 'string') {
+    throw new ValidationError('Missing serverId', {
+      safeMessage: 'serverId is required to remove a queue entry.'
+    });
+  }
+
+  if (!socketHandlers?.queueManager) {
+    return res.status(503).json({
+      success: false,
+      message: 'Queue manager not available'
+    });
+  }
+
+  // Check if entry exists first
+  const isQueued = socketHandlers.queueManager.isPlayerQueued(serverId);
+  if (!isQueued) {
+    return res.status(404).json({
+      success: false,
+      message: `No queue entry found for serverId: ${serverId}`
+    });
+  }
+
+  // Remove the entry
+  const removed = socketHandlers.queueManager.removePlayer(serverId);
+
+  // Log admin action
+  console.log(`[Admin] Queue entry removed: serverId=${serverId}, reason="${reason || 'No reason provided'}", by admin at ${new Date().toISOString()}`);
+
+  // Optionally notify the user via socket (if still connected)
+  try {
+    io.to(serverId).emit('queue_cancelled', {
+      reason: 'admin_removed',
+      message: 'Your queue entry was removed by an administrator.'
+    });
+  } catch (notifyErr) {
+    // Ignore errors - user may be disconnected
+  }
+
+  res.json({
+    success: removed,
+    message: removed ? 'Queue entry removed successfully' : 'Failed to remove queue entry',
+    serverId: serverId
   });
 }));
 

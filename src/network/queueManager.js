@@ -288,6 +288,26 @@ class QueueManager {
             waitingForConfirmation: entry.requiresConfirmation && !entry.confirmed
         }));
     }
+
+    /**
+     * Get full queue details for admin dashboard (not anonymized)
+     * @returns {Array} Full queue entries with all details
+     */
+    getQueueDetailsForAdmin() {
+        const now = Date.now();
+        return this._waitingPlayers.map((entry, index) => ({
+            position: index + 1,
+            serverId: entry.serverId,
+            playerId: entry.serverId.substring(0, 6), // For display
+            entryTime: entry.entryTime ? new Date(entry.entryTime).toISOString() : null,
+            waitingSeconds: entry.entryTime ? Math.floor((now - entry.entryTime) / 1000) : 0,
+            paymentId: entry.paymentId || null,
+            userId: entry.userId || null,
+            requiresConfirmation: !!entry.requiresConfirmation,
+            confirmed: !!entry.confirmed,
+            isValuable: this._isValuableEntry(entry)
+        }));
+    }
 }
 
 module.exports = QueueManager;

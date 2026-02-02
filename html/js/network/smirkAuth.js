@@ -231,6 +231,18 @@ const SmirkAuth = {
      * Should be called after DOM is ready and socket is connected
      */
     init() {
+        // Check if server has Smirk disabled (e.g., for Monero stagenet)
+        if (typeof SocketHandlers !== 'undefined' && SocketHandlers._smirkEnabled === false) {
+            console.log('Smirk integration disabled by server');
+            return;
+        }
+
+        // Prevent double-initialization
+        if (this._initialized) {
+            return;
+        }
+        this._initialized = true;
+
         const container = $('#smirkButtonContainer');
         if (!container.length) {
             console.log('Smirk button container not found');
@@ -291,12 +303,19 @@ const SmirkAuth = {
     }
 };
 
-// Auto-initialize when DOM is ready
+// Auto-initialize when DOM is ready (with delay to allow game_mode_info to arrive first)
 $(document).ready(function() {
-    // Wait a short moment for socket to connect before initializing
+    // Wait for game_mode_info to arrive first (typically within 2 seconds)
+    // SocketHandlers will call SmirkAuth.init() when it receives game_mode_info
+    // This fallback is for cases where game_mode_info doesn't include smirkEnabled
     setTimeout(() => {
-        SmirkAuth.init();
-    }, 1000);
+        // Only auto-init if not already initialized by SocketHandlers
+        // and if SocketHandlers._smirkEnabled is not explicitly false
+        if (!SmirkAuth._initialized &&
+            (typeof SocketHandlers === 'undefined' || SocketHandlers._smirkEnabled !== false)) {
+            SmirkAuth.init();
+        }
+    }, 3000);
 });
 
 // Also re-check when socket connects (in case of reconnection)
