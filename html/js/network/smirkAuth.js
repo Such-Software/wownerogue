@@ -9,7 +9,7 @@
  * 2. Connect to Smirk extension to get public keys
  * 3. Sign challenge with wallet
  * 4. Verify signature with backend
- * 5. Auto-set payout address from wallet
+ * 5. Get wallet addresses via getAddresses() and auto-set payout address
  */
 
 const SmirkAuth = {
@@ -63,7 +63,7 @@ const SmirkAuth = {
         }
 
         if (!keys || !keys.wow) {
-            throw new Error('Smirk wallet did not return a WOW address');
+            throw new Error('Smirk wallet did not return WOW public key');
         }
 
         // Step 3: Sign the challenge
@@ -99,19 +99,31 @@ const SmirkAuth = {
 
         const verifyData = await verifyRes.json();
 
-        // Step 5: Auto-set payout address from wallet
-        if (keys.wow && window.socket) {
-            window.socket.emit('address:update', { address: keys.wow });
+        // Step 5: Get wallet addresses and auto-set payout address
+        // Note: keys.wow is a public key (hex), NOT an address
+        // We need to call getAddresses() to get the actual WOW address
+        let walletAddress = null;
+        try {
+            const addresses = await window.smirk.getAddresses();
+            if (addresses && addresses.wow && window.socket) {
+                window.socket.emit('address:update', { address: addresses.wow });
+                walletAddress = addresses.wow;
+                console.log('Smirk WOW address set:', addresses.wow.substring(0, 20) + '...');
+            }
+        } catch (addrErr) {
+            console.warn('Could not get Smirk addresses:', addrErr.message);
+            // Fall back - user will need to manually enter address
         }
 
         // Update internal state
         this._isLinked = true;
-        this._walletAddress = keys.wow;
+        this._walletAddress = walletAddress;
+        this._publicKey = wowSig.publicKey;
 
         return {
             success: true,
             linked: verifyData.linked,
-            address: keys.wow
+            address: walletAddress
         };
     },
 
@@ -197,15 +209,20 @@ const SmirkAuth = {
             this._updateButton(btn, 'connected');
 
             // Show success message in chat
+            const addressSet = result.address != null;
+            const successMsg = addressSet
+                ? 'Smirk wallet connected! Payout address set.'
+                : 'Smirk wallet authenticated! Please set your payout address manually.';
+
             if (typeof SocketHandlers !== 'undefined' && SocketHandlers._appendMessage) {
-                SocketHandlers._appendMessage('status', 'Smirk wallet connected! Payout address set.');
+                SocketHandlers._appendMessage('status', successMsg);
             } else {
-                $('#messages').append($('<li class="status">').text('Smirk wallet connected! Payout address set.'));
+                $('#messages').append($('<li class="status">').text(successMsg));
             }
 
             // Update address button status if available
             if (typeof SocketHandlers !== 'undefined' && SocketHandlers._updateAddressButtonStatus) {
-                SocketHandlers._updateAddressButtonStatus(true);
+                SocketHandlers._updateAddressButtonStatus(addressSet);
             }
 
             return result;
