@@ -21,22 +21,39 @@ const InputHandler = {
     },
 
     setupChatForm: function() {
+        const MAX_CHAT_LENGTH = 200;
+
+        // Character counter update
+        $('#chatInput').on('input', function() {
+            const len = $(this).val().length;
+            const counter = $('#charCounter');
+            counter.text(len + '/' + MAX_CHAT_LENGTH);
+            // Change color when approaching limit
+            if (len >= MAX_CHAT_LENGTH) {
+                counter.css('color', '#f66');
+            } else if (len >= MAX_CHAT_LENGTH * 0.8) {
+                counter.css('color', '#fa0');
+            } else {
+                counter.css('color', '#666');
+            }
+        });
+
         $('#chatForm').submit(function(e) {
             e.preventDefault();
             var msg = $('#chatInput').val().trim();
-            
+
             // Don't send empty messages
             if (!msg) return false;
-            
+
             // If the message is "enter", always send it to server
             // The server will handle queueing logic and timing
             if (msg.toLowerCase() === 'enter') {
                 socket.emit('chat message', msg);
-                
+
                 // Don't automatically switch to waiting screen - let the server control screen state
                 // The server will send appropriate events (payment_created, waiting_status, etc.)
                 // to control what the user sees
-                
+
                 // Add visual feedback that request was sent
                 $('#messages').append($('<li style="color: #0f0;">').text("🔑 Processing game entry request..."));
                 UI.scrollChat();
@@ -44,8 +61,9 @@ const InputHandler = {
                 // Send other chat messages normally
                 socket.emit('chat message', msg);
             }
-            
+
             $('#chatInput').val('');
+            $('#charCounter').text('0/' + MAX_CHAT_LENGTH).css('color', '#666');
             return false;
         });
 

@@ -996,6 +996,93 @@ app.post('/api/admin/queue/remove', adminAuth, asyncHandler(async (req, res) => 
   });
 }));
 
+// =============================================================================
+// ADMIN CHAT MODERATION ENDPOINTS
+// =============================================================================
+
+/**
+ * GET /api/admin/chat
+ * List recent chat messages for moderation
+ * Query: ?limit=100&includeDeleted=false
+ */
+app.get('/api/admin/chat', adminAuth, asyncHandler(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const includeDeleted = req.query.includeDeleted === 'true';
+
+  const messages = await socketHandlers.chatHandler.chatHistory.getMessagesForAdmin(limit, includeDeleted);
+
+  res.json({
+    messages,
+    count: messages.length
+  });
+}));
+
+/**
+ * DELETE /api/admin/chat/:id
+ * Soft delete a chat message
+ * Body: { reason?: string }
+ */
+app.delete('/api/admin/chat/:id', adminAuth, asyncHandler(async (req, res) => {
+  const messageId = parseInt(req.params.id);
+  const { reason } = req.body;
+
+  if (!messageId || isNaN(messageId)) {
+    throw new ValidationError('Invalid message ID');
+  }
+
+  const deleted = await socketHandlers.chatHandler.chatHistory.deleteMessage(
+    messageId,
+    'admin',
+    reason || 'Admin deleted'
+  );
+
+  if (deleted) {
+    // Broadcast deletion to all connected clients
+    io.emit('chat_deleted', { messageId });
+    console.log(`[Admin] Chat message deleted: id=${messageId}, reason="${reason || 'No reason provided'}"`);
+  }
+
+  res.json({
+    success: deleted,
+    message: deleted ? 'Message deleted' : 'Message not found or already deleted'
+  });
+}));
+
+/**
+ * POST /api/admin/users/:id/chat-ban
+ * Ban or unban a user from chat
+ * Body: { banned: boolean, reason?: string }
+ */
+app.post('/api/admin/users/:id/chat-ban', adminAuth, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.id);
+  const { banned, reason } = req.body;
+
+  if (!userId || isNaN(userId)) {
+    throw new ValidationError('Invalid user ID');
+  }
+
+  if (typeof banned !== 'boolean') {
+    throw new ValidationError('banned must be a boolean');
+  }
+
+  await db.query(`
+    UPDATE users
+    SET chat_banned = $2,
+        chat_banned_at = CASE WHEN $2 THEN NOW() ELSE NULL END,
+        chat_banned_reason = $3
+    WHERE id = $1
+  `, [userId, banned, reason || null]);
+
+  console.log(`[Admin] User ${userId} chat ${banned ? 'banned' : 'unbanned'}: reason="${reason || 'No reason provided'}"`);
+
+  res.json({
+    success: true,
+    userId,
+    banned,
+    reason: reason || null
+  });
+}));
+
 /**
  * GET /api/admin/users/search
  * Search for users by socket ID prefix or payout address

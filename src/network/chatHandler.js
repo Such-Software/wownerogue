@@ -223,13 +223,42 @@ class ChatHandler {
         const trimmed = msg.trim();
         if (!trimmed) return;
 
+        // Message length limit (reject, don't truncate)
+        const MAX_MESSAGE_LENGTH = 200;
+        if (trimmed.length > MAX_MESSAGE_LENGTH) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
+                `Message too long (${trimmed.length}/${MAX_MESSAGE_LENGTH} characters). Please shorten it.`);
+            return;
+        }
+
+        // Get user info for ban check and user_id
+        let userId = null;
+        if (this.gameModeManager) {
+            try {
+                const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
+                userId = userRow?.id || null;
+
+                // Check if user is chat banned
+                if (userId && await this.chatHistory.isUserChatBanned(userId)) {
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                        'You have been banned from chat.');
+                    return;
+                }
+            } catch (e) {
+                // Continue without user lookup - allow message
+                if (this.debugManager?.CONSOLE_LOGGING) {
+                    console.warn('User lookup for chat failed:', e.message);
+                }
+            }
+        }
+
         // Additional rate limit for broadcast messages (more restrictive)
         const now = Date.now();
         const last = this._chatLastSent.get(socket.id) || 0;
         const BROADCAST_COOLDOWN = 2000; // 2 seconds between broadcasts
-        
+
         if (now - last < BROADCAST_COOLDOWN) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+            this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
                 `Please wait ${Math.ceil((BROADCAST_COOLDOWN - (now - last)) / 1000)} seconds before sending another message.`);
             return;
         }
@@ -237,25 +266,27 @@ class ChatHandler {
         this._chatLastSent.set(socket.id, now);
 
         // Complete HTML entity escaping to prevent XSS
+        // Note: length already validated above, slice is just a safety net
         const safe = trimmed
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;')
-            .slice(0, 300);
+            .slice(0, MAX_MESSAGE_LENGTH);
         const username = socket.id.substring(0, 6);
-        
-        // Save message to history (async, don't block broadcast)
+
+        // Save message to history with user_id (async, don't block broadcast)
         this.chatHistory.saveMessage({
             socketId: socket.id,
             username: username,
             message: safe,
-            type: 'chat'
+            type: 'chat',
+            userId: userId
         }).catch(err => {
             console.error('Failed to save chat message:', err.message);
         });
-        
+
         this.broadcastManager.broadcastChatMessage(username, safe, now, socket.id);
     }
 

@@ -120,7 +120,9 @@ const SocketHandlers = {
         socket.on('status_update', this.onStatusUpdate);
         socket.on('chat_broadcast', this.onChatBroadcast);
         socket.on('chat_history', this.onChatHistory);
-        
+        socket.on('chat_deleted', this.onChatDeleted);
+        socket.on('chat_error', this.onChatError);
+
         // Game state handlers
         socket.on('waiting_status', this.onWaitingStatus);
         socket.on('queue_joined', this.onQueueJoined);
@@ -298,25 +300,59 @@ const SocketHandlers = {
 
     onChatHistory: function(data) {
         if (!data || !data.messages || !Array.isArray(data.messages)) return;
-        
+
         // Add a separator for history messages
         if (data.messages.length > 0) {
             $('#messages').append($('<li class="chat-history-header" style="color: #666; font-style: italic; border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px;">').text('--- Recent Chat History ---'));
         }
-        
-        // Add each historical message
+
+        // Add each historical message with data-msg-id for deletion support
         data.messages.forEach(function(msg) {
             const msgElement = $('<li style="color: #888;">');
-            const username = msg.username || (msg.socketId ? msg.socketId.substring(0, 6) : 'anon');
-            msgElement.html('<strong>' + username + ':</strong> ' + msg.message);
+            if (msg.id) {
+                msgElement.attr('data-msg-id', msg.id);
+            }
+            const username = msg.playerId || msg.username || (msg.socketId ? msg.socketId.substring(0, 6) : 'anon');
+            const isSystem = msg.type === 'system' || msg.socketId === 'system';
+            if (isSystem) {
+                msgElement.addClass('status');
+            }
+            // Add timestamp if available
+            let timeStr = '';
+            if (msg.timestamp) {
+                timeStr = '<span style="color:#555;font-size:10px;">[' + SocketHandlers._formatTimeAgo(new Date(msg.timestamp)) + ']</span> ';
+            }
+            msgElement.html(timeStr + '<strong>' + username + ':</strong> ' + msg.message);
             $('#messages').append(msgElement);
         });
-        
+
         if (data.messages.length > 0) {
             $('#messages').append($('<li class="chat-history-footer" style="color: #666; font-style: italic; border-top: 1px solid #333; margin-top: 5px; padding-top: 5px;">').text('--- End of History ---'));
         }
-        
+
         UI.scrollChat();
+    },
+
+    onChatDeleted: function(data) {
+        if (!data || !data.messageId) return;
+        // Remove deleted message from view with fade effect
+        $('#messages li[data-msg-id="' + data.messageId + '"]').fadeOut(200, function() {
+            $(this).remove();
+        });
+    },
+
+    onChatError: function(data) {
+        if (!data || !data.message) return;
+        $('#messages').append($('<li class="error" style="color:#f66;">').text(data.message));
+        UI.scrollChat();
+    },
+
+    _formatTimeAgo: function(date) {
+        const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (seconds < 60) return 'just now';
+        if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+        if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+        return Math.floor(seconds / 86400) + 'd ago';
     },
 
     onWaitingStatus: function(data) {

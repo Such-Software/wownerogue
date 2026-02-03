@@ -20,7 +20,7 @@ class ChatHistoryManager {
         
         // Cleanup old messages periodically (once per day)
         this._cleanupInterval = null;
-        this._maxMessageAge = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+        this._maxMessageAge = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
     }
 
     /**
@@ -119,19 +119,23 @@ class ChatHistoryManager {
      * Save a chat message
      * @param {Object} messageData - Message data
      * @param {string} messageData.socketId - Socket ID of sender
-     * @param {string} messageData.username - Display username
+     * @param {string} messageData.username - Display username (playerId)
      * @param {string} messageData.message - Message content
      * @param {string} messageData.type - Message type (chat, system, event)
+     * @param {number} [messageData.userId] - Optional user ID from database
      * @returns {Object} Saved message with id and timestamp
      */
-    async saveMessage({ socketId, username, message, type = 'chat' }) {
+    async saveMessage({ socketId, username, message, type = 'chat', userId = null }) {
         const timestamp = Date.now();
+        const playerId = username; // username IS the playerId (6-char display ID)
         const messageObj = {
             socketId,
             username,
+            playerId,
             message,
             type,
-            timestamp
+            timestamp,
+            userId
         };
 
         // Add to in-memory cache immediately
@@ -139,7 +143,7 @@ class ChatHistoryManager {
         if (this._recentMessagesCache.length > this._cacheSize) {
             this._recentMessagesCache.shift();
         }
-        
+
         // Also add to fallback array
         this._inMemoryHistory.push(messageObj);
         if (this._inMemoryHistory.length > this._inMemoryFallbackSize) {
@@ -150,11 +154,11 @@ class ChatHistoryManager {
         if (this.db) {
             try {
                 const result = await this.db.query(`
-                    INSERT INTO chat_messages (socket_id, username, message, message_type, created_at)
-                    VALUES ($1, $2, $3, $4, NOW())
+                    INSERT INTO chat_messages (socket_id, username, player_id, user_id, message, message_type, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
                     RETURNING id
-                `, [socketId, username, message, type]);
-                
+                `, [socketId, username, playerId, userId, message, type]);
+
                 messageObj.id = result.rows[0]?.id;
             } catch (error) {
                 console.error('Failed to persist chat message:', error.message);
@@ -167,36 +171,46 @@ class ChatHistoryManager {
 
     /**
      * Get recent messages for a new user
-     * @param {number} count - Number of messages to retrieve (default: 50)
+     * Uses hybrid strategy: last hour of messages, OR last 10 messages if < 10 in last hour
+     * @param {number} maxCount - Maximum number of messages to retrieve (default: 50)
+     * @param {number} minCount - Minimum messages to show if recent activity is low (default: 10)
      * @returns {Array} Array of recent messages
      */
-    async getRecentMessages(count = 50) {
-        const limit = Math.min(count, this._cacheSize);
-        
-        // If cache is initialized, use it
-        if (this._cacheInitialized && this._recentMessagesCache.length > 0) {
-            return this._recentMessagesCache.slice(-limit);
-        }
-        
-        // If cache is empty, try in-memory fallback
-        if (this._inMemoryHistory.length > 0) {
-            return this._inMemoryHistory.slice(-limit);
-        }
-        
-        // If nothing in memory, try database
+    async getRecentMessages(maxCount = 50, minCount = 10) {
+        // Try database first for hybrid strategy
         if (this.db) {
             try {
+                // Hybrid query: Get messages from last hour, OR last N messages if fewer than minCount
                 const result = await this.db.query(`
-                    SELECT id, socket_id, username, message, message_type, created_at
-                    FROM chat_messages
-                    ORDER BY created_at DESC
+                    WITH recent_hour AS (
+                        SELECT id, socket_id, username, player_id, message, message_type, created_at
+                        FROM chat_messages
+                        WHERE deleted_at IS NULL
+                        AND created_at > NOW() - INTERVAL '1 hour'
+                        ORDER BY created_at DESC
+                        LIMIT $1
+                    ),
+                    fallback AS (
+                        SELECT id, socket_id, username, player_id, message, message_type, created_at
+                        FROM chat_messages
+                        WHERE deleted_at IS NULL
+                        ORDER BY created_at DESC
+                        LIMIT $2
+                    )
+                    SELECT * FROM (
+                        SELECT * FROM recent_hour
+                        UNION
+                        SELECT * FROM fallback
+                    ) combined
+                    ORDER BY created_at ASC
                     LIMIT $1
-                `, [limit]);
-                
-                return result.rows.reverse().map(row => ({
+                `, [maxCount, minCount]);
+
+                return result.rows.map(row => ({
                     id: row.id,
                     socketId: row.socket_id,
                     username: row.username,
+                    playerId: row.player_id || row.username,
                     message: row.message,
                     type: row.message_type,
                     timestamp: new Date(row.created_at).getTime()
@@ -205,7 +219,21 @@ class ChatHistoryManager {
                 console.error('Failed to get recent messages from DB:', error.message);
             }
         }
-        
+
+        // Fallback to cache (filter out deleted messages)
+        const limit = Math.min(maxCount, this._cacheSize);
+
+        if (this._cacheInitialized && this._recentMessagesCache.length > 0) {
+            const activeMessages = this._recentMessagesCache.filter(m => !m.deletedAt);
+            return activeMessages.slice(-limit);
+        }
+
+        // Final fallback to in-memory
+        if (this._inMemoryHistory.length > 0) {
+            const activeMessages = this._inMemoryHistory.filter(m => !m.deletedAt);
+            return activeMessages.slice(-limit);
+        }
+
         return [];
     }
 
@@ -234,6 +262,102 @@ class ChatHistoryManager {
         } catch (error) {
             console.error('Chat cleanup error:', error.message);
             return 0;
+        }
+    }
+
+    /**
+     * Check if a user is banned from chat
+     * @param {number} userId - User ID to check
+     * @returns {boolean} True if user is banned
+     */
+    async isUserChatBanned(userId) {
+        if (!userId || !this.db) return false;
+
+        try {
+            const result = await this.db.query(
+                'SELECT chat_banned FROM users WHERE id = $1',
+                [userId]
+            );
+            return result.rows[0]?.chat_banned === true;
+        } catch (error) {
+            console.error('Failed to check chat ban status:', error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Soft delete a message (admin moderation)
+     * @param {number} messageId - Message ID to delete
+     * @param {string} deletedBy - Admin identifier
+     * @param {string} reason - Reason for deletion
+     * @returns {boolean} True if deleted successfully
+     */
+    async deleteMessage(messageId, deletedBy = 'admin', reason = null) {
+        if (!this.db) return false;
+
+        try {
+            const result = await this.db.query(`
+                UPDATE chat_messages
+                SET deleted_at = NOW(), deleted_by = $2, delete_reason = $3
+                WHERE id = $1 AND deleted_at IS NULL
+                RETURNING id
+            `, [messageId, deletedBy, reason]);
+
+            if (result.rowCount > 0) {
+                // Also remove from in-memory caches
+                this._recentMessagesCache = this._recentMessagesCache.filter(m => m.id !== messageId);
+                this._inMemoryHistory = this._inMemoryHistory.filter(m => m.id !== messageId);
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Failed to delete chat message:', error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Get messages for admin view (includes deleted)
+     * @param {number} limit - Number of messages
+     * @param {boolean} includeDeleted - Whether to include deleted messages
+     * @returns {Array} Messages for admin
+     */
+    async getMessagesForAdmin(limit = 100, includeDeleted = false) {
+        if (!this.db) return [];
+
+        try {
+            const result = await this.db.query(`
+                SELECT
+                    c.id, c.socket_id, c.username, c.player_id, c.user_id,
+                    c.message, c.message_type, c.created_at,
+                    c.deleted_at, c.deleted_by, c.delete_reason,
+                    u.payout_address, u.chat_banned
+                FROM chat_messages c
+                LEFT JOIN users u ON c.user_id = u.id
+                ${includeDeleted ? '' : 'WHERE c.deleted_at IS NULL'}
+                ORDER BY c.created_at DESC
+                LIMIT $1
+            `, [limit]);
+
+            return result.rows.map(row => ({
+                id: row.id,
+                socketId: row.socket_id,
+                username: row.username,
+                playerId: row.player_id,
+                userId: row.user_id,
+                message: row.message,
+                type: row.message_type,
+                timestamp: new Date(row.created_at).getTime(),
+                createdAt: row.created_at,
+                deletedAt: row.deleted_at,
+                deletedBy: row.deleted_by,
+                deleteReason: row.delete_reason,
+                payoutAddress: row.payout_address,
+                chatBanned: row.chat_banned
+            }));
+        } catch (error) {
+            console.error('Failed to get admin messages:', error.message);
+            return [];
         }
     }
 

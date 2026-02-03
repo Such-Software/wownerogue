@@ -284,6 +284,7 @@
                 <button class="tab-btn" data-tab="payouts">Payouts</button>
                 <button class="tab-btn" data-tab="games">Games</button>
                 <button class="tab-btn" data-tab="users">Users</button>
+                <button class="tab-btn" data-tab="chat">Chat</button>
             </div>
 
             <!-- Tab: Overview -->
@@ -406,6 +407,40 @@
                     <div class="pagination" id="usersPagination"></div>
                 </div>
             </div>
+
+            <!-- Tab: Chat -->
+            <div id="tab-chat" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Chat Moderation</h3>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <label style="color:#888; font-size:12px;">
+                                <input type="checkbox" id="showDeletedMessages" onchange="loadChat()"> Show deleted
+                            </label>
+                            <button onclick="loadChat()" style="background:#055; color:#0f0; border:1px solid #0f0; padding:4px 10px; cursor:pointer;">🔄 Refresh</button>
+                        </div>
+                    </div>
+                    <p style="color:#888; margin: 10px 0; font-size:12px;">
+                        Delete offensive messages (they'll be removed from all clients). Ban users from chat if needed.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Time</th>
+                                <th>Player</th>
+                                <th>Message</th>
+                                <th>User ID</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="chatTable">
+                            <tr><td colspan="7" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -500,6 +535,7 @@
             else if (tab === 'payouts') loadPayouts();
             else if (tab === 'games') loadGames();
             else if (tab === 'users') loadUsers();
+            else if (tab === 'chat') loadChat();
         }
 
         async function loadDashboard() {
@@ -804,6 +840,142 @@
 
         function searchUsers() {
             loadUsers(0);
+        }
+
+        // Chat moderation functions
+        async function loadChat() {
+            const includeDeleted = document.getElementById('showDeletedMessages')?.checked || false;
+
+            try {
+                const url = `/api/admin/chat?limit=100&includeDeleted=${includeDeleted}`;
+                const res = await fetch(url, { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+
+                const tbody = document.getElementById('chatTable');
+                if (!data.messages?.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No chat messages</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.messages.map(m => {
+                    const isDeleted = !!m.deletedAt;
+                    const isBanned = m.chatBanned;
+                    const rowStyle = isDeleted ? 'opacity: 0.5; text-decoration: line-through;' : '';
+
+                    return `
+                        <tr style="${rowStyle}">
+                            <td>${m.id}</td>
+                            <td>${formatTimeAgo(new Date(m.timestamp))}</td>
+                            <td>${m.playerId || m.username || '-'}</td>
+                            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(m.message)}">${escapeHtml(m.message)}</td>
+                            <td>${m.userId || '-'}</td>
+                            <td>
+                                ${isDeleted ? '<span class="status-badge status-failed">Deleted</span>' : ''}
+                                ${isBanned ? '<span class="status-badge status-failed">Banned</span>' : ''}
+                                ${!isDeleted && !isBanned ? '<span class="status-badge status-completed">Active</span>' : ''}
+                            </td>
+                            <td>
+                                ${!isDeleted ? `<button class="btn btn-primary" onclick="deleteMessage(${m.id})" style="background:#c33;">Delete</button>` : ''}
+                                ${m.userId && !isBanned ? `<button class="btn btn-primary" onclick="banUser(${m.userId})" style="background:#a00; margin-left:4px;">Ban</button>` : ''}
+                                ${m.userId && isBanned ? `<button class="btn btn-primary" onclick="unbanUser(${m.userId})" style="background:#060; margin-left:4px;">Unban</button>` : ''}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load chat:', e);
+                document.getElementById('chatTable').innerHTML = '<tr><td colspan="7" class="loading">Error loading chat</td></tr>';
+            }
+        }
+
+        async function deleteMessage(messageId) {
+            if (!confirm('Delete this message? It will be removed from all clients.')) return;
+
+            try {
+                const res = await fetch(`/api/admin/chat/${messageId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ reason: 'Admin deleted' })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    loadChat();
+                } else {
+                    alert('Failed to delete: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to delete message:', e);
+                alert('Error deleting message');
+            }
+        }
+
+        async function banUser(userId) {
+            const reason = prompt('Ban reason (optional):');
+            if (reason === null) return; // Cancelled
+
+            try {
+                const res = await fetch(`/api/admin/users/${userId}/chat-ban`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ banned: true, reason: reason || 'Admin banned' })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    loadChat();
+                } else {
+                    alert('Failed to ban: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to ban user:', e);
+                alert('Error banning user');
+            }
+        }
+
+        async function unbanUser(userId) {
+            if (!confirm('Unban this user from chat?')) return;
+
+            try {
+                const res = await fetch(`/api/admin/users/${userId}/chat-ban`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ banned: false })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    loadChat();
+                } else {
+                    alert('Failed to unban: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to unban user:', e);
+                alert('Error unbanning user');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatTimeAgo(date) {
+            const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            return Math.floor(seconds / 86400) + 'd ago';
         }
 
         // Auto-refresh every 30 seconds

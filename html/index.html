@@ -205,7 +205,8 @@
         <!-- Chat input in its own row -->
         <div class="input-container">
             <form id="chatForm" action="">
-                <input id="chatInput" autocomplete="off" placeholder="Type a command..." />
+                <input id="chatInput" autocomplete="off" placeholder="Type a command..." maxlength="200" />
+                <span id="charCounter" style="color:#666; font-size:10px; margin-left:5px; min-width:45px;">0/200</span>
                 <button type="submit">Send</button>
             </form>
         </div>
