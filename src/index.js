@@ -520,12 +520,14 @@ app.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
   let isValidSignature = false;
   try {
     const nacl = require('tweetnacl');
-    const challengeBytes = Buffer.from(challenge, 'hex');
+    // The Smirk extension signs SHA256(utf8(challenge)), not the raw challenge bytes.
+    // We must hash the challenge the same way before verifying.
+    const challengeHash = crypto.createHash('sha256').update(challenge).digest();
     const signatureBytes = Buffer.from(signature, 'hex');
     const publicKeyBytes = Buffer.from(publicKey, 'hex');
 
     // tweetnacl.sign.detached.verify(message, signature, publicKey)
-    isValidSignature = nacl.sign.detached.verify(challengeBytes, signatureBytes, publicKeyBytes);
+    isValidSignature = nacl.sign.detached.verify(challengeHash, signatureBytes, publicKeyBytes);
   } catch (verifyError) {
     console.error('Signature verification error:', verifyError.message);
     throw new ValidationError('Signature verification failed', {
