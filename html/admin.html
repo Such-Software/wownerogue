@@ -450,6 +450,8 @@
         let currentTab = 'overview';
         let usersOffset = 0;
         let outcomesChart = null;
+        let atomicDivisor = 1e11; // Default WOW, updated from server on login
+        let cryptoSymbol = 'WOW'; // Updated from server on login
 
         // Check if already logged in
         if (apiKey) {
@@ -562,10 +564,13 @@
                 document.getElementById('statFailed').textContent = `${failed} failed`;
                 document.getElementById('statFailed').className = 'subtext' + (failed > 0 ? ' danger' : '');
 
+                // Update divisor and symbol from server
+                if (overview.atomicDivisor) atomicDivisor = overview.atomicDivisor;
+                if (overview.cryptoType) cryptoSymbol = overview.cryptoType;
+
                 // Wallet balance
                 if (overview.walletBalance) {
                     const walletEl = document.getElementById('walletStatus');
-                    const cryptoType = window.location.hostname.includes('monerogue') ? 'XMR' : 'WOW';
 
                     if (overview.walletBalance.error) {
                         // Wallet RPC error - show error state
@@ -577,11 +582,11 @@
                     } else {
                         // Wallet connected - show balance
                         const bal = overview.walletBalance.unlocked_balance || 0;
-                        const formatted = (bal / 1e12).toFixed(4);
+                        const formatted = (bal / atomicDivisor).toFixed(4);
                         document.getElementById('statBalance').textContent = formatted;
                         document.getElementById('statUnlocked').textContent = `Unlocked: ${formatted}`;
-                        walletEl.className = 'wallet-status' + (bal < 100000000000 ? ' warning' : ' healthy');
-                        document.getElementById('walletBalance').textContent = `${formatted} ${cryptoType}`;
+                        walletEl.className = 'wallet-status' + (bal < atomicDivisor ? ' warning' : ' healthy');
+                        document.getElementById('walletBalance').textContent = `${formatted} ${cryptoSymbol}`;
                     }
                 } else {
                     document.getElementById('statBalance').textContent = '-';
@@ -724,7 +729,7 @@
                 tbody.innerHTML = data.payouts.map(p => `
                     <tr>
                         <td>${p.id}</td>
-                        <td>${(p.amount / 1e12).toFixed(6)}</td>
+                        <td>${(p.amount / atomicDivisor).toFixed(6)}</td>
                         <td title="${p.address || ''}">${p.address ? p.address.substring(0, 12) + '...' : '-'}</td>
                         <td><span class="status-badge status-${p.status}">${p.status}</span></td>
                         <td class="tx-hash">${p.txHash ? p.txHash.substring(0, 16) + '...' : '-'}</td>
@@ -781,7 +786,7 @@
                         <td><span class="status-badge status-${g.status}">${g.status}</span></td>
                         <td>${g.outcome || '-'}</td>
                         <td>${g.duration ? g.duration + 's' : '-'}</td>
-                        <td>${g.payoutAmount ? (g.payoutAmount / 1e12).toFixed(6) : '-'}</td>
+                        <td>${g.payoutAmount ? (g.payoutAmount / atomicDivisor).toFixed(6) : '-'}</td>
                         <td>${new Date(g.createdAt).toLocaleString()}</td>
                     </tr>
                 `).join('');
@@ -813,7 +818,7 @@
                         <td>${u.credits || 0}</td>
                         <td>${u.gamesPlayed || 0}</td>
                         <td>${u.gamesWon || 0}</td>
-                        <td>${u.totalWon ? (parseInt(u.totalWon) / 1e12).toFixed(4) : '0'}</td>
+                        <td>${u.totalWon ? (parseInt(u.totalWon) / atomicDivisor).toFixed(4) : '0'}</td>
                         <td>${new Date(u.createdAt).toLocaleDateString()}</td>
                     </tr>
                 `).join('');

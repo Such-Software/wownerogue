@@ -1180,6 +1180,10 @@ app.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res) =>
   const payout = payoutStats.rows[0];
   const game = gameStats.rows[0];
 
+  const cryptoType = gameModeManager.cryptoType || process.env.CRYPTO_TYPE || 'WOW';
+  const { inferCurrencyDecimals, getDecimalDivisor } = require('./game/helpers/gameModeUtils');
+  const atomicDivisor = getDecimalDivisor(inferCurrencyDecimals(cryptoType));
+
   res.json({
     totalUsers: parseInt(user.total_users) || 0,
     totalGamesPlayed: parseInt(user.total_games) || 0,
@@ -1189,6 +1193,8 @@ app.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res) =>
     failedPayouts: parseInt(payout.failed_payouts) || 0,
     completedPayouts: parseInt(payout.completed_payouts) || 0,
     walletBalance: walletBalance,
+    cryptoType,
+    atomicDivisor,
     last24h: {
       games: parseInt(game.games_24h) || 0,
       wins: parseInt(game.wins_24h) || 0,
