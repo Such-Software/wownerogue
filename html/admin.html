@@ -653,20 +653,20 @@
                         return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
                     };
 
-                    return \`
-                        <tr style="\${rowStyle}">
-                            <td>\${entry.position}</td>
-                            <td title="\${entry.serverId}">\${entry.serverId.substring(0, 12)}...</td>
-                            <td style="\${isStuck ? 'color:#f80; font-weight:bold;' : ''}">\${formatWait(entry.waitingSeconds)}</td>
-                            <td>\${entry.paymentId || '-'}</td>
-                            <td>\${statusText}</td>
+                    return `
+                        <tr style="${rowStyle}">
+                            <td>${entry.position}</td>
+                            <td title="${entry.serverId}">${entry.serverId.substring(0, 12)}...</td>
+                            <td style="${isStuck ? 'color:#f80; font-weight:bold;' : ''}">${formatWait(entry.waitingSeconds)}</td>
+                            <td>${entry.paymentId || '-'}</td>
+                            <td>${statusText}</td>
                             <td>
-                                <button class="btn btn-danger" onclick="removeQueueEntry('\${entry.serverId}')" style="background:#500; color:#f88; border:1px solid #f55; padding:3px 8px; cursor:pointer;">
+                                <button class="btn btn-danger" onclick="removeQueueEntry('${entry.serverId}')" style="background:#500; color:#f88; border:1px solid #f55; padding:3px 8px; cursor:pointer;">
                                     Remove
                                 </button>
                             </td>
                         </tr>
-                    \`;
+                    `;
                 }).join('');
             } catch (e) {
                 console.error('Failed to load queue:', e);
@@ -679,7 +679,7 @@
         }
 
         async function removeQueueEntry(serverId) {
-            if (!confirm(\`Remove queue entry for \${serverId.substring(0, 12)}...? This will cancel their queue position.\`)) return;
+            if (!confirm(`Remove queue entry for ${serverId.substring(0, 12)}...? This will cancel their queue position.`)) return;
 
             const reason = prompt('Reason for removal (optional):') || 'Admin removal';
 

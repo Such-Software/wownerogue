@@ -262,85 +262,91 @@ class GameModeManager {
      */
     async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null) {
         try {
-            const user = await this.getOrCreateUser(socketId);
+            // Look up user from payment record's user_id (stable across socket reconnects)
+            // This avoids the bug where socket ID changes if user refreshes during confirmation
+            const paymentLookup = await this.db.query(`
+                SELECT user_id, description, status FROM payments WHERE id = $1
+            `, [paymentId]);
 
-            // Determine credits to add from package or fallback
+            if (paymentLookup.rows.length === 0) {
+                console.error(`Payment ${paymentId} not found`);
+                return { success: false, reason: 'Payment not found' };
+            }
+
+            // Fast-fail if already confirmed (avoids unnecessary transaction)
+            if (paymentLookup.rows[0].status === 'confirmed') {
+                console.log(`Payment ${paymentId} already confirmed, skipping duplicate processing`);
+                return { success: false, alreadyProcessed: true, reason: 'Payment already processed' };
+            }
+
+            const userId = paymentLookup.rows[0].user_id;
+
+            // Determine credits to add from package info or payment description
             let creditsToAdd = 10; // Default fallback
             if (packageInfo && packageInfo.credits) {
                 creditsToAdd = Number(packageInfo.credits) + (Number(packageInfo.bonus) || 0);
             } else {
-                // Try to get from payment record description
-                const paymentResult = await this.db.query(`
-                    SELECT description, status FROM payments WHERE id = $1
-                `, [paymentId]);
-                if (paymentResult.rows.length > 0) {
-                    // SECURITY: Check if already confirmed (prevents double-crediting)
-                    if (paymentResult.rows[0].status === 'confirmed') {
-                        console.log(`⚠️ Payment ${paymentId} already confirmed, skipping duplicate processing`);
-                        return {
-                            success: false,
-                            alreadyProcessed: true,
-                            reason: 'Payment already processed'
-                        };
-                    }
-                    const desc = paymentResult.rows[0].description || '';
-                    const match = desc.match(/(\d+)\s*credits?/i);
-                    if (match) {
-                        creditsToAdd = parseInt(match[1], 10) || 10;
-                    }
+                const desc = paymentLookup.rows[0].description || '';
+                const match = desc.match(/(\d+)\s*credits?/i);
+                if (match) {
+                    creditsToAdd = parseInt(match[1], 10) || 10;
                 }
             }
 
-            // SECURITY: Atomically update payment status from 'pending' to 'confirmed'
-            // Only proceeds if the payment was actually pending (prevents double-crediting)
-            const paymentUpdateResult = await this.db.query(`
-                UPDATE payments
-                SET status = 'confirmed',
-                    credits_purchased = $1,
-                    confirmed_at = NOW()
-                WHERE id = $2 AND status = 'pending'
-                RETURNING id
-            `, [creditsToAdd, paymentId]);
+            // CRITICAL: Wrap all three operations in a transaction.
+            // If any step fails, the payment stays 'pending' and can be recovered.
+            const result = await this.db.withTransaction(async (client) => {
+                // Step 1: Atomically mark payment as confirmed (prevents double-crediting)
+                const paymentUpdateResult = await client.query(`
+                    UPDATE payments
+                    SET status = 'confirmed',
+                        credits_purchased = $1,
+                        confirmed_at = NOW()
+                    WHERE id = $2 AND status = 'pending'
+                    RETURNING id
+                `, [creditsToAdd, paymentId]);
 
-            // If no rows were updated, payment was already processed
-            if (paymentUpdateResult.rows.length === 0) {
-                console.log(`⚠️ Payment ${paymentId} already confirmed (atomic check), skipping duplicate`);
-                return {
-                    success: false,
-                    alreadyProcessed: true,
-                    reason: 'Payment already processed'
-                };
+                if (paymentUpdateResult.rows.length === 0) {
+                    // Already processed by another instance - not an error
+                    return { alreadyProcessed: true };
+                }
+
+                // Step 2: Add credits to user (using payment's user_id, not socket lookup)
+                const updateResult = await client.query(`
+                    UPDATE users
+                    SET credits = credits + $1,
+                        total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1,
+                        updated_at = NOW()
+                    WHERE id = $2
+                    RETURNING credits
+                `, [creditsToAdd, userId]);
+
+                const newBalance = updateResult.rows[0]?.credits ?? creditsToAdd;
+
+                // Step 3: Record credit transaction for audit trail
+                await client.query(`
+                    INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                    VALUES ($1, $2, 'package_purchase', $3, 'purchase')
+                `, [userId, creditsToAdd, newBalance]);
+
+                return { newBalance };
+            });
+
+            if (result.alreadyProcessed) {
+                console.log(`Payment ${paymentId} already confirmed (atomic check), skipping duplicate`);
+                return { success: false, alreadyProcessed: true, reason: 'Payment already processed' };
             }
 
-            // Payment successfully marked as confirmed - now add credits
-            // Use atomic increment to prevent race conditions
-            const updateResult = await this.db.query(`
-                UPDATE users
-                SET credits = credits + $1,
-                    total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1,
-                    updated_at = NOW()
-                WHERE id = $2
-                RETURNING credits
-            `, [creditsToAdd, user.id]);
-
-            const newBalance = updateResult.rows[0]?.credits ?? (user.credits + creditsToAdd);
-
-            // Record credit transaction
-            await this.db.query(`
-                INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
-                VALUES ($1, $2, 'package_purchase', $3, 'purchase')
-            `, [user.id, creditsToAdd, newBalance]);
-
-            console.log(`💰 Credits package confirmed: +${creditsToAdd} credits for user ${user.id}, new balance: ${newBalance}`);
+            console.log(`Credits package confirmed: +${creditsToAdd} credits for user ${userId}, new balance: ${result.newBalance}`);
 
             return {
                 success: true,
                 creditsAdded: creditsToAdd,
-                newBalance: newBalance
+                newBalance: result.newBalance
             };
         } catch (error) {
             const normalized = normalizeError(error, 'Failed to process credits package confirmation');
-            console.error('❌ Error processing credits package:', normalized.message);
+            console.error('Error processing credits package:', normalized.message);
             return {
                 success: false,
                 reason: normalized.safeMessage
@@ -722,65 +728,74 @@ class GameModeManager {
 
     async _processGameStartWithCredits(user, socketId, gameId) {
         const creditsToSpend = this.creditsPerGameCost;
-        // Use a conditional update to prevent credits going negative
-        const updateRes = await this.db.query(`
-            UPDATE users 
-            SET credits = credits - $1,
-                total_games_played = total_games_played + 1,
-                updated_at = NOW()
-            WHERE id = $2 AND credits >= $1
-            RETURNING credits
-        `, [creditsToSpend, user.id]);
-        
-        // If no rows were updated, user doesn't have enough credits
-        if (updateRes.rows.length === 0) {
-            return { 
-                success: false, 
+
+        const result = await this.db.withTransaction(async (client) => {
+            // Conditional update prevents credits going negative
+            const updateRes = await client.query(`
+                UPDATE users
+                SET credits = credits - $1,
+                    total_games_played = total_games_played + 1,
+                    updated_at = NOW()
+                WHERE id = $2 AND credits >= $1
+                RETURNING credits
+            `, [creditsToSpend, user.id]);
+
+            if (updateRes.rows.length === 0) {
+                return { insufficient: true };
+            }
+
+            const remainingCredits = updateRes.rows[0].credits;
+
+            await client.query(`
+                UPDATE games SET payment_mode = 'credits' WHERE id = $1
+            `, [gameId]);
+
+            await client.query(`
+                INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                VALUES ($1, $2, 'game_entry', $3, 'spend')
+            `, [user.id, -creditsToSpend, remainingCredits]);
+
+            return { remainingCredits };
+        });
+
+        if (result.insufficient) {
+            return {
+                success: false,
                 reason: 'Insufficient credits',
                 creditsRequired: creditsToSpend,
                 creditsAvailable: user.credits
             };
         }
-        const remainingCredits = updateRes.rows[0] ? updateRes.rows[0].credits : (user.credits - creditsToSpend);
-        
-        // Record the game mode used
-        await this.db.query(`
-            UPDATE games SET payment_mode = 'credits' WHERE id = $1
-        `, [gameId]);
-        
-        // Record credit transaction
-        await this.db.query(`
-            INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
-            VALUES ($1, $2, 'game_entry', $3, 'spend')
-        `, [user.id, -creditsToSpend, remainingCredits]);
 
-        console.log(`🎫 Deducted ${creditsToSpend} credit(s) from user ${user.id}, ${remainingCredits} remaining`);
-        
-        return { 
-            success: true, 
-            creditsRemaining: remainingCredits, 
+        console.log(`Deducted ${creditsToSpend} credit(s) from user ${user.id}, ${result.remainingCredits} remaining`);
+
+        return {
+            success: true,
+            creditsRemaining: result.remainingCredits,
             creditsSpent: creditsToSpend,
             effectiveMode: 'PAID_CREDITS'
         };
     }
 
     async _processGameStartWithPayment(user, payment, gameId) {
-        await this.db.query(`
-            UPDATE games 
-            SET payment_id = $1
-            WHERE id = $2
-        `, [payment.id, gameId]);
-        
-        await this.db.query(`
-            UPDATE users 
-            SET total_games_played = total_games_played + 1,
-                updated_at = NOW()
-            WHERE id = $1
-        `, [user.id]);
-        
-        console.log(`💳 Linked game ${gameId} to payment ${payment.id}`);
-        return { 
-            success: true, 
+        await this.db.withTransaction(async (client) => {
+            await client.query(`
+                UPDATE games
+                SET payment_id = $1
+                WHERE id = $2
+            `, [payment.id, gameId]);
+
+            await client.query(`
+                UPDATE users
+                SET total_games_played = total_games_played + 1,
+                    updated_at = NOW()
+                WHERE id = $1
+            `, [user.id]);
+        });
+
+        console.log(`Linked game ${gameId} to payment ${payment.id}`);
+        return {
+            success: true,
             paymentId: payment.id,
             effectiveMode: 'PAID_SINGLE'
         };

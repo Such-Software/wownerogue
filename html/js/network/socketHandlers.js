@@ -1331,7 +1331,7 @@ const SocketHandlers = {
                     animation: earlyEntryPulse 2s infinite;
                 ">⚡ ENTER NOW (RISKY!) ⚡</button>
             `);
-            
+
             // Add CSS animation
             if (!$('#earlyEntryStyles').length) {
                 $('head').append(`
@@ -1365,22 +1365,39 @@ const SocketHandlers = {
         
         // Show/hide based on whether we're queued and early entry is allowed
         if (this._isQueued && this.isEarlyEntryAllowed()) {
+            // Update button text to show credit cost when in paid mode
+            var mode = this._gameMode;
+            if (mode === 'PAID_CREDITS' || mode === 'MIXED') {
+                var cost = this._creditsPerGame || 1;
+                $btn.text('⚡ ENTER NOW (' + cost + ' credit, RISKY!) ⚡');
+            } else {
+                $btn.text('⚡ ENTER NOW (RISKY!) ⚡');
+            }
             $btn.show();
         } else {
             $btn.hide();
         }
     },
-    
+
     /**
      * Request early entry from the server
      */
     requestEarlyEntry: function() {
         if (!window.socket) return;
-        
+
+        // Confirm before spending credits
+        var mode = this._gameMode;
+        var msg = 'Enter the dungeon NOW?\n\nYou will die when the next block is found!';
+        if (mode === 'PAID_CREDITS' || mode === 'MIXED') {
+            var cost = this._creditsPerGame || 1;
+            msg = 'Use ' + cost + ' credit to enter the dungeon NOW?\n\nYou will die when the next block is found!';
+        }
+        if (!confirm(msg)) return;
+
         // Disable button to prevent double-clicks
-        const $btn = $('#earlyEntryButton');
+        var $btn = $('#earlyEntryButton');
         $btn.prop('disabled', true).text('⏳ Entering...');
-        
+
         socket.emit('early_entry');
     },
     

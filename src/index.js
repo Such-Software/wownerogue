@@ -61,6 +61,11 @@ app.get('/', function(req, res) {
    res.sendFile('index.html', { root: htmlPath });
 });
 
+// Serve admin panel
+app.get('/admin', function(req, res) {
+   res.sendFile('admin.html', { root: htmlPath });
+});
+
 // Debug endpoint to receive client-side debug info
 app.post('/debug', (req, res) => {
   if (debugManager.CONSOLE_LOGGING) {

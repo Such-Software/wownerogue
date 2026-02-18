@@ -162,9 +162,42 @@ class SessionManager {
           AND p.status = 'confirmed'
           AND p.payment_type = 'credits_package'
           AND (p.credits_purchased IS NULL OR p.credits_purchased = 0)
-          AND p.confirmed_at > NOW() - INTERVAL '24 hours'
+          AND p.confirmed_at > NOW() - INTERVAL '7 days'
         ORDER BY p.confirmed_at ASC
       `, [userId]);
+
+      // Also find payments where credits_purchased was set but credits were never
+      // actually added to the user (e.g., crash/disconnect between payment update
+      // and user credit update before transaction wrapping was added)
+      const orphanedPayments = await this.db.query(`
+        SELECT p.id, p.credits_purchased, p.confirmed_at
+        FROM payments p
+        WHERE p.user_id = $1
+          AND p.status = 'confirmed'
+          AND p.payment_type = 'credits_package'
+          AND p.credits_purchased > 0
+          AND p.confirmed_at > NOW() - INTERVAL '7 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM credit_transactions ct
+            WHERE ct.user_id = p.user_id
+              AND ct.amount = p.credits_purchased
+              AND ct.reason IN ('package_purchase', 'package_purchase_recovered')
+              AND ct.created_at >= p.confirmed_at - INTERVAL '1 minute'
+          )
+        ORDER BY p.confirmed_at ASC
+      `, [userId]);
+
+      // Merge orphaned payments into unprocessed list (they need recovery too)
+      for (const orphan of orphanedPayments.rows) {
+        unprocessedPayments.rows.push({
+          id: orphan.id,
+          payment_type: 'credits_package',
+          description: null,
+          expected_amount: null,
+          confirmed_at: orphan.confirmed_at,
+          _creditsFromRecord: orphan.credits_purchased // use stored value
+        });
+      }
 
       if (unprocessedPayments.rows.length === 0) {
         return result;
@@ -172,18 +205,22 @@ class SessionManager {
 
       for (const payment of unprocessedPayments.rows) {
         try {
-          // Parse credits from description (e.g., "Wowngeon 10 credits package (WOW)")
-          let creditsToAdd = 10; // Default fallback
-          const desc = payment.description || '';
-          const match = desc.match(/(\d+)\s*credits?/i);
-          if (match) {
-            creditsToAdd = parseInt(match[1], 10) || 10;
+          // Determine credits: use stored value from orphaned record, or parse from description
+          let creditsToAdd = payment._creditsFromRecord || 0;
+          if (!creditsToAdd) {
+            creditsToAdd = 10; // Default fallback
+            const desc = payment.description || '';
+            const match = desc.match(/(\d+)\s*credits?/i);
+            if (match) {
+              creditsToAdd = parseInt(match[1], 10) || 10;
+            }
           }
+          const isOrphaned = !!payment._creditsFromRecord;
 
           // CRITICAL: Use transaction with row lock to prevent double-credit race condition
           // This ensures only one instance can process a payment at a time
           const recovered = await this.db.withTransaction(async (client) => {
-            // Lock the payment row and re-check if it's still unprocessed
+            // Lock the payment row and re-check status
             const lockResult = await client.query(`
               SELECT id, credits_purchased
               FROM payments
@@ -191,9 +228,27 @@ class SessionManager {
               FOR UPDATE
             `, [payment.id]);
 
-            // If already processed (by another instance), skip
-            if (!lockResult.rows[0] || (lockResult.rows[0].credits_purchased && lockResult.rows[0].credits_purchased > 0)) {
-              return null; // Already processed
+            if (!lockResult.rows[0]) return null;
+
+            // For normal recovery: skip if credits_purchased already set
+            // For orphaned recovery: skip if a credit_transaction already exists
+            if (!isOrphaned) {
+              if (lockResult.rows[0].credits_purchased && lockResult.rows[0].credits_purchased > 0) {
+                return null; // Already processed
+              }
+            } else {
+              // Double-check: does a credit_transaction already exist for this?
+              const txCheck = await client.query(`
+                SELECT 1 FROM credit_transactions
+                WHERE user_id = $1
+                  AND amount = $2
+                  AND reason IN ('package_purchase', 'package_purchase_recovered')
+                  AND created_at >= $3::timestamp - INTERVAL '1 minute'
+                LIMIT 1
+              `, [userId, creditsToAdd, payment.confirmed_at]);
+              if (txCheck.rows.length > 0) {
+                return null; // Already recovered
+              }
             }
 
             // Add credits to user
