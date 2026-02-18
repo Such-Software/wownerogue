@@ -272,14 +272,68 @@ class WalletRPCService {
     }
 
     /**
-     * Placeholder for future batch payout aggregation.
-     * Currently returns early to avoid runtime errors where it's scheduled.
+     * Send a batch payout to multiple destinations in a single transfer_split call.
+     * More efficient than individual transfers — uses fewer outputs and pays less in fees.
+     * @param {Array<{amount: number|bigint, address: string}>} destinations
+     * @returns {Object} - { tx_hash_list, tx_key_list, fee_list, totalFee }
      */
-    async processBatchPayouts() {
-        if (this.debugManager?.CONSOLE_LOGGING) {
-            console.log('⚙️ processBatchPayouts stub invoked (no payouts processed).');
+    async processBatchPayout(destinations) {
+        if (!destinations || destinations.length === 0) {
+            throw new AppError('No destinations provided for batch payout', {
+                safeMessage: 'Batch payout requires at least one destination.'
+            });
         }
-        return { processed: 0 };
+
+        // Validate all addresses before attempting transfer
+        for (const dest of destinations) {
+            if (!dest.address || typeof dest.address !== 'string') {
+                throw new AppError('Invalid address in batch payout', {
+                    safeMessage: 'One or more payout addresses are invalid.'
+                });
+            }
+            const validation = await this.validateAddress(dest.address);
+            if (!validation.valid) {
+                throw new AppError(`Invalid payout address in batch: ${dest.address.substring(0, 10)}...`, {
+                    safeMessage: 'One or more payout addresses failed validation.'
+                });
+            }
+        }
+
+        const transferParams = {
+            destinations: destinations.map(d => ({
+                amount: this.normalizeAtomicAmount(d.amount),
+                address: d.address
+            })),
+            account_index: this.accountIndex,
+            priority: 1,
+            get_tx_key: true
+        };
+
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log(`🚀 Initiating batch payout (${destinations.length} destinations)`, {
+                totalAmount: destinations.reduce((sum, d) => sum + Number(d.amount), 0),
+                destinations: destinations.map(d => d.address.substring(0, 10) + '...')
+            });
+        }
+
+        const response = await this.rpcCall('transfer_split', transferParams);
+
+        const result = {
+            tx_hash_list: response.result.tx_hash_list || [],
+            tx_key_list: response.result.tx_key_list || [],
+            fee_list: response.result.fee_list || [],
+            totalFee: (response.result.fee_list || []).reduce((a, b) => a + b, 0)
+        };
+
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log(`💸 Batch payout sent (${result.tx_hash_list.length} tx)`, {
+                txHashes: result.tx_hash_list,
+                totalFee: result.totalFee,
+                destinations: destinations.length
+            });
+        }
+
+        return result;
     }
 
     normalizeAtomicAmount(value) {
@@ -340,6 +394,22 @@ class WalletRPCService {
                 error: error.message
             };
         }
+    }
+
+    /**
+     * Get the wallet's own primary address (account_index 0, address_index 0).
+     * Used by output-splitting script and internal operations.
+     * @returns {Object} - { address: string, address_index: number }
+     */
+    async getOwnAddress() {
+        const response = await this.rpcCall('get_address', {
+            account_index: this.accountIndex,
+            address_index: [0]
+        });
+        return {
+            address: response.result.address,
+            address_index: 0
+        };
     }
 
     /**
@@ -420,22 +490,30 @@ class WalletRPCService {
                 });
             }
 
-            const response = await this.rpcCall('transfer', transferParams);
+            // Use transfer_split for better output handling — automatically splits
+            // across multiple outputs if needed, more resilient than plain transfer
+            const response = await this.rpcCall('transfer_split', transferParams);
+
+            // transfer_split returns arrays: tx_hash_list, tx_key_list, fee_list
+            const txHash = response.result.tx_hash_list?.[0];
+            const txKey = response.result.tx_key_list?.[0];
+            const fee = response.result.fee_list?.reduce((a, b) => a + b, 0) || 0;
 
             if (this.debugManager?.CONSOLE_LOGGING) {
                 console.log('💸 Payout sent successfully', {
                     to: address.substring(0, 10) + '...',
                     amount: normalizedAmount,
-                    txHash: response.result.tx_hash,
-                    fee: response.result.fee
+                    txHash,
+                    fee,
+                    txCount: response.result.tx_hash_list?.length || 1
                 });
             }
 
             return {
                 success: true,
-                txHash: response.result.tx_hash,
-                txKey: response.result.tx_key,
-                fee: response.result.fee,
+                txHash,
+                txKey,
+                fee,
                 userId,
                 gameId,
                 amount: normalizedAmount

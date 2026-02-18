@@ -340,6 +340,28 @@ WantedBy=multi-user.target
 
 ---
 
+## Wallet Output Management
+
+Wownero (and Monero) lock change outputs for several blocks after spending. If the wallet has only one large output and multiple payouts fire in quick succession, the second payout will fail because the change output from the first is still locked.
+
+**Solution**: Pre-split wallet outputs into many smaller ones. The game server includes a CLI tool for this:
+
+```bash
+# Preview what would happen (no transaction sent)
+node scripts/splitOutputs.js --amount 10 --count 30 --dry-run
+
+# Split into 30 outputs of 10 WOW each (requires ~300 WOW + fees)
+node scripts/splitOutputs.js --amount 10 --count 30
+```
+
+This creates 30 independently-spendable outputs, allowing up to 30 concurrent payouts before any output locking becomes an issue.
+
+**When to re-split**: As payouts go out, outputs get consumed and consolidated via change. Periodically check the wallet and re-split when the number of spendable outputs drops low. The server also batches payouts that happen within 5 seconds of each other into a single transaction to conserve outputs.
+
+**Recommended setup**: After initial wallet funding, run the split script. For a game with typical traffic, 20-30 outputs of 10 WOW each provides good concurrency headroom.
+
+---
+
 ## Monitoring
 
 ### Check Service Status

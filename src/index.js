@@ -1686,6 +1686,10 @@ debugManager.onNewBlockCallback((blockHeight) => {
     socketHandlers.startGamesForWaiting(blockHeight);
     // Check active games for timeout
     socketHandlers.checkGamesTimeout(blockHeight);
+    // Flush any pending payouts (safety net for batch timer)
+    gameModeManager._processPendingPayouts().catch(err => {
+        console.error('❌ Block-triggered payout processing error:', err.message);
+    });
 });
 
 // Initialize payment system

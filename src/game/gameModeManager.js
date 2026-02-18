@@ -1136,89 +1136,42 @@ class GameModeManager {
                 const userRow = userResult.rows[0];
                 const payoutAddress = lockedPayoutAddress || (userRow && userRow.payout_address);
                 if (userRow && payoutAddress) {
-                    // SECURITY: Use safe payout pattern - create pending record FIRST, then RPC, then store tx_hash
-                    let payoutId = null;
+                    // Create pending payout record, then schedule batch processing.
+                    // Multiple wins within 5 seconds are batched into one transfer_split call,
+                    // saving outputs and preventing locked-output failures.
                     try {
-                        // Step 1: Create pending payout record FIRST (ensures we have a record even if RPC succeeds but server crashes)
                         const insertResult = await this.db.query(`
                             INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, created_at)
                             VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
                             RETURNING id
                         `, [
                             userRow.id,
-                            gameDbId, // Use DB id if available
+                            gameDbId,
                             payoutAddress,
                             payoutAmount,
                             multiplier,
                             treasureFound ? 'escape_with_treasure' : 'escape'
                         ]);
-                        payoutId = insertResult.rows[0].id;
+                        const payoutId = insertResult.rows[0].id;
 
-                        // Step 2: Attempt wallet RPC transfer (using locked address)
-                        const payoutResult = await this.walletService.processPayout({
-                            userId: userRow.id,
-                            gameId,
-                            address: payoutAddress,
-                            amount: payoutAmount,
-                            multiplier,
-                            description: `Game ${gameId} payout`
-                        });
-
-                        // Step 3: IMMEDIATELY store tx_hash if RPC succeeded (BEFORE any transaction)
-                        // This ensures we never lose the tx_hash even if subsequent DB operations fail
-                        if (payoutResult.success && payoutResult.txHash) {
-                            await this.db.query(`
-                                UPDATE payouts SET tx_hash = $1, fee = $2 WHERE id = $3
-                            `, [payoutResult.txHash, payoutResult.fee || null, payoutId]);
-                        }
-
-                        // Step 4: Update status and user stats atomically
-                        await this.db.withTransaction(async (client) => {
-                            await client.query(`
-                                UPDATE payouts
-                                SET status = $1, processed_at = NOW()
-                                WHERE id = $2
-                            `, [payoutResult.success ? 'completed' : 'failed', payoutId]);
-
-                            if (payoutResult.success) {
-                                await client.query(`
-                                    UPDATE users
-                                    SET total_amount_won = total_amount_won + $1,
-                                        total_payouts_received = COALESCE(total_payouts_received, 0) + 1
-                                    WHERE id = $2
-                                `, [payoutAmount, userRow.id]);
-                            }
-                        });
+                        // Schedule batch processing (5-second debounce collects concurrent wins)
+                        this._scheduleBatchPayout();
 
                         return {
                             success: true,
                             mode: recordedPaymentMode,
                             payout: {
+                                status: 'queued',
+                                payoutId,
                                 amount: payoutAmount,
                                 multiplier,
-                                treasure: treasureFound,
-                                txHash: payoutResult.txHash
+                                treasure: treasureFound
                             },
                             score: metrics.score ?? null
                         };
                     } catch (payoutErr) {
-                        const normalizedPayout = normalizeError(payoutErr, 'Failed to send payout');
-                        console.error('❌ Error creating payout:', normalizedPayout.message);
-                        // Update payout record with failure if it exists
-                        if (payoutId) {
-                            try {
-                                await this.db.query(`
-                                    UPDATE payouts
-                                    SET status = 'failed',
-                                        error_message = $1,
-                                        last_error = $1,
-                                        last_retry_at = NOW()
-                                    WHERE id = $2
-                                `, [payoutErr.message, payoutId]);
-                            } catch (dbErr) {
-                                console.error('Failed to update payout error:', dbErr.message);
-                            }
-                        }
+                        const normalizedPayout = normalizeError(payoutErr, 'Failed to create payout record');
+                        console.error('❌ Error creating payout record:', normalizedPayout.message);
                         return { success: true, mode: recordedPaymentMode, payout: null, payoutError: normalizedPayout.safeMessage, score: metrics.score ?? null };
                     }
                 }
@@ -1231,6 +1184,140 @@ class GameModeManager {
             const normalized = normalizeError(err, 'Failed to complete game');
             console.error('❌ completeGame error:', normalized.message);
             return { success: false, error: normalized.safeMessage };
+        }
+    }
+
+    // ---- Batch Payout Processing ----
+
+    /**
+     * Schedule batch payout processing with a short debounce.
+     * Multiple wins within the debounce window (5s) are batched into one transfer.
+     * Also called on new block events as a safety net.
+     */
+    _scheduleBatchPayout() {
+        if (this._batchPayoutTimer) clearTimeout(this._batchPayoutTimer);
+        this._batchPayoutTimer = setTimeout(() => {
+            this._processPendingPayouts().catch(err => {
+                console.error('❌ Batch payout processing error:', err.message);
+            });
+        }, 5000);
+    }
+
+    /**
+     * Process all pending payouts that haven't been sent yet.
+     * Batches them into a single transfer_split call for efficiency.
+     * Called by debounce timer and on new block events.
+     */
+    async _processPendingPayouts() {
+        // Prevent concurrent batch processing
+        if (this._isBatchProcessing) return;
+        this._isBatchProcessing = true;
+
+        try {
+            // Gather all pending payouts with no tx_hash (not yet attempted)
+            const pending = await this.db.query(`
+                SELECT id, user_id, game_id, payout_address, amount, multiplier, reason
+                FROM payouts
+                WHERE status = 'pending' AND tx_hash IS NULL
+                ORDER BY created_at ASC
+            `);
+
+            if (pending.rows.length === 0) return;
+
+            console.log(`📦 Processing batch of ${pending.rows.length} pending payout(s)`);
+
+            // Build destinations for transfer_split
+            const destinations = pending.rows.map(p => ({
+                amount: p.amount,
+                address: p.payout_address
+            }));
+
+            // Generate batch_id to link payouts processed together
+            const batchId = require('uuid').v4();
+
+            if (pending.rows.length === 1) {
+                // Single payout — use processPayout for simpler flow
+                const p = pending.rows[0];
+                try {
+                    const result = await this.walletService.processPayout({
+                        userId: p.user_id,
+                        gameId: p.game_id,
+                        address: p.payout_address,
+                        amount: p.amount,
+                        multiplier: p.multiplier
+                    });
+
+                    if (result.success && result.txHash) {
+                        await this.db.query(
+                            `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3 WHERE id = $4`,
+                            [result.txHash, result.fee || null, batchId, p.id]
+                        );
+                    }
+
+                    await this.db.withTransaction(async (client) => {
+                        await client.query(
+                            `UPDATE payouts SET status = 'completed', processed_at = NOW() WHERE id = $1`,
+                            [p.id]
+                        );
+                        await client.query(
+                            `UPDATE users SET total_amount_won = total_amount_won + $1, total_payouts_received = COALESCE(total_payouts_received, 0) + 1 WHERE id = $2`,
+                            [p.amount, p.user_id]
+                        );
+                    });
+                    console.log(`💸 Single payout ${p.id} completed: ${result.txHash}`);
+                } catch (err) {
+                    console.error(`❌ Single payout ${p.id} failed:`, err.message);
+                    await this.db.query(
+                        `UPDATE payouts SET status = 'failed', last_error = $1, last_retry_at = NOW() WHERE id = $2`,
+                        [err.message, p.id]
+                    ).catch(() => {});
+                }
+            } else {
+                // Multiple payouts — batch via transfer_split with multiple destinations
+                try {
+                    const result = await this.walletService.processBatchPayout(destinations);
+
+                    // All destinations in one transfer_split typically produce 1 tx
+                    const txHash = result.tx_hash_list[0];
+                    const feePerPayout = result.totalFee
+                        ? Math.ceil(result.totalFee / pending.rows.length)
+                        : null;
+
+                    for (const p of pending.rows) {
+                        // Store tx_hash immediately for each payout
+                        await this.db.query(
+                            `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3 WHERE id = $4`,
+                            [txHash, feePerPayout, batchId, p.id]
+                        );
+
+                        // Update status and user stats atomically
+                        await this.db.withTransaction(async (client) => {
+                            await client.query(
+                                `UPDATE payouts SET status = 'completed', processed_at = NOW() WHERE id = $1`,
+                                [p.id]
+                            );
+                            await client.query(
+                                `UPDATE users SET total_amount_won = total_amount_won + $1, total_payouts_received = COALESCE(total_payouts_received, 0) + 1 WHERE id = $2`,
+                                [p.amount, p.user_id]
+                            );
+                        });
+                    }
+                    console.log(`💸 Batch payout completed: ${pending.rows.length} payouts in tx ${txHash}`);
+                } catch (err) {
+                    console.error(`❌ Batch payout failed (${pending.rows.length} payouts):`, err.message);
+                    // Mark all as failed — retry service will pick them up individually
+                    for (const p of pending.rows) {
+                        await this.db.query(
+                            `UPDATE payouts SET status = 'failed', last_error = $1, last_retry_at = NOW() WHERE id = $2`,
+                            [err.message, p.id]
+                        ).catch(() => {});
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('❌ _processPendingPayouts error:', err.message);
+        } finally {
+            this._isBatchProcessing = false;
         }
     }
 }
