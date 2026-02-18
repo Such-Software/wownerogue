@@ -109,7 +109,7 @@ class QueueManager {
                 console.log(`[QueueManager] Player ${serverId} enters on block ${blockHeight} (dies after ${blockHeight + 1})`);
             }
             try {
-                const game = this.createGameForUser(currentUser, 'standard');
+                const game = await this.createGameForUser(currentUser, 'standard');
                 const gameState = game.getState();
                 gameState.blockHeight = blockHeight;
                 // Include provably fair commitment
@@ -121,8 +121,9 @@ class QueueManager {
                 if (this.gameModeManager) {
                     const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
                     if (!startRes.success) {
-                        // Abort game
+                        // Abort game + clean up orphaned DB record
                         if (this.activeGames) this.activeGames.delete(serverId);
+                        this._cleanupOrphanedGame(game);
                         this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
                         continue;
                     }
@@ -178,7 +179,7 @@ class QueueManager {
         if (!currentUser) return false;
         currentUser.blockRec = blockHeight; // lifetime until next block
         try {
-            const game = this.createGameForUser(currentUser, 'standard');
+            const game = await this.createGameForUser(currentUser, 'standard');
             const gameState = game.getState();
             gameState.blockHeight = blockHeight;
             // Include provably fair commitment
@@ -190,8 +191,9 @@ class QueueManager {
             if (this.gameModeManager) {
                 const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
                 if (!startRes.success) {
-                    // Abort game
+                    // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);
+                    this._cleanupOrphanedGame(game);
                     this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
                     return false;
                 }
@@ -235,7 +237,7 @@ class QueueManager {
         currentUser.isEarlyEntry = true; // Mark as early entry for potential special handling
 
         try {
-            const game = this.createGameForUser(currentUser, 'standard', { earlyEntry: true });
+            const game = await this.createGameForUser(currentUser, 'standard', { earlyEntry: true });
             const gameState = game.getState();
             gameState.blockHeight = blockHeight;
             gameState.isEarlyEntry = true;
@@ -250,8 +252,9 @@ class QueueManager {
             if (this.gameModeManager) {
                 const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
                 if (!startRes.success) {
-                    // Abort game
+                    // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);
+                    this._cleanupOrphanedGame(game);
                     return { success: false, reason: startRes.reason || 'Payment processing failed' };
                 }
                 // Emit credits_update if credits were spent
@@ -272,6 +275,19 @@ class QueueManager {
             console.error('[QueueManager] Error starting early game:', normalized.message);
             this.io.to(serverId).emit('message', 'Error starting game: ' + normalized.message);
             return { success: false, reason: normalized.message };
+        }
+    }
+
+    /**
+     * Clean up a game record from the DB when processGameStart fails.
+     * Prevents orphaned "active" records that never complete.
+     */
+    _cleanupOrphanedGame(game) {
+        if (game && game.dbId && this.gameModeManager && this.gameModeManager.db) {
+            this.gameModeManager.db.query(
+                `UPDATE games SET status = 'expired', outcome = 'aborted', completed_at = NOW() WHERE id = $1`,
+                [game.dbId]
+            ).catch(err => console.error('[QueueManager] Failed to clean up orphaned game:', err.message));
         }
     }
 

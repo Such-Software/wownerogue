@@ -747,8 +747,9 @@ class GameModeManager {
             const remainingCredits = updateRes.rows[0].credits;
 
             await client.query(`
-                UPDATE games SET payment_mode = 'credits' WHERE id = $1
-            `, [gameId]);
+                UPDATE games SET game_mode = 'PAID_CREDITS', payout_address = $2
+                WHERE dungeon_seed = $1
+            `, [gameId, user.payout_address || null]);
 
             await client.query(`
                 INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
@@ -781,9 +782,9 @@ class GameModeManager {
         await this.db.withTransaction(async (client) => {
             await client.query(`
                 UPDATE games
-                SET payment_id = $1
-                WHERE id = $2
-            `, [payment.id, gameId]);
+                SET payment_id = $1, game_mode = 'PAID_SINGLE', payout_address = $3
+                WHERE dungeon_seed = $2
+            `, [payment.id, gameId, user.payout_address || null]);
 
             await client.query(`
                 UPDATE users
@@ -801,166 +802,8 @@ class GameModeManager {
         };
     }
 
-    /**
-     * Process game completion (handle payouts)
-     */
-    async processGameCompletion(gameId, outcome, treasureFound = false) {
-        try {
-            // Get game details
-            const gameResult = await this.db.query(`
-                SELECT g.*, u.payout_address, u.id as user_id
-                FROM games g
-                JOIN users u ON g.user_id = u.id
-                WHERE g.id = $1
-            `, [gameId]);
-            
-            if (gameResult.rows.length === 0) {
-                return { success: false, reason: 'Game not found' };
-            }
-            
-            const game = gameResult.rows[0];
-            
-            // Update game status
-            await this.db.query(`
-                UPDATE games 
-                SET status = $1, 
-                    outcome = $2, 
-                    treasure_found = $3, 
-                    completed_at = NOW()
-                WHERE id = $4
-            `, [outcome === 'escaped' ? 'won' : 'lost', outcome, treasureFound, gameId]);
-            
-            const recordedMode = (game.payment_mode || game.game_mode || this.gameMode || 'FREE').toUpperCase();
-            const payoutEligibleMode = (recordedMode === 'PAID_SINGLE') || (recordedMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
-            if (payoutEligibleMode && outcome === 'escaped' && game.payout_address) {
-                const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedMode, { treasureFound });
-                if (payoutAmount > 0) {
-                    const reason = treasureFound ? 'escape_with_treasure' : 'escape';
-                    let payoutId = null;
-
-                    try {
-                        // Step 1: Create pending payout record FIRST (ensures we have a record even if RPC succeeds but server crashes)
-                        const insertResult = await this.db.query(`
-                            INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, created_at)
-                            VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
-                            RETURNING id
-                        `, [
-                            game.user_id,
-                            gameId,
-                            game.payout_address,
-                            payoutAmount,
-                            multiplier,
-                            reason
-                        ]);
-                        payoutId = insertResult.rows[0].id;
-
-                        // Step 2: Attempt wallet RPC transfer
-                        const payoutResult = await this.walletService.processPayout({
-                            userId: game.user_id,
-                            gameId,
-                            address: game.payout_address,
-                            amount: payoutAmount,
-                            multiplier,
-                            description: `Game ${gameId} payout`
-                        });
-
-                        // Step 3: IMMEDIATELY store tx_hash if RPC succeeded (BEFORE transaction)
-                        // This ensures we never lose the tx_hash even if subsequent DB operations fail
-                        // The retry service can then check blockchain status using this hash
-                        if (payoutResult.success && payoutResult.txHash) {
-                            await this.db.query(`
-                                UPDATE payouts
-                                SET tx_hash = $1, fee = $2
-                                WHERE id = $3
-                            `, [payoutResult.txHash, payoutResult.fee || null, payoutId]);
-                        }
-
-                        // Step 4: Update status and user stats (within transaction for atomicity)
-                        await this.db.withTransaction(async (client) => {
-                            await client.query(`
-                                UPDATE payouts
-                                SET status = $1, processed_at = NOW()
-                                WHERE id = $2
-                            `, [
-                                payoutResult.success ? 'completed' : 'failed',
-                                payoutId
-                            ]);
-
-                            // Update user's total_amount_won if successful
-                            if (payoutResult.success) {
-                                await client.query(`
-                                    UPDATE users
-                                    SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
-                                        total_payouts_received = COALESCE(total_payouts_received, 0) + 1
-                                    WHERE id = $2
-                                `, [payoutAmount, game.user_id]);
-                            }
-                        });
-
-                        console.log(`💸 Payout ${payoutResult.success ? 'sent' : 'failed'}: ${payoutAmount} atomic units for game ${gameId} (multiplier ${multiplier}x)`);
-                    } catch (payoutError) {
-                        console.error(`❌ Payout processing failed for game ${gameId}:`, payoutError.message);
-                        // Update payout record with failure (if it exists)
-                        if (payoutId) {
-                            try {
-                                await this.db.query(`
-                                    UPDATE payouts
-                                    SET status = 'failed',
-                                        error_message = $1,
-                                        retry_count = COALESCE(retry_count, 0),
-                                        last_error = $1,
-                                        last_retry_at = NOW()
-                                    WHERE id = $2
-                                `, [payoutError.message, payoutId]);
-                            } catch (dbErr) {
-                                console.error('Failed to update payout error:', dbErr.message);
-                            }
-                        } else {
-                            // Payout record wasn't created, insert failed record
-                            try {
-                                await this.db.query(`
-                                    INSERT INTO payouts (user_id, game_id, payout_address, amount, multiplier, reason, status, error_message, created_at)
-                                    VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, NOW())
-                                `, [
-                                    game.user_id,
-                                    gameId,
-                                    game.payout_address,
-                                    payoutAmount,
-                                    multiplier,
-                                    reason,
-                                    payoutError.message
-                                ]);
-                            } catch (dbErr) {
-                                console.error('Failed to record payout error:', dbErr.message);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Update user statistics
-            if (outcome === 'escaped') {
-                await this.db.query(`
-                    UPDATE users 
-                    SET total_games_won = total_games_won + 1,
-                        updated_at = NOW()
-                    WHERE id = $1
-                `, [game.user_id]);
-            }
-            
-            return { 
-                success: true, 
-                outcome, 
-                treasureFound,
-                payoutCreated: payoutEligibleMode && outcome === 'escaped'
-            };
-            
-        } catch (error) {
-            const normalized = normalizeError(error, 'Failed to process game completion');
-            console.error('❌ Error processing game completion:', normalized.message);
-            return { success: false, reason: normalized.safeMessage };
-        }
-    }
+    // processGameCompletion() removed — dead code, never called.
+    // Only completeGame() (below) is used for game completion/payouts.
 
     /**
      * Create payment request
@@ -1233,18 +1076,17 @@ class GameModeManager {
             // Retrieve the game record to get the actual payment_mode used at game start
             let recordedPaymentMode = this.gameMode; // fallback to global
             let gameDbId = null;
+            let lockedPayoutAddress = null; // address locked at game start
             try {
                 const gameRecord = await this.db.query(`
-                    SELECT id, payment_mode FROM games
+                    SELECT id, game_mode, payout_address FROM games
                     WHERE dungeon_seed = $1 AND socket_id = $2
                     LIMIT 1
                 `, [gameId, socketId]);
                 if (gameRecord.rows.length > 0) {
                     gameDbId = gameRecord.rows[0].id;
-                    recordedPaymentMode = (gameRecord.rows[0].payment_mode || this.gameMode).toUpperCase();
-                    // Normalize to expected values
-                    if (recordedPaymentMode === 'DIRECT') recordedPaymentMode = 'PAID_SINGLE';
-                    if (recordedPaymentMode === 'CREDITS') recordedPaymentMode = 'PAID_CREDITS';
+                    recordedPaymentMode = (gameRecord.rows[0].game_mode || this.gameMode).toUpperCase();
+                    lockedPayoutAddress = gameRecord.rows[0].payout_address || null;
                 }
             } catch (e) {
                 // Non-fatal, use fallback
@@ -1289,10 +1131,11 @@ class GameModeManager {
                     }
                 }
 
-                // Look up user record for payout address
+                // Use payout address locked at game start, fall back to current user address
                 const userResult = await this.db.query(`SELECT * FROM users WHERE socket_id = $1 LIMIT 1`, [socketId]);
                 const userRow = userResult.rows[0];
-                if (userRow && userRow.payout_address) {
+                const payoutAddress = lockedPayoutAddress || (userRow && userRow.payout_address);
+                if (userRow && payoutAddress) {
                     // SECURITY: Use safe payout pattern - create pending record FIRST, then RPC, then store tx_hash
                     let payoutId = null;
                     try {
@@ -1304,18 +1147,18 @@ class GameModeManager {
                         `, [
                             userRow.id,
                             gameDbId, // Use DB id if available
-                            userRow.payout_address,
+                            payoutAddress,
                             payoutAmount,
                             multiplier,
                             treasureFound ? 'escape_with_treasure' : 'escape'
                         ]);
                         payoutId = insertResult.rows[0].id;
 
-                        // Step 2: Attempt wallet RPC transfer
+                        // Step 2: Attempt wallet RPC transfer (using locked address)
                         const payoutResult = await this.walletService.processPayout({
                             userId: userRow.id,
                             gameId,
-                            address: userRow.payout_address,
+                            address: payoutAddress,
                             amount: payoutAmount,
                             multiplier,
                             description: `Game ${gameId} payout`

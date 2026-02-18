@@ -30,23 +30,23 @@ class GameManager {
      * @param {Object} options - Additional game options
      * @returns {Object} Created game instance
      */
-    createGameForUser(user, gameType = 'standard', options = {}) {
+    async createGameForUser(user, gameType = 'standard', options = {}) {
         let game;
-        
+
         if (gameType === 'legacy') {
             game = Game.createLegacyGame(user.id, user, options);
         } else {
             game = Game.createStandardGame(user.id, user, options);
         }
-        
+
         user.joinGame(game);
         this.activeGames.set(user.id, game);
 
-        // Insert a DB record for this game (best effort)
-        this._insertGameRecord(game, user);
-        
+        // Insert DB record and wait for it (needed for processGameStart to find the row)
+        await this._insertGameRecord(game, user);
+
         if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id}`);
+            console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id} (dbId: ${game.dbId || 'none'})`);
         }
         return game;
     }
@@ -64,6 +64,11 @@ class GameManager {
         try {
             const socketId = socket.id || socket;
 
+            // IMMEDIATELY remove from active games to prevent double-processing.
+            // If escape + block timeout fire in the same event loop tick, the second
+            // call would find the game still here during the first call's await.
+            this.activeGames.delete(socketId);
+
             game.gameState = status;
             const moves = game.moveCount || 0;
             const durationSeconds = game.startedAt ? Math.max(0, Math.round((Date.now() - game.startedAt) / 1000)) : null;
@@ -76,19 +81,19 @@ class GameManager {
                 durationSeconds
             };
             game.endGame(status, gameStats);
-            
+
             // Process game completion with payment system
             let payoutInfo = null;
             if (this.gameModeManager) {
                 try {
                     payoutInfo = await this.gameModeManager.completeGame(
-                        socketId, 
-                        game.id, 
-                        status === 'won', 
+                        socketId,
+                        game.id,
+                        status === 'won',
                         game.player.hasTreasure || false,
                         { moves, durationSeconds, score: finalScore }
                     );
-                    
+
                     if (this.debugManager.CONSOLE_LOGGING && payoutInfo) {
                         console.log(`💰 Payout processed for ${socketId}:`, payoutInfo);
                     }
@@ -96,10 +101,10 @@ class GameManager {
                     console.error('Error processing game completion:', error);
                 }
             }
-            
+
             // Emit game over event with provably fair reveal
             const proofReveal = game.getProofReveal ? game.getProofReveal() : null;
-            
+
             this.io.to(socketId).emit('game_over', {
                 status: status,
                 reason: reason,
@@ -114,10 +119,6 @@ class GameManager {
 
             // Persist completion details if DB available
             await this._updateGameRecord(game, socketId, status, reason, moves, durationSeconds);
-            
-            // Clean up game from active games BEFORE notifying spectators
-            // This ensures the game list broadcast won't include this game
-            this.activeGames.delete(socketId);
 
             // Notify spectators that the game has ended and broadcast updated list
             if (this.spectatorManager) {
@@ -131,16 +132,17 @@ class GameManager {
                     treasure: game.player.hasTreasure || false
                 });
             }
-            
+
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log(`🎮 Game ${game.id} ended for ${socketId}: ${status} (${reason})`);
             }
-            
+
         } catch (error) {
             console.error('GameManager.handleGameOver error:', error);
             // Still try to clean up even if there was an error
-            if (socket && socket.id) {
-                this.activeGames.delete(socket.id);
+            const socketId = socket?.id || socket;
+            if (socketId) {
+                this.activeGames.delete(socketId);
             }
         }
     }
@@ -256,18 +258,24 @@ class GameManager {
      * @param {Object} game - Game instance
      * @param {Object} user - User object
      */
-    _insertGameRecord(game, user) {
+    async _insertGameRecord(game, user) {
         if (this.gameModeManager && this.gameModeManager.db) {
             const db = this.gameModeManager.db;
             const gameMode = this.gameModeManager.gameMode || 'FREE';
             const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
             const socketId = user.id; // user.id is the socket id string
-            
-            db.query(`
-                INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
-                VALUES ((SELECT id FROM users WHERE socket_id = $1), $2, $3, 'active', $4, $5, NOW())
-            `, [socketId, socketId, gameMode, blockHeight, game.id])
-            .catch(err => console.error('Game insert failed:', err.message));
+
+            try {
+                const result = await db.query(`
+                    INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
+                    VALUES ((SELECT id FROM users WHERE socket_id = $1), $2, $3, 'active', $4, $5, NOW())
+                    RETURNING id
+                `, [socketId, socketId, gameMode, blockHeight, game.id]);
+                game.dbId = result.rows[0]?.id || null;
+            } catch (err) {
+                console.error('Game insert failed:', err.message);
+                game.dbId = null;
+            }
         }
     }
 

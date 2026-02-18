@@ -983,12 +983,12 @@
             return Math.floor(seconds / 86400) + 'd ago';
         }
 
-        // Auto-refresh every 30 seconds
+        // Auto-refresh every 15 seconds for active tabs
         setInterval(() => {
-            if (apiKey && currentTab === 'overview') {
-                loadDashboard();
-            }
-        }, 30000);
+            if (!apiKey) return;
+            if (currentTab === 'overview') loadDashboard();
+            else if (currentTab === 'queue') loadQueue();
+        }, 15000);
     </script>
 </body>
 </html>
