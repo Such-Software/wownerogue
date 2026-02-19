@@ -396,10 +396,7 @@ class SpectatorManager {
         // Add pending games to the response
         gameListData.pendingGames = pendingGames;
         
-        // Only broadcast if there are active or pending games
-        if (gameListData.pagination.totalGames === 0 && pendingGames.length === 0) return;
-        
-        // Broadcast to a "lobby" room - users join this room when not in game
+        // Always broadcast, even when empty — clients need to clear their lists
         this.io.to('lobby').emit('active_games', gameListData);
     }
 

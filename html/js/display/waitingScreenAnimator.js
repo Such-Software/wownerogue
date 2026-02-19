@@ -92,8 +92,8 @@ var WaitingScreenAnimator = {
         // Check if we're in "Awaiting payment" mode - use treasure hunt animation
         const isAwaitingPayment = typeof Game !== 'undefined' && Game._awaitingPayment;
         
-        if (isAwaitingPayment) {
-            // Use the treasure hunt animation for payment waiting
+        if (!isAwaitingPayment) {
+            // Use the treasure hunt animation for queue waiting (the longer wait)
             this.drawPaymentAnimation(screenWidth, screenHeight, drawCenteredTextFn);
             return;
         }
