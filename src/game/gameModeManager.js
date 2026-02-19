@@ -810,7 +810,14 @@ class GameModeManager {
      */
     async createPaymentRequest(socketId, paymentType, options = {}) {
         try {
-            const user = await this.getOrCreateUser(socketId);
+            // Prefer session-resolved userId (stable across reconnects) over socket_id lookup
+            let user;
+            if (options.userId) {
+                const result = await this.db.query('SELECT * FROM users WHERE id = $1', [options.userId]);
+                user = result.rows[0] || await this.getOrCreateUser(socketId);
+            } else {
+                user = await this.getOrCreateUser(socketId);
+            }
             const reuseExisting = options.reuseExisting !== false;
             const requestedPackageId = options.packageId;
 
@@ -864,6 +871,15 @@ class GameModeManager {
                 }
             }
             
+            // Expire any stale pending payments for this user before creating a new one.
+            // A user should only have one active pending payment at a time.
+            const expiredResult = await this.db.query(`
+                UPDATE payments SET status = 'expired'
+                WHERE user_id = $1 AND status = 'pending'
+                RETURNING subaddress
+            `, [user.id]);
+            const expiredAddresses = expiredResult.rows.map(r => r.subaddress);
+
             // Create payment request using wallet RPC with correct parameters
             const paymentResult = await this.walletService.createPaymentRequest(
                 amount,
@@ -874,12 +890,12 @@ class GameModeManager {
 
             const expiresAt = paymentResult.expiresAt || new Date(Date.now() + 30 * 60 * 1000);
 
-            // Store payment info in database
+            // Store payment info in database (address_index enables monitoring restoration after restart)
             const insertResult = await this.db.query(`
-                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, description, created_at, expires_at)
-                VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7)
+                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, description, created_at, expires_at, address_index)
+                VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7, $8)
                 RETURNING id, expires_at
-            `, [user.id, socketId, paymentResult.address, amount, paymentType, description, expiresAt]);
+            `, [user.id, socketId, paymentResult.address, amount, paymentType, description, expiresAt, paymentResult.addressIndex ?? null]);
 
             const insertedRow = insertResult.rows[0];
             
@@ -893,7 +909,8 @@ class GameModeManager {
                 package: this._serializePackageInfo(packageInfo),
                 paymentType,
                 description,
-                reused: false
+                reused: false,
+                expiredAddresses
             };
             
         } catch (error) {

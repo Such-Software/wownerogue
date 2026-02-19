@@ -52,6 +52,7 @@ const activeGames = new Map(); // Maps socketId to Game objects
 let alertService = null; // Initialized later when payment system starts
 let payoutRetryService = null; // Initialized later when payment system starts
 let batchPayoutInterval = null; // Initialized later when payment system starts
+let paymentExpiryInterval = null; // Initialized later when payment system starts
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
@@ -1835,6 +1836,27 @@ async function startServer() {
             // Start periodic alert checks (every 5 minutes)
             alertService.startPeriodicChecks(300000);
         }
+
+        // Periodic job: expire old pending payments (every 5 minutes)
+        paymentExpiryInterval = setInterval(async () => {
+            try {
+                const result = await databaseManager.query(`
+                    UPDATE payments SET status = 'expired'
+                    WHERE status = 'pending' AND expires_at < NOW()
+                    RETURNING id, subaddress
+                `);
+                if (result.rows.length > 0) {
+                    for (const row of result.rows) {
+                        walletRPCService.stopPaymentMonitoring(row.subaddress);
+                        walletRPCService.addressToUser.delete(row.subaddress);
+                        walletRPCService.addressToSocket.delete(row.subaddress);
+                    }
+                    console.log(`[PaymentExpiry] Expired ${result.rows.length} stale payment(s)`);
+                }
+            } catch (e) {
+                console.error('[PaymentExpiry] Error:', e.message);
+            }
+        }, 5 * 60 * 1000);
         
     } catch (error) {
         console.error('❌ Failed to start server:', error);
@@ -1862,6 +1884,7 @@ async function gracefulShutdown(signal) {
 
     // Stop scheduled timers
     if (batchPayoutInterval) clearInterval(batchPayoutInterval);
+    if (paymentExpiryInterval) clearInterval(paymentExpiryInterval);
     if (gameModeManager._batchPayoutTimer) clearTimeout(gameModeManager._batchPayoutTimer);
     if (payoutRetryService) payoutRetryService.stop();
     if (alertService) alertService.stopPeriodicChecks?.();

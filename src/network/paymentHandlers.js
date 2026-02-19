@@ -190,11 +190,28 @@ class PaymentHandlers {
                 return;
             }
 
-            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, { 
+            // Resolve authoritative userId from session manager (stable across socket reconnects)
+            let sessionUserId = null;
+            if (this.sessionManager?.sessions?.has(socket.id)) {
+                sessionUserId = this.sessionManager.sessions.get(socket.id).id;
+            }
+
+            const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, {
                 reuseExisting: true,
-                packageId: options.packageId 
+                packageId: options.packageId,
+                userId: sessionUserId
             });
             const reused = !!paymentRequest.reused;
+
+            // Stop monitoring any expired addresses from previous payment requests
+            if (paymentRequest.expiredAddresses?.length > 0) {
+                for (const addr of paymentRequest.expiredAddresses) {
+                    this.walletService.stopPaymentMonitoring(addr);
+                    this.walletService.addressToUser.delete(addr);
+                    this.walletService.addressToSocket.delete(addr);
+                }
+            }
+
             const formattedAmount = paymentRequest.amountFormatted ?? this.gameModeManager.formatAtomicHuman(amount, 3);
             let qrDataUrl = null;
             try {

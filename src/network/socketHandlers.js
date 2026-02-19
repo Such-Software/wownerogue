@@ -753,10 +753,9 @@ class SocketHandlers {
                 this.paymentHandlers.stopMonitoringForSocket(socketId);
             }
 
-            // Clean up wallet Maps to prevent memory leaks (addressToUser, addressToSocket)
-            if (this.walletService && typeof this.walletService.cleanupUserPayments === 'function') {
-                this.walletService.cleanupUserPayments(socketId);
-            }
+            // NOTE: Do NOT call walletService.cleanupUserPayments() here.
+            // addressToUser entries must persist so checkPaymentStatus() can query the wallet
+            // RPC after session resumption. They get cleaned up when payments are confirmed or expired.
             
             // Clean up movement timestamps
             this.playerMoveTimestamps.delete(socketId);
@@ -815,7 +814,7 @@ class SocketHandlers {
         try {
             // Query for pending (unpaid) payment requests for this user
             const pendingResult = await this.gameModeManager.db.query(`
-                SELECT id, subaddress, expected_amount, payment_type, description, expires_at
+                SELECT id, subaddress, expected_amount, payment_type, description, expires_at, address_index
                 FROM payments
                 WHERE user_id = $1
                   AND status = 'pending'
@@ -880,10 +879,25 @@ class SocketHandlers {
                 package: null
             };
 
+            // Re-register address in wallet service so checkPaymentStatus() can query the wallet RPC.
+            // This is essential after server restart or if the entry was lost during disconnect.
+            if (this.walletService && payment.subaddress) {
+                this.walletService.addressToUser.set(payment.subaddress, {
+                    userId: String(dbUserId),
+                    socketId: socket.id,
+                    amount: Number(payment.expected_amount),
+                    addressIndex: payment.address_index ?? 0,
+                    accountIndex: 0,
+                    detected: false,
+                    confirmed: false,
+                    status: 'pending'
+                });
+            }
+
             // Restart payment monitoring
             // First stop any existing monitoring (unlikely but safe)
             this.paymentHandlers.stopMonitoringForSocket(socket.id);
-            
+
             // Restart monitoring via paymentHandlers internal method
             if (typeof this.paymentHandlers._monitorAddress === 'function') {
                 this.paymentHandlers._monitorAddress(

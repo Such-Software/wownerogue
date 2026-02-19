@@ -432,18 +432,19 @@ describe('Payment & Payout Comprehensive Tests', () => {
         test('creates single_game payment request correctly', async () => {
             const user = { id: 1, credits: 0 };
             gmm.singleGamePrice = 100000000000;
-            
+
             mockDb.query.mockResolvedValueOnce({ rows: [user] }); // getOrCreateUser
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // update last_active
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payment
-            
+            mockDb.query.mockResolvedValueOnce({ rows: [] }); // expire stale payments
+
             mockWalletService.createPaymentRequest.mockResolvedValueOnce({
                 address: 'wow1paymentaddr',
                 expiresAt: new Date()
             });
-            
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 999, expires_at: new Date() }] 
+
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 999, expires_at: new Date() }]
             }); // INSERT payment
 
             const result = await gmm.createPaymentRequest('socket1', 'single_game');
@@ -462,18 +463,19 @@ describe('Payment & Payout Comprehensive Tests', () => {
         test('creates credits_package payment request correctly', async () => {
             const user = { id: 1, credits: 0 };
             gmm.creditsPackagePrice = 500000000000;
-            
+
             mockDb.query.mockResolvedValueOnce({ rows: [user] }); // getOrCreateUser
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // update last_active
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payment
-            
+            mockDb.query.mockResolvedValueOnce({ rows: [] }); // expire stale payments
+
             mockWalletService.createPaymentRequest.mockResolvedValueOnce({
                 address: 'wow1creditspayment',
                 expiresAt: new Date()
             });
-            
-            mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1000, expires_at: new Date() }] 
+
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1000, expires_at: new Date() }]
             }); // INSERT payment
 
             const result = await gmm.createPaymentRequest('socket1', 'credits_package');
