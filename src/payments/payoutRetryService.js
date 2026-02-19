@@ -66,17 +66,21 @@ class PayoutRetryService {
             // 1. Status is 'pending' (stuck - RPC may have succeeded but DB update failed)
             // 2. Status is 'failed' with retry_count < maxRetries
             // Exclude very recent failures (wait at least 1 minute before retry)
-            const result = await this.db.query(`
-                SELECT p.*
-                FROM payouts p
-                WHERE (
-                    (p.status = 'pending' AND p.created_at < NOW() - INTERVAL '2 minutes')
-                    OR (p.status = 'failed' AND p.retry_count < $1 AND (p.last_retry_at IS NULL OR p.last_retry_at < NOW() - INTERVAL '1 minute'))
-                )
-                AND p.status != 'permanently_failed'
-                ORDER BY p.created_at ASC
-                LIMIT 10
-            `, [this.maxRetries]);
+            // FOR UPDATE SKIP LOCKED prevents race with batch processor in gameModeManager
+            const result = await this.db.withTransaction(async (client) => {
+                return await client.query(`
+                    SELECT p.*
+                    FROM payouts p
+                    WHERE (
+                        (p.status = 'pending' AND p.created_at < NOW() - INTERVAL '2 minutes')
+                        OR (p.status = 'failed' AND p.retry_count < $1 AND (p.last_retry_at IS NULL OR p.last_retry_at < NOW() - INTERVAL '1 minute'))
+                    )
+                    AND p.status NOT IN ('permanently_failed', 'processing')
+                    ORDER BY p.created_at ASC
+                    LIMIT 10
+                    FOR UPDATE SKIP LOCKED
+                `, [this.maxRetries]);
+            });
 
             if (result.rows.length === 0) {
                 if (this.debugManager?.CONSOLE_LOGGING) {

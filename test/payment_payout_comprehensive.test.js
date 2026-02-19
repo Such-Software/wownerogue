@@ -6,16 +6,20 @@
 const GameModeManager = require('../src/game/gameModeManager');
 
 // Mock dependencies
-const createMockDb = () => ({
-    query: jest.fn(),
-    // Mock withTransaction to execute the callback with a mock client
-    withTransaction: jest.fn().mockImplementation(async (callback) => {
-        const mockClient = {
-            query: jest.fn().mockResolvedValue({ rows: [] })
-        };
-        return callback(mockClient);
-    })
-});
+const createMockDb = () => {
+    const mockClient = {
+        query: jest.fn().mockResolvedValue({ rows: [] })
+    };
+    return {
+        query: jest.fn(),
+        // Mock withTransaction to execute the callback with a shared mock client
+        // so tests can set up client.query expectations
+        withTransaction: jest.fn().mockImplementation(async (callback) => {
+            return callback(mockClient);
+        }),
+        _mockClient: mockClient // Expose for test setup
+    };
+};
 
 const createMockWalletService = () => ({
     createPaymentRequest: jest.fn(),
@@ -91,13 +95,14 @@ describe('Payment & Payout Comprehensive Tests', () => {
             const user = { id: 1, credits: 1 };
             gmm.creditsPerGameCost = 1;
 
-            // UPDATE returns the new balance of 0
-            mockDb.query.mockResolvedValueOnce({ rows: [{ credits: 0 }] }); // UPDATE succeeds
-            mockDb.query.mockResolvedValueOnce({ rows: [] }); // UPDATE games
-            mockDb.query.mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
+            // All queries inside withTransaction go through client.query
+            mockDb._mockClient.query
+                .mockResolvedValueOnce({ rows: [{ credits: 0 }] }) // UPDATE users ... WHERE credits >= 1
+                .mockResolvedValueOnce({ rows: [] }) // UPDATE games
+                .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm._processGameStartWithCredits(user, 'socket1', 'game123');
-            
+
             expect(result.success).toBe(true);
             expect(result.creditsRemaining).toBe(0);
             expect(result.creditsSpent).toBe(1);
@@ -107,12 +112,14 @@ describe('Payment & Payout Comprehensive Tests', () => {
             const user = { id: 1, credits: 5 };
             gmm.creditsPerGameCost = 2;
 
-            mockDb.query.mockResolvedValueOnce({ rows: [{ credits: 3 }] }); // UPDATE succeeds
-            mockDb.query.mockResolvedValueOnce({ rows: [] }); // UPDATE games
-            mockDb.query.mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
+            // All queries inside withTransaction go through client.query
+            mockDb._mockClient.query
+                .mockResolvedValueOnce({ rows: [{ credits: 3 }] }) // UPDATE users
+                .mockResolvedValueOnce({ rows: [] }) // UPDATE games
+                .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm._processGameStartWithCredits(user, 'socket1', 'game123');
-            
+
             expect(result.success).toBe(true);
             expect(result.creditsRemaining).toBe(3);
             expect(result.creditsSpent).toBe(2);
@@ -228,52 +235,56 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
     describe('Credits Package Confirmation', () => {
         test('adds credits from package info correctly', async () => {
-            const user = { id: 1, credits: 0 };
-            
-            mockDb.query
-                .mockResolvedValueOnce({ rows: [user] }) // getOrCreateUser
-                .mockResolvedValueOnce({ rows: [] }) // update last_active
-                .mockResolvedValueOnce({ rows: [{ credits: 15 }] }) // UPDATE users
-                .mockResolvedValueOnce({ rows: [] }) // UPDATE payments
+            // Step 1: db.query — SELECT payment lookup (has user_id, status='pending')
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ user_id: 1, description: '', status: 'pending' }]
+            });
+
+            // Step 2: withTransaction — client.query calls:
+            mockDb._mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // UPDATE payments SET status='confirmed' RETURNING id
+                .mockResolvedValueOnce({ rows: [{ credits: 15 }] }) // UPDATE users SET credits = credits + 15
                 .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm.processCreditsPackageConfirmation('socket1', 123, { credits: 10, bonus: 5 });
-            
+
             expect(result.success).toBe(true);
             expect(result.creditsAdded).toBe(15);
             expect(result.newBalance).toBe(15);
         });
 
         test('parses credits from payment description as fallback', async () => {
-            const user = { id: 1, credits: 5 };
-            
-            mockDb.query
-                .mockResolvedValueOnce({ rows: [user] }) // getOrCreateUser
-                .mockResolvedValueOnce({ rows: [] }) // update last_active
-                .mockResolvedValueOnce({ rows: [{ description: 'Wowngeon 25 credits package (WOW)' }] }) // SELECT payments
+            // Step 1: db.query — SELECT payment lookup with description
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ user_id: 1, description: 'Wowngeon 25 credits package (WOW)', status: 'pending' }]
+            });
+
+            // Step 2: withTransaction — client.query calls:
+            mockDb._mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // UPDATE payments SET status='confirmed'
                 .mockResolvedValueOnce({ rows: [{ credits: 30 }] }) // UPDATE users
-                .mockResolvedValueOnce({ rows: [] }) // UPDATE payments
                 .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm.processCreditsPackageConfirmation('socket1', 123, null);
-            
+
             expect(result.success).toBe(true);
             expect(result.creditsAdded).toBe(25); // Parsed from description
         });
 
         test('defaults to 10 credits when no info available', async () => {
-            const user = { id: 1, credits: 0 };
-            
-            mockDb.query
-                .mockResolvedValueOnce({ rows: [user] }) // getOrCreateUser
-                .mockResolvedValueOnce({ rows: [] }) // update last_active
-                .mockResolvedValueOnce({ rows: [{ description: 'Some payment' }] }) // SELECT payments - no credits pattern
+            // Step 1: db.query — SELECT payment lookup with non-matching description
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ user_id: 1, description: 'Some payment', status: 'pending' }]
+            });
+
+            // Step 2: withTransaction — client.query calls:
+            mockDb._mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // UPDATE payments SET status='confirmed'
                 .mockResolvedValueOnce({ rows: [{ credits: 10 }] }) // UPDATE users
-                .mockResolvedValueOnce({ rows: [] }) // UPDATE payments
                 .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm.processCreditsPackageConfirmation('socket1', 123, null);
-            
+
             expect(result.success).toBe(true);
             expect(result.creditsAdded).toBe(10); // Default fallback
         });
@@ -287,12 +298,6 @@ describe('Payment & Payout Comprehensive Tests', () => {
         });
 
         test('processes winning game with payout correctly', async () => {
-            mockWalletService.processPayout.mockResolvedValueOnce({
-                success: true,
-                txHash: 'abc123',
-                fee: 1000000
-            });
-
             // Game record lookup
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ id: 1, payment_mode: 'direct' }]
@@ -309,30 +314,20 @@ describe('Payment & Payout Comprehensive Tests', () => {
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ id: 999 }]
             });
-            // UPDATE payouts (store tx_hash)
-            mockDb.query.mockResolvedValueOnce({ rows: [] });
 
             const result = await gmm.completeGame('socket1', 'game123', true, false, { moves: 50 });
 
             expect(result.success).toBe(true);
             expect(result.payout).toBeDefined();
+            expect(result.payout.status).toBe('queued');
+            expect(result.payout.payoutId).toBe(999);
             expect(result.payout.amount).toBe(200000000000);
             expect(result.payout.multiplier).toBe(2);
-            expect(mockWalletService.processPayout).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    amount: 200000000000,
-                    address: 'wow1testaddress'
-                })
-            );
+            // processPayout is NOT called directly — payout is batched via _scheduleBatchPayout
+            expect(mockWalletService.processPayout).not.toHaveBeenCalled();
         });
 
         test('treasure bonus applied correctly to payout', async () => {
-            mockWalletService.processPayout.mockResolvedValueOnce({
-                success: true,
-                txHash: 'abc123',
-                fee: 1000000
-            });
-
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ id: 1, payment_mode: 'direct' }]
             });
@@ -345,11 +340,10 @@ describe('Payment & Payout Comprehensive Tests', () => {
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ id: 999 }]
             });
-            // UPDATE payouts (store tx_hash)
-            mockDb.query.mockResolvedValueOnce({ rows: [] });
 
             const result = await gmm.completeGame('socket1', 'game123', true, true, { moves: 30 });
 
+            expect(result.payout.status).toBe('queued');
             expect(result.payout.amount).toBe(300000000000); // 3x for treasure
             expect(result.payout.multiplier).toBe(3);
             expect(result.payout.treasure).toBe(true);
@@ -412,14 +406,8 @@ describe('Payment & Payout Comprehensive Tests', () => {
             gmm.creditsPayoutBaseValue = 50000000000;
             gmm.creditPayoutMultipliers = { escape: 1.5, escapeWithTreasure: 2 };
 
-            mockWalletService.processPayout.mockResolvedValueOnce({
-                success: true,
-                txHash: 'xyz789',
-                fee: 1000000
-            });
-
             mockDb.query.mockResolvedValueOnce({
-                rows: [{ id: 1, payment_mode: 'credits' }] // Game was started with credits
+                rows: [{ id: 1, game_mode: 'PAID_CREDITS' }] // Game was started with credits
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
@@ -430,12 +418,11 @@ describe('Payment & Payout Comprehensive Tests', () => {
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ id: 999 }]
             });
-            // UPDATE payouts (store tx_hash)
-            mockDb.query.mockResolvedValueOnce({ rows: [] });
 
             const result = await gmm.completeGame('socket1', 'game123', true, false, {});
 
             // Should use credits multipliers, not direct
+            expect(result.payout.status).toBe('queued');
             expect(result.payout.amount).toBe(75000000000); // 50000000000 * 1.5
             expect(result.payout.multiplier).toBe(1.5);
         });
@@ -622,20 +609,20 @@ describe('Edge Cases and Error Handling', () => {
         gmm = new GameModeManager(mockDb, mockWalletService, createMockDebugManager(), createMockPaymentConfig());
     });
 
-    test('handles wallet service error during payout', async () => {
+    test('handles payout insert failure gracefully', async () => {
         gmm.gameMode = 'PAID_SINGLE';
-        
-        mockWalletService.processPayout.mockRejectedValueOnce(new Error('Wallet unavailable'));
 
         mockDb.query.mockResolvedValueOnce({ rows: [{ id: 1, payment_mode: 'direct' }] });
         mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
         mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
-        mockDb.query.mockResolvedValueOnce({ 
-            rows: [{ id: 1, payout_address: 'wow1testaddress' }] 
+        mockDb.query.mockResolvedValueOnce({
+            rows: [{ id: 1, payout_address: 'wow1testaddress' }]
         });
+        // INSERT payout fails
+        mockDb.query.mockRejectedValueOnce(new Error('Database connection lost'));
 
         const result = await gmm.completeGame('socket1', 'game123', true, false, {});
-        
+
         expect(result.success).toBe(true);
         expect(result.payout).toBeNull();
         expect(result.payoutError).toBeDefined();
@@ -643,8 +630,9 @@ describe('Edge Cases and Error Handling', () => {
 
     test('handles database error during credits deduction', async () => {
         const user = { id: 1, credits: 5 };
-        
-        mockDb.query.mockRejectedValueOnce(new Error('Database connection lost'));
+
+        // _processGameStartWithCredits uses withTransaction, so error must come from there
+        mockDb.withTransaction.mockRejectedValueOnce(new Error('Database connection lost'));
 
         await expect(gmm._processGameStartWithCredits(user, 'socket1', 'game123'))
             .rejects.toThrow('Database connection lost');

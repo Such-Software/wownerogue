@@ -572,10 +572,16 @@ class WalletRPCService {
     }
 
     cleanupUserPayments(userId) {
+        const addressesToRemove = [];
         for (const [address, userInfo] of this.addressToUser.entries()) {
             if (userInfo.userId === userId || userInfo.socketId === userId) {
-                this.stopPaymentMonitoring(address);
+                addressesToRemove.push(address);
             }
+        }
+        for (const address of addressesToRemove) {
+            this.stopPaymentMonitoring(address);
+            this.addressToUser.delete(address);
+            this.addressToSocket.delete(address);
         }
     }
 

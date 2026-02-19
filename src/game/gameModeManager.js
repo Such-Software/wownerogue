@@ -1214,13 +1214,26 @@ class GameModeManager {
         this._isBatchProcessing = true;
 
         try {
-            // Gather all pending payouts with no tx_hash (not yet attempted)
-            const pending = await this.db.query(`
-                SELECT id, user_id, game_id, payout_address, amount, multiplier, reason
-                FROM payouts
-                WHERE status = 'pending' AND tx_hash IS NULL
-                ORDER BY created_at ASC
-            `);
+            // Gather pending payouts inside a transaction with row-level locks.
+            // FOR UPDATE SKIP LOCKED prevents the retry service from grabbing the same rows.
+            const pending = await this.db.withTransaction(async (client) => {
+                const result = await client.query(`
+                    SELECT id, user_id, game_id, payout_address, amount, multiplier, reason
+                    FROM payouts
+                    WHERE status = 'pending' AND tx_hash IS NULL
+                    ORDER BY created_at ASC
+                    FOR UPDATE SKIP LOCKED
+                `);
+                // Mark as 'processing' so retry service won't touch them even after this tx commits
+                if (result.rows.length > 0) {
+                    const ids = result.rows.map(r => r.id);
+                    await client.query(
+                        `UPDATE payouts SET status = 'processing' WHERE id = ANY($1)`,
+                        [ids]
+                    );
+                }
+                return result;
+            });
 
             if (pending.rows.length === 0) return;
 
@@ -1247,17 +1260,11 @@ class GameModeManager {
                         multiplier: p.multiplier
                     });
 
-                    if (result.success && result.txHash) {
-                        await this.db.query(
-                            `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3 WHERE id = $4`,
-                            [result.txHash, result.fee || null, batchId, p.id]
-                        );
-                    }
-
+                    // Store tx_hash + status + user stats atomically in one transaction
                     await this.db.withTransaction(async (client) => {
                         await client.query(
-                            `UPDATE payouts SET status = 'completed', processed_at = NOW() WHERE id = $1`,
-                            [p.id]
+                            `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3, status = 'completed', processed_at = NOW() WHERE id = $4`,
+                            [result.txHash || null, result.fee || null, batchId, p.id]
                         );
                         await client.query(
                             `UPDATE users SET total_amount_won = total_amount_won + $1, total_payouts_received = COALESCE(total_payouts_received, 0) + 1 WHERE id = $2`,
@@ -1283,18 +1290,12 @@ class GameModeManager {
                         ? Math.ceil(result.totalFee / pending.rows.length)
                         : null;
 
+                    // Store tx_hash + status + user stats atomically for each payout
                     for (const p of pending.rows) {
-                        // Store tx_hash immediately for each payout
-                        await this.db.query(
-                            `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3 WHERE id = $4`,
-                            [txHash, feePerPayout, batchId, p.id]
-                        );
-
-                        // Update status and user stats atomically
                         await this.db.withTransaction(async (client) => {
                             await client.query(
-                                `UPDATE payouts SET status = 'completed', processed_at = NOW() WHERE id = $1`,
-                                [p.id]
+                                `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3, status = 'completed', processed_at = NOW() WHERE id = $4`,
+                                [txHash, feePerPayout, batchId, p.id]
                             );
                             await client.query(
                                 `UPDATE users SET total_amount_won = total_amount_won + $1, total_payouts_received = COALESCE(total_payouts_received, 0) + 1 WHERE id = $2`,

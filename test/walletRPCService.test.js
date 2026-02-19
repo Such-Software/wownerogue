@@ -13,17 +13,16 @@ describe('WalletRPCService interface', () => {
     expect(typeof svc.checkPaymentStatus).toBe('function');
     expect(typeof svc.startPaymentMonitoring).toBe('function');
     expect(typeof svc.stopPaymentMonitoring).toBe('function');
-    expect(typeof svc.processBatchPayouts).toBe('function'); // newly added stub
+    expect(typeof svc.processBatchPayout).toBe('function');
     expect(typeof svc.processPayout).toBe('function');
     expect(typeof svc.normalizeAtomicAmount).toBe('function');
     expect(typeof svc.cleanupUserPayments).toBe('function');
     expect(typeof svc.getHealthStatus).toBe('function');
   });
 
-  test('processBatchPayouts stub returns processed:0', async () => {
+  test('processBatchPayout validates destinations', async () => {
     const svc = new WalletRPCService(debugManagerMock);
-    const res = await svc.processBatchPayouts();
-    expect(res).toEqual({ processed: 0 });
+    await expect(svc.processBatchPayout([])).rejects.toThrow(/destinations/i);
   });
 
   test('rpcCall wraps failures in ExternalServiceError', async () => {
@@ -150,14 +149,14 @@ describe('WalletRPCService.processPayout', () => {
     })).rejects.toThrow(/amount/i);
   });
 
-  test('calls transfer RPC with correct parameters', async () => {
+  test('calls transfer_split RPC with correct parameters', async () => {
     // Mock validateAddress to return valid
     svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockResolvedValueOnce({
       result: {
-        tx_hash: 'abc123def456',
-        tx_key: 'key789',
-        fee: 1000000
+        tx_hash_list: ['abc123def456'],
+        tx_key_list: ['key789'],
+        fee_list: [1000000]
       }
     });
 
@@ -167,7 +166,7 @@ describe('WalletRPCService.processPayout', () => {
       userId: 'user1',
       gameId: 'game123'
     });
-    
+
     expect(result.success).toBe(true);
     expect(result.txHash).toBe('abc123def456');
     expect(result.txKey).toBe('key789');
@@ -175,8 +174,8 @@ describe('WalletRPCService.processPayout', () => {
     expect(result.userId).toBe('user1');
     expect(result.gameId).toBe('game123');
     expect(result.amount).toBe(100000000000);
-    
-    expect(svc.rpcCall).toHaveBeenCalledWith('transfer', {
+
+    expect(svc.rpcCall).toHaveBeenCalledWith('transfer_split', {
       destinations: [{
         amount: 100000000000,
         address: 'wow1testaddress123456789'
@@ -190,7 +189,7 @@ describe('WalletRPCService.processPayout', () => {
   test('includes subaddr_indices when subaddressIndex specified', async () => {
     svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockResolvedValueOnce({
-      result: { tx_hash: 'xyz', tx_key: 'key', fee: 100 }
+      result: { tx_hash_list: ['xyz'], tx_key_list: ['key'], fee_list: [100] }
     });
 
     await svc.processPayout({
@@ -198,8 +197,8 @@ describe('WalletRPCService.processPayout', () => {
       amount: 100,
       subaddressIndex: 5
     });
-    
-    expect(svc.rpcCall).toHaveBeenCalledWith('transfer', 
+
+    expect(svc.rpcCall).toHaveBeenCalledWith('transfer_split',
       expect.objectContaining({
         subaddr_indices: [5]
       })
@@ -209,7 +208,7 @@ describe('WalletRPCService.processPayout', () => {
   test('does not include subaddr_indices for invalid index values', async () => {
     svc.validateAddress = jest.fn().mockResolvedValue({ valid: true });
     svc.rpcCall = jest.fn().mockResolvedValueOnce({
-      result: { tx_hash: 'xyz', tx_key: 'key', fee: 100 }
+      result: { tx_hash_list: ['xyz'], tx_key_list: ['key'], fee_list: [100] }
     });
 
     await svc.processPayout({
@@ -217,8 +216,8 @@ describe('WalletRPCService.processPayout', () => {
       amount: 100,
       subaddressIndex: -1
     });
-    
-    expect(svc.rpcCall).toHaveBeenCalledWith('transfer', 
+
+    expect(svc.rpcCall).toHaveBeenCalledWith('transfer_split',
       expect.not.objectContaining({
         subaddr_indices: expect.anything()
       })

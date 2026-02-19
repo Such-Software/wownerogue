@@ -113,7 +113,7 @@ class SpectatorManager {
             playerId: socketId.substring(0, 6), // Anonymized player ID
             startedAt: game.startedAt,
             moveCount: game.moveCount || 0,
-            hasTreasure: game.player?.hasTreasure || false,
+            hasTreasure: game.isComplete ? (game.player?.hasTreasure || false) : undefined,
             spectatorCount: spectatorCount,
             // Don't expose exact positions - let spectators get that when they join
             dungeonSize: {
@@ -368,7 +368,7 @@ class SpectatorManager {
             player: game.player ? {
                 x: game.player.x,
                 y: game.player.y,
-                hasTreasure: game.player.hasTreasure
+                hasTreasure: undefined // Hidden from spectators during live games
             } : null,
             monster: game.monster ? {
                 x: game.monster.x,

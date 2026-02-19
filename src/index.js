@@ -50,6 +50,8 @@ gameModeManager.io = io;
 // Initialize remaining components
 const activeGames = new Map(); // Maps socketId to Game objects
 let alertService = null; // Initialized later when payment system starts
+let payoutRetryService = null; // Initialized later when payment system starts
+let batchPayoutInterval = null; // Initialized later when payment system starts
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
@@ -628,12 +630,28 @@ app.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
 const adminAuth = (req, res, next) => {
   const adminKey = process.env.ADMIN_API_KEY;
   if (!adminKey) {
-    return res.status(503).json({ 
+    return res.status(503).json({
       error: 'Admin API not configured',
       message: 'Set ADMIN_API_KEY environment variable to enable admin endpoints.'
     });
   }
-  
+
+  // Origin check — reject cross-origin requests to admin endpoints
+  const origin = req.headers.origin || req.headers.referer;
+  if (origin) {
+    try {
+      const allowedOrigins = process.env.ALLOWED_ORIGINS
+        ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+        : [`http://localhost:${process.env.PORT || 3000}`, `http://127.0.0.1:${process.env.PORT || 3000}`];
+      const requestOrigin = new URL(origin).origin;
+      if (!allowedOrigins.includes(requestOrigin)) {
+        return res.status(403).json({ error: 'Forbidden', message: 'Origin not allowed.' });
+      }
+    } catch (e) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Invalid origin.' });
+    }
+  }
+
   const providedKey = req.headers['x-admin-key'];
   if (!providedKey ||
       providedKey.length !== adminKey.length ||
@@ -643,7 +661,7 @@ const adminAuth = (req, res, next) => {
       message: 'Invalid or missing X-Admin-Key header.'
     });
   }
-  
+
   next();
 };
 
@@ -1783,7 +1801,7 @@ async function startServer() {
             const payoutConfig = paymentConfigManager.getConfig().payouts?.processing || {};
             const payoutIntervalSeconds = Math.max(1, Number(payoutConfig.batchInterval || 300));
             const payoutIntervalMs = payoutIntervalSeconds * 1000;
-            setInterval(async () => {
+            batchPayoutInterval = setInterval(async () => {
                 try {
                     await walletRPCService.processBatchPayouts();
                 } catch (error) {
@@ -1804,7 +1822,7 @@ async function startServer() {
             // Make alertService available to gameModeManager/paymentHandlers for balance checks
             gameModeManager.alertService = alertService;
 
-            const payoutRetryService = new PayoutRetryService({
+            payoutRetryService = new PayoutRetryService({
                 db: databaseManager,
                 walletService: walletRPCService,
                 debugManager,
@@ -1834,3 +1852,41 @@ app.use((req, res, next) => {
 app.use(createErrorMiddleware({ logger: console }));
 
 startServer();
+
+// Graceful shutdown — clean up timers, wait for in-flight payouts, close DB pool
+async function gracefulShutdown(signal) {
+    console.log(`\n${signal} received. Shutting down gracefully...`);
+
+    // Stop accepting new connections
+    http.close();
+
+    // Stop scheduled timers
+    if (batchPayoutInterval) clearInterval(batchPayoutInterval);
+    if (gameModeManager._batchPayoutTimer) clearTimeout(gameModeManager._batchPayoutTimer);
+    if (payoutRetryService) payoutRetryService.stop();
+    if (alertService) alertService.stopPeriodicChecks?.();
+
+    // Wait for in-flight batch processing to finish (up to 10 seconds)
+    let waitMs = 0;
+    while (gameModeManager._isBatchProcessing && waitMs < 10000) {
+        await new Promise(r => setTimeout(r, 500));
+        waitMs += 500;
+    }
+    if (waitMs > 0) {
+        console.log(`  Waited ${waitMs}ms for in-flight payout processing`);
+    }
+
+    // Close database pool
+    try {
+        await databaseManager.close();
+        console.log('  Database pool closed');
+    } catch (err) {
+        console.error('  Error closing database pool:', err.message);
+    }
+
+    console.log('Shutdown complete.');
+    process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

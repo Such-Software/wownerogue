@@ -446,7 +446,7 @@
 
     <script>
         // State
-        let apiKey = localStorage.getItem('adminApiKey') || '';
+        let apiKey = sessionStorage.getItem('adminApiKey') || '';
         let currentTab = 'overview';
         let usersOffset = 0;
         let outcomesChart = null;
@@ -487,7 +487,7 @@
 
                 if (res.ok) {
                     apiKey = key;
-                    localStorage.setItem('adminApiKey', key);
+                    sessionStorage.setItem('adminApiKey', key);
                     verifyAndShowDashboard();
                 } else {
                     document.getElementById('loginError').style.display = 'block';
@@ -518,7 +518,7 @@
 
         function logout() {
             apiKey = '';
-            localStorage.removeItem('adminApiKey');
+            sessionStorage.removeItem('adminApiKey');
             document.getElementById('loginModal').classList.remove('hidden');
             document.getElementById('dashboard').classList.add('hidden');
             document.getElementById('apiKeyInput').value = '';

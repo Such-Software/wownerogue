@@ -4,8 +4,14 @@
  */
 
 // Mock the database
+const mockClient = {
+    query: jest.fn().mockResolvedValue({ rows: [] })
+};
 const mockDb = {
-    query: jest.fn()
+    query: jest.fn(),
+    withTransaction: jest.fn().mockImplementation(async (callback) => {
+        return callback(mockClient);
+    })
 };
 
 // Mock wallet service
@@ -48,6 +54,7 @@ describe('GameModeManager', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockDb.query.mockReset();
+        mockClient.query.mockReset().mockResolvedValue({ rows: [] });
         gmm = new GameModeManager(mockDb, mockWalletService, mockDebugManager, mockPaymentConfigManager);
     });
 
@@ -176,12 +183,15 @@ describe('GameModeManager', () => {
 
     describe('processCreditsPackageConfirmation', () => {
         test('adds correct credits from package info', async () => {
-            const user = { id: 1, credits: 0 };
-            mockDb.query
-                .mockResolvedValueOnce({ rows: [user] }) // getOrCreateUser - first lookup
-                .mockResolvedValueOnce({ rows: [] }) // getOrCreateUser - update last_active
-                .mockResolvedValueOnce({ rows: [{ credits: 15 }] }) // UPDATE users
-                .mockResolvedValueOnce({ rows: [] }) // UPDATE payments
+            // Step 1: db.query — SELECT payment lookup
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ user_id: 1, description: '', status: 'pending' }]
+            });
+
+            // Step 2: withTransaction — client.query calls
+            mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // UPDATE payments SET status='confirmed'
+                .mockResolvedValueOnce({ rows: [{ credits: 15 }] }) // UPDATE users SET credits = credits + 15
                 .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm.processCreditsPackageConfirmation('socket1', 123, { credits: 10, bonus: 5 });
@@ -190,13 +200,15 @@ describe('GameModeManager', () => {
         });
 
         test('falls back to default credits when package info missing and no description', async () => {
-            const user = { id: 1, credits: 0 };
-            mockDb.query
-                .mockResolvedValueOnce({ rows: [user] }) // getOrCreateUser - first lookup
-                .mockResolvedValueOnce({ rows: [] }) // getOrCreateUser - update last_active
-                .mockResolvedValueOnce({ rows: [] }) // SELECT payment - no description
+            // Step 1: db.query — SELECT payment lookup with no credits in description
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ user_id: 1, description: 'Some payment', status: 'pending' }]
+            });
+
+            // Step 2: withTransaction — client.query calls
+            mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // UPDATE payments SET status='confirmed'
                 .mockResolvedValueOnce({ rows: [{ credits: 10 }] }) // UPDATE users
-                .mockResolvedValueOnce({ rows: [] }) // UPDATE payments
                 .mockResolvedValueOnce({ rows: [] }); // INSERT credit_transactions
 
             const result = await gmm.processCreditsPackageConfirmation('socket1', 123, null);

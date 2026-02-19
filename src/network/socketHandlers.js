@@ -752,6 +752,11 @@ class SocketHandlers {
             if (this.paymentHandlers && typeof this.paymentHandlers.stopMonitoringForSocket === 'function') {
                 this.paymentHandlers.stopMonitoringForSocket(socketId);
             }
+
+            // Clean up wallet Maps to prevent memory leaks (addressToUser, addressToSocket)
+            if (this.walletService && typeof this.walletService.cleanupUserPayments === 'function') {
+                this.walletService.cleanupUserPayments(socketId);
+            }
             
             // Clean up movement timestamps
             this.playerMoveTimestamps.delete(socketId);

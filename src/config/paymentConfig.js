@@ -293,11 +293,9 @@ class PaymentConfigManager {
         if (creditsPayoutEnabled !== undefined) {
             config.payouts.rules.credits.enabled = creditsPayoutEnabled;
         }
-        console.log(`🔧 ENV CREDITS_PAYOUT_BASE = "${process.env.CREDITS_PAYOUT_BASE}" (raw)`);
         config.payouts.rules.credits.multipliers.escape = parseFloatValue(process.env.CREDITS_PAYOUT_ESCAPE, config.payouts.rules.credits.multipliers.escape);
         config.payouts.rules.credits.multipliers.escapeWithTreasure = parseFloatValue(process.env.CREDITS_PAYOUT_TREASURE, config.payouts.rules.credits.multipliers.escapeWithTreasure);
         config.payouts.rules.credits.baseValue = parseAtomicValue(process.env.CREDITS_PAYOUT_BASE, config.payouts.rules.credits.baseValue);
-        console.log(`🔧 Parsed credits baseValue = ${config.payouts.rules.credits.baseValue}`);
 
         config.payouts.processing.batchInterval = parseInteger(process.env.PAYOUT_BATCH_INTERVAL, config.payouts.processing.batchInterval);
         config.payouts.processing.maxRetries = parseInteger(process.env.PAYOUT_MAX_RETRIES, config.payouts.processing.maxRetries);
