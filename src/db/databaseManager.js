@@ -20,7 +20,10 @@ class QueryValidator {
 
     isSafe(text, params) {
         // Check if using parameterized query properly
-        const placeholderCount = (text.match(/\$\d+/g) || []).length;
+        // Count unique placeholders ($1, $2, etc.) — PostgreSQL allows reusing $1 multiple times
+        const placeholders = text.match(/\$\d+/g) || [];
+        const uniquePlaceholders = new Set(placeholders);
+        const placeholderCount = uniquePlaceholders.size;
         if (placeholderCount !== params.length) {
             console.warn('⚠️ Parameter count mismatch in query');
             return false;
