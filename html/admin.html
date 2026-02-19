@@ -580,13 +580,21 @@
                         walletEl.className = 'wallet-status disconnected';
                         document.getElementById('walletBalance').textContent = 'RPC Error';
                     } else {
-                        // Wallet connected - show balance
-                        const bal = overview.walletBalance.unlocked_balance || 0;
-                        const formatted = (bal / atomicDivisor).toFixed(4);
-                        document.getElementById('statBalance').textContent = formatted;
-                        document.getElementById('statUnlocked').textContent = `Unlocked: ${formatted}`;
-                        walletEl.className = 'wallet-status' + (bal < atomicDivisor ? ' warning' : ' healthy');
-                        document.getElementById('walletBalance').textContent = `${formatted} ${cryptoSymbol}`;
+                        // Wallet connected - show total balance and unlocked/locked breakdown
+                        const total = overview.walletBalance.balance || 0;
+                        const unlocked = overview.walletBalance.unlocked_balance || 0;
+                        const locked = total - unlocked;
+                        const totalFormatted = (total / atomicDivisor).toFixed(4);
+                        const unlockedFormatted = (unlocked / atomicDivisor).toFixed(4);
+                        document.getElementById('statBalance').textContent = totalFormatted;
+                        if (locked > 0) {
+                            const lockedFormatted = (locked / atomicDivisor).toFixed(4);
+                            document.getElementById('statUnlocked').textContent = `Unlocked: ${unlockedFormatted} | Locked: ${lockedFormatted}`;
+                        } else {
+                            document.getElementById('statUnlocked').textContent = `Unlocked: ${unlockedFormatted}`;
+                        }
+                        walletEl.className = 'wallet-status' + (unlocked < atomicDivisor ? ' warning' : ' healthy');
+                        document.getElementById('walletBalance').textContent = `${totalFormatted} ${cryptoSymbol}`;
                     }
                 } else {
                     document.getElementById('statBalance').textContent = '-';

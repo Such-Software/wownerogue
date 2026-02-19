@@ -308,7 +308,8 @@ class AlertService {
      */
     async alertPayoutFailed(payout) {
         const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
-        const amountFormatted = (payout.amount / 1e12).toFixed(6);
+        const divisor = cryptoType === 'WOW' ? 1e11 : 1e12;
+        const amountFormatted = (payout.amount / divisor).toFixed(6);
 
         await this.sendAlert('payout_failed', {
             subject: `💀 Payout Permanently Failed - ${amountFormatted} ${cryptoType}`,
