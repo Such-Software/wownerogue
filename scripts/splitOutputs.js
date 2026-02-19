@@ -17,10 +17,28 @@
  */
 
 const path = require('path');
-const axios = require('axios');
+const fs = require('fs');
+const http = require('http');
 
-// Load .env from the src/ directory (same as server)
-require('dotenv').config({ path: path.resolve(__dirname, '..', 'src', '.env') });
+// Parse .env manually — no external dependencies needed
+function loadEnv() {
+    const envPath = path.resolve(__dirname, '..', 'src', '.env');
+    try {
+        const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const eq = trimmed.indexOf('=');
+            if (eq === -1) continue;
+            const key = trimmed.substring(0, eq).trim();
+            const val = trimmed.substring(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+            if (!process.env[key]) process.env[key] = val;
+        }
+    } catch (e) {
+        // .env not found — that's fine, user can pass --endpoint
+    }
+}
+loadEnv();
 
 const ATOMIC_DIVISOR = 1e11; // Wownero: 11 decimal places
 
@@ -84,17 +102,38 @@ Example:
     return opts;
 }
 
-async function rpcCall(endpoint, method, params = {}) {
-    const response = await axios.post(`${endpoint}/json_rpc`, {
-        jsonrpc: '2.0',
-        id: '0',
-        method,
-        params
+function rpcCall(endpoint, method, params = {}) {
+    return new Promise((resolve, reject) => {
+        const body = JSON.stringify({ jsonrpc: '2.0', id: '0', method, params });
+        const parsed = new URL(`${endpoint}/json_rpc`);
+        const options = {
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: parsed.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+        };
+
+        const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    if (json.error) {
+                        reject(new Error(`RPC error (${method}): ${json.error.message}`));
+                    } else {
+                        resolve(json);
+                    }
+                } catch (e) {
+                    reject(new Error(`Invalid JSON response from ${method}: ${data.substring(0, 200)}`));
+                }
+            });
+        });
+        req.on('error', (err) => reject(new Error(`RPC connection error (${method}): ${err.message}`)));
+        req.write(body);
+        req.end();
     });
-    if (response.data.error) {
-        throw new Error(`RPC error (${method}): ${response.data.error.message}`);
-    }
-    return response.data;
 }
 
 async function main() {
