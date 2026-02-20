@@ -228,26 +228,24 @@ const SocketHandlers = {
         if (creditsPerGame && creditsPerGame > 0) {
             SocketHandlers._creditsPerGame = creditsPerGame;
         }
-        
-        let el = document.getElementById('creditsDisplay');
-        if (!el) {
-            // Create a small unobtrusive badge in header if not present
-            const header = document.getElementById('header') || document.body;
-            el = document.createElement('div');
-            el.id = 'creditsDisplay';
-            el.style.cssText = 'position:absolute;top:4px;right:8px;font-size:12px;font-family:monospace;color:#0af;background:#111;padding:2px 6px;border:1px solid #044;border-radius:4px;';
-            header.appendChild(el);
-        }
-        
+
+        var el = document.getElementById('creditsDisplay');
+        if (!el) return;
+
         // Calculate games remaining
-        const perGame = SocketHandlers._creditsPerGame || 1;
-        const gamesRemaining = Math.floor(balance / perGame);
-        
-        // Show credits and games remaining
-        if (gamesRemaining > 0) {
-            el.textContent = 'Credits: ' + balance + ' (' + gamesRemaining + ' game' + (gamesRemaining !== 1 ? 's' : '') + ')';
+        var perGame = SocketHandlers._creditsPerGame || 1;
+        var gamesRemaining = Math.floor(balance / perGame);
+
+        // Show/hide based on balance
+        if (balance > 0) {
+            el.style.display = 'block';
+            if (gamesRemaining > 0) {
+                el.textContent = 'Credits: ' + balance + ' (' + gamesRemaining + ' game' + (gamesRemaining !== 1 ? 's' : '') + ')';
+            } else {
+                el.textContent = 'Credits: ' + balance;
+            }
         } else {
-            el.textContent = 'Credits: ' + balance;
+            el.style.display = 'none';
         }
     },
 
