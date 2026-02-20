@@ -279,25 +279,37 @@ class PaymentHandlers {
             if (status.in_mempool && !status.confirmed) {
                 if (this.mempoolNotified.has(paymentRequest.address)) return;
                 this.mempoolNotified.add(paymentRequest.address);
-                socket.emit('payment_detected', { paymentId: paymentRequest.id, message: 'Payment detected in mempool! Adding you to the game queue...', amount: status.amount, confirmations: 0 });
-                const existingIdx = this.queueManager.getPlayerIndex(socket.id);
-                if (existingIdx === -1) {
-                    // Try to get DB userId from session
-                    let userId = null;
-                    if (this.sessionManager?.sessions?.has(socket.id)) {
-                        userId = this.sessionManager.sessions.get(socket.id).id;
-                    }
 
-                    this.queueManager.addPlayer({ 
-                        serverId: socket.id, 
-                        clientId: currentUser ? currentUser.clientId : null, 
-                        userId: userId,
-                        paymentId: paymentRequest.id, 
-                        requiresConfirmation: true, 
-                        confirmed: false 
-                    });
+                // Check payment type — credits_package should NOT queue for a game
+                const mapping = this.socketPaymentMap.get(socket.id);
+                const isCredits = mapping && mapping.paymentType === 'credits_package';
+
+                const detectMessage = isCredits
+                    ? 'Payment detected in mempool! Awaiting block confirmation to add credits...'
+                    : 'Payment detected in mempool! Adding you to the game queue...';
+                socket.emit('payment_detected', { paymentId: paymentRequest.id, message: detectMessage, amount: status.amount, confirmations: 0 });
+
+                // Only queue for single_game payments (credits just add balance, no game queue)
+                if (!isCredits) {
+                    const existingIdx = this.queueManager.getPlayerIndex(socket.id);
+                    if (existingIdx === -1) {
+                        // Try to get DB userId from session
+                        let userId = null;
+                        if (this.sessionManager?.sessions?.has(socket.id)) {
+                            userId = this.sessionManager.sessions.get(socket.id).id;
+                        }
+
+                        this.queueManager.addPlayer({
+                            serverId: socket.id,
+                            clientId: currentUser ? currentUser.clientId : null,
+                            userId: userId,
+                            paymentId: paymentRequest.id,
+                            requiresConfirmation: true,
+                            confirmed: false
+                        });
+                    }
+                    socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
                 }
-                socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
             } else if (status.confirmed) {
                 // SECURITY: Use in-memory Set as fast-path, but DB is source of truth
                 // This prevents double-processing on server restart
@@ -344,6 +356,8 @@ class PaymentHandlers {
                         console.error('Error processing credits package confirmation:', e.message);
                         socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
                     }
+                    // Defensively remove from queue — credits purchases should never be queued
+                    this.queueManager.removePlayer(socket.id);
                 } else {
                     // single_game payment - standard flow
                     // CRITICAL: Atomically update payment status and check if we actually updated it

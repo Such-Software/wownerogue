@@ -537,7 +537,7 @@ class SocketHandlers {
             // Create game immediately
             const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
             memUser.blockRec = blockHeight; // keep legacy timeout logic consistent
-            const game = this.gameManager.createGameForUser(memUser, 'standard');
+            const game = await this.gameManager.createGameForUser(memUser, 'standard');
             const state = game.getState();
             state.blockHeight = blockHeight;
             

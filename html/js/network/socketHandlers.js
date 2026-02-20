@@ -870,18 +870,34 @@ const SocketHandlers = {
         // Hide the QR code now that payment is confirmed
         SocketHandlers.hidePaymentQR();
 
-        if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
-            Game.drawWaitingScreen();
+        // Credits purchase: return to home screen (no game queue)
+        if (data.creditsAdded || data.newBalance !== undefined) {
+            if (typeof Game !== 'undefined') {
+                Game._pendingPaymentConfirmed();
+            }
+            // Return to welcome/home screen so user can start a game
+            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWelcomeScreen) {
+                ScreenManager.drawWelcomeScreen();
+            }
+            $('#messages').append($('<li class="payment-success" style="color:#0f0;">').html(
+                '✅ <strong>Credits purchased!</strong> Type \'enter\' or click START GAME to play.'
+            ));
+            UI.scrollChat();
+            SocketHandlers._setBannerStatus('Credits Added', '#0f0');
+        } else {
+            // Single game payment: show waiting screen (player is in queue)
+            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
+                Game.drawWaitingScreen();
+            }
+            if (typeof Game !== 'undefined') {
+                Game._pendingPaymentConfirmed();
+            }
+            $('#messages').append($('<li class="payment-success" style="color:#0f0;">').html(
+                '✅ <strong>Payment confirmed in block.</strong> You are in the game queue.'
+            ));
+            UI.scrollChat();
+            SocketHandlers._setBannerStatus('Confirmed', '#0f0');
         }
-        if (typeof Game !== 'undefined') {
-            Game._pendingPaymentConfirmed();
-        }
-
-        $('#messages').append($('<li class="payment-success" style="color:#0f0;">').html(
-            '✅ <strong>Payment confirmed in block.</strong> You are in the game queue.'
-        ));
-        UI.scrollChat();
-        SocketHandlers._setBannerStatus('Confirmed', '#0f0');
         // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
     },
 

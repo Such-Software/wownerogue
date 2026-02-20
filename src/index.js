@@ -638,15 +638,24 @@ const adminAuth = (req, res, next) => {
   }
 
   // Origin check — reject cross-origin requests to admin endpoints
+  // Same-origin requests (Origin matches Host) are always allowed
   const origin = req.headers.origin || req.headers.referer;
   if (origin) {
     try {
-      const allowedOrigins = process.env.ALLOWED_ORIGINS
-        ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-        : [`http://localhost:${process.env.PORT || 3000}`, `http://127.0.0.1:${process.env.PORT || 3000}`];
       const requestOrigin = new URL(origin).origin;
-      if (!allowedOrigins.includes(requestOrigin)) {
-        return res.status(403).json({ error: 'Forbidden', message: 'Origin not allowed.' });
+      const host = req.headers.host;
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const selfOrigin = `${protocol}://${host}`;
+
+      // Allow same-origin requests (admin.html served from same server)
+      if (requestOrigin !== selfOrigin) {
+        // Check explicit allowlist for cross-origin requests
+        const allowedOrigins = process.env.ALLOWED_ORIGINS
+          ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+          : [`http://localhost:${process.env.PORT || 3000}`, `http://127.0.0.1:${process.env.PORT || 3000}`];
+        if (!allowedOrigins.includes(requestOrigin)) {
+          return res.status(403).json({ error: 'Forbidden', message: 'Origin not allowed.' });
+        }
       }
     } catch (e) {
       return res.status(403).json({ error: 'Forbidden', message: 'Invalid origin.' });
@@ -1804,7 +1813,7 @@ async function startServer() {
             const payoutIntervalMs = payoutIntervalSeconds * 1000;
             batchPayoutInterval = setInterval(async () => {
                 try {
-                    await walletRPCService.processBatchPayouts();
+                    await gameModeManager._processPendingPayouts();
                 } catch (error) {
                     console.error('Error in batch payout processing:', error);
                 }
