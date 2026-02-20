@@ -214,7 +214,45 @@ class ChatHandler {
                 return true;
                 
             default:
+                // Check for /nick command (case-sensitive prefix)
+                if (command.startsWith('/nick ') || command === '/nick') {
+                    await this._handleNickCommand(socket, command);
+                    return true;
+                }
                 return false; // Command not handled
+        }
+    }
+
+    async _handleNickCommand(socket, command) {
+        const name = command.slice(6).trim();
+        if (!name) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info',
+                'Usage: /nick YourName (max 20 chars, letters/numbers/underscores)');
+            return;
+        }
+
+        // Validate: 1-20 chars, alphanumeric + underscores + spaces
+        if (!/^[a-zA-Z0-9_ ]{1,20}$/.test(name)) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
+                'Invalid name. Use letters, numbers, underscores, or spaces (max 20 chars).');
+            return;
+        }
+
+        if (!this.gameModeManager?.db) {
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Display names not available.');
+            return;
+        }
+
+        try {
+            await this.gameModeManager.db.query(
+                'UPDATE users SET display_name = $1 WHERE socket_id = $2',
+                [name.trim(), socket.id]
+            );
+            this.broadcastManager.sendStatusUpdate(socket.id, 'info',
+                'Display name set to: ' + name.trim());
+        } catch (err) {
+            console.error('Failed to set display name:', err.message);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Failed to set display name.');
         }
     }
 

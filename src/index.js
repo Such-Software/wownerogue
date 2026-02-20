@@ -1519,6 +1519,40 @@ app.post('/api/admin/payouts/:id/retry', adminAuth, asyncHandler(async (req, res
   });
 }));
 
+// =============================================================================
+// LEADERBOARD
+// =============================================================================
+app.get('/api/leaderboard', asyncHandler(async (req, res) => {
+  const period = req.query.period || 'all';
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+  let timeFilter = '';
+  if (period === 'week') timeFilter = "AND g.completed_at > NOW() - INTERVAL '7 days'";
+  else if (period === 'month') timeFilter = "AND g.completed_at > NOW() - INTERVAL '30 days'";
+
+  const result = await db.query(`
+    SELECT
+      u.id,
+      COALESCE(u.display_name,
+        CASE WHEN u.payout_address IS NOT NULL
+          THEN LEFT(u.payout_address, 4) || '...' || RIGHT(u.payout_address, 4)
+          ELSE 'Anon#' || u.id
+        END
+      ) as name,
+      MAX(g.score) as best_score,
+      COUNT(*) FILTER (WHERE g.status = 'won') as wins,
+      COUNT(*) as games_played
+    FROM games g
+    JOIN users u ON g.user_id = u.id
+    WHERE g.status IN ('won', 'lost') AND g.score > 0 ${timeFilter}
+    GROUP BY u.id, u.display_name, u.payout_address
+    ORDER BY best_score DESC
+    LIMIT $1
+  `, [limit]);
+
+  res.json({ leaderboard: result.rows, period });
+}));
+
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();
   const decimals = Number(config.currency?.decimals ?? 12);

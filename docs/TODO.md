@@ -75,17 +75,27 @@
 - [x] **Address Validation**: `validateAddress()` called before every payout attempt
 - [x] **Transaction Status Check**: `checkTransactionStatus()` verifies blockchain before retry
 
-## Smirk Wallet Integration (Jan 2026)
+## Smirk Wallet Integration (Jan-Feb 2026)
 - [x] **Database Schema**: `smirk_public_key` column, `smirk_challenges` table (migration 009)
 - [x] **Auth Endpoints**: `/api/auth/smirk/challenge`, `/verify`, `/status`
 - [x] **Frontend Module**: `smirkAuth.js` with extension detection and login flow
 - [x] **Address Modal**: Shows Smirk connect button or install link
+- [x] **Native Payments**: `requestPayment()` integration — Smirk-connected users get auto-prompted via extension instead of manual address/QR. Falls back to normal flow on rejection.
 
 ## Admin Dashboard (Jan 2026)
 - [x] **Alert Service**: Email alerts via Resend for low balance, disconnects, failed payouts
 - [x] **Stats Endpoints**: `/api/admin/stats/overview`, `/payouts`, `/games`, `/users`
 - [x] **Admin UI**: Full dashboard at `/admin.html` with charts and tables
 - [x] **Payout Retry**: Manual retry button in admin dashboard
+
+## Scoring & Leaderboard (Feb 2026)
+- [x] **Scoring System**: New formula (max 800 pts) — base escape + treasure bonus + speed bonus + efficiency bonus
+- [x] **Score Persistence**: `score` column on games table, `high_score` on users (migration 014)
+- [x] **Leaderboard API**: `GET /api/leaderboard?period=all|week|month` with display name support
+- [x] **Leaderboard UI**: Modal with rank, name, best score, wins, games. Period tabs (All/Week/Month)
+- [x] **Display Names**: `/nick` chat command stores `display_name` on users table
+- [x] **Real-time Updates**: `leaderboard_update` broadcast on game wins, auto-refreshes open modal
+- [x] **Difficulty Tuning**: Casino preset hardened — 70x35 dungeon, 1.5x monster speed, 97% chase, 22-tile vision
 
 ## Payout Reliability (Feb 2026)
 - [x] **Fire-and-Forget INSERT Fix**: `_insertGameRecord` now awaited, prevents race conditions ✅

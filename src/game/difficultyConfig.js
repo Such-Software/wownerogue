@@ -98,23 +98,23 @@ const DIFFICULTY_PRESETS = {
     // Casino - high house edge for real money
     casino: {
         dungeon: {
-            width: 60,
-            height: 30,
-            roomWidthRange: [3, 5],
+            width: 70,                     // Large dungeon (was 60)
+            height: 35,                    // (was 30)
+            roomWidthRange: [3, 4],        // Small rooms (was [3, 5])
             roomHeightRange: [3, 4],
-            corridorLengthRange: [5, 12],
-            dugPercentage: 0.12           // Very tight
+            corridorLengthRange: [6, 15],  // Long corridors (was [5, 12])
+            dugPercentage: 0.10            // Very tight (was 0.12)
         },
         monster: {
-            startDistanceFromPlayer: 0.35, // Close to player
-            movesPerPlayerMove: 1.0,
-            chaseAggressiveness: 0.95,     // Nearly always chases
-            visionRange: 18,               // Excellent vision
+            startDistanceFromPlayer: 0.30, // Close to player (was 0.35)
+            movesPerPlayerMove: 1.0,       // Monster matches player speed
+            chaseAggressiveness: 0.97,     // Nearly always chases (was 0.95)
+            visionRange: 22,               // Excellent vision (was 18)
             respawnOnDeath: false
         },
         treasure: {
-            roomPositionRatio: 0.25,       // Early room
-            distanceFromExitRatio: 0.8     // Very far from exit
+            roomPositionRatio: 0.20,       // Early room (was 0.25)
+            distanceFromExitRatio: 0.85    // Very far from exit (was 0.8)
         },
         targetHouseWinRate: 0.70           // 70% house wins
     }
@@ -145,16 +145,40 @@ function getDifficultyPreset(cryptoType = 'WOW', overridePreset = null) {
 }
 
 /**
- * Merge difficulty config with custom overrides
+ * Merge difficulty config with custom overrides.
+ * Environment variables override preset values when set.
  */
 function getDifficultyConfig(cryptoType = 'WOW', customOverrides = {}) {
     const preset = getDifficultyPreset(cryptoType, customOverrides.preset);
-    
+
+    // Apply env var overrides (only when explicitly set)
+    const envOverrides = {
+        dungeon: {},
+        monster: {},
+        treasure: {}
+    };
+
+    const env = process.env;
+    if (env.DUNGEON_WIDTH) envOverrides.dungeon.width = parseInt(env.DUNGEON_WIDTH);
+    if (env.DUNGEON_HEIGHT) envOverrides.dungeon.height = parseInt(env.DUNGEON_HEIGHT);
+    if (env.DUNGEON_DUG_PERCENTAGE) envOverrides.dungeon.dugPercentage = parseFloat(env.DUNGEON_DUG_PERCENTAGE);
+    if (env.DUNGEON_ROOM_WIDTH_MIN) envOverrides.dungeon.roomWidthRange = [parseInt(env.DUNGEON_ROOM_WIDTH_MIN), parseInt(env.DUNGEON_ROOM_WIDTH_MAX || env.DUNGEON_ROOM_WIDTH_MIN)];
+    if (env.DUNGEON_ROOM_HEIGHT_MIN) envOverrides.dungeon.roomHeightRange = [parseInt(env.DUNGEON_ROOM_HEIGHT_MIN), parseInt(env.DUNGEON_ROOM_HEIGHT_MAX || env.DUNGEON_ROOM_HEIGHT_MIN)];
+    if (env.DUNGEON_CORRIDOR_MIN) envOverrides.dungeon.corridorLengthRange = [parseInt(env.DUNGEON_CORRIDOR_MIN), parseInt(env.DUNGEON_CORRIDOR_MAX || env.DUNGEON_CORRIDOR_MIN)];
+
+    if (env.MONSTER_SPEED) envOverrides.monster.movesPerPlayerMove = parseFloat(env.MONSTER_SPEED);
+    if (env.MONSTER_CHASE) envOverrides.monster.chaseAggressiveness = parseFloat(env.MONSTER_CHASE);
+    if (env.MONSTER_VISION) envOverrides.monster.visionRange = parseInt(env.MONSTER_VISION);
+    if (env.MONSTER_DISTANCE) envOverrides.monster.startDistanceFromPlayer = parseFloat(env.MONSTER_DISTANCE);
+
+    if (env.TREASURE_ROOM_POSITION) envOverrides.treasure.roomPositionRatio = parseFloat(env.TREASURE_ROOM_POSITION);
+    if (env.TREASURE_EXIT_DISTANCE) envOverrides.treasure.distanceFromExitRatio = parseFloat(env.TREASURE_EXIT_DISTANCE);
+
     return {
         ...preset,
-        dungeon: { ...preset.dungeon, ...customOverrides.dungeon },
-        monster: { ...preset.monster, ...customOverrides.monster },
-        treasure: { ...preset.treasure, ...customOverrides.treasure }
+        dungeon: { ...preset.dungeon, ...envOverrides.dungeon, ...customOverrides.dungeon },
+        monster: { ...preset.monster, ...envOverrides.monster, ...customOverrides.monster },
+        treasure: { ...preset.treasure, ...envOverrides.treasure, ...customOverrides.treasure }
     };
 }
 

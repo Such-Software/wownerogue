@@ -670,7 +670,67 @@ const SocketHandlers = {
     onPaymentCreated: function(data) {
         console.log('Payment created:', data);
         if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
-        
+
+        // Try Smirk native payment if user is connected via Smirk
+        if (typeof SmirkAuth !== 'undefined' && SmirkAuth._isLinked && SmirkAuth.isAvailable() &&
+            typeof window.smirk !== 'undefined' && window.smirk.requestPayment) {
+            SocketHandlers._trySmirkPayment(data);
+            return;
+        }
+
+        // Normal flow: show payment modal + chat message + QR
+        SocketHandlers._showPaymentFlow(data);
+    },
+
+    /**
+     * Attempt payment via Smirk wallet extension.
+     * Falls back to normal address/QR flow on rejection or error.
+     */
+    _trySmirkPayment: async function(data) {
+        $('#messages').append($('<li class="status">').text('Opening Smirk wallet for payment...'));
+        UI.scrollChat();
+
+        try {
+            await window.smirk.requestPayment({
+                address: data.address,
+                amount: String(data.amount),
+                asset: (SocketHandlers._cryptoType || 'WOW').toLowerCase(),
+                description: data.paymentType === 'credits_package'
+                    ? 'Buy ' + (data.package ? data.package.credits : '') + ' credits'
+                    : 'Single game entry'
+            });
+
+            // User confirmed in Smirk — TX submitted, server monitoring handles the rest
+            $('#messages').append($('<li class="status" style="color:#4ade80;">').text(
+                'Payment sent via Smirk! Waiting for confirmation...'
+            ));
+            UI.scrollChat();
+
+            // Show payment UI in "waiting for confirmation" state
+            if (typeof PaymentUI !== 'undefined') {
+                PaymentUI.showPaymentRequest(data);
+                $('#payment-status').html('<span style="color:#4ade80;">Payment sent via Smirk — awaiting confirmation...</span>');
+            }
+            SocketHandlers._setBannerStatus('Pay', '#0af');
+            if (typeof Game !== 'undefined' && Game._paymentRequested) Game._paymentRequested();
+            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) Game.drawWaitingScreen();
+
+        } catch (err) {
+            console.log('Smirk payment declined/failed, falling back to manual:', err);
+            $('#messages').append($('<li class="status">').text(
+                'Smirk payment cancelled. Use the address below.'
+            ));
+            UI.scrollChat();
+
+            // Fall back to normal address/QR flow
+            SocketHandlers._showPaymentFlow(data);
+        }
+    },
+
+    /**
+     * Show normal payment flow: modal + chat message + QR code
+     */
+    _showPaymentFlow: function(data) {
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.showPaymentRequest(data);
         }
@@ -685,11 +745,10 @@ const SocketHandlers = {
         const shortAddr = data.address.substring(0, 10) + '…' + data.address.slice(-6);
         parts.push('Address: <span class="pay-address-full" style="cursor:pointer;" title="Click to toggle full address">' + shortAddr + '</span>' +
                    ' <button class="copy-pay-address" data-address="' + data.address + '" style="margin-left:4px;padding:1px 4px;font-size:11px;cursor:pointer;">Copy</button>');
-        // (Removed inline QR image to avoid duplication; dedicated pinned sidebar QR is used instead.)
         const $li = $('<li class="payment-info" style="white-space:normal;">').html(parts.join('<br>'));
         $('#messages').append($li);
 
-        // Attach copy handler (delegated inside this LI to avoid duplicates)
+        // Attach copy handler
         const fullAddress = data.address;
         $li.on('click', '.copy-pay-address', function(e) {
             e.preventDefault();
@@ -699,8 +758,7 @@ const SocketHandlers = {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
                         await navigator.clipboard.writeText(addr);
                     } else {
-                        // Fallback
-                        const ta = document.createElement('textarea');
+                        var ta = document.createElement('textarea');
                         ta.value = addr; document.body.appendChild(ta); ta.select();
                         document.execCommand('copy'); document.body.removeChild(ta);
                     }
@@ -716,20 +774,19 @@ const SocketHandlers = {
         });
 
         // Toggle short/full address on span click
-        let showingFull = false;
+        var showingFull = false;
         $li.on('click', '.pay-address-full', function() {
             showingFull = !showingFull;
             $(this).text(showingFull ? fullAddress : shortAddr);
         });
         UI.scrollChat();
-        
+
         setTimeout(function() {
             $('#chatInput').focus();
         }, 100);
         SocketHandlers._setBannerStatus('Pay', '#0af');
         if (typeof Game !== 'undefined' && Game._paymentRequested) Game._paymentRequested();
-        
-        // Show waiting screen (which will now say "Awaiting payment")
+
         if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
             Game.drawWaitingScreen();
         }

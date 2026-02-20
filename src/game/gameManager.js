@@ -133,8 +133,35 @@ class GameManager {
                 });
             }
 
+            // Broadcast leaderboard update if score > 0
+            if (finalScore > 0) {
+                try {
+                    let displayName = null;
+                    if (this.gameModeManager?.db) {
+                        const userRow = await this.gameModeManager.db.query(
+                            `SELECT COALESCE(display_name,
+                                CASE WHEN payout_address IS NOT NULL
+                                    THEN LEFT(payout_address, 4) || '...' || RIGHT(payout_address, 4)
+                                    ELSE 'Anon#' || id
+                                END) as name
+                            FROM users WHERE socket_id = $1`, [socketId]);
+                        displayName = userRow.rows[0]?.name || 'Unknown';
+                    }
+                    this.io.emit('leaderboard_update', {
+                        name: displayName || 'Unknown',
+                        score: finalScore,
+                        treasure: game.player.hasTreasure || false
+                    });
+                } catch (lbErr) {
+                    // Non-critical, don't block game over
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.warn('Leaderboard broadcast failed:', lbErr.message);
+                    }
+                }
+            }
+
             if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`🎮 Game ${game.id} ended for ${socketId}: ${status} (${reason})`);
+                console.log(`🎮 Game ${game.id} ended for ${socketId}: ${status} (${reason}), score: ${finalScore}`);
             }
 
         } catch (error) {
@@ -238,19 +265,29 @@ class GameManager {
     _calculateScore(game, status, reason) {
         if (!game) return 0;
         const moves = game.moveCount || 0;
-        let score = 0;
+        const duration = game.startedAt
+            ? Math.max(1, Math.round((Date.now() - game.startedAt) / 1000))
+            : 120;
+
         if (status === 'won' && reason === 'escaped') {
-            score += 100; // base win
+            let score = 100; // base escape bonus
+
+            // Treasure bonus
             if (game.player?.hasTreasure) {
-                score += 100; // treasure bonus
+                score += 200;
             }
-            const moveBonus = Math.max(0, 100 - Math.max(moves - 40, 0) * 2);
-            score += moveBonus;
+
+            // Speed bonus: max 300, loses 5 points per second after 20s
+            score += Math.max(0, 300 - Math.max(duration - 20, 0) * 5);
+
+            // Efficiency bonus: max 200, loses 3 points per move after 30 moves
+            score += Math.max(0, 200 - Math.max(moves - 30, 0) * 3);
+
+            return Math.round(score);
         } else if (game.player?.hasTreasure) {
-            // Reached treasure but did not escape
-            score += 50;
+            return 50; // found treasure but died
         }
-        return Math.max(0, Math.round(score));
+        return 0;
     }
 
     /**
@@ -290,15 +327,25 @@ class GameManager {
         if (this.gameModeManager && this.gameModeManager.db) {
             const db = this.gameModeManager.db;
             const outcome = reason === 'escaped' ? 'escaped' : (reason === 'monster' ? 'caught_by_monster' : reason);
-            
+            const score = this._calculateScore(game, status, reason);
+
             try {
                 await db.query(`
-                    UPDATE games SET status = $1, outcome = $2, treasure_found = $3, moves_made = $4, duration_seconds = $5, completed_at = NOW()
+                    UPDATE games SET status = $1, outcome = $2, treasure_found = $3, moves_made = $4,
+                        duration_seconds = $5, score = $8, completed_at = NOW()
                     WHERE dungeon_seed = $6 AND socket_id = $7
-                `, [status, outcome, game.player.hasTreasure, moves, durationSeconds, game.id, socketId]);
-                
+                `, [status, outcome, game.player.hasTreasure, moves, durationSeconds, game.id, socketId, score]);
+
+                // Update user's high score if this is a new personal best
+                if (score > 0) {
+                    await db.query(`
+                        UPDATE users SET high_score = GREATEST(COALESCE(high_score, 0), $1)
+                        WHERE socket_id = $2
+                    `, [score, socketId]);
+                }
+
                 if (this.debugManager.CONSOLE_LOGGING) {
-                    console.log(`✅ Updated game record for ${socketId}: ${status} (${outcome})`);
+                    console.log(`✅ Updated game record for ${socketId}: ${status} (${outcome}), score: ${score}`);
                 }
             } catch (err) {
                 console.error('Game completion update failed:', err.message);
