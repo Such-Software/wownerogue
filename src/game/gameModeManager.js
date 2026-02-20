@@ -1071,7 +1071,8 @@ class GameModeManager {
                 allowInCreditsMode: this.configSnapshot?.earlyEntry?.allowInCreditsMode ?? false
             },
             // Smirk wallet integration (disabled for Monero stagenet)
-            smirkEnabled: process.env.SMIRK_ENABLED !== 'false'
+            smirkEnabled: process.env.SMIRK_ENABLED !== 'false',
+            explorerTxUrl: process.env.EXPLORER_TX_URL || null
         };
     }
 

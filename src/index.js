@@ -424,7 +424,7 @@ app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
     
     // Calculate total received (confirmed payouts)
     const totalResult = await db.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_received FROM payouts WHERE user_id = $1 AND status = 'confirmed'`,
+      `SELECT COALESCE(SUM(amount), 0) as total_received FROM payouts WHERE user_id = $1 AND status = 'completed'`,
       [user.id]
     );
     

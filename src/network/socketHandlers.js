@@ -463,6 +463,7 @@ class SocketHandlers {
             }
         });
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
+        socket.on('join_queue', () => this.handleJoinQueue(socket)); // Queue instead of auto-start
         socket.on('early_entry', () => this.handleEarlyEntry(socket)); // Early entry without waiting for block
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
@@ -578,6 +579,32 @@ class SocketHandlers {
         } catch (err) {
             console.error('handleAutoStart error:', err);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Unexpected error starting game.');
+        }
+    }
+
+    /**
+     * Handle join_queue request — adds player to block queue instead of starting immediately
+     */
+    async handleJoinQueue(socket) {
+        try {
+            await this.queueHandler.handleGameQueue(
+                socket,
+                this.connectionHandler.getUserBySocket.bind(this.connectionHandler)
+            );
+            // queueHandler already emits queue status and adds to queue
+            // Client receives queue_joined event from broadcastManager
+            const pos = this.queueManager.getPlayerIndex(socket.id);
+            if (pos !== -1) {
+                const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : 0;
+                socket.emit('queue_joined', {
+                    position: pos + 1,
+                    currentBlock: currentBlock,
+                    nextBlock: currentBlock + 1
+                });
+            }
+        } catch (err) {
+            console.error('handleJoinQueue error:', err);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Failed to join queue.');
         }
     }
 

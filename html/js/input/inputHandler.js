@@ -201,7 +201,20 @@ const InputHandler = {
     setupClickHandlers: function() {
         // Add click handling for the HTML START button
         $('#startButton').click(function(e) {
-            // Attempt immediate start
+            // If early entry is available and user has credits, show choice modal
+            if (typeof SocketHandlers !== 'undefined') {
+                var isPaidCredits = SocketHandlers._gameMode === 'PAID_CREDITS';
+                var hasCredits = SocketHandlers._creditsBalance >= (SocketHandlers._creditsPerGame || 1);
+                var earlyAllowed = SocketHandlers._earlyEntryConfig &&
+                    SocketHandlers._earlyEntryConfig.enabled &&
+                    SocketHandlers._earlyEntryConfig.allowInCreditsMode;
+                if (isPaidCredits && hasCredits && earlyAllowed) {
+                    SocketHandlers.showEntryChoiceModal();
+                    return;
+                }
+            }
+
+            // Default: attempt immediate start
             socket.emit('auto_start');
 
             // Check if we should show waiting screen

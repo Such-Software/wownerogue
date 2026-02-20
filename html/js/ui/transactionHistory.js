@@ -143,7 +143,11 @@ const TransactionHistory = {
                     <div style="color:#888; font-size:0.85em; margin-top:4px;">
                         ${payout.reason || 'Game reward'} • ${date}
                     </div>
-                    ${payout.txHash ? `<div style="color:#60a5fa; font-size:0.75em; margin-top:4px; word-break:break-all;">TX: ${payout.txHash.substring(0, 16)}...</div>` : ''}
+                    ${payout.txHash ? `<div style="font-size:0.75em; margin-top:4px; word-break:break-all;">${
+                        typeof SocketHandlers !== 'undefined' && SocketHandlers._explorerTxUrl
+                            ? '<a href="' + SocketHandlers._explorerTxUrl + payout.txHash + '" target="_blank" rel="noopener" style="color:#60a5fa; text-decoration:underline;">TX: ' + payout.txHash.substring(0, 16) + '...</a>'
+                            : '<span style="color:#60a5fa;">TX: ' + payout.txHash.substring(0, 16) + '...</span>'
+                    } <button class="copy-hash-btn" data-hash="${payout.txHash}" style="font-size:10px; padding:1px 4px; cursor:pointer; background:#333; color:#fff; border:1px solid #555; border-radius:3px;">Copy</button></div>` : ''}
                 </div>
             `);
             

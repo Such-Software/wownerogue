@@ -506,8 +506,21 @@ const SocketHandlers = {
             }
         }
         
-        UI.scrollChat();
         const won = data && (data.status === 'won' || data.reason === 'escaped');
+
+        // Show payout notification for wins
+        if (won && data.payout && data.payout.amount) {
+            var decimals = (SocketHandlers._cryptoType === 'WOW') ? 11 : 12;
+            var amountFormatted = (data.payout.amount / Math.pow(10, decimals)).toFixed(4);
+            var currency = SocketHandlers._cryptoType || 'WOW';
+            var multiplierText = data.payout.multiplier ? ' (' + data.payout.multiplier + 'x)' : '';
+            var treasureText = data.payout.treasure ? ' + Treasure bonus!' : '';
+            $('#messages').append($('<li style="color:#4ade80; font-weight:bold; padding:4px 0;">').html(
+                '💰 Payout queued: ' + amountFormatted + ' ' + currency + multiplierText + treasureText
+            ));
+        }
+
+        UI.scrollChat();
         if (won) {
             SocketHandlers._setBannerStatus('Won', '#0f0');
         } else {
@@ -591,6 +604,8 @@ const SocketHandlers = {
         SocketHandlers._directPayoutsEnabled = !!data.directPayoutsEnabled;
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
         SocketHandlers._smirkEnabled = data.smirkEnabled !== false; // Default to true if not specified
+        SocketHandlers._cryptoType = data.cryptoType || 'WOW';
+        SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
 
         // Initialize Smirk auth if enabled and not already initialized
         if (SocketHandlers._smirkEnabled && typeof SmirkAuth !== 'undefined' && !SmirkAuth._initialized) {
@@ -1433,14 +1448,91 @@ const SocketHandlers = {
      */
     onEarlyEntryError: function(data) {
         console.error('Early entry error:', data);
-        
+
         // Re-enable button
         const $btn = $('#earlyEntryButton');
         $btn.prop('disabled', false).text('⚡ ENTER NOW (RISKY!) ⚡');
-        
+
         const message = data?.message || 'Early entry not available';
         $('#messages').append($('<li class="error" style="color:#f00;">').text('Early entry failed: ' + message));
         UI.scrollChat();
+    },
+
+    // =====================
+    // Entry Choice Modal
+    // =====================
+
+    showEntryChoiceModal: function() {
+        // Remove any existing modal
+        $('#entryChoiceOverlay').remove();
+
+        var cost = this._creditsPerGame || 1;
+        var $overlay = $('<div id="entryChoiceOverlay">').css({
+            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+            background: 'rgba(0,0,0,0.7)', zIndex: 3000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+        });
+
+        var $modal = $('<div>').css({
+            background: '#0a1a0a', border: '2px solid #0f0', borderRadius: '8px',
+            padding: '24px', maxWidth: '420px', width: '90%', color: '#0f0',
+            fontFamily: 'monospace', textAlign: 'center'
+        });
+
+        $modal.html(
+            '<div style="font-size:18px; font-weight:bold; margin-bottom:16px;">How do you want to enter?</div>' +
+            '<div style="font-size:12px; color:#888; margin-bottom:20px;">Cost: ' + cost + ' credit per game</div>' +
+            '<button id="entryChoiceNow" style="' +
+                'display:block; width:100%; padding:12px; margin-bottom:10px; cursor:pointer; ' +
+                'background:linear-gradient(180deg,#662200,#441100); border:2px solid #ff6600; ' +
+                'color:#ffcc00; font-family:monospace; font-size:14px; font-weight:bold; border-radius:4px;' +
+            '">⚡ Start Now (risky)<br><span style="font-size:11px; font-weight:normal; color:#cc9966;">Game starts immediately — you die when next block arrives</span></button>' +
+            '<button id="entryChoiceQueue" style="' +
+                'display:block; width:100%; padding:12px; margin-bottom:10px; cursor:pointer; ' +
+                'background:linear-gradient(180deg,#003300,#001a00); border:2px solid #0f0; ' +
+                'color:#0f0; font-family:monospace; font-size:14px; font-weight:bold; border-radius:4px;' +
+            '">🛡️ Wait for Next Block (safe)<br><span style="font-size:11px; font-weight:normal; color:#6a6;">Queues you — full block window to escape</span></button>' +
+            '<button id="entryChoiceCancel" style="' +
+                'display:block; width:100%; padding:8px; cursor:pointer; ' +
+                'background:transparent; border:1px solid #555; color:#888; ' +
+                'font-family:monospace; font-size:12px; border-radius:4px;' +
+            '">Cancel</button>'
+        );
+
+        $overlay.append($modal);
+        $('body').append($overlay);
+
+        // Handlers
+        $('#entryChoiceNow').on('click', function() {
+            $('#entryChoiceOverlay').remove();
+            socket.emit('auto_start');
+            $('#messages').append($('<li style="color:#ff6600;">').text('⚡ Starting game immediately...'));
+            UI.scrollChat();
+            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                ScreenManager.drawWaitingScreen();
+            }
+        });
+
+        $('#entryChoiceQueue').on('click', function() {
+            $('#entryChoiceOverlay').remove();
+            socket.emit('join_queue');
+            $('#messages').append($('<li style="color:#0f0;">').text('🛡️ Joining queue — waiting for next block...'));
+            UI.scrollChat();
+            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
+                ScreenManager.drawWaitingScreen();
+            }
+        });
+
+        $('#entryChoiceCancel').on('click', function() {
+            $('#entryChoiceOverlay').remove();
+        });
+
+        // Close on overlay click (outside modal)
+        $overlay.on('click', function(e) {
+            if (e.target === this) {
+                $('#entryChoiceOverlay').remove();
+            }
+        });
     }
 };
 
