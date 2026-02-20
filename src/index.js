@@ -56,7 +56,15 @@ let paymentExpiryInterval = null; // Initialized later when payment system start
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
-app.use(express.static(htmlPath));
+app.use(express.static(htmlPath, {
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html') || filePath.endsWith('.js')) {
+            res.setHeader('Cache-Control', 'no-cache');
+        }
+    }
+}));
 app.use(express.json()); // Parse JSON for API endpoints
 
 // Serve main page
