@@ -308,6 +308,10 @@ class PaymentConfigManager {
         config.preferences.allowMixedMode = config.modes.credits.allowMixedMode;
         config.preferences.preferCreditsFirst = parseBoolean(process.env.PREFER_CREDITS_FIRST, config.preferences.preferCreditsFirst);
 
+        config.earlyEntry.enabled = parseBoolean(process.env.EARLY_ENTRY_ENABLED, config.earlyEntry.enabled);
+        config.earlyEntry.allowInFreeMode = parseBoolean(process.env.EARLY_ENTRY_FREE_MODE, config.earlyEntry.allowInFreeMode);
+        config.earlyEntry.allowInCreditsMode = parseBoolean(process.env.EARLY_ENTRY_CREDITS_MODE, config.earlyEntry.allowInCreditsMode);
+
         return config;
     }
 

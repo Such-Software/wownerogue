@@ -1066,9 +1066,9 @@ class GameModeManager {
                 payouts: this.directPayoutMultipliers.escape > 0 || this.creditPayoutMultipliers.escape > 0
             },
             earlyEntry: {
-                enabled: paymentConfig.earlyEntry?.enabled ?? false,
-                allowInFreeMode: paymentConfig.earlyEntry?.allowInFreeMode ?? false,
-                allowInCreditsMode: paymentConfig.earlyEntry?.allowInCreditsMode ?? false
+                enabled: this.configSnapshot?.earlyEntry?.enabled ?? false,
+                allowInFreeMode: this.configSnapshot?.earlyEntry?.allowInFreeMode ?? false,
+                allowInCreditsMode: this.configSnapshot?.earlyEntry?.allowInCreditsMode ?? false
             },
             // Smirk wallet integration (disabled for Monero stagenet)
             smirkEnabled: process.env.SMIRK_ENABLED !== 'false'

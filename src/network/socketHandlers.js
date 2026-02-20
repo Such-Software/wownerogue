@@ -443,11 +443,23 @@ class SocketHandlers {
     socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         socket.on('disconnect', () => this.handleDisconnect(socket));
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
-        socket.on('register_client', (data) => {
+        socket.on('register_client', async (data) => {
             this.connectionHandler.handleRegisterClient(socket, data);
             // Re-send game mode info after client registers handlers (fixes race condition)
             if (this.gameModeManager) {
                 socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
+            }
+            // Re-send credits_update (same race condition — event may arrive before handlers register)
+            if (this.sessionManager) {
+                try {
+                    const sessionUser = await this.sessionManager.getBySocket(socket.id);
+                    if (sessionUser) {
+                        socket.emit('credits_update', {
+                            balance: sessionUser.credits || 0,
+                            creditsPerGame: this.gameModeManager?.creditsPerGameCost || 1
+                        });
+                    }
+                } catch (e) { /* ignore — credits will update on next action */ }
             }
         });
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
