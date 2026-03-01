@@ -11,8 +11,9 @@ Smirk injects a `window.smirk` API (similar to MetaMask's `window.ethereum`) tha
 1. Request wallet connection (get public keys)
 2. Request message signatures (for authentication)
 3. Get wallet addresses (for payouts)
+4. Request payments (send WOW directly from extension)
 
-Wownerogue uses the WOW (Wownero) key for authentication via a challenge-response signature flow.
+Wownerogue uses the WOW (Wownero) key for authentication via a challenge-response signature flow, and `requestPayment()` for in-extension payment prompts.
 
 ---
 
@@ -174,6 +175,27 @@ const addrs = await window.smirk.getAddresses();
 // addrs.grin - "grin1..." (bech32 slatepack address)
 ```
 
+### `smirk.requestPayment(options)` -> `Promise<PaymentResult>`
+
+Prompts the user to send a payment from their Smirk wallet. Opens an approval popup showing the recipient address, amount, and description. Resolves when the user confirms and the TX is broadcast; rejects if the user denies or the extension context is invalid.
+
+```javascript
+const result = await window.smirk.requestPayment({
+  address: 'Wo3MWeLE...',   // Recipient address
+  amount: '1',              // Human-readable amount (NOT atomic units)
+  asset: 'wow',             // Asset ticker (lowercase)
+  description: 'Single game entry'  // Shown in approval popup
+});
+// result.txid   - Transaction hash (hex)
+// result.amount - Amount sent (string)
+```
+
+**Important:** The `amount` field must be the human-readable value (e.g. `"1"` for 1 WOW), not atomic units. The extension handles conversion internally.
+
+**Error cases:**
+- User clicks "Deny" → rejects with user cancellation error
+- Extension context invalidated (browser reloaded extension) → rejects with `"Extension context invalidated"`. The page must be refreshed to re-establish the connection.
+
 ### `smirk.isConnected()` -> `Promise<boolean>`
 
 Check if the current origin is connected (approved).
@@ -190,12 +212,13 @@ Get public keys without prompting (only works if already connected). Returns `nu
 
 ## Client-Side Implementation
 
-See `html/js/network/smirkAuth.js` for the full implementation. Key points:
+See `html/js/network/smirkAuth.js` for auth and `html/js/network/socketHandlers.js` (`_trySmirkPayment`) for payments. Key points:
 
 - The `SmirkAuth` module is initialized after DOM ready and socket connection
 - It checks `SocketHandlers._smirkEnabled` (set by server's `game_mode_info` event) to gate the feature
 - On successful auth, it calls `smirk.getAddresses()` to auto-set the payout address via `socket.emit('address:update')`
 - The button shows install link if extension is not detected, connect button if it is
+- When a Smirk-connected user triggers a payment, `_trySmirkPayment()` calls `smirk.requestPayment()` with the human-readable amount. If the user confirms, the TX is broadcast and the server's existing mempool monitoring detects it. If the user denies or the extension context is stale, it falls back to the normal address/QR payment modal.
 
 ---
 

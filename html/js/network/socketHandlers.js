@@ -691,9 +691,11 @@ const SocketHandlers = {
         UI.scrollChat();
 
         try {
+            // Use human-readable amount (e.g. "1"), NOT atomic units (e.g. 100000000000)
+            var payAmount = data.humanAmount || data.amountFormatted || String(data.amount);
             await window.smirk.requestPayment({
                 address: data.address,
-                amount: String(data.amount),
+                amount: payAmount,
                 asset: (SocketHandlers._cryptoType || 'WOW').toLowerCase(),
                 description: data.paymentType === 'credits_package'
                     ? 'Buy ' + (data.package ? data.package.credits : '') + ' credits'
@@ -717,9 +719,19 @@ const SocketHandlers = {
 
         } catch (err) {
             console.log('Smirk payment declined/failed, falling back to manual:', err);
-            $('#messages').append($('<li class="status">').text(
-                'Smirk payment cancelled. Use the address below.'
-            ));
+            var errMsg = String(err.message || err || '');
+
+            if (errMsg.indexOf('context invalidated') !== -1) {
+                // Extension was reloaded/updated — stale context
+                $('#messages').append($('<li class="status" style="color:#f59e0b;">').text(
+                    'Smirk extension was reloaded. Please refresh the page to re-enable Smirk payments. Using manual payment for now.'
+                ));
+                SmirkAuth._isLinked = false;
+            } else {
+                $('#messages').append($('<li class="status">').text(
+                    'Smirk payment cancelled. Use the address below.'
+                ));
+            }
             UI.scrollChat();
 
             // Fall back to normal address/QR flow
