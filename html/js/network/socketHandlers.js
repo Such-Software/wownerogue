@@ -719,18 +719,24 @@ const SocketHandlers = {
 
         } catch (err) {
             console.log('Smirk payment declined/failed, falling back to manual:', err);
-            var errMsg = String(err.message || err || '');
+            var errMsg = String(err.message || err || '').toLowerCase();
 
-            if (errMsg.indexOf('context invalidated') !== -1) {
-                // Extension was reloaded/updated — stale context
-                $('#messages').append($('<li class="status" style="color:#f59e0b;">').text(
-                    'Smirk extension was reloaded. Please refresh the page to re-enable Smirk payments. Using manual payment for now.'
-                ));
-                SmirkAuth._isLinked = false;
-            } else {
+            // Check if this is a user-initiated denial vs extension error
+            var isUserDenied = errMsg.indexOf('denied') !== -1 ||
+                               errMsg.indexOf('rejected') !== -1 ||
+                               errMsg.indexOf('cancelled') !== -1 ||
+                               errMsg.indexOf('user') !== -1;
+
+            if (isUserDenied) {
                 $('#messages').append($('<li class="status">').text(
                     'Smirk payment cancelled. Use the address below.'
                 ));
+            } else {
+                // Extension error (context invalidated, service worker issue, etc.)
+                $('#messages').append($('<li class="status" style="color:#f59e0b;">').text(
+                    'Smirk payment unavailable — using manual payment. Try refreshing the page to fix Smirk.'
+                ));
+                SmirkAuth._isLinked = false;
             }
             UI.scrollChat();
 
