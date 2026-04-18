@@ -532,18 +532,24 @@ app.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
   `, [challengeResult.rows[0].id]);
 
   // 3. Verify signature using tweetnacl
-  // The signature should be the challenge signed by the wallet's private key
+  // Accepts both formats during transition:
+  // - RFC 8032 standard: signature over raw UTF-8 message bytes (new extension)
+  // - Legacy: signature over SHA256(message) (old extension, remove after 2026-07-01)
   let isValidSignature = false;
   try {
     const nacl = require('tweetnacl');
-    // The Smirk extension signs SHA256(utf8(challenge)), not the raw challenge bytes.
-    // We must hash the challenge the same way before verifying.
-    const challengeHash = crypto.createHash('sha256').update(challenge).digest();
     const signatureBytes = Buffer.from(signature, 'hex');
     const publicKeyBytes = Buffer.from(publicKey, 'hex');
 
-    // tweetnacl.sign.detached.verify(message, signature, publicKey)
-    isValidSignature = nacl.sign.detached.verify(challengeHash, signatureBytes, publicKeyBytes);
+    // Try RFC 8032 standard first (raw message bytes)
+    const challengeBytes = Buffer.from(challenge, 'utf8');
+    isValidSignature = nacl.sign.detached.verify(challengeBytes, signatureBytes, publicKeyBytes);
+
+    // Fall back to legacy SHA256 pre-hash (DEPRECATED — remove after 2026-07-01)
+    if (!isValidSignature) {
+      const challengeHash = crypto.createHash('sha256').update(challenge).digest();
+      isValidSignature = nacl.sign.detached.verify(challengeHash, signatureBytes, publicKeyBytes);
+    }
   } catch (verifyError) {
     console.error('Signature verification error:', verifyError.message);
     throw new ValidationError('Signature verification failed', {
