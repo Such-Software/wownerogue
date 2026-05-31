@@ -381,6 +381,7 @@ class SocketHandlers {
             }
         });
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
+        socket.on('play_free', () => this.handleAutoStart(socket, { free: true })); // Explicit free-play choice
         socket.on('join_queue', () => this.handleJoinQueue(socket)); // Queue instead of auto-start
         socket.on('early_entry', () => this.handleEarlyEntry(socket)); // Early entry without waiting for block
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
@@ -402,15 +403,19 @@ class SocketHandlers {
      * Applies payment eligibility + payout address gating (for payout-eligible modes)
      * If eligible, starts game immediately (bypassing block queue) and processes game start (credit deduction / payment linkage)
      */
-    async handleAutoStart(socket) {
+    async handleAutoStart(socket, opts = {}) {
         try {
+            // The player explicitly chose FREE play (Pleb board, no payment/payout). Only
+            // honoured when the instance allows free play; otherwise fall through to paid.
+            const wantsFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
+
             // Rate limiting for game starts — keyed on stable identity + IP so reconnecting
             // (new socket.id) can't reset the limit.
             const rlId = stableId(socket, this.sessionManager);
             const rlIp = clientIp(socket);
             const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'game:start', rlIp);
             if (!rateLimitResult.allowed) {
-                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
                     `Please wait ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds before starting another game. (${rateLimitResult.remaining} attempts remaining)`);
                 return;
             }
@@ -428,7 +433,8 @@ class SocketHandlers {
             }
 
             let canStart = { allowed: true, reason: 'Free mode' };
-            if (this.gameModeManager) {
+            // Free play skips all payment/credits/payout-address gating below.
+            if (this.gameModeManager && !wantsFree) {
                 // Payout address gating for modes that can payout
                 const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
                 if (payoutEligible) {
@@ -480,9 +486,9 @@ class SocketHandlers {
                 state.proof = game.getProofCommitment();
             }
 
-            // Process start (credits deduction / payment link)
+            // Process start (free / credits deduction / payment link)
             if (this.gameModeManager) {
-                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id);
+                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id, { forceFree: wantsFree });
                 if (!startRes.success) {
                     // Abort game
                     this.activeGames.delete(socket.id);

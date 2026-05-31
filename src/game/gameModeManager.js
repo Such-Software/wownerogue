@@ -104,6 +104,11 @@ class GameModeManager {
         this.paymentsEnabled = this.gameMode !== 'FREE';
         this.directModeEnabled = this.gameMode === 'PAID_SINGLE';
         this.creditsModeEnabled = this.gameMode === 'PAID_CREDITS';
+
+        // FREE_PLAY_ENABLED lets players CHOOSE free play even on an instance that also
+        // sells credits/entry (their score goes to the Pleb board; paid games go to the
+        // Hall of Champions). Always true when payments are off (free is the only option).
+        this.freePlayEnabled = !this.paymentsEnabled || /^true$/i.test(process.env.FREE_PLAY_ENABLED || 'false');
     }
 
     applyConfigSnapshot(config, options = {}) {
@@ -477,9 +482,22 @@ class GameModeManager {
         try {
             const user = await this.getOrCreateUser(socketId);
             const effective = this.getEffectiveModeForUser(user);
-            
+
             const options = [];
-            
+
+            // Free play (Pleb board, no payout) — offered alongside paid options when enabled.
+            if (this.freePlayEnabled && this.paymentsEnabled) {
+                options.push({
+                    type: 'play_free',
+                    label: 'Play Free (Pleb leaderboard)',
+                    mode: 'FREE',
+                    cost: 0,
+                    costDisplay: 'Free',
+                    payoutEligible: false,
+                    recommended: false
+                });
+            }
+
             if (effective.canUseCredits) {
                 options.push({
                     type: 'use_credit',
@@ -655,12 +673,20 @@ class GameModeManager {
     /**
      * Process game start (deduct credits or link payment)
      */
-    async processGameStart(socketId, gameId) {
+    async processGameStart(socketId, gameId, options = {}) {
         try {
             const user = await this.getOrCreateUser(socketId);
+
+            // The player explicitly chose FREE play (even on an instance that also sells
+            // credits/entry). Record this game as FREE so it lands on the Pleb leaderboard,
+            // with no payment and no payout.
+            if (options.forceFree) {
+                return await this._processGameStartFree(user, gameId);
+            }
+
             const effective = this.getEffectiveModeForUser(user);
-            
-            // FREE mode
+
+            // FREE mode (instance is free-only)
             if (effective.mode === 'FREE') {
                 return { success: true, effectiveMode: 'FREE' };
             }
@@ -745,6 +771,21 @@ class GameModeManager {
             escapeMult: escape.multiplier,
             treasureMult: treasure.multiplier
         };
+    }
+
+    /**
+     * Start a game the player explicitly chose to play for FREE. Records game_mode='FREE'
+     * on the game (overriding the instance default, so it goes to the Pleb leaderboard) and
+     * counts the game. No payment, no payout.
+     */
+    async _processGameStartFree(user, gameId) {
+        await this.db.withTransaction(async (client) => {
+            await client.query(`UPDATE games SET game_mode = 'FREE' WHERE dungeon_seed = $1`, [gameId]);
+            await client.query(`
+                UPDATE users SET total_games_played = total_games_played + 1, updated_at = NOW() WHERE id = $1
+            `, [user.id]);
+        });
+        return { success: true, effectiveMode: 'FREE' };
     }
 
     async _processGameStartWithCredits(user, socketId, gameId) {

@@ -517,6 +517,15 @@ app.get('/api/leaderboard', asyncHandler(async (req, res) => {
   if (period === 'week') timeFilter = "AND g.completed_at > NOW() - INTERVAL '7 days'";
   else if (period === 'month') timeFilter = "AND g.completed_at > NOW() - INTERVAL '30 days'";
 
+  // Per-game leaderboard split (whitelisted -> safe to interpolate):
+  //   champions = games played with credits/entry-fee (Hall of Champions)
+  //   pleb      = free games (Pleb board)
+  //   all       = everyone (default, backward compatible)
+  const board = req.query.board || 'all';
+  let boardFilter = '';
+  if (board === 'champions') boardFilter = "AND g.game_mode IN ('PAID_SINGLE','PAID_CREDITS')";
+  else if (board === 'pleb') boardFilter = "AND g.game_mode = 'FREE'";
+
   const result = await db.query(`
     SELECT
       u.id,
@@ -531,13 +540,13 @@ app.get('/api/leaderboard', asyncHandler(async (req, res) => {
       COUNT(*) as games_played
     FROM games g
     JOIN users u ON g.user_id = u.id
-    WHERE g.status IN ('won', 'lost') AND g.score > 0 ${timeFilter}
+    WHERE g.status IN ('won', 'lost') AND g.score > 0 ${timeFilter} ${boardFilter}
     GROUP BY u.id, u.display_name, u.payout_address
     ORDER BY best_score DESC
     LIMIT $1
   `, [limit]);
 
-  res.json({ leaderboard: result.rows, period });
+  res.json({ leaderboard: result.rows, period, board });
 }));
 
 app.get('/api/game-modes', (req, res) => {
@@ -573,11 +582,14 @@ app.get('/api/game-modes', (req, res) => {
   }
 
   res.json({
+    // Free play is available when the instance is free-only OR when free play is offered
+    // as a choice alongside paid options (FREE_PLAY_ENABLED).
+    freePlayEnabled: !!gameModeManager.freePlayEnabled,
     FREE: {
       name: 'Free Play',
       cost: 0,
       payoutMultiplier: 0,
-      enabled: !config.paymentsEnabled
+      enabled: !!gameModeManager.freePlayEnabled
     },
     PAID_SINGLE: {
       name: 'Paid Single Game',
