@@ -89,4 +89,21 @@ describe('Payout uses the snapshot recorded at game start', () => {
 
     expect(result.payout.amount).toBe(200000000000); // live 2x
   });
+
+  test('no payout for a PAID_SINGLE win when direct payouts are disabled (no-payout instance)', async () => {
+    const { gmm, db } = buildGmm();
+    gmm.directPayoutEnabled = false; // e.g. mainnet legitimacy: sell entry, never pay out
+
+    db.query
+      .mockResolvedValueOnce({ rows: [{ id: 1, game_mode: 'PAID_SINGLE', payout_address: 'wow1addr' }] }) // game record
+      .mockResolvedValue({ rows: [] }); // completion UPDATE + anything else
+
+    const result = await gmm.completeGame('socket1', 'game123', true, true, { moves: 10 });
+
+    expect(result.success).toBe(true);
+    expect(result.payout == null || result.payout === undefined).toBe(true); // no payout queued
+    // No payout INSERT happened.
+    const insertedPayout = db.query.mock.calls.find(c => /INSERT INTO payouts/i.test(c[0]));
+    expect(insertedPayout).toBeUndefined();
+  });
 });

@@ -77,6 +77,10 @@ class GameModeManager {
         this.creditsPackagePrice = parseAtomicEnvValue(process.env.CREDITS_PACKAGE_PRICE, this.creditsPackagePrice);
         this.creditsPerGameCost = parseAtomicEnvValue(process.env.CREDITS_PER_GAME, 1) || 1;
         this.creditsPayoutEnabled = /^true$/i.test(process.env.CREDITS_PAYOUTS_ENABLED || process.env.CREDITS_PAYOUT_ENABLED || 'false');
+        // Direct (per-game / entry-fee) payouts must be independently gateable, like credits.
+        // Default true for backward compatibility; set DIRECT_PAYOUTS_ENABLED=false for a
+        // no-payout instance (sell entry/credits for prestige only, e.g. mainnet legitimacy).
+        this.directPayoutEnabled = !/^false$/i.test(process.env.DIRECT_PAYOUTS_ENABLED || 'true');
         this.creditsPayoutBaseValue = parseAtomicEnvValue(process.env.CREDITS_PAYOUT_BASE, this.singleGamePrice);
         process.env.CREDITS_PER_GAME = String(this.creditsPerGameCost);
 
@@ -158,6 +162,10 @@ class GameModeManager {
         if (config.payouts && config.payouts.rules) {
             const directRule = config.payouts.rules.direct || {};
             const creditsRule = config.payouts.rules.credits || {};
+
+            if (directRule.enabled !== undefined) {
+                this.directPayoutEnabled = !!directRule.enabled;
+            }
 
             if (directRule.multipliers) {
                 if (directRule.multipliers.escape !== undefined) {
@@ -469,7 +477,7 @@ class GameModeManager {
             bothModesEnabled,
             preferCreditsFirst: this.preferCreditsFirst,
             creditsPayoutsEnabled: this.creditsPayoutEnabled,
-            directPayoutsEnabled: this.directPayoutMultipliers.escape > 0
+            directPayoutsEnabled: this.directPayoutEnabled && this.directPayoutMultipliers.escape > 0
         };
     }
 
@@ -1152,7 +1160,7 @@ class GameModeManager {
             freePlayEnabled: this.freePlayEnabled,
             directModeEnabled: this.directModeEnabled,
             creditsModeEnabled: this.creditsModeEnabled,
-            directPayoutsEnabled: this.directPayoutMultipliers.escape > 0,
+            directPayoutsEnabled: this.directPayoutEnabled && this.directPayoutMultipliers.escape > 0,
             creditsPayoutsEnabled: this.creditsPayoutEnabled,
             payoutMultipliers: {
                 direct: this.directPayoutMultipliers,
@@ -1244,8 +1252,11 @@ class GameModeManager {
                 }
             }
 
-            // Handle payouts based on the actual recorded payment mode, not the current global setting
-            const payoutEligibleStartMode = (recordedPaymentMode === 'PAID_SINGLE') || (recordedPaymentMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
+            // Handle payouts based on the actual recorded payment mode, not the current global
+            // setting. Each mode's payout is gated by its own enable flag, so a no-payout
+            // instance (DIRECT_PAYOUTS_ENABLED=false / CREDITS_PAYOUTS_ENABLED=false) never sends.
+            const payoutEligibleStartMode = (recordedPaymentMode === 'PAID_SINGLE' && this.directPayoutEnabled)
+                || (recordedPaymentMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
             if (payoutEligibleStartMode && won) {
                 // Use the payout terms snapshotted at game start (so a mid-game config change
                 // can't alter an in-flight payout). Fall back to live calculation only for

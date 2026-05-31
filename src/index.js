@@ -595,7 +595,9 @@ app.get('/api/game-modes', (req, res) => {
       name: 'Paid Single Game',
       cost: toDisplay(directMode.price),
       enabled: !!directMode.enabled,
-      payoutMultiplier: config.payouts.rules.direct.multipliers
+      payoutMultiplier: (directMode.enabled && config.payouts.rules.direct.enabled)
+        ? config.payouts.rules.direct.multipliers
+        : 0
     },
     PAID_CREDITS: {
       name: 'Credits Package',
