@@ -1038,10 +1038,18 @@ class SocketHandlers {
         // Snapshot the entries first: handleGameOver mutates activeGames (it deletes the
         // entry), so iterating the live Map could skip games. Process sequentially and
         // await each game-over rather than firing them all off concurrently on one tick.
+        // Anti-instant-death guard ONLY (default 2s, set 0 to disable). Random block timing
+        // is the game's core mechanic and is deliberately preserved — this is not a fairness
+        // floor. It only avoids the degenerate case where a block lands in the same instant
+        // the game starts and the player dies before the dungeon even renders / before their
+        // first move is possible (100ms move cooldown).
+        const graceMs = (() => { const v = parseInt(process.env.GAME_START_GRACE_MS, 10); return Number.isFinite(v) ? v : 2000; })();
+        const now = Date.now();
         const snapshot = Array.from(this.activeGames.entries());
         for (const [socketId, game] of snapshot) {
             const user = this.connectionHandler.getUserBySocket(socketId);
-            if (user && user.blockRec && currentHeight > user.blockRec) {
+            const elapsedMs = now - (game.startedAt || now);
+            if (user && user.blockRec && currentHeight > user.blockRec && elapsedMs >= graceMs) {
                 if (this.debugManager.CONSOLE_LOGGING) {
                     console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
                 }

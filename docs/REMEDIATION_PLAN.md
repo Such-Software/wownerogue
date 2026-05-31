@@ -38,7 +38,7 @@ Key: `S` ≤ half day · `M` ~1–3 days · `L` ~1 week+ · 🔴 launch-blocker 
 - [x] **2.3 M — Input validation + leak fixes.** ✅ `register_client` validates `clientId` (type/length/charset) before it enters `clientSocketMap` — closes the map-poisoning vector. `mempoolNotified` is now a Map with real TTL eviction in PaymentHandlers (the dead duplicate Set + its random-10% eviction removed from SocketHandlers). `sessions` cache evicted on disconnect (`removeSocket`, called after suspend reads it). `sessionManager.dispose()` / `suspendedGameManager.cleanup()` / `paymentHandlers.dispose()` wired into `shutdown()`. `checkGamesTimeout` snapshots before iterating + awaits sequentially (was mutate-during-`forEach` + fire-and-forget). New `inputValidation.test.js`.
 
 ## Phase 3 — Game integrity (🟠)
-- [ ] **3.1 S — Uniform time budget** (elapsed/fixed-block, not "next block"); fix early-entry (`src/network/queueHandler.js:241`).
+- [x] **3.1 S — Anti-instant-death grace only (NO fairness floor).** ✅ Random block timing is the game's core mechanic and is deliberately preserved — early entry is a knowingly-risky bet, not a bug. The only change is a tiny configurable grace (`GAME_START_GRACE_MS`, default 2000ms, 0 to disable) so a block landing the instant a game starts can't kill the player before the dungeon renders / before their first move is possible. _(Rejected the originally-planned uniform time budget — it would gut the random-timing mechanic.)_
 - [ ] **3.2 S — Reachability guarantee** entrance→treasure→exit (`src/game/dungeon.js`).
 - [ ] **3.3 S — Swap/passthrough collision fix** (`src/game/game.js:181`).
 
