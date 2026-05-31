@@ -127,12 +127,15 @@ CREDITS_PACKAGES=[{"id":"small","credits":10,"price":"90000000000","bonus":0},{"
 ALLOW_MIXED_MODE=true
 PREFER_CREDITS_FIRST=true
 
-# --- payouts ---
+# --- payouts --- (bankroll: ~0.3797 sXMR in the "test" wallet)
 PAYOUTS_ENABLED=true
-PAYOUT_MIN_AMOUNT=1000000000
-PAYOUT_MAX_PER_GAME=1000000000000
+PAYOUT_MIN_AMOUNT=1000000000        # 0.001 XMR
+PAYOUT_MAX_PER_GAME=50000000000     # 0.05 XMR safety cap (real max is 3x*0.01 = 0.03)
 PAYOUT_BATCH_INTERVAL=300
 PAYOUT_MAX_RETRIES=3
+LOW_BALANCE_THRESHOLD=50000000000   # alert/halt when unlocked balance drops below 0.05 XMR
+# Tip: lower DIRECT_GAME_PRICE/CREDITS_PAYOUT_BASE to 0.001 XMR (1000000000) for many more
+# demo plays per the small bankroll; refill from a stagenet faucet as needed.
 
 # --- wallet RPC (monero stagenet) ---
 PRIMARY_WALLET_ENDPOINT=http://127.0.0.1:38083
