@@ -811,19 +811,27 @@ app.post('/api/admin/refund/payment', adminAuth, asyncHandler(async (req, res) =
     
     await client.query('COMMIT');
     
-    // Optionally send funds back via wallet RPC
+    // Optionally send funds back via wallet RPC. Refund what the user ACTUALLY paid
+    // (received_amount, recorded at confirmation) when available, falling back to the
+    // expected amount for older records.
     let fundsSent = false;
     let txHash = null;
-    if (sendFunds && payment.payout_address && payment.expected_amount > 0) {
+    const refundAmount = (payment.received_amount != null && Number(payment.received_amount) > 0)
+      ? payment.received_amount
+      : payment.expected_amount;
+    if (sendFunds && payment.payout_address && Number(refundAmount) > 0) {
       try {
-        if (walletRPCService && typeof walletRPCService.sendPayment === 'function') {
-          const result = await walletRPCService.sendPayment(
-            payment.payout_address, 
-            payment.expected_amount
-          );
-          fundsSent = true;
-          txHash = result?.tx_hash || null;
-        }
+        // processPayout validates the address and performs the transfer; returns
+        // { success, txHash, fee }. (The previous code called a nonexistent sendPayment(),
+        // so refunds were silently never sent while still reporting success.)
+        const result = await walletRPCService.processPayout({
+          address: payment.payout_address,
+          amount: refundAmount,
+          userId: payment.user_id,
+          description: `Refund for payment ${paymentId}`
+        });
+        fundsSent = !!(result && result.success);
+        txHash = (result && result.txHash) || null;
       } catch (err) {
         console.error('Failed to send refund funds:', err.message);
         // Don't fail the request - refund is recorded, funds can be sent manually
