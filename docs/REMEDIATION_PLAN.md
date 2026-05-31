@@ -25,7 +25,7 @@ Key: `S` ≤ half day · `M` ~1–3 days · `L` ~1 week+ · 🔴 launch-blocker 
 - [x] **0.6 🟠 S — Client + admin XSS and CSP.** ✅ Single shared `escapeHtml` helper (`html/js/core/escapeHtml.js`, escapes all five chars incl. both quotes); leaderboard delegates to it. Chat sinks (`onChatBroadcast`/`onChatHistory`) now escape username + message. Admin panel escapes user-controlled fields (payout address, socket id, player name, status) and its local `escapeHtml` now escapes quotes (safe in `title="…"`). CSP + `X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy` headers added via middleware in `index.js` (`connect-src 'self'` keeps Socket.IO working; nonce-based tightening tracked as Phase 4.4).
 
 ## Phase 1 — Money correctness hardening (🟠)
-- [ ] **1.1 M — `src/money/atomic.js` BigInt module** as the only money type; remove `Number()` casts in `gameModeManager.js` and float `reduce` in `walletRPCService.js:314`.
+- [x] **1.1 M — `src/money/atomic.js` BigInt module.** ✅ Exact integer money math (`toBig`/`toSafe`/`sum`/`add`/`mulByDecimal`/`format`). `calculatePayout` now computes `base * multiplier` via BigInt (half-up rounding, narrows to number only when exact). `walletRPCService` batch total + fee sum use `money.sum` instead of float `reduce`. Property tests (`moneyAtomic.test.js`) prove exactness on amounts above 2^53 where the old float path drifted.
 - [ ] **1.2 S — Snapshot payout config at game start** (`gameModeManager.js:237`); pay from recorded multiplier/base.
 - [ ] **1.3 S — Close payout uniqueness holes.** Cover `processing` in the unique index; guard INSERT (`gameModeManager.js:1161`); add status/outcome/mode enum CHECKs.
 - [ ] **1.4 S — Fix retry stat guard + non-atomic tx_hash write** (`src/payments/payoutRetryService.js:121,174`).

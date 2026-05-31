@@ -13,6 +13,7 @@ const {
 } = require('./helpers/gameModeUtils');
 const { ValidationError, normalizeError } = require('../utils/errors');
 const paymentConfig = require('../config/paymentConfig');
+const money = require('../money/atomic');
 
 const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW depending on currency decimals
 const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
@@ -243,8 +244,11 @@ class GameModeManager {
             ? (multipliers.escapeWithTreasure ?? multipliers.escape ?? 0)
             : (multipliers.escape ?? 0);
 
-        const amount = Math.round(base * multiplier);
-        
+        // Exact integer math: base (atomic units) * decimal multiplier via BigInt, then
+        // narrow back to a number only when exactly representable. Avoids float precision
+        // loss on large atomic amounts (the old `Math.round(base * multiplier)`).
+        const amount = money.toSafe(money.mulByDecimal(base, multiplier));
+
         console.log(`🧮 calculatePayout: mode=${normalizedMode}, usingCredits=${usingCredits}, treasureFound=${treasureFound}`);
         console.log(`   base=${base}, multipliers=${JSON.stringify(multipliers)}, chosen multiplier=${multiplier}`);
         console.log(`   final amount=${amount} (base * multiplier = ${base} * ${multiplier})`);

@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const { ExternalServiceError, AppError } = require('../utils/errors');
+const money = require('../money/atomic');
 
 class WalletRPCService {
     constructor(debugManager) {
@@ -311,7 +312,7 @@ class WalletRPCService {
 
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`🚀 Initiating batch payout (${destinations.length} destinations)`, {
-                totalAmount: destinations.reduce((sum, d) => sum + Number(d.amount), 0),
+                totalAmount: money.sum(destinations.map(d => d.amount)).toString(),
                 destinations: destinations.map(d => d.address.substring(0, 10) + '...')
             });
         }
@@ -322,7 +323,7 @@ class WalletRPCService {
             tx_hash_list: response.result.tx_hash_list || [],
             tx_key_list: response.result.tx_key_list || [],
             fee_list: response.result.fee_list || [],
-            totalFee: (response.result.fee_list || []).reduce((a, b) => a + b, 0)
+            totalFee: money.toSafe(money.sum(response.result.fee_list || []))
         };
 
         if (this.debugManager?.CONSOLE_LOGGING) {
