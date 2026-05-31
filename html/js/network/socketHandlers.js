@@ -288,7 +288,9 @@ const SocketHandlers = {
     onChatBroadcast: function(data) {
         const msgElement = $('<li style="color: #aaa;">');
         if (data.socketId) {
-            msgElement.html('<strong>' + data.socketId.substring(0, 6) + ':</strong> ' + data.message);
+            // Escape both fields — chat content is attacker-controlled. Defense in depth:
+            // the server also escapes, but the client must never trust that.
+            msgElement.html('<strong>' + escapeHtml(String(data.socketId).substring(0, 6)) + ':</strong> ' + escapeHtml(data.message));
         } else {
             msgElement.text(data.message);
         }
@@ -320,7 +322,7 @@ const SocketHandlers = {
             if (msg.timestamp) {
                 timeStr = '<span style="color:#555;font-size:10px;">[' + SocketHandlers._formatTimeAgo(new Date(msg.timestamp)) + ']</span> ';
             }
-            msgElement.html(timeStr + '<strong>' + username + ':</strong> ' + msg.message);
+            msgElement.html(timeStr + '<strong>' + escapeHtml(username) + ':</strong> ' + escapeHtml(msg.message));
             $('#messages').append(msgElement);
         });
 

@@ -738,9 +738,9 @@
                     <tr>
                         <td>${p.id}</td>
                         <td>${(p.amount / atomicDivisor).toFixed(6)}</td>
-                        <td title="${p.address || ''}">${p.address ? p.address.substring(0, 12) + '...' : '-'}</td>
-                        <td><span class="status-badge status-${p.status}">${p.status}</span></td>
-                        <td class="tx-hash">${p.txHash ? p.txHash.substring(0, 16) + '...' : '-'}</td>
+                        <td title="${escapeHtml(p.address || '')}">${p.address ? escapeHtml(p.address.substring(0, 12)) + '...' : '-'}</td>
+                        <td><span class="status-badge status-${escapeHtml(p.status)}">${escapeHtml(p.status)}</span></td>
+                        <td class="tx-hash">${p.txHash ? escapeHtml(p.txHash.substring(0, 16)) + '...' : '-'}</td>
                         <td>${new Date(p.createdAt).toLocaleString()}</td>
                         <td>
                             ${p.status === 'failed' || p.status === 'permanently_failed' ?
@@ -821,8 +821,8 @@
                 tbody.innerHTML = data.users.map(u => `
                     <tr>
                         <td>${u.id}</td>
-                        <td title="${u.socketId}">${u.socketId ? u.socketId.substring(0, 15) + '...' : '-'}</td>
-                        <td>${u.payoutAddress || '-'}</td>
+                        <td title="${escapeHtml(u.socketId)}">${u.socketId ? escapeHtml(u.socketId.substring(0, 15)) + '...' : '-'}</td>
+                        <td>${u.payoutAddress ? escapeHtml(u.payoutAddress) : '-'}</td>
                         <td>${u.credits || 0}</td>
                         <td>${u.gamesPlayed || 0}</td>
                         <td>${u.gamesWon || 0}</td>
@@ -879,9 +879,9 @@
                         <tr style="${rowStyle}">
                             <td>${m.id}</td>
                             <td>${formatTimeAgo(new Date(m.timestamp))}</td>
-                            <td>${m.playerId || m.username || '-'}</td>
+                            <td>${escapeHtml(m.playerId || m.username || '-')}</td>
                             <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(m.message)}">${escapeHtml(m.message)}</td>
-                            <td>${m.userId || '-'}</td>
+                            <td>${escapeHtml(m.userId || '-')}</td>
                             <td>
                                 ${isDeleted ? '<span class="status-badge status-failed">Deleted</span>' : ''}
                                 ${isBanned ? '<span class="status-badge status-failed">Banned</span>' : ''}
@@ -978,9 +978,15 @@
         }
 
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            // Escape all five HTML-significant chars (including quotes) so the result is
+            // safe in both element text and quoted attribute values (e.g. title="...").
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function formatTimeAgo(date) {

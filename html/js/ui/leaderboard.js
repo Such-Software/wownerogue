@@ -127,12 +127,15 @@ const Leaderboard = {
     },
 
     _escapeHtml: function(str) {
+        // Delegate to the shared helper (single source of truth). Falls back to a local
+        // implementation if the helper somehow isn't loaded.
+        if (typeof window !== 'undefined' && typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
+        }
         if (!str) return '';
         return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 };
 

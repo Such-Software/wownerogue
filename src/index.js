@@ -54,6 +54,30 @@ let payoutRetryService = null; // Initialized later when payment system starts
 let batchPayoutInterval = null; // Initialized later when payment system starts
 let paymentExpiryInterval = null; // Initialized later when payment system starts
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
+// Security headers (defense in depth alongside output escaping).
+// CSP locks down where scripts/styles/connections may come from. Inline scripts/styles
+// are still permitted ('unsafe-inline') because the current pages rely on them heavily;
+// removing that is tracked as Phase 4.4 (nonce-based CSP). connect-src 'self' covers
+// same-origin Socket.IO websockets under CSP Level 3.
+app.use((req, res, next) => {
+    res.setHeader('Content-Security-Policy', [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self'",
+        "connect-src 'self' https://smirk.cash",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'self'",
+        "form-action 'self'"
+    ].join('; '));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+});
+
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
 app.use(express.static(htmlPath, {
