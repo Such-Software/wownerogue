@@ -7,6 +7,7 @@
  */
 
 const createAdminRoutes = require('../src/routes/admin');
+const createAuthRoutes = require('../src/routes/auth');
 
 function stubCtx() {
   return {
@@ -46,5 +47,18 @@ describe('admin routes factory', () => {
       expect(paths).toContain(p);
     }
     expect(paths.length).toBe(expected.length);
+  });
+});
+
+describe('auth (smirk) routes factory', () => {
+  test('builds a router and registers the smirk endpoints', () => {
+    const router = createAuthRoutes({ db: { query: jest.fn() } });
+    const paths = router.stack.filter(l => l.route).map(l => l.route.path);
+    expect(paths).toEqual(expect.arrayContaining([
+      '/api/auth/smirk/challenge',
+      '/api/auth/smirk/verify',
+      '/api/auth/smirk/status'
+    ]));
+    expect(paths.length).toBe(3);
   });
 });
