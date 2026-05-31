@@ -26,7 +26,7 @@ Key: `S` ≤ half day · `M` ~1–3 days · `L` ~1 week+ · 🔴 launch-blocker 
 
 ## Phase 1 — Money correctness hardening (🟠)
 - [x] **1.1 M — `src/money/atomic.js` BigInt module.** ✅ Exact integer money math (`toBig`/`toSafe`/`sum`/`add`/`mulByDecimal`/`format`). `calculatePayout` now computes `base * multiplier` via BigInt (half-up rounding, narrows to number only when exact). `walletRPCService` batch total + fee sum use `money.sum` instead of float `reduce`. Property tests (`moneyAtomic.test.js`) prove exactness on amounts above 2^53 where the old float path drifted.
-- [ ] **1.2 S — Snapshot payout config at game start** (`gameModeManager.js:237`); pay from recorded multiplier/base.
+- [x] **1.2 S — Snapshot payout config at game start.** ✅ Migration 016 adds `payout_escape_amount`/`payout_treasure_amount` (BIGINT) + multipliers to `games`. Both start paths stamp the resolved payout amounts (via `_computePayoutSnapshot`); `completeGame` pays from the snapshot (falls back to live calc only for pre-snapshot games). New `payoutSnapshot.test.js` proves a mid-game config change can't alter an in-flight payout.
 - [ ] **1.3 S — Close payout uniqueness holes.** Cover `processing` in the unique index; guard INSERT (`gameModeManager.js:1161`); add status/outcome/mode enum CHECKs.
 - [ ] **1.4 S — Fix retry stat guard + non-atomic tx_hash write** (`src/payments/payoutRetryService.js:121,174`).
 - [ ] **1.5 S — Remove dead refund send-path** (`src/index.js:795`).

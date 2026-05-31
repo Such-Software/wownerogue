@@ -731,8 +731,25 @@ class GameModeManager {
         }
     }
 
+    /**
+     * Compute the payout terms to snapshot on a game at start, so an admin changing
+     * config mid-game can't alter an in-flight game's payout. Returns atomic amounts as
+     * strings (for the BIGINT columns) plus the multipliers for the audit trail.
+     */
+    _computePayoutSnapshot(mode) {
+        const escape = this.calculatePayout(mode, { treasureFound: false });
+        const treasure = this.calculatePayout(mode, { treasureFound: true });
+        return {
+            escapeAmount: String(escape.amount),
+            treasureAmount: String(treasure.amount),
+            escapeMult: escape.multiplier,
+            treasureMult: treasure.multiplier
+        };
+    }
+
     async _processGameStartWithCredits(user, socketId, gameId) {
         const creditsToSpend = this.creditsPerGameCost;
+        const snap = this._computePayoutSnapshot('PAID_CREDITS');
 
         const result = await this.db.withTransaction(async (client) => {
             // Conditional update prevents credits going negative
@@ -752,9 +769,11 @@ class GameModeManager {
             const remainingCredits = updateRes.rows[0].credits;
 
             await client.query(`
-                UPDATE games SET game_mode = 'PAID_CREDITS', payout_address = $2
+                UPDATE games SET game_mode = 'PAID_CREDITS', payout_address = $2,
+                    payout_escape_amount = $3, payout_treasure_amount = $4,
+                    payout_escape_mult = $5, payout_treasure_mult = $6
                 WHERE dungeon_seed = $1
-            `, [gameId, user.payout_address || null]);
+            `, [gameId, user.payout_address || null, snap.escapeAmount, snap.treasureAmount, snap.escapeMult, snap.treasureMult]);
 
             await client.query(`
                 INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
@@ -784,12 +803,15 @@ class GameModeManager {
     }
 
     async _processGameStartWithPayment(user, payment, gameId) {
+        const snap = this._computePayoutSnapshot('PAID_SINGLE');
         await this.db.withTransaction(async (client) => {
             await client.query(`
                 UPDATE games
-                SET payment_id = $1, game_mode = 'PAID_SINGLE', payout_address = $3
+                SET payment_id = $1, game_mode = 'PAID_SINGLE', payout_address = $3,
+                    payout_escape_amount = $4, payout_treasure_amount = $5,
+                    payout_escape_mult = $6, payout_treasure_mult = $7
                 WHERE dungeon_seed = $2
-            `, [payment.id, gameId, user.payout_address || null]);
+            `, [payment.id, gameId, user.payout_address || null, snap.escapeAmount, snap.treasureAmount, snap.escapeMult, snap.treasureMult]);
 
             await client.query(`
                 UPDATE users
@@ -1100,9 +1122,13 @@ class GameModeManager {
             let recordedPaymentMode = this.gameMode; // fallback to global
             let gameDbId = null;
             let lockedPayoutAddress = null; // address locked at game start
+            let payoutSnapshot = null; // payout terms snapshotted at game start
             try {
                 const gameRecord = await this.db.query(`
-                    SELECT id, game_mode, payout_address FROM games
+                    SELECT id, game_mode, payout_address,
+                           payout_escape_amount, payout_treasure_amount,
+                           payout_escape_mult, payout_treasure_mult
+                    FROM games
                     WHERE dungeon_seed = $1 AND socket_id = $2
                     LIMIT 1
                 `, [gameId, socketId]);
@@ -1110,6 +1136,15 @@ class GameModeManager {
                     gameDbId = gameRecord.rows[0].id;
                     recordedPaymentMode = (gameRecord.rows[0].game_mode || this.gameMode).toUpperCase();
                     lockedPayoutAddress = gameRecord.rows[0].payout_address || null;
+                    const r = gameRecord.rows[0];
+                    if (r.payout_escape_amount != null || r.payout_treasure_amount != null) {
+                        payoutSnapshot = {
+                            escapeAmount: r.payout_escape_amount,
+                            treasureAmount: r.payout_treasure_amount,
+                            escapeMult: r.payout_escape_mult,
+                            treasureMult: r.payout_treasure_mult
+                        };
+                    }
                 }
             } catch (e) {
                 // Non-fatal, use fallback
@@ -1141,7 +1176,19 @@ class GameModeManager {
             // Handle payouts based on the actual recorded payment mode, not the current global setting
             const payoutEligibleStartMode = (recordedPaymentMode === 'PAID_SINGLE') || (recordedPaymentMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
             if (payoutEligibleStartMode && won) {
-                const { amount: payoutAmount, multiplier } = this.calculatePayout(recordedPaymentMode, { treasureFound });
+                // Use the payout terms snapshotted at game start (so a mid-game config change
+                // can't alter an in-flight payout). Fall back to live calculation only for
+                // older games that predate the snapshot columns.
+                let payoutAmount;
+                let multiplier;
+                if (payoutSnapshot) {
+                    payoutAmount = treasureFound ? payoutSnapshot.treasureAmount : payoutSnapshot.escapeAmount;
+                    multiplier = treasureFound ? payoutSnapshot.treasureMult : payoutSnapshot.escapeMult;
+                } else {
+                    const live = this.calculatePayout(recordedPaymentMode, { treasureFound });
+                    payoutAmount = live.amount;
+                    multiplier = live.multiplier;
+                }
 
                 // Check if payout was already processed for this game (prevent duplicates)
                 if (gameDbId) {
