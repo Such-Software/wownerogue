@@ -1,34 +1,41 @@
 -- Migration 010: Security constraints to prevent invalid data states
--- These constraints enforce business rules at the database level as a safety net
+-- These constraints enforce business rules at the database level as a safety net.
+--
+-- Each ADD CONSTRAINT is guarded by a conname check so the migration is idempotent and
+-- safe to re-run / recover from a partial apply. (Postgres has no ADD CONSTRAINT IF NOT
+-- EXISTS, and a bare ADD CONSTRAINT on an existing constraint hard-fails, which previously
+-- could wedge startup.)
 
--- Ensure credits can never go negative
--- This catches any code bugs that might bypass application-level checks
-ALTER TABLE users ADD CONSTRAINT users_credits_non_negative
-    CHECK (credits >= 0);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_credits_non_negative') THEN
+        ALTER TABLE users ADD CONSTRAINT users_credits_non_negative CHECK (credits >= 0);
+    END IF;
 
--- Ensure total_amount_won can never go negative
-ALTER TABLE users ADD CONSTRAINT users_total_won_non_negative
-    CHECK (total_amount_won >= 0);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_total_won_non_negative') THEN
+        ALTER TABLE users ADD CONSTRAINT users_total_won_non_negative CHECK (total_amount_won >= 0);
+    END IF;
 
--- Ensure total_games_played can never go negative
-ALTER TABLE users ADD CONSTRAINT users_games_played_non_negative
-    CHECK (total_games_played >= 0);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_games_played_non_negative') THEN
+        ALTER TABLE users ADD CONSTRAINT users_games_played_non_negative CHECK (total_games_played >= 0);
+    END IF;
 
--- Ensure total_games_won can never go negative
-ALTER TABLE users ADD CONSTRAINT users_games_won_non_negative
-    CHECK (total_games_won >= 0);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_games_won_non_negative') THEN
+        ALTER TABLE users ADD CONSTRAINT users_games_won_non_negative CHECK (total_games_won >= 0);
+    END IF;
 
--- Ensure payout amounts are always positive
-ALTER TABLE payouts ADD CONSTRAINT payouts_amount_positive
-    CHECK (amount > 0);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payouts_amount_positive') THEN
+        ALTER TABLE payouts ADD CONSTRAINT payouts_amount_positive CHECK (amount > 0);
+    END IF;
 
--- Ensure payment amounts are always positive
-ALTER TABLE payments ADD CONSTRAINT payments_amount_positive
-    CHECK (expected_amount > 0);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payments_amount_positive') THEN
+        ALTER TABLE payments ADD CONSTRAINT payments_amount_positive CHECK (expected_amount > 0);
+    END IF;
 
--- Ensure multiplier is non-negative (0 means no payout)
-ALTER TABLE payouts ADD CONSTRAINT payouts_multiplier_non_negative
-    CHECK (multiplier >= 0);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payouts_multiplier_non_negative') THEN
+        ALTER TABLE payouts ADD CONSTRAINT payouts_multiplier_non_negative CHECK (multiplier >= 0);
+    END IF;
+END $$;
 
 -- Add index for faster payout retry queries
 CREATE INDEX IF NOT EXISTS idx_payouts_retry_candidates ON payouts (status, retry_count, last_retry_at)

@@ -143,8 +143,22 @@ class DatabaseManager {
                 const filePath = path.join(migrationsPath, file);
                 const sql = await fs.readFile(filePath, 'utf8');
                 console.log(`🔄 Running migration: ${file}`);
-                await this.pool.query(sql);
-                await this.pool.query(`INSERT INTO schema_migrations (filename) VALUES ($1)`, [file]);
+
+                // Apply the migration AND record it in the ledger atomically in one
+                // transaction, so a migration can never be applied-but-unrecorded (which
+                // would re-run a possibly-non-idempotent migration on the next boot).
+                const client = await this.pool.connect();
+                try {
+                    await client.query('BEGIN');
+                    await client.query(sql);
+                    await client.query(`INSERT INTO schema_migrations (filename) VALUES ($1)`, [file]);
+                    await client.query('COMMIT');
+                } catch (migErr) {
+                    await client.query('ROLLBACK').catch(() => {});
+                    throw migErr;
+                } finally {
+                    client.release();
+                }
                 console.log(`✅ Migration completed: ${file}`);
             }
 
