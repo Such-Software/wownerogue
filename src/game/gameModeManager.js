@@ -1193,7 +1193,7 @@ class GameModeManager {
                 // Check if payout was already processed for this game (prevent duplicates)
                 if (gameDbId) {
                     const existingPayout = await this.db.query(`
-                        SELECT id FROM payouts WHERE game_id = $1 AND status IN ('pending', 'completed')
+                        SELECT id FROM payouts WHERE game_id = $1 AND status IN ('pending', 'processing', 'completed')
                     `, [gameDbId]);
                     if (existingPayout.rows.length > 0) {
                         console.log(`⚠️ Payout already exists for game ${gameId}, skipping duplicate`);
