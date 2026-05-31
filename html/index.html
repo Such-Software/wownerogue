@@ -20,7 +20,11 @@
                 window._localStorageAvailable = true;
                 const existing = localStorage.getItem('wownerogue_token');
                 if (existing) {
-                    opts.query = { resumeToken: existing };
+                    // Send the session token in the handshake `auth` payload, NOT the URL
+                    // query string. Query strings leak into proxy/access/referer logs;
+                    // auth is carried in the connection body. (Server keeps a query-string
+                    // fallback for older clients during rollout.)
+                    opts.auth = { resumeToken: existing };
                 }
             } catch(_) {
                 window._localStorageAvailable = false;

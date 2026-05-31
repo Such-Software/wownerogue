@@ -172,7 +172,11 @@ class ConnectionHandler {
 
     _getResumeToken(socket) {
         try {
-            return socket.handshake.query?.resumeToken || null;
+            // Prefer the handshake `auth` payload (not logged by proxies); fall back to the
+            // query string for backward compatibility with older clients during rollout.
+            return socket.handshake.auth?.resumeToken
+                || socket.handshake.query?.resumeToken
+                || null;
         } catch (_) {
             return null;
         }

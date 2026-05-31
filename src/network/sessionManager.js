@@ -53,10 +53,24 @@ class SessionManager {
             }
           }
 
+          // SECURITY: Rotate the token on every resume. The session token is a bearer
+          // credential — rotating it limits the window in which a leaked/observed token is
+          // usable (a leaked token is invalidated the next time the real owner reconnects).
+          // The client persists the returned token from the `session_resumed` event.
+          let issuedToken = resumeToken;
+          try {
+            issuedToken = await this.rotateToken(user.id);
+            user.anon_token = issuedToken;
+            this.sessions.set(socketId, user);
+          } catch (rotErr) {
+            // If rotation fails, keep the existing token rather than locking the user out.
+            console.error('[SessionManager] Token rotation failed, keeping existing token:', rotErr.message);
+          }
+
           if (this.debugManager.CONSOLE_LOGGING) console.log(`[SessionManager] Resumed session for user ${user.id}`);
           return {
             resumed: true,
-            token: resumeToken,
+            token: issuedToken,
             user: {
               ...user,
               socket_id: socketId

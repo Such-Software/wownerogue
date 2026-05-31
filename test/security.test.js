@@ -71,6 +71,9 @@ function createMockDb() {
                         const addrIdx = params.findIndex((_, i) => text.includes(`payout_address = $${i + 1}`));
                         if (addrIdx >= 0) user.payout_address = params[addrIdx];
                     }
+                    if (text.includes('anon_token =')) {
+                        user.anon_token = params[0];
+                    }
                 }
                 return { rows: user ? [user] : [] };
             }
@@ -237,6 +240,36 @@ describe('SQL Injection Prevention', () => {
                 expect(result.token).toBeTruthy();
                 expect(result.token).not.toBe(token); // Should generate new token
             }
+        });
+
+        test('should rotate the session token on resume (bearer-token replay protection)', async () => {
+            // Create a session to obtain a real token.
+            const created = await sessionManager.resumeOrCreate({
+                socketId: 'rotate-socket-1',
+                ipAddress: '127.0.0.1',
+                resumeToken: null
+            });
+            expect(created.resumed).toBe(false);
+            const firstToken = created.token;
+            expect(firstToken).toBeTruthy();
+
+            // Resume with that token — should succeed and hand back a DIFFERENT token.
+            const resumed = await sessionManager.resumeOrCreate({
+                socketId: 'rotate-socket-2',
+                ipAddress: '127.0.0.1',
+                resumeToken: firstToken
+            });
+            expect(resumed.resumed).toBe(true);
+            expect(resumed.token).toBeTruthy();
+            expect(resumed.token).not.toBe(firstToken); // rotated
+
+            // The OLD token must no longer resume (it was invalidated).
+            const replay = await sessionManager.resumeOrCreate({
+                socketId: 'rotate-socket-3',
+                ipAddress: '127.0.0.1',
+                resumeToken: firstToken
+            });
+            expect(replay.resumed).toBe(false);
         });
 
         test('should safely handle malicious socket ID', async () => {
