@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>Wownerogue - A Wownero Roguelike</title>
     <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
     <link rel="icon" type="image/x-icon" href="favicon.ico" id="favicon">
@@ -81,6 +83,7 @@
     <script src="js/network/socketHandlers.js"></script>
     <script src="js/network/smirkAuth.js"></script>
     <script src="js/input/inputHandler.js"></script>
+    <script src="js/input/touchControls.js"></script>
 </head>
 <body>
     <div class="container">
@@ -368,5 +371,13 @@
             }, 100); // 100ms delay to ensure everything is loaded
         });
     </script>
+
+    <!-- On-screen movement D-pad (shown on touch/mobile via CSS) -->
+    <div id="touch-dpad" aria-hidden="true">
+        <button id="dpad-up" type="button" aria-label="Move up">▲</button>
+        <button id="dpad-left" type="button" aria-label="Move left">◀</button>
+        <button id="dpad-right" type="button" aria-label="Move right">▶</button>
+        <button id="dpad-down" type="button" aria-label="Move down">▼</button>
+    </div>
 </body>
 </html>
