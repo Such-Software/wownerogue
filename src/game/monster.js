@@ -1,4 +1,5 @@
 const ROT = require('./rot.js');
+const { seededShuffle } = require('./provablyFair');
 
 /**
  * Monster class - Manages monster state and AI with improved pathfinding
@@ -104,7 +105,7 @@ class Monster {
     /**
      * Improved AI to move toward player using A* pathfinding with limited vision
      */
-    moveTowardPlayer(player, dungeon) {
+    moveTowardPlayer(player, dungeon, rng = Math.random) {
         if (!dungeon || !dungeon.map) return;
 
         // Check if a tile is passable (floor, stairs, treasure)
@@ -115,7 +116,7 @@ class Monster {
 
         // If no player target, wander randomly
         if (!player) {
-            this._wander(dungeon, isPassable);
+            this._wander(dungeon, isPassable, rng);
             return;
         }
         
@@ -143,7 +144,7 @@ class Monster {
             }
             
             // Fallback: direct move toward player
-            this._moveDirectToward(player.x, player.y, dungeon, isPassable);
+            this._moveDirectToward(player.x, player.y, dungeon, isPassable, rng);
             
         } else if (this.lastKnownPlayerX !== null) {
             // Player not visible but we have last known position - patrol toward it
@@ -153,7 +154,7 @@ class Monster {
                 // Reached last known position, clear it and wander
                 this.lastKnownPlayerX = null;
                 this.lastKnownPlayerY = null;
-                this._wander(dungeon, isPassable);
+                this._wander(dungeon, isPassable, rng);
             } else {
                 // Path toward last known position
                 const path = this.findPath(this.lastKnownPlayerX, this.lastKnownPlayerY, dungeon, isPassable);
@@ -165,19 +166,19 @@ class Monster {
                     // Can't reach last known position, clear and wander
                     this.lastKnownPlayerX = null;
                     this.lastKnownPlayerY = null;
-                    this._wander(dungeon, isPassable);
+                    this._wander(dungeon, isPassable, rng);
                 }
             }
         } else {
             // No player info - wander randomly
-            this._wander(dungeon, isPassable);
+            this._wander(dungeon, isPassable, rng);
         }
     }
     
     /**
      * Simple direct movement toward a target (fallback)
      */
-    _moveDirectToward(targetX, targetY, dungeon, isPassable) {
+    _moveDirectToward(targetX, targetY, dungeon, isPassable, rng = Math.random) {
         const dx = Math.sign(targetX - this.x);
         const dy = Math.sign(targetY - this.y);
         
@@ -212,15 +213,16 @@ class Monster {
         }
         
         // Blocked in preferred directions, try diagonals (A* backup)
-        this._wander(dungeon, isPassable);
+        this._wander(dungeon, isPassable, rng);
     }
     
     /**
      * Random wandering behavior
      */
-    _wander(dungeon, isPassable) {
+    _wander(dungeon, isPassable, rng = Math.random) {
         const dirs = [[0,1],[1,0],[0,-1],[-1,0]];
-        const shuffledDirs = ROT.RNG.shuffle(dirs.slice());
+        // Deterministic shuffle from the per-game seeded RNG (provably fair).
+        const shuffledDirs = seededShuffle(rng, dirs.slice());
         
         for (const [dx, dy] of shuffledDirs) {
             const nx = this.x + dx;

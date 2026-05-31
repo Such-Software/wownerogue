@@ -5,7 +5,7 @@ const Monster = require('./monster.js');
 const DungeonGenerator = require('./dungeon.js');
 const LightingAndFov = require('./lightingAndFov.js');
 const { getDifficultyConfig, getMonsterSpawnRoomIndex, getTreasureRoomIndex } = require('./difficultyConfig');
-const { createGameProof, getPreGameCommitment, getPostGameReveal, createSeededRNG } = require('./provablyFair');
+const { createGameProof, getPreGameCommitment, getPostGameReveal, createSeededRNG, seedToInt, seededShuffle } = require('./provablyFair');
 
 // Environment-based console logging control
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
@@ -29,7 +29,11 @@ class Game {
     
     // Provably fair: Generate game proof before anything else
     this.gameProof = createGameProof(this.id);
+    // Per-game deterministic RNG derived from the committed seed. ALL game randomness
+    // (dungeon generation + monster movement) flows through this so the game is
+    // reproducible from the seed for provably-fair verification.
     this.seededRNG = createSeededRNG(this.gameProof.seed);
+    this.seedInt = seedToInt(this.gameProof.seed);
 
     // Get default configuration from DungeonGenerator
     const dungeonConfig = DungeonGenerator.getConfig();
@@ -114,8 +118,14 @@ class Game {
     this.monsterMoveAccumulator = 0; // For fractional monster moves
     this.fee = 0;
 
-    // Generate dungeon with the provided dimensions and config
-    this.dungeon = DungeonGenerator.generate(this.gameConfig.width, this.gameConfig.height, this.gameConfig);
+    // Generate dungeon with the provided dimensions and config.
+    // Pass the per-game seeded RNG + numeric seed so the layout is deterministic
+    // and verifiable from the committed seed (provably fair).
+    this.dungeon = DungeonGenerator.generate(this.gameConfig.width, this.gameConfig.height, {
+      ...this.gameConfig,
+      rng: this.seededRNG,
+      seedInt: this.seedInt
+    });
     
     // Place player at entrance
     if (this.dungeon.entrance) {
@@ -236,12 +246,13 @@ class Game {
     while (this.monsterMoveAccumulator >= 1) {
       this.monsterMoveAccumulator -= 1;
       
-      // Apply chase aggressiveness (chance to move randomly instead of chasing)
-      if (Math.random() < chaseAggressiveness) {
-        this.monster.moveTowardPlayer(this.player, this.dungeon);
+      // Apply chase aggressiveness (chance to move randomly instead of chasing).
+      // Use the per-game seeded RNG so monster behaviour is deterministic from the seed.
+      if (this.seededRNG() < chaseAggressiveness) {
+        this.monster.moveTowardPlayer(this.player, this.dungeon, this.seededRNG);
       } else {
         // Random move - still try to move, just not toward player
-        this.monster.moveTowardPlayer(null, this.dungeon);
+        this.monster.moveTowardPlayer(null, this.dungeon, this.seededRNG);
       }
     }
 

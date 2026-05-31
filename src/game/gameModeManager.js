@@ -260,7 +260,7 @@ class GameModeManager {
      * @param {object} packageInfo - Package info (credits, bonus, etc.)
      * @returns {object} Result with success, creditsAdded, newBalance, alreadyProcessed
      */
-    async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null) {
+    async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null, receivedAmount = null) {
         try {
             // Look up user from payment record's user_id (stable across socket reconnects)
             // This avoids the bug where socket ID changes if user refreshes during confirmation
@@ -301,10 +301,11 @@ class GameModeManager {
                     UPDATE payments
                     SET status = 'confirmed',
                         credits_purchased = $1,
-                        confirmed_at = NOW()
+                        confirmed_at = NOW(),
+                        received_amount = COALESCE($3, received_amount)
                     WHERE id = $2 AND status = 'pending'
                     RETURNING id
-                `, [creditsToAdd, paymentId]);
+                `, [creditsToAdd, paymentId, receivedAmount]);
 
                 if (paymentUpdateResult.rows.length === 0) {
                     // Already processed by another instance - not an error

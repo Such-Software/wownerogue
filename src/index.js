@@ -1753,6 +1753,24 @@ app.get('/api/verify', (req, res) => {
   }
   
   const result = verifyGame(seed, commitment);
+
+  // PROVABLY FAIR (Phase 0.2): when the seed matches the commitment, regenerate the
+  // dungeon from the seed and return a layout fingerprint so the player can confirm
+  // the layout is a deterministic function of the committed seed (not crafted after payment).
+  if (result.valid) {
+    try {
+      const DungeonGenerator = require('./game/dungeon');
+      const dungeon = DungeonGenerator.regenerateFromSeed(seed, process.env.CRYPTO_TYPE || 'WOW');
+      result.layoutFingerprint = DungeonGenerator.layoutFingerprint(dungeon);
+      result.dungeonSize = { width: dungeon.map[0].length, height: dungeon.map.length };
+      result.entrance = dungeon.entrance;
+      result.exit = dungeon.exit;
+      result.treasure = dungeon.treasure;
+    } catch (e) {
+      // Regeneration is best-effort; the hash check above is the primary verification.
+    }
+  }
+
   res.json(result);
 });
 

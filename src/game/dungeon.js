@@ -1,5 +1,7 @@
+const crypto = require('crypto');
 const ROT = require('./rot.js');
 const { getDifficultyConfig, getMonsterSpawnRoomIndex, getTreasureRoomIndex } = require('./difficultyConfig');
+const { createSeededRNG, seedToInt } = require('./provablyFair');
 
 // Environment-based console logging control
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
@@ -58,6 +60,55 @@ class DungeonGenerator {
         };
     }
     
+    /**
+     * PROVABLY FAIR (Phase 0.2): Reproduce a dungeon purely from its committed seed.
+     * Mirrors the standard generation path used by Game so a verifier can independently
+     * regenerate the exact layout a player saw. Assumes standard generation options
+     * (the difficulty preset for `cryptoType`); games started with custom dungeon
+     * overrides would need those overrides passed in `gameOptions` to match.
+     * @param {string} seed - The revealed game seed
+     * @param {string|null} cryptoType - Currency, selects the difficulty preset
+     * @param {object} gameOptions - Optional overrides matching the original game
+     * @returns {object} The regenerated dungeon ({ map, rooms, entrance, exit, treasure, torches })
+     */
+    static regenerateFromSeed(seed, cryptoType = null, gameOptions = {}) {
+        const dungeonConfig = this.getConfig(cryptoType);
+        const width = gameOptions.width || dungeonConfig.DEFAULT_WIDTH;
+        const height = gameOptions.height || dungeonConfig.DEFAULT_HEIGHT;
+        const gameConfig = {
+            width,
+            height,
+            floorVariation: gameOptions.floorVariation !== undefined ? gameOptions.floorVariation : dungeonConfig.FLOOR_VARIATION,
+            torchEnabled: gameOptions.torchEnabled !== undefined ? gameOptions.torchEnabled : dungeonConfig.TORCH_ENABLED,
+            torchDensity: gameOptions.torchDensity !== undefined ? gameOptions.torchDensity : dungeonConfig.TORCH_DENSITY,
+            primaryFloor: gameOptions.primaryFloor || dungeonConfig.PRIMARY_FLOOR,
+            secondaryFloor: gameOptions.secondaryFloor || dungeonConfig.SECONDARY_FLOOR,
+            torchTile: gameOptions.torchTile || dungeonConfig.TORCH_TILE,
+            ...gameOptions
+        };
+        return this.generate(width, height, {
+            ...gameConfig,
+            rng: createSeededRNG(seed),
+            seedInt: seedToInt(seed)
+        });
+    }
+
+    /**
+     * Deterministic fingerprint of a dungeon's layout, used to compare a regenerated
+     * dungeon against the one that was played.
+     * @param {object} dungeon - A dungeon object from generate()/regenerateFromSeed()
+     * @returns {string} SHA-256 hex of the layout-defining fields
+     */
+    static layoutFingerprint(dungeon) {
+        const payload = JSON.stringify({
+            map: dungeon.map,
+            entrance: dungeon.entrance,
+            exit: dungeon.exit,
+            treasure: dungeon.treasure
+        });
+        return crypto.createHash('sha256').update(payload).digest('hex');
+    }
+
     static generate(width, height, options = {}) {
         const defaultOptions = {
             floorVariation: DUNGEON_CONFIGS.FLOOR_VARIATION,
@@ -71,6 +122,17 @@ class DungeonGenerator {
         const config = { ...defaultOptions, ...options };
         if (CONSOLE_LOGGING) {
             console.log(`[DungeonGenerator] Generating dungeon with effective torchDensity: ${config.torchDensity}`);
+        }
+
+        // PROVABLY FAIR (Phase 0.2): when a per-game seeded RNG is supplied, all
+        // randomness in generation is derived from the committed seed so the dungeon
+        // is reproducible for verification. `config.rng` drives floor/torch/treasure
+        // placement; `config.seedInt` deterministically seeds ROT.RNG for the Digger.
+        // Generation is fully synchronous, so seeding the global ROT.RNG here is safe
+        // even with concurrent games (no other game can interleave mid-generation).
+        const rng = (typeof config.rng === 'function') ? config.rng : Math.random;
+        if (config.seedInt != null) {
+            ROT.RNG.setSeed(config.seedInt);
         }
 
         // Create dungeon using ROT.js Map.Digger
@@ -117,8 +179,8 @@ class DungeonGenerator {
         const treasureCenter = treasureRoom.getCenter();
         // Place treasure slightly off center to make it more interesting
         const treasure = [
-            treasureCenter[0] + Math.floor(Math.random() * 3) - 1,
-            treasureCenter[1] + Math.floor(Math.random() * 3) - 1
+            treasureCenter[0] + Math.floor(rng() * 3) - 1,
+            treasureCenter[1] + Math.floor(rng() * 3) - 1
         ];
         
         // Ensure the treasure is on a floor tile (check for both floor types)
@@ -150,7 +212,8 @@ class DungeonGenerator {
         }
 
         let placedTorchesCount = 0; // Counter for torches placed in this function
-        
+        const rng = (typeof config.rng === 'function') ? config.rng : Math.random;
+
         // Log the torchDensity being used for this map generation pass
         if (CONSOLE_LOGGING) {
             console.log(`[DungeonGenerator.enhanceMapWithVariations] Starting enhancement with torchDensity: ${config.torchDensity}`);
@@ -165,14 +228,14 @@ class DungeonGenerator {
                 
                 if (cell === 0) {
                     // Floor tile - randomly choose primary or secondary
-                    if (Math.random() < config.floorVariation) {
+                    if (rng() < config.floorVariation) {
                         enhancedMap[y][x] = config.secondaryFloor;
                     } else {
                         enhancedMap[y][x] = config.primaryFloor;
                     }
                 } else if (cell === 1) {
                     // Wall tile - maybe add a torch
-                    if (config.torchEnabled && this.shouldPlaceTorch(basicMap, x, y, config.torchDensity)) {
+                    if (config.torchEnabled && this.shouldPlaceTorch(basicMap, x, y, config.torchDensity, rng)) {
                         enhancedMap[y][x] = config.torchTile;
                         placedTorchesCount++; // Increment if a torch is placed
                     } else {
@@ -188,7 +251,7 @@ class DungeonGenerator {
     }
     
     // Determine if a torch should be placed on this wall tile
-    static shouldPlaceTorch(map, x, y, torchDensity) {
+    static shouldPlaceTorch(map, x, y, torchDensity, rng = Math.random) {
         // Only place torches on walls that are adjacent to floors (for lighting logic)
         const height = map.length;
         const width = map[0].length;
@@ -202,7 +265,7 @@ class DungeonGenerator {
             return nx >= 0 && nx < width && ny >= 0 && ny < height && map[ny][nx] === 0;
         });
         
-        const randomValue = Math.random();
+        const randomValue = rng();
         const shouldPlace = adjacentToFloor && randomValue < torchDensity;
         
         return shouldPlace;

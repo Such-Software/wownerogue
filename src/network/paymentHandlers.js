@@ -16,6 +16,8 @@ class PaymentHandlers {
         this.broadcastManager = broadcastManager;
         this.sessionManager = sessionManager;
         this.mempoolNotified = new Set();
+        // Track underpaid payments we've already warned about (notify once, keep monitoring for top-up)
+        this.underpaidNotified = new Set();
         this.paymentMonitors = new Map();
         // Track pending payment metadata per socket (may reuse existing)
         this.socketPaymentMap = new Map(); // socketId -> { address, paymentId, amount, cryptoType, createdAt }
@@ -311,6 +313,34 @@ class PaymentHandlers {
                     socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
                 }
             } else if (status.confirmed) {
+                // SECURITY (Phase 0.1): A confirmed transaction is NOT sufficient to grant a
+                // game/credits — we must verify the RECEIVED amount covers what was expected.
+                // checkPaymentStatus() sets `confirmed` for ANY incoming tx on the subaddress,
+                // while `complete` means totalReceived >= required. Without this gate a player
+                // could send a single atomic unit and play (or buy credits) for free.
+                if (!status.complete) {
+                    // Underpaid. Keep monitoring so a later top-up to the same address can
+                    // complete it; warn the user once to avoid spamming on every 2s poll.
+                    if (!this.underpaidNotified.has(paymentRequest.id)) {
+                        this.underpaidNotified.add(paymentRequest.id);
+                        const required = status.required || 0;
+                        const received = status.amount || 0;
+                        const shortfall = Math.max(0, required - received);
+                        console.warn(`[PaymentHandlers] Underpaid payment ${paymentRequest.id}: received ${received}, required ${required} (shortfall ${shortfall})`);
+                        try {
+                            socket.emit('payment_underpaid', {
+                                paymentId: paymentRequest.id,
+                                received,
+                                required,
+                                shortfall
+                            });
+                        } catch (_) {}
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
+                            `⚠️  UNDERPAYMENT DETECTED\n\nReceived less than the required amount. Send the remaining balance to the SAME address to complete your payment, or wait for it to expire and try again.`);
+                    }
+                    return;
+                }
+
                 // SECURITY: Use in-memory Set as fast-path, but DB is source of truth
                 // This prevents double-processing on server restart
                 if (this.confirmedPayments.has(paymentRequest.id)) {
@@ -331,7 +361,8 @@ class PaymentHandlers {
                         const creditsResult = await this.gameModeManager.processCreditsPackageConfirmation(
                             socket.id,
                             paymentRequest.id,
-                            mapping.package
+                            mapping.package,
+                            Math.round(status.amount || 0)
                         );
                         if (creditsResult.success) {
                             socket.emit('credits_update', { balance: creditsResult.newBalance });
@@ -368,10 +399,11 @@ class PaymentHandlers {
                             const updateResult = await this.gameModeManager.db.query(`
                                 UPDATE payments
                                 SET status = 'confirmed',
-                                    confirmed_at = NOW()
+                                    confirmed_at = NOW(),
+                                    received_amount = $2
                                 WHERE id = $1 AND status = 'pending'
                                 RETURNING id
-                            `, [paymentRequest.id]);
+                            `, [paymentRequest.id, Math.round(status.amount || 0)]);
                             wasUpdated = updateResult.rows.length > 0;
                             if (this.debugManager.CONSOLE_LOGGING) {
                                 console.log(`[PaymentHandlers] Payment ${paymentRequest.id} status update: ${wasUpdated ? 'success' : 'already confirmed'}`);
@@ -464,6 +496,9 @@ class PaymentHandlers {
         if (mapping) {
             this.walletService.stopPaymentMonitoring(mapping.address);
             this.socketPaymentMap.delete(socketId);
+            if (mapping.paymentId != null) {
+                this.underpaidNotified.delete(mapping.paymentId);
+            }
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log(`🛑 Stopped monitoring for socket ${socketId}`);
             }

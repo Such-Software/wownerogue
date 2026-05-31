@@ -80,6 +80,19 @@ function createSeededRNG(seed) {
 }
 
 /**
+ * Derive a positive integer from a hex seed, suitable for seeding ROT.RNG.
+ * 13 hex chars = 52 bits, which stays within Number.MAX_SAFE_INTEGER so the
+ * value is represented exactly. Always returns >= 1.
+ * @param {string} seed - The game seed (hex)
+ * @returns {number} A positive integer derived deterministically from the seed
+ */
+function seedToInt(seed) {
+    const hex = String(seed).replace(/[^0-9a-fA-F]/g, '').slice(0, 13) || '1';
+    const n = parseInt(hex, 16);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
  * Generate a random integer in range [min, max] using seeded RNG
  * @param {function} rng - Seeded RNG function
  * @param {number} min - Minimum value (inclusive)
@@ -158,13 +171,12 @@ function getPostGameReveal(proof, gameResult = {}) {
             moves: gameResult.moves ?? 0,
             duration: gameResult.duration ?? 0
         },
-        verificationUrl: `/verify/${proof.gameId}`,
+        verificationUrl: `/verify/${proof.seed}`,
         instructions: [
             "To verify this game was fair:",
-            `1. Compute SHA-256 of the seed: ${proof.seed}`,
-            `2. Verify it matches the commitment: ${proof.commitment}`,
-            "3. Use the seed to regenerate the dungeon layout",
-            "4. Confirm the dungeon matches what you played"
+            `1. Compute SHA-256 of the seed and confirm it equals the commitment: ${proof.commitment}`,
+            "2. The seed deterministically generates the dungeon layout, treasure, and monster behaviour",
+            `3. Open ${`/verify/${proof.seed}`} to regenerate the dungeon from the seed and compare its layout fingerprint`
         ]
     };
 }
@@ -196,6 +208,7 @@ module.exports = {
     hashSeed,
     verifySeed,
     createSeededRNG,
+    seedToInt,
     seededRandomInt,
     seededShuffle,
     createGameProof,
