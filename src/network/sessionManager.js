@@ -213,11 +213,9 @@ class SessionManager {
         });
       }
 
-      if (unprocessedPayments.rows.length === 0) {
-        return result;
-      }
-
-      for (const payment of unprocessedPayments.rows) {
+      // NOTE: do not early-return when there are no credits_package payments — the
+      // single_game recovery below must still run.
+      for (const payment of (unprocessedPayments.rows.length === 0 ? [] : unprocessedPayments.rows)) {
         try {
           // Determine credits: use stored value from orphaned record, or parse from description
           let creditsToAdd = payment._creditsFromRecord || 0;
@@ -302,6 +300,71 @@ class SessionManager {
         } catch (paymentError) {
           console.error(`[PaymentRecovery] Failed to process payment ${payment.id}:`, paymentError.message);
         }
+      }
+
+      // PHASE 0.5: Recover confirmed single_game payments that were never consumed.
+      // If a user paid for a single game and disconnected before a game started (no
+      // games row references the payment), the money was taken with nothing given and
+      // there was previously no recovery path. Grant the equivalent credits (one paid
+      // game) so they get what they paid for. Idempotent via a per-payment reason key.
+      try {
+        const creditsPerGame = (this.gameModeManager && this.gameModeManager.creditsPerGameCost) || 1;
+        const unconsumed = await this.db.query(`
+          SELECT p.id, p.confirmed_at
+          FROM payments p
+          WHERE p.user_id = $1
+            AND p.status = 'confirmed'
+            AND p.payment_type = 'single_game'
+            AND p.confirmed_at > NOW() - INTERVAL '7 days'
+            AND NOT EXISTS (SELECT 1 FROM games g WHERE g.payment_id = p.id)
+            AND NOT EXISTS (
+              SELECT 1 FROM credit_transactions ct
+              WHERE ct.user_id = p.user_id AND ct.reason = 'single_game_recovered:' || p.id
+            )
+          ORDER BY p.confirmed_at ASC
+        `, [userId]);
+
+        for (const payment of unconsumed.rows) {
+          try {
+            const recovered = await this.db.withTransaction(async (client) => {
+              // Lock the payment and re-check under the lock that it is still unconsumed
+              // and not already recovered (prevents double-credit across instances/races).
+              const lock = await client.query(`SELECT id FROM payments WHERE id = $1 FOR UPDATE`, [payment.id]);
+              if (!lock.rows[0]) return null;
+
+              const gameCheck = await client.query(`SELECT 1 FROM games WHERE payment_id = $1 LIMIT 1`, [payment.id]);
+              if (gameCheck.rows.length > 0) return null; // a game was started for it after all
+
+              const reason = `single_game_recovered:${payment.id}`;
+              const dup = await client.query(
+                `SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reason = $2 LIMIT 1`,
+                [userId, reason]
+              );
+              if (dup.rows.length > 0) return null; // already recovered
+
+              const upd = await client.query(
+                `UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING credits`,
+                [creditsPerGame, userId]
+              );
+              const newBalance = upd.rows[0]?.credits ?? 0;
+              await client.query(`
+                INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                VALUES ($1, $2, $3, $4, 'recovery')
+              `, [userId, creditsPerGame, reason, newBalance]);
+              return { creditsToAdd: creditsPerGame };
+            });
+
+            if (recovered) {
+              result.creditsRecovered += recovered.creditsToAdd;
+              result.paymentsProcessed++;
+              console.log(`💰 [PaymentRecovery] Recovered unconsumed single_game payment ${payment.id} as ${recovered.creditsToAdd} credit(s) for user ${userId}`);
+            }
+          } catch (e) {
+            console.error(`[PaymentRecovery] Failed to recover single_game payment ${payment.id}:`, e.message);
+          }
+        }
+      } catch (e) {
+        console.error('[PaymentRecovery] single_game recovery error:', e.message);
       }
 
       if (result.creditsRecovered > 0) {

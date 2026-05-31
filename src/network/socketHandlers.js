@@ -86,7 +86,19 @@ class SocketHandlers {
             debugManager: this.debugManager,
             broadcastManager: this.broadcastManager,
             io: this.io,
-            createGameForUser: (userObj, gameType, options) => this.gameManager.createGameForUser(userObj, gameType, options),
+            createGameForUser: async (userObj, gameType, options) => {
+                const game = await this.gameManager.createGameForUser(userObj, gameType, options);
+                // Stamp the stable DB user id onto the game at creation. Suspend/restore keys
+                // on this id; capturing it now (when we reliably have the session) means the
+                // disconnect path never needs a fresh, failure-prone DB lookup to preserve a
+                // game — so ANY game, paid or free, is reconnectable.
+                try {
+                    const sid = userObj?.id;
+                    const dbUid = sid != null ? this.sessionManager?.sessions?.get(sid)?.id : null;
+                    if (game && dbUid != null) game.dbUserId = dbUid;
+                } catch (_) {}
+                return game;
+            },
             getUserBySocket: (socketId) => this.connectionHandler.getUserBySocket(socketId),
             activeGames: this.activeGames,
             gameModeManager: this.gameModeManager,
@@ -752,38 +764,45 @@ class SocketHandlers {
         this.connectionHandler.handleDisconnect(socket, async (socket) => {
             const socketId = socket.id;
             
-            // Try to get DB user ID for session-based preservation
-            let dbUserId = null;
-            if (this.sessionManager) {
-                try {
-                    const user = await this.sessionManager.getBySocket(socketId);
-                    dbUserId = user?.id;
-                } catch (e) {
-                    // Non-fatal, proceed without DB user
+            const activeGame = this.activeGames.get(socketId);
+
+            // Resolve the stable DB user id that suspend/restore keys on. Preference order:
+            //   1. the id stamped on the game at creation (always present for any game
+            //      started with a session) — no lookup, can't fail,
+            //   2. the in-memory session cache,
+            //   3. a DB lookup as a last resort.
+            // Every game — paid or free — is preserved and reconnectable as long as a stable
+            // id resolves, which it does whenever a session was ever established.
+            let dbUserId = activeGame?.dbUserId || null;
+            if (!dbUserId && this.sessionManager) {
+                try { dbUserId = this.sessionManager.sessions?.get(socketId)?.id || null; } catch (_) {}
+                if (!dbUserId) {
+                    try { const u = await this.sessionManager.getBySocket(socketId); dbUserId = u?.id || null; } catch (_) {}
                 }
             }
-            
-            // Check if user has an active game that should be suspended
-            const activeGame = this.activeGames.get(socketId);
+
             if (activeGame && dbUserId && this.suspendedGameManager) {
-                // Suspend the game for potential reconnection
+                // Suspend the game so it can be restored on reconnect (keyed by dbUserId).
                 const suspended = this.suspendedGameManager.suspendGame(dbUserId, socketId, activeGame, {
                     paymentMonitoringActive: this.paymentHandlers?.hasActiveMonitoring?.(socketId) || false
                 });
-                
+                this.activeGames.delete(socketId);
                 if (suspended) {
-                    // Remove from activeGames (now in suspended state)
-                    this.activeGames.delete(socketId);
-                    
                     if (this.debugManager.CONSOLE_LOGGING) {
                         console.log(`[SocketHandlers] Game suspended for user ${dbUserId} (socket: ${socketId})`);
                     }
                 } else {
-                    // Couldn't suspend, just delete
-                    this.activeGames.delete(socketId);
+                    console.error(`[SocketHandlers] suspendGame returned false for user ${dbUserId} (socket ${socketId}); game ${activeGame.id || 'unknown'} not restorable.`);
                 }
             } else {
-                // No DB user or no game, just clean up
+                if (activeGame) {
+                    // Reachable only when no stable identity resolved at all — i.e. a session
+                    // was never established (e.g. DB unavailable at connect), so there is
+                    // genuinely no id to restore the game under. Record it for auditing.
+                    console.error(`[SocketHandlers] Active game dropped without suspension — no stable user id `
+                        + `(socket=${socketId}, mode=${activeGame.paymentMode || activeGame.gameMode || 'unknown'}, `
+                        + `gameId=${activeGame.id || 'unknown'}). Cannot restore a game without a session identity.`);
+                }
                 this.activeGames.delete(socketId);
             }
             
