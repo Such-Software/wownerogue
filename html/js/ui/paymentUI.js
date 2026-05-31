@@ -113,7 +113,17 @@ const PaymentUI = {
         
         // Reset selected package
         this.selectedPackageId = null;
-        
+
+        // Explain the two leaderboards up front when both paid and free are available.
+        if (this.config.paymentsEnabled && this.config.freePlayEnabled) {
+            $container.append(
+                '<div style="margin-bottom:14px;padding:10px;background:rgba(245,158,11,0.08);border:1px solid #92400e;border-radius:6px;font-size:0.85em;line-height:1.5;">' +
+                    '🏅 <strong style="color:#fbbf24;">Pay</strong> (credits or single entry) to put your high scores in the <strong style="color:#fbbf24;">Hall of Champions</strong>.<br>' +
+                    '🪙 <strong style="color:#8ab4f8;">Play free</strong> — high scores go to the <strong style="color:#8ab4f8;">Pleb leaderboard</strong> instead.' +
+                '</div>'
+            );
+        }
+
         // === SECTION 1: Use existing credits (if available) ===
         if (hasCredits && this.config.creditsModeEnabled) {
             const creditsPayoutsEnabled = this.config.creditsPayoutsEnabled;
@@ -125,9 +135,9 @@ const PaymentUI = {
                 const baseFormatted = this.formatPrice(creditsBaseValue);
                 const escapeWin = (parseFloat(baseFormatted) * creditsMultipliers.escape).toFixed(2);
                 const treasureWin = (parseFloat(baseFormatted) * creditsMultipliers.escapeWithTreasure).toFixed(2);
-                payoutNote = `<span style="color:#4ade80;">💰 Win: ${creditsMultipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${creditsMultipliers.escapeWithTreasure}x (${treasureWin} ${currency})</span>`;
+                payoutNote = `<span style="color:#4ade80;">💰 Win: ${creditsMultipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${creditsMultipliers.escapeWithTreasure}x (${treasureWin} ${currency})</span><br><span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>`;
             } else {
-                payoutNote = '<span style="color:#888;">No crypto payouts • Play for fun</span>';
+                payoutNote = '<span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>';
             }
             
             $container.append(`
@@ -156,9 +166,9 @@ const PaymentUI = {
             if (directPayoutsEnabled) {
                 const escapeWin = (parseFloat(price) * multipliers.escape).toFixed(2);
                 const treasureWin = (parseFloat(price) * multipliers.escapeWithTreasure).toFixed(2);
-                payoutInfo = `<span style="color:#4ade80;">Win: ${multipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${multipliers.escapeWithTreasure}x (${treasureWin} ${currency})</span>`;
+                payoutInfo = `<span style="color:#4ade80;">Win: ${multipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${multipliers.escapeWithTreasure}x (${treasureWin} ${currency})</span><br><span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>`;
             } else {
-                payoutInfo = '<span style="color:#888;">No crypto payouts</span>';
+                payoutInfo = '<span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>';
             }
             
             $container.append(`
@@ -193,7 +203,7 @@ const PaymentUI = {
                 const treasureWin = (parseFloat(baseFormatted) * creditsMultipliers.escapeWithTreasure).toFixed(2);
                 creditsPayoutInfo = `<div style="font-size:0.85em;color:#4ade80;margin-bottom:10px;">💰 Win: ${creditsMultipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${creditsMultipliers.escapeWithTreasure}x (${treasureWin} ${currency})</div>`;
             } else {
-                creditsPayoutInfo = `<div style="font-size:0.85em;color:#888;margin-bottom:10px;">No crypto payouts • Play for fun with bulk discount</div>`;
+                creditsPayoutInfo = `<div style="font-size:0.85em;color:#fbbf24;margin-bottom:10px;">🏅 High scores enter the Hall of Champions • bulk discount</div>`;
             }
             
             let packagesHtml = '';
@@ -264,7 +274,7 @@ const PaymentUI = {
         // alongside paid (freePlayEnabled). Free games go to the Pleb leaderboard.
         if (this.config.freePlayEnabled) {
             const note = this.config.paymentsEnabled
-                ? 'No payout • Pleb leaderboard'
+                ? '🪙 Free — high scores go to the Pleb leaderboard'
                 : 'No payments required';
             $container.append(`
                 <button class="mode-option" data-mode="FREE" data-action="free"

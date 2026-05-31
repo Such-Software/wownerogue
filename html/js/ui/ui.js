@@ -51,13 +51,19 @@ const UI = {
     _gameTitleFull: "WOWNEROGUE - A Wownero Roguelike",
 
     updateGameTitle: function(cryptoType) {
-        if (cryptoType === 'XMR') {
+        var isXmr = cryptoType === 'XMR';
+        if (isXmr) {
             document.title = "Monerogue - A Monero Roguelike";
             this._gameTitleFull = "MONEROGUE - A Monero Roguelike";
         } else {
             document.title = "Wownerogue - A Wownero Roguelike";
             this._gameTitleFull = "WOWNEROGUE - A Wownero Roguelike";
         }
+
+        // Footer line + favicon track the currency too (Wownero vs Monero per instance).
+        $('#footer-title').text((isXmr ? 'Monero' : 'Wownero') + ' Roguelike v0.1.0 | Use WASD or arrow keys to move');
+        var favicon = document.getElementById('favicon');
+        if (favicon) favicon.href = isXmr ? 'favicon-monero.png' : 'favicon.ico';
 
         // If the static banner is already visible (animation finished), update it immediately
         if ($('#staticbanner').is(':visible') && !$('#banner').is(':visible')) {
