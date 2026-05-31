@@ -1300,37 +1300,52 @@ class GameModeManager {
                 }
             } else {
                 // Multiple payouts — batch via transfer_split with multiple destinations
+                const ids = pending.rows.map(p => p.id);
                 try {
                     const result = await this.walletService.processBatchPayout(destinations);
 
-                    // All destinations in one transfer_split typically produce 1 tx
-                    const txHash = result.tx_hash_list[0];
+                    // transfer_split sends ONE on-chain tx to all destinations; every payout
+                    // row in this batch legitimately shares that tx_hash (see migration 015).
+                    const txHash = (result.tx_hash_list && result.tx_hash_list[0]) || null;
                     const feePerPayout = result.totalFee
                         ? Math.ceil(result.totalFee / pending.rows.length)
                         : null;
 
-                    // Store tx_hash + status + user stats atomically for each payout
-                    for (const p of pending.rows) {
-                        await this.db.withTransaction(async (client) => {
+                    // Mark the ENTIRE batch completed in a SINGLE transaction so we never
+                    // leave some rows completed and others stranded mid-batch (which the old
+                    // per-row loop did when the shared tx_hash hit the unique index).
+                    await this.db.withTransaction(async (client) => {
+                        await client.query(
+                            `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3, status = 'completed', processed_at = NOW() WHERE id = ANY($4)`,
+                            [txHash, feePerPayout, batchId, ids]
+                        );
+                        // Per-row stat increments inside the same transaction. Amounts are passed
+                        // as DB values so Postgres does the BIGINT arithmetic (no JS float).
+                        for (const p of pending.rows) {
                             await client.query(
-                                `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3, status = 'completed', processed_at = NOW() WHERE id = $4`,
-                                [txHash, feePerPayout, batchId, p.id]
-                            );
-                            await client.query(
-                                `UPDATE users SET total_amount_won = total_amount_won + $1, total_payouts_received = COALESCE(total_payouts_received, 0) + 1 WHERE id = $2`,
+                                `UPDATE users SET total_amount_won = total_amount_won + $1::bigint, total_payouts_received = COALESCE(total_payouts_received, 0) + 1 WHERE id = $2`,
                                 [p.amount, p.user_id]
                             );
-                        });
-                    }
+                        }
+                    });
                     console.log(`💸 Batch payout completed: ${pending.rows.length} payouts in tx ${txHash}`);
                 } catch (err) {
                     console.error(`❌ Batch payout failed (${pending.rows.length} payouts):`, err.message);
-                    // Mark all as failed — retry service will pick them up individually
-                    for (const p of pending.rows) {
-                        await this.db.query(
-                            `UPDATE payouts SET status = 'failed', last_error = $1, last_retry_at = NOW() WHERE id = $2`,
-                            [err.message, p.id]
-                        ).catch(() => {});
+                    // CRITICAL: a batch failure is ambiguous — transfer_split may have already
+                    // broadcast on-chain even though the RPC response errored. These rows have no
+                    // tx_hash, so the retry service's blockchain guard can't protect them and an
+                    // auto-retry could DOUBLE-PAY. Mark 'needs_review' (which the retry service
+                    // does NOT pick up) and alert an operator instead.
+                    await this.db.query(
+                        `UPDATE payouts SET status = 'needs_review', last_error = $1, last_retry_at = NOW() WHERE id = ANY($2)`,
+                        [String(err.message).slice(0, 500), ids]
+                    ).catch(() => {});
+                    if (this.alertService && typeof this.alertService.sendAlert === 'function') {
+                        this.alertService.sendAlert('batch_payout_failed', {
+                            subject: '⚠️ Batch payout failed — manual review required',
+                            html: `<p>A batch of ${pending.rows.length} payout(s) failed and was marked <b>needs_review</b> to avoid a possible double-payout.</p>`
+                                + `<p>Payout IDs: ${ids.join(', ')}</p><p>Error: ${err.message}</p>`
+                        }).catch(() => {});
                     }
                 }
             }
