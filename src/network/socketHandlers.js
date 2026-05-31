@@ -187,8 +187,7 @@ class SocketHandlers {
             cleanupTimeoutMs: 300000 // 5 minutes to reconnect before game is lost
         });
 
-        // Movement manager abstraction with memory cleanup
-        this.playerMoveTimestamps = new Map();
+        // Movement manager abstraction (owns its own move-cooldown state)
         this.movementManager = new MovementManager({
             activeGames: this.activeGames,
             io: this.io,
@@ -206,32 +205,6 @@ class SocketHandlers {
      * Register memory cleanup functions to prevent memory leaks
      */
     _registerMemoryCleanups() {
-        // Cleanup player move timestamps (keep for 5 minutes)
-        this.memoryManager.registerCleanup(
-            'playerMoveTimestamps',
-            () => {
-                const now = Date.now();
-                const maxAge = 300000; // 5 minutes
-                let cleaned = 0;
-                const toDelete = [];
-                
-                for (const [socketId, timestamp] of this.playerMoveTimestamps.entries()) {
-                    if (now - timestamp > maxAge) {
-                        toDelete.push(socketId);
-                    }
-                }
-                
-                for (const socketId of toDelete) {
-                    if (this.playerMoveTimestamps.delete(socketId)) {
-                        cleaned++;
-                    }
-                }
-                
-                return cleaned;
-            },
-            300000
-        );
-
         // (mempool-notification dedup + TTL eviction lives in PaymentHandlers, which owns
         // the actual dedup set; the old SocketHandlers copy here was unused and is removed.)
 
@@ -242,69 +215,6 @@ class SocketHandlers {
                 () => { this.rateLimiter.cleanup(); return 0; },
                 60000
             );
-        }
-    }
-
-    /**
-     * Handle player movement input from client.
-     * Expects moveData: { direction: 'up'|'down'|'left'|'right' }
-     */
-    handlePlayerMove(socket, moveData) {
-        try {
-            if (!moveData || typeof moveData.direction !== 'string') return;
-            const now = Date.now();
-            const last = this.playerMoveTimestamps.get(socket.id) || 0;
-            if (now - last < this.MOVE_COOLDOWN) return; // rate limit moves
-            this.playerMoveTimestamps.set(socket.id, now);
-
-            const game = this.activeGames.get(socket.id);
-            if (!game) return; // not in a game
-
-            // Translate direction to delta
-            const dir = moveData.direction;
-            let dx = 0, dy = 0;
-            switch (dir) {
-                case 'up': dy = -1; break;
-                case 'down': dy = 1; break;
-                case 'left': dx = -1; break;
-                case 'right': dx = 1; break;
-                default: return; // ignore unknown
-            }
-
-            // Attempt move via game API (assuming game has movePlayer(dx,dy))
-            if (typeof game.movePlayer === 'function') {
-                game.movePlayer(dx, dy);
-            } else if (game.player) {
-                // Fallback direct mutation (legacy) with simple bounds check
-                const newX = game.player.x + dx;
-                const newY = game.player.y + dy;
-                if (newX >= 0 && newY >= 0) {
-                    game.player.x = newX;
-                    game.player.y = newY;
-                }
-            }
-
-            if (typeof game.moveMonster === 'function') {
-                game.moveMonster();
-            }
-
-            // Build updated state
-            let state;
-            if (typeof game.getState === 'function') {
-                state = game.getState();
-            } else {
-                state = { player: game.player };
-            }
-
-            // Add block height context
-            if (this.debugManager && typeof this.debugManager.getCurrentBlockHeight === 'function') {
-                state.blockHeight = this.debugManager.getCurrentBlockHeight();
-            }
-
-            this.io.to(socket.id).emit('game_update', state);
-
-        } catch (err) {
-            console.error('handlePlayerMove error:', err);
         }
     }
 
@@ -816,9 +726,6 @@ class SocketHandlers {
             // addressToUser entries must persist so checkPaymentStatus() can query the wallet
             // RPC after session resumption. They get cleaned up when payments are confirmed or expired.
             
-            // Clean up movement timestamps
-            this.playerMoveTimestamps.delete(socketId);
-            
             // Preserve queue entry for users with session/payment
             // The queue entry's socketId will be updated on reconnection
             if (this.queueManager && typeof this.queueManager.removePlayer === 'function') {
@@ -1211,7 +1118,6 @@ class SocketHandlers {
 
         // Clear remaining data structures
         this.activeGames.clear();
-        this.playerMoveTimestamps.clear();
 
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log('✅ SocketHandlers shutdown complete');

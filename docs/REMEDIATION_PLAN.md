@@ -43,11 +43,11 @@ Key: `S` ≤ half day · `M` ~1–3 days · `L` ~1 week+ · 🔴 launch-blocker 
 - [x] **3.3 S — Multi-step monster collision fix.** ✅ Collision is now checked after **each** monster sub-step, not just after the loop. With `movesPerPlayerMove > 1` (casino's 1.5× speed) the monster could previously step onto the player's tile and off again between checks, phasing through and missing the catch (player-favorable, eroded the house edge). New `monsterCollision.test.js`.
 
 ## Phase 4 — De-spaghetti / structural cleanup (🟡)
-- [ ] **4.1 L — Break up `index.js`** into `app.js`, `routes/{public,user,admin,auth}.js`, `views/verify.js`, `server.js`.
-- [ ] **4.2 M — Kill duplicates.** Merge `rpcService`+`rpccalls`; delete dead `handlePlayerMove` (`socketHandlers.js:244`); unify `payout_address` widths; remove `QueryValidator` theater (`databaseManager.js:21`).
+- [x] **4.1 L — Break up `index.js` (substantially).** ✅ Extracted the verify HTML → `views/verifyPage.js` (now HTML-escaped), all 15 admin endpoints → `routes/admin.js`, and the 3 smirk endpoints → `routes/auth.js`, each as DI factories with smoke tests. **index.js: 2029 → 882 lines (-57%).** _Remaining user/public routes left inline — they're interleaved with bootstrap and have no route tests, so further slicing is diminishing-return/higher-risk; the structure + pattern are established for later._
+- [~] **4.2 M — Kill duplicates (partial).** ✅ Deleted the dead `handlePlayerMove` handler (a footgun that double-stepped the monster + bypassed escape/collision detection) and its orphaned `playerMoveTimestamps` map/cleanup — the live path is `MovementManager`. _Remaining (lower-value/higher-effort): merge `rpcService`+`rpccalls`, unify `payout_address` column widths, address the `QueryValidator` false-positive — deferred._
 - [ ] **4.3 M — Config as immutable snapshots;** stop mutating `process.env` (`gameModeManager.js:189`).
 - [ ] **4.4 M — Frontend de-spaghetti.** Shared `escapeHtml`/`dom.js`; kill double-declares + dead `_appendMessage`; explicit init ordering; upgrade/drop jQuery; gate broadcast logging (`broadcastManager.js:33`).
-- [ ] **4.5 S — Delete stale `test/` scratch files.**
+- [x] **4.5 S — Delete stale `test/` scratch files.** ✅ Removed 14 non-jest leftovers (5 `.js` scratch scripts + 9 `.html` debug pages) — confirmed they contained no jest constructs and were referenced nowhere. `test/` is now exclusively the 21 real jest suites.
 
 ## Phase 5 — Test & ops overhaul (🟠 — the launch gate)
 - [ ] **5.1 L — Real money-path tests** against Postgres (no stubbed `withTransaction`): under/overpay, double-confirm, batch dispatch, credit race, retry idempotency; property-test `money/atomic.js`.
