@@ -119,22 +119,25 @@ class PayoutRetryService {
                     if (txStatus.exists) {
                         // Transaction is in blockchain/mempool - mark as completed, don't retry!
                         await this.db.withTransaction(async (client) => {
-                            await client.query(`
+                            // Transition to completed ONLY if not already completed. The RETURNING
+                            // tells us whether THIS call did the transition, so we count user stats
+                            // exactly once (the previous guard checked the same row it had just
+                            // updated, so it never counted at all).
+                            const transitioned = await client.query(`
                                 UPDATE payouts
                                 SET status = 'completed', processed_at = NOW()
-                                WHERE id = $1
+                                WHERE id = $1 AND status <> 'completed'
+                                RETURNING id
                             `, [id]);
 
-                            // Update user stats (may have been missed if original DB update failed)
-                            await client.query(`
-                                UPDATE users
-                                SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
-                                    total_payouts_received = COALESCE(total_payouts_received, 0) + 1
-                                WHERE id = $2 AND NOT EXISTS (
-                                    SELECT 1 FROM payouts
-                                    WHERE id = $3 AND status = 'completed' AND processed_at IS NOT NULL
-                                )
-                            `, [amount, user_id, id]);
+                            if (transitioned.rows.length > 0) {
+                                await client.query(`
+                                    UPDATE users
+                                    SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
+                                        total_payouts_received = COALESCE(total_payouts_received, 0) + 1
+                                    WHERE id = $2
+                                `, [amount, user_id]);
+                            }
                         });
                         console.log(`✅ Payout ${id} already in blockchain (${txStatus.confirmations} confirmations), marked completed`);
                         return;
@@ -169,31 +172,35 @@ class PayoutRetryService {
                 description: `Retry payout ${id} for game ${game_id}`
             });
 
-            // IMMEDIATELY store tx_hash (same pattern as gameModeManager)
-            if (payoutResult.success && payoutResult.txHash) {
-                await this.db.query(`
-                    UPDATE payouts SET tx_hash = $1, fee = $2 WHERE id = $3
-                `, [payoutResult.txHash, payoutResult.fee, id]);
+            if (!payoutResult.success) {
+                throw new AppError(`Payout ${id} retry did not succeed`);
             }
 
-            // Update payout record with success
+            // Store tx_hash, mark completed, and count stats ATOMICALLY in one transaction,
+            // so the process can't die between writing tx_hash and marking completed (which
+            // previously left a tx_hash on a non-completed row). The conditional transition
+            // (status <> 'completed') makes stat-counting exactly-once.
             await this.db.withTransaction(async (client) => {
-                await client.query(`
+                const transitioned = await client.query(`
                     UPDATE payouts
-                    SET status = 'completed',
+                    SET tx_hash = $1,
+                        fee = $2,
+                        status = 'completed',
                         processed_at = NOW(),
                         retry_count = COALESCE(retry_count, 0) + 1,
                         last_retry_at = NOW()
-                    WHERE id = $1
-                `, [id]);
+                    WHERE id = $3 AND status <> 'completed'
+                    RETURNING id
+                `, [payoutResult.txHash || null, payoutResult.fee || null, id]);
 
-                // Update user stats
-                await client.query(`
-                    UPDATE users
-                    SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
-                        total_payouts_received = COALESCE(total_payouts_received, 0) + 1
-                    WHERE id = $2
-                `, [amount, user_id]);
+                if (transitioned.rows.length > 0) {
+                    await client.query(`
+                        UPDATE users
+                        SET total_amount_won = COALESCE(total_amount_won, 0) + $1,
+                            total_payouts_received = COALESCE(total_payouts_received, 0) + 1
+                        WHERE id = $2
+                    `, [amount, user_id]);
+                }
             });
 
             console.log(`✅ Payout ${id} retry succeeded: ${payoutResult.txHash}`);
