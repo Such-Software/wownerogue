@@ -13,7 +13,8 @@ const SocketHandlers = {
 
     _hasPayoutAddress: false,
     _creditsBalance: 0,
-    _gameMode: 'free',
+    _gameMode: null, // set from the server's game-modes event; was previously declared
+                     // twice in this object literal (the later `null` silently won)
 
     _directPayoutsEnabled: false,
     _paymentsEnabled: false,
@@ -1394,8 +1395,7 @@ const SocketHandlers = {
     // =====================
     // Early Entry Functions
     // =====================
-    
-    _gameMode: null,
+
     _earlyEntryConfig: { enabled: false },
     _isQueued: false,
     

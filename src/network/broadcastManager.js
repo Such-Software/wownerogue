@@ -30,8 +30,10 @@ class BroadcastManager {
             count = this.io.engine.clientsCount || 0;
         }
         
-        console.log(`👥 Broadcasting user count: ${count} (last was ${this._lastUserCount})`);
-        
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log(`👥 Broadcasting user count: ${count} (last was ${this._lastUserCount})`);
+        }
+
         // Always broadcast to ensure new clients get the count
         this._lastUserCount = count;
         this.io.emit('user_count', { count });
@@ -60,8 +62,10 @@ class BroadcastManager {
      * @param {string} socketId - Socket ID of the sender
      */
     broadcastChatMessage(username, message, timestamp, socketId) {
-        console.log(`💬 Broadcasting chat message from ${socketId}: "${message}"`);
-        
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log(`💬 Broadcasting chat message from ${socketId}: "${message}"`);
+        }
+
         this.io.emit('chat_broadcast', {
             username: username,
             message: message,
@@ -100,11 +104,12 @@ class BroadcastManager {
      * @param {object} gameState - The game state to broadcast
      */
     sendGameUpdate(playerSocketId, gameState) {
-        // Debug logging for lighting data in updates
-        console.log(`📡 sendGameUpdate to ${playerSocketId}:`);
-        console.log(`  - Lighting data: ${!!gameState.lighting} (${gameState.lighting ? Object.keys(gameState.lighting).length : 0} rows)`);
-        console.log(`  - Torch data: ${!!gameState.torches} (${gameState.torches ? gameState.torches.length : 0} torches)`);
-        
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log(`📡 sendGameUpdate to ${playerSocketId}:`);
+            console.log(`  - Lighting data: ${!!gameState.lighting} (${gameState.lighting ? Object.keys(gameState.lighting).length : 0} rows)`);
+            console.log(`  - Torch data: ${!!gameState.torches} (${gameState.torches ? gameState.torches.length : 0} torches)`);
+        }
+
         // Send to the player
         this.io.to(playerSocketId).emit('game_update', gameState);
         
@@ -125,7 +130,9 @@ class BroadcastManager {
      * @param {object} gameState - Initial game state
      */
     sendGameStart(socketId, gameState) {
-        console.log(`🎮 SENDING GAME_START to ${socketId}`);
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.log(`🎮 SENDING GAME_START to ${socketId}`);
+        }
         this.io.to(socketId).emit('game_start', gameState);
     }
 

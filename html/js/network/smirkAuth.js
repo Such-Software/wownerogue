@@ -214,11 +214,8 @@ const SmirkAuth = {
                 ? 'Smirk wallet connected! Payout address set.'
                 : 'Smirk wallet authenticated! Please set your payout address manually.';
 
-            if (typeof SocketHandlers !== 'undefined' && SocketHandlers._appendMessage) {
-                SocketHandlers._appendMessage('status', successMsg);
-            } else {
-                $('#messages').append($('<li class="status">').text(successMsg));
-            }
+            // .text() sets textContent, so the message is safe from injection.
+            $('#messages').append($('<li class="status">').text(successMsg));
 
             // Update address button status if available
             if (typeof SocketHandlers !== 'undefined' && SocketHandlers._updateAddressButtonStatus) {
@@ -233,11 +230,7 @@ const SmirkAuth = {
 
             // Show error message
             const errorMsg = 'Smirk login failed: ' + err.message;
-            if (typeof SocketHandlers !== 'undefined' && SocketHandlers._appendMessage) {
-                SocketHandlers._appendMessage('error', errorMsg);
-            } else {
-                $('#messages').append($('<li class="error">').text(errorMsg));
-            }
+            $('#messages').append($('<li class="error">').text(errorMsg));
 
             throw err;
         }
