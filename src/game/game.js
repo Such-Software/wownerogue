@@ -245,7 +245,7 @@ class Game {
     // Only move if accumulator >= 1
     while (this.monsterMoveAccumulator >= 1) {
       this.monsterMoveAccumulator -= 1;
-      
+
       // Apply chase aggressiveness (chance to move randomly instead of chasing).
       // Use the per-game seeded RNG so monster behaviour is deterministic from the seed.
       if (this.seededRNG() < chaseAggressiveness) {
@@ -253,6 +253,21 @@ class Game {
       } else {
         // Random move - still try to move, just not toward player
         this.monster.moveTowardPlayer(null, this.dungeon, this.seededRNG);
+      }
+
+      // Collision check after EACH sub-step (Phase 3.3). With movesPerPlayerMove > 1
+      // (e.g. the casino preset's 1.5x speed) the monster takes multiple steps per turn;
+      // checking only after the loop let it step onto the player's tile and back off
+      // between checks, "phasing through" the player and missing the catch (a player-
+      // favorable bug). Checking each sub-step closes that gap.
+      if (this.monster.hasCaughtPlayer(this.player)) {
+        this.gameState = 'lost';
+        return {
+          status: 'monster_caught',
+          event: 'monster_caught',
+          player: this.player.getState(),
+          monster: this.monster.getState()
+        };
       }
     }
 

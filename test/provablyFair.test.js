@@ -48,6 +48,29 @@ describe('Provably fair: deterministic dungeon generation', () => {
   });
 });
 
+describe('Dungeon reachability (Phase 3.2)', () => {
+  test('generated dungeons always have a reachable exit (many seeds)', () => {
+    const cfg = { primaryFloor: "'1", secondaryFloor: "'2" };
+    for (let i = 0; i < 25; i++) {
+      const seed = (i.toString(16).padStart(2, '0')).repeat(32);
+      const d = DungeonGenerator.regenerateFromSeed(seed, 'WOW');
+      expect(DungeonGenerator.isReachable(d.map, d.entrance, d.exit, cfg)).toBe(true);
+    }
+  });
+
+  test('isReachable returns false when the target is walled off', () => {
+    const cfg = { primaryFloor: "'1", secondaryFloor: "'2" };
+    // 3x3 all-floor map, but wall off the target corner.
+    const map = [
+      ["'1", "'1", "'1"],
+      ["'1", "'1", '#'],
+      ["'1", '#',  "'1"]  // (2,2) is isolated by walls at (2,1) and (1,2)
+    ];
+    expect(DungeonGenerator.isReachable(map, [0, 0], [2, 2], cfg)).toBe(false);
+    expect(DungeonGenerator.isReachable(map, [0, 0], [1, 0], cfg)).toBe(true);
+  });
+});
+
 describe('Provably fair: deterministic monster movement', () => {
   // A small open room so the monster always has somewhere to wander.
   function buildDungeon() {

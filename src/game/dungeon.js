@@ -118,21 +118,46 @@ class DungeonGenerator {
             secondaryFloor: DUNGEON_CONFIGS.SECONDARY_FLOOR,
             torchTile: DUNGEON_CONFIGS.TORCH_TILE
         };
-        
+
         const config = { ...defaultOptions, ...options };
         if (CONSOLE_LOGGING) {
             console.log(`[DungeonGenerator] Generating dungeon with effective torchDensity: ${config.torchDensity}`);
         }
 
-        // PROVABLY FAIR (Phase 0.2): when a per-game seeded RNG is supplied, all
-        // randomness in generation is derived from the committed seed so the dungeon
-        // is reproducible for verification. `config.rng` drives floor/torch/treasure
-        // placement; `config.seedInt` deterministically seeds ROT.RNG for the Digger.
-        // Generation is fully synchronous, so seeding the global ROT.RNG here is safe
-        // even with concurrent games (no other game can interleave mid-generation).
+        // PROVABLY FAIR (Phase 0.2): when a per-game seeded RNG is supplied, all randomness
+        // in generation is derived from the committed seed so the dungeon is reproducible.
         const rng = (typeof config.rng === 'function') ? config.rng : Math.random;
-        if (config.seedInt != null) {
-            ROT.RNG.setSeed(config.seedInt);
+        const baseSeedInt = config.seedInt;
+
+        // REACHABILITY (Phase 3.2): a dungeon whose exit is unreachable from the entrance
+        // is paid-but-unwinnable. The digger normally connects all rooms, so this is rare,
+        // but guard it. Retries are DETERMINISTIC (per-attempt ROT seed = baseSeedInt+attempt
+        // and the seeded rng stream keeps advancing), so verify regeneration replays the same
+        // attempts and reproduces the exact same final dungeon.
+        const MAX_ATTEMPTS = 12;
+        let last = null;
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+            const attemptSeed = (baseSeedInt != null) ? baseSeedInt + attempt : null;
+            const dungeon = this._generateOnce(width, height, config, rng, attemptSeed);
+            last = dungeon;
+            if (this.isReachable(dungeon.map, dungeon.entrance, dungeon.exit, config)) {
+                return dungeon;
+            }
+            if (CONSOLE_LOGGING) {
+                console.warn(`[DungeonGenerator] attempt ${attempt}: exit unreachable from entrance, regenerating`);
+            }
+        }
+        console.error(`[DungeonGenerator] Could not generate a reachable dungeon after ${MAX_ATTEMPTS} attempts; returning last candidate.`);
+        return last;
+    }
+
+    /**
+     * Single-pass dungeon generation (one attempt). Seeds ROT.RNG deterministically when
+     * `seedInt` is provided. Returns { map, rooms, entrance, exit, treasure, torches }.
+     */
+    static _generateOnce(width, height, config, rng, seedInt) {
+        if (seedInt != null) {
+            ROT.RNG.setSeed(seedInt);
         }
 
         // Create dungeon using ROT.js Map.Digger
@@ -142,32 +167,32 @@ class DungeonGenerator {
             corridorLength: DUNGEON_CONFIGS.CORRIDOR_LENGTH_RANGE,
             dugPercentage: DUNGEON_CONFIGS.DUG_PERCENTAGE
         });
-        
+
         // Initialize the empty map with walls (1)
         const map = Array(height).fill().map(() => Array(width).fill(1));
-        
+
         // Fill in floors (0) using digger's callback
         digger.create((x, y, value) => {
             // value: 0 = floor, 1 = wall
             map[y][x] = value;
         });
-        
+
         // Create enhanced map with floor variations and torches
         const enhancedMap = this.enhanceMapWithVariations(map, config);
-        
+
         // Get rooms that were created
         const rooms = digger.getRooms();
-        
+
         // Place entrance in the first room
         const entranceRoom = rooms[0];
         const entranceCenter = entranceRoom.getCenter();
         const entrance = [entranceCenter[0], entranceCenter[1]];
-        
+
         // Place exit in the last room
         const exitRoom = rooms[rooms.length - 1];
         const exitCenter = exitRoom.getCenter();
         const exit = [exitCenter[0], exitCenter[1]];
-        
+
         // Place treasure in a middle room (not first or last)
         let treasureRoom;
         if (rooms.length > 2) {
@@ -182,22 +207,55 @@ class DungeonGenerator {
             treasureCenter[0] + Math.floor(rng() * 3) - 1,
             treasureCenter[1] + Math.floor(rng() * 3) - 1
         ];
-        
+
         // Ensure the treasure is on a floor tile (check for both floor types)
         const treasureTile = enhancedMap[treasure[1]][treasure[0]];
         if (treasureTile !== config.primaryFloor && treasureTile !== config.secondaryFloor) {
             treasure[0] = treasureCenter[0];
             treasure[1] = treasureCenter[1];
         }
-        
+
         return {
             map: enhancedMap,  // Return the enhanced map with variations
-            rooms: rooms, 
+            rooms: rooms,
             entrance: entrance,
             exit: exit,
             treasure: treasure,
             torches: this.getTorchPositions(enhancedMap, config) // Include torch positions
         };
+    }
+
+    /**
+     * BFS flood-fill: is `to` reachable from `from` over walkable tiles?
+     */
+    static isReachable(map, from, to, config) {
+        const primaryFloor = config.primaryFloor;
+        const secondaryFloor = config.secondaryFloor;
+        const isWalk = (t) => t === primaryFloor || t === secondaryFloor || t === 0 || t === '>' || t === '$M';
+        const h = map.length;
+        const w = map[0].length;
+        const [sx, sy] = from;
+        const [tx, ty] = to;
+        if (!isWalk(map[sy] && map[sy][sx]) || !isWalk(map[ty] && map[ty][tx])) return false;
+
+        const seen = Array.from({ length: h }, () => new Array(w).fill(false));
+        let head = 0;
+        const queue = [[sx, sy]];
+        seen[sy][sx] = true;
+        const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        while (head < queue.length) {
+            const [x, y] = queue[head++];
+            if (x === tx && y === ty) return true;
+            for (const [dx, dy] of DIRS) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < w && ny >= 0 && ny < h && !seen[ny][nx] && isWalk(map[ny][nx])) {
+                    seen[ny][nx] = true;
+                    queue.push([nx, ny]);
+                }
+            }
+        }
+        return false;
     }
     
     // Enhanced map creation with floor variations and torch placement

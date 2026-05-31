@@ -39,8 +39,8 @@ Key: `S` ≤ half day · `M` ~1–3 days · `L` ~1 week+ · 🔴 launch-blocker 
 
 ## Phase 3 — Game integrity (🟠)
 - [x] **3.1 S — Anti-instant-death grace only (NO fairness floor).** ✅ Random block timing is the game's core mechanic and is deliberately preserved — early entry is a knowingly-risky bet, not a bug. The only change is a tiny configurable grace (`GAME_START_GRACE_MS`, default 2000ms, 0 to disable) so a block landing the instant a game starts can't kill the player before the dungeon renders / before their first move is possible. _(Rejected the originally-planned uniform time budget — it would gut the random-timing mechanic.)_
-- [ ] **3.2 S — Reachability guarantee** entrance→treasure→exit (`src/game/dungeon.js`).
-- [ ] **3.3 S — Swap/passthrough collision fix** (`src/game/game.js:181`).
+- [x] **3.2 S — Reachability guarantee.** ✅ `DungeonGenerator.generate` now BFS-checks entrance→exit reachability and regenerates if unreachable (paid-but-unwinnable guard). Retries are **deterministic** (per-attempt ROT seed = `seedInt+attempt`, seeded rng stream advances), so verify-regeneration replays the same attempts and reproduces the exact dungeon — provably-fair determinism preserved. New `isReachable` + tests (25 seeds all reachable; walled-off target rejected).
+- [x] **3.3 S — Multi-step monster collision fix.** ✅ Collision is now checked after **each** monster sub-step, not just after the loop. With `movesPerPlayerMove > 1` (casino's 1.5× speed) the monster could previously step onto the player's tile and off again between checks, phasing through and missing the catch (player-favorable, eroded the house edge). New `monsterCollision.test.js`.
 
 ## Phase 4 — De-spaghetti / structural cleanup (🟡)
 - [ ] **4.1 L — Break up `index.js`** into `app.js`, `routes/{public,user,admin,auth}.js`, `views/verify.js`, `server.js`.
