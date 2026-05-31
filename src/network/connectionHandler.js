@@ -4,6 +4,7 @@
  */
 
 const user = require('../db/user');
+const { clientIp } = require('./rateLimitContext');
 
 class ConnectionHandler {
     constructor({ io, broadcastManager, debugManager, sessionManager, rateLimiter }) {
@@ -24,8 +25,9 @@ class ConnectionHandler {
      */
     async handleConnection(socket) {
         try {
-            // Rate limiting for connections
-            const ip = socket.handshake.address;
+            // Rate limiting for connections — use the real client IP (honours a trusted
+            // reverse proxy via TRUST_PROXY) so per-IP connection limits work behind a proxy.
+            const ip = clientIp(socket) || socket.handshake.address;
             const rateLimitResult = await this.rateLimiter.checkLimit(ip, 'connection:new', ip);
             
             if (!rateLimitResult.allowed) {

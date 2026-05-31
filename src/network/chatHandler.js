@@ -4,6 +4,7 @@
  */
 
 const ChatHistoryManager = require('./chatHistoryManager');
+const { clientIp, stableId } = require('./rateLimitContext');
 
 class ChatHandler {
     constructor({ io, broadcastManager, debugManager, addressManager, paymentHandlers, queueManager, gameModeManager, rateLimiter, db }) {
@@ -61,17 +62,19 @@ class ChatHandler {
      */
     async handleChatMessage(socket, msg, additionalHandlers = {}) {
         try {
-            // Rate limiting for chat messages
-            const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'chat:message');
-            
+            // Rate limiting for chat messages — stable id + IP so reconnecting can't reset it.
+            const rlId = stableId(socket, this.gameModeManager?.sessionManager);
+            const rlIp = clientIp(socket);
+            const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'chat:message', rlIp);
+
             if (!rateLimitResult.allowed) {
-                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
                     `Please slow down! You can send ${rateLimitResult.remaining} more messages after ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds.`);
                 return;
             }
 
             // Record the chat attempt
-            await this.rateLimiter.recordAttempt(socket.id, 'chat:message');
+            await this.rateLimiter.recordAttempt(rlId, 'chat:message', rlIp);
 
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log('Message received:', msg);
@@ -147,16 +150,18 @@ class ChatHandler {
     }
 
     async _handleAddressDetection(socket, detected) {
-        // Rate limiting for address setting
-        const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'address:set');
-        
+        // Rate limiting for address setting — stable id + IP.
+        const rlId = stableId(socket, this.gameModeManager?.sessionManager);
+        const rlIp = clientIp(socket);
+        const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'address:set', rlIp);
+
         if (!rateLimitResult.allowed) {
-            this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+            this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
                 `Address changes are rate limited. Try again in ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds.`);
             return;
         }
 
-        await this.rateLimiter.recordAttempt(socket.id, 'address:set');
+        await this.rateLimiter.recordAttempt(rlId, 'address:set', rlIp);
         this.addressManager.handleDetection(socket.id, detected);
     }
 

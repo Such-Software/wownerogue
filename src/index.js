@@ -2,6 +2,11 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 var app = express();
+// Trust the reverse proxy (for correct req.ip / X-Forwarded-For handling) only when
+// explicitly enabled, so client IPs can't be spoofed in a direct-exposure deployment.
+if (process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', true);
+}
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
 

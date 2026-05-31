@@ -11,6 +11,7 @@ const PaymentHandlers = require('./paymentHandlers');
 const AddressManager = require('./addressManager');
 const SessionManager = require('./sessionManager');
 const RateLimiter = require('./rateLimiter');
+const { clientIp, stableId } = require('./rateLimitContext');
 const ConnectionHandler = require('./connectionHandler');
 const ChatHandler = require('./chatHandler');
 const QueueHandler = require('./queueHandler');
@@ -501,8 +502,11 @@ class SocketHandlers {
      */
     async handleAutoStart(socket) {
         try {
-            // Rate limiting for game starts
-            const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:start');
+            // Rate limiting for game starts — keyed on stable identity + IP so reconnecting
+            // (new socket.id) can't reset the limit.
+            const rlId = stableId(socket, this.sessionManager);
+            const rlIp = clientIp(socket);
+            const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'game:start', rlIp);
             if (!rateLimitResult.allowed) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
                     `Please wait ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds before starting another game. (${rateLimitResult.remaining} attempts remaining)`);
@@ -559,8 +563,8 @@ class SocketHandlers {
                 }
             }
 
-            // Record the game start attempt
-            await this.rateLimiter.recordAttempt(socket.id, 'game:start');
+            // Record the game start attempt (same stable id + IP as the check above)
+            await this.rateLimiter.recordAttempt(rlId, 'game:start', rlIp);
 
             // Create game immediately
             const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
@@ -683,15 +687,17 @@ class SocketHandlers {
                 return;
             }
 
-            const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'address:set');
+            const rlId = stableId(socket, this.sessionManager);
+            const rlIp = clientIp(socket);
+            const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'address:set', rlIp);
             if (!rateLimitResult.allowed) {
-                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
                     `Address changes are rate limited. Try again in ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds.`);
                 this.io.to(socket.id).emit('address_update_error', { message: 'Address changes are temporarily rate limited.' });
                 return;
             }
 
-            await this.rateLimiter.recordAttempt(socket.id, 'address:set');
+            await this.rateLimiter.recordAttempt(rlId, 'address:set', rlIp);
 
             await this.addressManager.saveAddress(socket.id, address);
         } catch (err) {

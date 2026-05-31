@@ -5,12 +5,14 @@
 
 class RateLimiter {
     constructor(options = {}) {
-        // Default rate limits - can be overridden via options
+        // Default rate limits. SocketHandlers passes a production `limits` override that
+        // takes precedence (merged below); these defaults are kept ALIGNED with it so a
+        // RateLimiter constructed without options (e.g. in tests) behaves the same.
         this.limits = {
             'payment:create': { window: 60000, max: 3 },      // 3 payments per minute
-            'game:start': { window: 60000, max: 10 },         // 10 game starts per minute
+            'game:start': { window: 60000, max: 15 },         // 15 game starts per minute
             'game:queue': { window: 30000, max: 5 },          // 5 queue attempts per 30s
-            'chat:message': { window: 10000, max: 8 },        // 8 messages per 10s
+            'chat:message': { window: 10000, max: 12 },       // 12 messages per 10s
             'address:set': { window: 300000, max: 3 },        // 3 address changes per 5min
             'move:player': { window: 1000, max: 50 },         // 50 moves per second (already handled separately)
             'connection:new': { window: 60000, max: 10 },     // 10 connections per minute per IP
@@ -81,7 +83,8 @@ class RateLimiter {
             'connection:',   // Connection attempts
             'payment:',      // Payment creation/operations
             'game:',         // Game start/queue operations
-            'address:'       // Address changes
+            'address:',      // Address changes
+            'chat:'          // Chat messages (reconnect-proof spam protection)
         ];
         return ipLimitedPrefixes.some(prefix => action.startsWith(prefix));
     }
