@@ -1816,7 +1816,9 @@ debugManager.onNewBlockCallback((blockHeight) => {
     // Start games for waiting players when new block detected
     socketHandlers.startGamesForWaiting(blockHeight);
     // Check active games for timeout
-    socketHandlers.checkGamesTimeout(blockHeight);
+    Promise.resolve(socketHandlers.checkGamesTimeout(blockHeight)).catch(err => {
+        console.error('❌ checkGamesTimeout error:', err.message);
+    });
     // Flush any pending payouts (safety net for batch timer)
     gameModeManager._processPendingPayouts().catch(err => {
         console.error('❌ Block-triggered payout processing error:', err.message);

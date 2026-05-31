@@ -15,7 +15,10 @@ class PaymentHandlers {
         this.queueManager = queueManager;
         this.broadcastManager = broadcastManager;
         this.sessionManager = sessionManager;
-        this.mempoolNotified = new Set();
+        // Address -> timestamp of the first mempool notification, so we notify/queue once
+        // per payment address. A Map with TTL eviction (below) instead of an unbounded Set.
+        this.mempoolNotified = new Map();
+        this._mempoolNotifiedTtlMs = 60 * 60 * 1000; // 1 hour
         // Track underpaid payments we've already warned about (notify once, keep monitoring for top-up)
         this.underpaidNotified = new Set();
         this.paymentMonitors = new Map();
@@ -35,6 +38,12 @@ class PaymentHandlers {
                 if (now - ts > this._confirmedRetentionMs) {
                     this._confirmedTimestamps.delete(pid);
                     this.confirmedPayments.delete(pid);
+                }
+            }
+            // TTL-evict stale mempool-notified addresses (replaces the old random eviction).
+            for (const [addr, ts] of this.mempoolNotified.entries()) {
+                if (now - ts > this._mempoolNotifiedTtlMs) {
+                    this.mempoolNotified.delete(addr);
                 }
             }
         }, 30 * 60 * 1000); // sweep every 30 min
@@ -280,7 +289,7 @@ class PaymentHandlers {
         this.walletService.startPaymentMonitoring(paymentRequest.address, async (status) => {
             if (status.in_mempool && !status.confirmed) {
                 if (this.mempoolNotified.has(paymentRequest.address)) return;
-                this.mempoolNotified.add(paymentRequest.address);
+                this.mempoolNotified.set(paymentRequest.address, Date.now());
 
                 // Check payment type — credits_package should NOT queue for a game
                 const mapping = this.socketPaymentMap.get(socket.id);
@@ -496,6 +505,7 @@ class PaymentHandlers {
         if (mapping) {
             this.walletService.stopPaymentMonitoring(mapping.address);
             this.socketPaymentMap.delete(socketId);
+            this.mempoolNotified.delete(mapping.address);
             if (mapping.paymentId != null) {
                 this.underpaidNotified.delete(mapping.paymentId);
             }

@@ -82,18 +82,27 @@ class ConnectionHandler {
      * Handle client registration with cleanup
      */
     handleRegisterClient(socket, data) {
-        if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`Client registered: ${socket.id} (server) <-> ${data.clientId} (client)`);
+        // Validate the client-supplied id before it goes into clientSocketMap as both key
+        // and value. Without this a client could send a huge or colliding id to poison the
+        // map (and getUserBySocket follows that mapping).
+        const clientId = data && data.clientId;
+        if (typeof clientId !== 'string' || clientId.length === 0 || clientId.length > 64 || !/^[A-Za-z0-9_-]+$/.test(clientId)) {
+            socket.emit('socket_registered', { serverId: socket.id, success: false, error: 'Invalid clientId' });
+            return;
         }
-        
+
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`Client registered: ${socket.id} (server) <-> ${clientId} (client)`);
+        }
+
         // Clean up any existing mappings for these IDs to prevent memory leaks
-        this._cleanupExistingMappings(socket.id, data.clientId);
-        
-        this.clientSocketMap.set(data.clientId, socket.id);
-        this.clientSocketMap.set(socket.id, data.clientId);
-        
+        this._cleanupExistingMappings(socket.id, clientId);
+
+        this.clientSocketMap.set(clientId, socket.id);
+        this.clientSocketMap.set(socket.id, clientId);
+
         socket.emit('socket_registered', {
-            clientId: data.clientId,
+            clientId: clientId,
             serverId: socket.id,
             success: true
         });

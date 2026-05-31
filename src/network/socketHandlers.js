@@ -59,8 +59,7 @@ class SocketHandlers {
         });
 
         // Legacy WAITING_PLAYERS removed; queueManager owns queue state
-        this.mempoolNotified = new Set(); // track payment addresses already queued
-        
+
         // Initialize session manager first
         if (this.gameModeManager && this.gameModeManager.db) {
             this.sessionManager = new SessionManager({
@@ -233,15 +232,8 @@ class SocketHandlers {
             300000
         );
 
-        // Cleanup mempool notifications (keep for 10 minutes)  
-        this.memoryManager.registerCleanup(
-            'mempoolNotifications', 
-            MemoryManager.createSetCleanup(this.mempoolNotified, (addr) => {
-                // This is a simple heuristic - in production you'd want to track timestamps
-                return Math.random() < 0.1; // Randomly clean ~10% each cycle
-            }),
-            600000
-        );
+        // (mempool-notification dedup + TTL eviction lives in PaymentHandlers, which owns
+        // the actual dedup set; the old SocketHandlers copy here was unused and is removed.)
 
         // Let other components register their cleanups
         if (this.rateLimiter) {
@@ -849,6 +841,12 @@ class SocketHandlers {
             if (this.spectatorManager) {
                 this.spectatorManager.handleDisconnect(socketId);
             }
+
+            // Evict the cached session row LAST (after the suspend logic above read it),
+            // so the sessions map doesn't grow unbounded with every socket ever seen.
+            if (this.sessionManager?.removeSocket) {
+                this.sessionManager.removeSocket(socketId);
+            }
         });
     }
 
@@ -1036,20 +1034,26 @@ class SocketHandlers {
     /**
      * Check for game timeouts based on block height
      */
-    checkGamesTimeout(currentHeight) {
-        this.activeGames.forEach((game, socketId) => {
+    async checkGamesTimeout(currentHeight) {
+        // Snapshot the entries first: handleGameOver mutates activeGames (it deletes the
+        // entry), so iterating the live Map could skip games. Process sequentially and
+        // await each game-over rather than firing them all off concurrently on one tick.
+        const snapshot = Array.from(this.activeGames.entries());
+        for (const [socketId, game] of snapshot) {
             const user = this.connectionHandler.getUserBySocket(socketId);
-            
             if (user && user.blockRec && currentHeight > user.blockRec) {
                 if (this.debugManager.CONSOLE_LOGGING) {
                     console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
                 }
-                
                 game.gameState = 'lost';
                 const fakeSocket = { id: socketId };
-                this.handleGameOver(fakeSocket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
+                try {
+                    await this.handleGameOver(fakeSocket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
+                } catch (e) {
+                    console.error(`checkGamesTimeout: handleGameOver failed for ${socketId}:`, e.message);
+                }
             }
-        });
+        }
     }
 
     // Payment system handlers (placeholder for compatibility)
@@ -1192,10 +1196,14 @@ class SocketHandlers {
             this.memoryManager.shutdown();
         }
 
+        // Dispose components whose timers/maps would otherwise leak on shutdown.
+        if (this.sessionManager?.dispose) this.sessionManager.dispose();
+        if (this.suspendedGameManager?.cleanup) this.suspendedGameManager.cleanup();
+        if (this.paymentHandlers?.dispose) this.paymentHandlers.dispose();
+
         // Clear remaining data structures
         this.activeGames.clear();
         this.playerMoveTimestamps.clear();
-        this.mempoolNotified.clear();
 
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log('✅ SocketHandlers shutdown complete');

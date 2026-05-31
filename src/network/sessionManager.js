@@ -413,6 +413,15 @@ class SessionManager {
     return newToken;
   }
 
+  /**
+   * Evict a socket's cached session row. Called on disconnect so the in-memory
+   * `sessions` map doesn't grow unbounded with every socket ever seen (and so stale
+   * cached rows aren't served on reconnect). Safe: a later getBySocket re-reads from DB.
+   */
+  removeSocket(socketId) {
+    this.sessions.delete(socketId);
+  }
+
   dispose() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
