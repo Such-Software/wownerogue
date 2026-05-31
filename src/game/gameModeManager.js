@@ -950,34 +950,63 @@ class GameModeManager {
     /**
      * Get or create user record
      */
+    /**
+     * Resolve the database user for a socket.
+     *
+     * IDENTITY (Phase 2.1): The stable identity is `users.id`, established from the
+     * client's `anon_token` by SessionManager at connection time. This method resolves
+     * through that session identity FIRST, so every money/credit/payout path operates on
+     * the same stable row. It only falls back to the legacy `socket_id` lookup-or-create
+     * when no session exists (e.g. SessionManager not wired, or a REST call for a socket
+     * with no live session) — `socket_id` is mutable and non-unique and must never be the
+     * primary money key.
+     */
     async getOrCreateUser(socketId, ipAddress = null) {
         try {
-            // Try to find existing user
+            // 1. Prefer the stable identity established by SessionManager (anon_token -> id).
+            if (this.sessionManager && typeof this.sessionManager.getBySocket === 'function') {
+                try {
+                    const sessionUser = await this.sessionManager.getBySocket(socketId);
+                    if (sessionUser && sessionUser.id != null) {
+                        // Return a FRESH row by stable id (the cached session row may be stale).
+                        const fresh = await this.db.query(`SELECT * FROM users WHERE id = $1`, [sessionUser.id]);
+                        if (fresh.rows.length > 0) {
+                            await this.db.query(`UPDATE users SET last_active = NOW() WHERE id = $1`, [fresh.rows[0].id]);
+                            return fresh.rows[0];
+                        }
+                    }
+                } catch (sessErr) {
+                    // Fall through to legacy resolution on any session-lookup error.
+                }
+            }
+
+            // 2. Legacy fallback: look up by socket_id.
             let userResult = await this.db.query(`
                 SELECT * FROM users WHERE socket_id = $1
             `, [socketId]);
-            
+
             if (userResult.rows.length > 0) {
-                // Update last active
                 await this.db.query(`
-                    UPDATE users 
+                    UPDATE users
                     SET last_active = NOW()
                     WHERE id = $1
                 `, [userResult.rows[0].id]);
-                
+
                 return userResult.rows[0];
             }
-            
-            // Create new user
+
+            // 3. Last resort: create a new user. This only fires when no session was
+            // established for the socket (abnormal in normal flow, since every connection
+            // creates a session) — log it so orphan-row creation is visible.
             userResult = await this.db.query(`
                 INSERT INTO users (socket_id, ip_address)
                 VALUES ($1, $2)
                 RETURNING *
             `, [socketId, ipAddress]);
-            
-            console.log(`👤 Created new user: ${socketId}`);
+
+            console.warn(`👤 Created new user without a session (socket ${socketId}) — no anon_token identity resolved.`);
             return userResult.rows[0];
-            
+
         } catch (error) {
             const normalized = normalizeError(error, 'Failed to load user');
             console.error('❌ Error getting/creating user:', normalized.message);

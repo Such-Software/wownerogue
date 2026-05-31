@@ -67,6 +67,9 @@ class SocketHandlers {
                 debugManager: this.debugManager,
                 gameModeManager: this.gameModeManager
             });
+            // IDENTITY (Phase 2.1): give GameModeManager the session manager so getOrCreateUser
+            // resolves through the stable anon_token identity instead of the mutable socket_id.
+            this.gameModeManager.sessionManager = this.sessionManager;
             // Initialize cleanup timers
             this.sessionManager.initialize().catch(err => {
                 console.error('Failed to initialize SessionManager:', err);
