@@ -1,0 +1,35 @@
+# Monero STAGENET wallet RPC for the monerogue.app instance.
+# Mirrors wownero-wallet-rpc.service. Install to /etc/systemd/system/monero-wallet-rpc.service
+#
+# Wallet:  /home/jw/Programs/monero-x86_64-linux-gnu-v0.18.4.4/test  (the stagenet wallet with coins)
+# Daemon:  monerod --stagenet RPC on 127.0.0.1:38081 (already running)
+# RPC:     binds :38083 (free)
+#
+# IMPORTANT: replace REPLACE_WITH_WALLET_PASSWORD below with the wallet's real password
+# (do NOT commit the real password). Consider --wallet-dir + --rpc-login for production,
+# but this mirrors the existing wownero setup for parity.
+[Unit]
+Description=Monero Wallet RPC (Stagenet) - monerogue
+After=network-online.target monerod.service
+Wants=monerod.service
+
+[Service]
+User=jw
+Group=jw
+Type=simple
+
+ExecStart=/usr/bin/monero-wallet-rpc \
+    --stagenet \
+    --wallet-file /home/jw/Programs/monero-x86_64-linux-gnu-v0.18.4.4/test \
+    --password "REPLACE_WITH_WALLET_PASSWORD" \
+    --rpc-bind-port 38083 \
+    --daemon-address 127.0.0.1:38081 \
+    --non-interactive \
+    --rpc-bind-ip 127.0.0.1 \
+    --disable-rpc-login
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+# monerogue.app game instance (Monero STAGENET, pay-to-play WITH payouts).
+# Install to /etc/systemd/system/monerogue.service
+#
+# Separate code checkout + user + DB + .env from the wownerogue (mainnet) instance, so the
+# two are fully independent. NPM (Nginx Proxy Manager) already forwards monerogue.app -> :3001.
+[Unit]
+Description=Monerogue Game Server (Monero Stagenet)
+After=network.target postgresql.service monero-wallet-rpc.service
+Wants=monero-wallet-rpc.service
+
+[Service]
+Type=simple
+User=monerogue
+Group=monerogue
+WorkingDirectory=/var/www/monerogue/app/src
+EnvironmentFile=/var/www/monerogue/app/src/.env
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
