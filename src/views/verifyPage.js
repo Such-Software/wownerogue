@@ -14,7 +14,8 @@ function esc(value) {
         .replace(/'/g, '&#39;');
 }
 
-function renderVerifyPage(gameId, gameRecord) {
+function renderVerifyPage(gameId, gameRecord, gameName) {
+    const name = gameName || 'Wownerogue';
     const recordBlock = gameRecord ? `
   <div class="box">
     <h3>Game Record</h3>
@@ -31,7 +32,7 @@ function renderVerifyPage(gameId, gameRecord) {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Wownerogue - Game Verification</title>
+  <title>${esc(name)} - Game Verification</title>
   <style>
     body { background: #0a0a0a; color: #0f0; font-family: monospace; padding: 20px; max-width: 800px; margin: 0 auto; }
     h1 { color: #0ff; }
@@ -48,7 +49,7 @@ function renderVerifyPage(gameId, gameRecord) {
   </style>
 </head>
 <body>
-  <h1>🔐 Wownerogue Provably Fair Verification</h1>
+  <h1>🔐 ${esc(name)} Provably Fair Verification</h1>
 
   <div class="box">
     <h3>How it works:</h3>

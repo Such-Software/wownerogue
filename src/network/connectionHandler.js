@@ -5,6 +5,7 @@
 
 const user = require('../db/user');
 const { clientIp } = require('./rateLimitContext');
+const { gameNameFor } = require('../game/helpers/gameModeUtils');
 
 class ConnectionHandler {
     constructor({ io, broadcastManager, debugManager, sessionManager, rateLimiter }) {
@@ -275,7 +276,7 @@ class ConnectionHandler {
         this.io.to(socket.id).emit('blockheight', { blockHeight: currentBlock });
         
         // Send connection status
-        this.broadcastManager.sendStatusUpdate(socket.id, 'connection', 'Connected to Wownerogue server');
+        this.broadcastManager.sendStatusUpdate(socket.id, 'connection', `Connected to ${gameNameFor(process.env.CRYPTO_TYPE)} server`);
     }
 
     _cleanupExistingMappings(socketId, clientId) {

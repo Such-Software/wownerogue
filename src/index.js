@@ -492,9 +492,10 @@ app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
 // =============================================================================
 // Smirk Wallet Authentication Endpoints
 // =============================================================================
-// Smirk is a browser extension wallet for Wownero/Monero.
-// Disable for Monero stagenet deployments (Smirk doesn't support stagenet).
-const smirkEnabled = process.env.SMIRK_ENABLED !== 'false';
+// Smirk is a browser extension wallet for Wownero/Monero (mainnet only).
+// Forced off on any test network (stagenet/testnet), regardless of SMIRK_ENABLED.
+const { isTestNetworkFor } = require('./game/helpers/gameModeUtils');
+const smirkEnabled = process.env.SMIRK_ENABLED !== 'false' && !isTestNetworkFor(process.env.MONERO_NETWORK);
 if (smirkEnabled) {
   app.use(createAuthRoutes({ db: databaseManager }));
 }
@@ -640,7 +641,7 @@ app.get('/verify/:gameId', asyncHandler(async (req, res) => {
   }
   
   // Return the server-rendered HTML verification page (see src/views/verifyPage.js).
-  res.send(renderVerifyPage(gameId, gameRecord));
+  res.send(renderVerifyPage(gameId, gameRecord, gameModeManager.gameName));
 }));
 
 // API endpoint for programmatic verification

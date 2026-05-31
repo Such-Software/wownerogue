@@ -104,7 +104,9 @@ const PaymentUI = {
     render: function() {
         if (!this.config) return;
 
-        const currency = this.config.cryptoType || 'WOW';
+        // Display label (sXMR on stagenet) — distinct from cryptoType, which formatPrice
+        // still uses for decimals.
+        const currency = this.config.currencyLabel || this.config.cryptoType || 'WOW';
         const hasCredits = this.userCredits >= (this.config.creditsPerGame || 1);
         const creditPackages = this.config.creditPackages || [];
         

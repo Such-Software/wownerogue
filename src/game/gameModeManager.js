@@ -9,7 +9,9 @@ const {
     inferCurrencyDecimals: inferCurrencyDecimalsForSymbol,
     formatAtomic,
     formatAtomicHuman,
-    getDecimalDivisor
+    getDecimalDivisor,
+    gameNameFor,
+    currencyLabelFor
 } = require('./helpers/gameModeUtils');
 const { ValidationError, normalizeError } = require('../utils/errors');
 const paymentConfig = require('../config/paymentConfig');
@@ -67,6 +69,11 @@ class GameModeManager {
     inferCurrencyDecimals(symbol) {
         return inferCurrencyDecimalsForSymbol(symbol);
     }
+
+    // Product name (Monerogue/Wownerogue) and network-aware currency label (sXMR on
+    // stagenet, XMR on mainnet, WOW for Wownero) — derived so they always track config.
+    get gameName() { return gameNameFor(this.cryptoType); }
+    get currencyLabel() { return currencyLabelFor(this.cryptoType, this.network); }
 
     applyLegacyEnvConfig() {
         this.setLegacyGameMode(process.env.GAME_MODE || 'FREE');
@@ -904,7 +911,7 @@ class GameModeManager {
             switch (paymentType) {
                 case 'single_game': {
                     amount = this.singleGamePrice;
-                    description = `Wowngeon single game entry (${this.cryptoType})`;
+                    description = `${this.gameName} single game entry (${this.currencyLabel})`;
                     break;
                 }
                 case 'credits_package': {
@@ -927,7 +934,7 @@ class GameModeManager {
                     const creditCount = selectedPackage?.credits ?? 10;
                     const bonusCredits = selectedPackage?.bonus ?? 0;
                     const bonusText = bonusCredits > 0 ? ` (+${bonusCredits} bonus)` : '';
-                    description = `Wowngeon ${creditCount}${bonusText} credits package (${this.cryptoType})`;
+                    description = `${this.gameName} ${creditCount}${bonusText} credits package (${this.currencyLabel})`;
                     break;
                 }
                 default:
@@ -1147,6 +1154,8 @@ class GameModeManager {
         return {
             mode: this.gameMode,
             cryptoType: this.cryptoType,
+            currencyLabel: this.currencyLabel, // sXMR on stagenet, XMR on mainnet, WOW for Wownero
+            gameName: this.gameName,           // Monerogue / Wownerogue
             network: this.network,
             isTestNetwork: this.isTestNetwork,
             testnetWarning: testnetWarning,
@@ -1176,8 +1185,9 @@ class GameModeManager {
                 allowInFreeMode: this.configSnapshot?.earlyEntry?.allowInFreeMode ?? false,
                 allowInCreditsMode: this.configSnapshot?.earlyEntry?.allowInCreditsMode ?? false
             },
-            // Smirk wallet integration (disabled for Monero stagenet)
-            smirkEnabled: process.env.SMIRK_ENABLED !== 'false',
+            // Smirk wallet integration. Smirk only works on mainnet, so it is forced off on
+            // any test network (stagenet/testnet) regardless of SMIRK_ENABLED.
+            smirkEnabled: process.env.SMIRK_ENABLED !== 'false' && !this.isTestNetwork,
             explorerTxUrl: process.env.EXPLORER_TX_URL || null
         };
     }

@@ -515,7 +515,7 @@ const SocketHandlers = {
         if (won && data.payout && data.payout.amount) {
             var decimals = (SocketHandlers._cryptoType === 'WOW') ? 11 : 12;
             var amountFormatted = (data.payout.amount / Math.pow(10, decimals)).toFixed(4);
-            var currency = SocketHandlers._cryptoType || 'WOW';
+            var currency = SocketHandlers._currencyLabel || SocketHandlers._cryptoType || 'WOW';
             var multiplierText = data.payout.multiplier ? ' (' + data.payout.multiplier + 'x)' : '';
             var treasureText = data.payout.treasure ? ' + Treasure bonus!' : '';
             $('#messages').append($('<li style="color:#4ade80; font-weight:bold; padding:4px 0;">').html(
@@ -608,6 +608,7 @@ const SocketHandlers = {
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
         SocketHandlers._smirkEnabled = data.smirkEnabled !== false; // Default to true if not specified
         SocketHandlers._cryptoType = data.cryptoType || 'WOW';
+        SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
 
         // Initialize Smirk auth if enabled and not already initialized
@@ -762,7 +763,7 @@ const SocketHandlers = {
             : '💳 <strong>Payment Required</strong>';
         parts.push(reusedCopy);
         const displayAmount = data.humanAmount || data.amountFormatted || data.amount;
-        parts.push('Amount: ' + displayAmount + ' ' + (data.cryptoType || ''));
+        parts.push('Amount: ' + displayAmount + ' ' + (data.currencyLabel || SocketHandlers._currencyLabel || data.cryptoType || ''));
         const shortAddr = data.address.substring(0, 10) + '…' + data.address.slice(-6);
         parts.push('Address: <span class="pay-address-full" style="cursor:pointer;" title="Click to toggle full address">' + shortAddr + '</span>' +
                    ' <button class="copy-pay-address" data-address="' + data.address + '" style="margin-left:4px;padding:1px 4px;font-size:11px;cursor:pointer;">Copy</button>');
