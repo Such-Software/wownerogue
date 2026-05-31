@@ -260,13 +260,17 @@ const PaymentUI = {
             `);
         }
         
-        // === FREE mode (only if payments disabled) ===
-        if (!this.config.paymentsEnabled) {
+        // === FREE play === shown when the instance is free-only OR offers free as a choice
+        // alongside paid (freePlayEnabled). Free games go to the Pleb leaderboard.
+        if (this.config.freePlayEnabled) {
+            const note = this.config.paymentsEnabled
+                ? 'No payout • Pleb leaderboard'
+                : 'No payments required';
             $container.append(`
                 <button class="mode-option" data-mode="FREE" data-action="free"
                         style="width:100%;padding:12px;background:#166534;border:none;color:#fff;cursor:pointer;border-radius:4px;">
-                    <strong>🆓 Free Play</strong><br>
-                    <span style="font-size:0.8em;color:#aaa;">No payments required</span>
+                    <strong>🆓 Play Free</strong><br>
+                    <span style="font-size:0.8em;color:#aaa;">${note}</span>
                 </button>
             `);
         }
@@ -278,7 +282,9 @@ const PaymentUI = {
         if (mode === 'FREE') {
             $('#payment-ui').hide();
             if (window.socket) {
-                window.socket.emit('enter_game');
+                // play_free records the game as FREE (Pleb leaderboard, no payout) even on
+                // an instance that also sells credits/entry.
+                window.socket.emit('play_free');
             }
             return;
         }

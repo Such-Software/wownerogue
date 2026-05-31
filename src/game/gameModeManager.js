@@ -1149,6 +1149,7 @@ class GameModeManager {
             creditPackages: creditPackages,
             creditsPayoutBaseValue: this.creditsPayoutBaseValue,
             paymentsEnabled: this.paymentsEnabled,
+            freePlayEnabled: this.freePlayEnabled,
             directModeEnabled: this.directModeEnabled,
             creditsModeEnabled: this.creditsModeEnabled,
             directPayoutsEnabled: this.directPayoutMultipliers.escape > 0,

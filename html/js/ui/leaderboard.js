@@ -5,6 +5,7 @@
 const Leaderboard = {
     _isLoading: false,
     _currentPeriod: 'all',
+    _currentBoard: 'champions', // 'champions' (paid) | 'pleb' (free)
 
     init: function() {
         $('#leaderboardButton').on('click', function() {
@@ -34,8 +35,12 @@ const Leaderboard = {
         var panel = $(
             '<div id="leaderboard-panel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:2100; background:rgba(10,10,20,0.97); border:2px solid #f59e0b; padding:20px; color:#e0e0e0; min-width:380px; max-width:500px; max-height:80vh; overflow-y:auto; box-shadow:0 0 20px rgba(245,158,11,0.3); border-radius:6px;">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">' +
-                    '<strong style="color:#fbbf24; font-size:1.1em;">🏆 Leaderboard</strong>' +
+                    '<strong id="leaderboard-title" style="color:#fbbf24; font-size:1.1em;">🏅 Hall of Champions</strong>' +
                     '<button id="close-leaderboard" style="background:#500; color:#f00; border:1px solid #f00; padding:2px 8px; cursor:pointer; font-size:14px;">✕</button>' +
+                '</div>' +
+                '<div id="leaderboard-boards" style="display:flex; gap:4px; margin-bottom:8px;">' +
+                    '<button class="lb-board" data-board="champions" style="flex:1; padding:7px; font-size:12px; font-weight:bold; cursor:pointer; border:1px solid #555; border-radius:3px;">🏅 Champions</button>' +
+                    '<button class="lb-board" data-board="pleb" style="flex:1; padding:7px; font-size:12px; font-weight:bold; cursor:pointer; border:1px solid #555; border-radius:3px;">🪙 Pleb</button>' +
                 '</div>' +
                 '<div id="leaderboard-tabs" style="display:flex; gap:4px; margin-bottom:12px;">' +
                     '<button class="lb-tab" data-period="all" style="flex:1; padding:6px; font-size:11px; cursor:pointer; border:1px solid #555; border-radius:3px;">All Time</button>' +
@@ -59,6 +64,11 @@ const Leaderboard = {
             self._updateTabs();
             self._fetchAndRender();
         });
+        $(document).on('click', '.lb-board', function() {
+            self._currentBoard = $(this).data('board');
+            self._updateTabs();
+            self._fetchAndRender();
+        });
 
         this._updateTabs();
     },
@@ -72,6 +82,15 @@ const Leaderboard = {
                 $(this).css({ background: '#1a1a2e', color: '#aaa', borderColor: '#555' });
             }
         });
+        var board = this._currentBoard;
+        $('.lb-board').each(function() {
+            if ($(this).data('board') === board) {
+                $(this).css({ background: '#92400e', color: '#fff', borderColor: '#f59e0b' });
+            } else {
+                $(this).css({ background: '#1a1a2e', color: '#aaa', borderColor: '#555' });
+            }
+        });
+        $('#leaderboard-title').text(board === 'pleb' ? '🪙 Pleb Board' : '🏅 Hall of Champions');
     },
 
     _fetchAndRender: function() {
@@ -80,7 +99,7 @@ const Leaderboard = {
         $('#leaderboard-content').html('<div style="text-align:center; color:#888;">Loading...</div>');
 
         var self = this;
-        $.getJSON('/api/leaderboard?period=' + this._currentPeriod + '&limit=20')
+        $.getJSON('/api/leaderboard?period=' + this._currentPeriod + '&board=' + this._currentBoard + '&limit=20')
             .done(function(data) {
                 self._render(data.leaderboard || []);
             })
