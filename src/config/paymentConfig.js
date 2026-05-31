@@ -4,6 +4,7 @@
  */
 
 const { EventEmitter } = require('events');
+const { inferCurrencyDecimals } = require('../game/helpers/gameModeUtils');
 
 const DEFAULT_CONFIG = Object.freeze({
     paymentsEnabled: true,
@@ -248,6 +249,12 @@ class PaymentConfigManager {
         }
 
         config.currency.symbol = process.env.CRYPTO_TYPE || config.currency.symbol;
+        // Derive decimals from the currency (XMR=12, WOW=11) so display divisors match the
+        // chain. Previously decimals stayed at the WOW default (11) even for XMR, making all
+        // XMR amounts display 10x too large. An explicit CURRENCY_DECIMALS env still wins.
+        config.currency.decimals = process.env.CURRENCY_DECIMALS
+            ? parseInt(process.env.CURRENCY_DECIMALS, 10)
+            : inferCurrencyDecimals(config.currency.symbol);
         config.currency.minPayment = parseAtomicValue(process.env.PAYOUT_MIN_AMOUNT, config.currency.minPayment);
         config.currency.maxPayment = parseAtomicValue(process.env.MAX_CREDIT_PURCHASE_PER_DAY, config.currency.maxPayment);
 
