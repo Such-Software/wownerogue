@@ -17,6 +17,14 @@ const { ValidationError, normalizeError } = require('../utils/errors');
 const paymentConfig = require('../config/paymentConfig');
 const money = require('../money/atomic');
 
+// A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it
+// is SAFE to retry (no double-pay risk) — unlike an ambiguous post-broadcast failure. Monero
+// locks spent outputs (incl. change) for ~10 blocks, so this is the expected error when all
+// outputs are temporarily locked.
+function isInsufficientFundsError(message) {
+    return /not enough (unlocked )?(money|balance|outputs)|insufficient|no unlocked|unlocked balance/i.test(String(message || ''));
+}
+
 const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW depending on currency decimals
 const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
 
@@ -1399,6 +1407,31 @@ class GameModeManager {
 
             if (pending.rows.length === 0) return;
 
+            // MONERO OUTPUT LOCKING: a spent output (incl. the change output) is locked for
+            // ~10 blocks. If we don't have enough UNLOCKED balance to cover this batch right
+            // now, DEFER it (revert to pending) instead of attempting a transfer that would
+            // fail — the next batch interval and every new-block tick re-check, so it sends as
+            // soon as outputs unlock. Batching already minimises how many change outputs we
+            // create; this handles the "all outputs currently locked" window.
+            try {
+                const totalNeeded = money.sum(pending.rows.map(p => p.amount)); // BigInt atomic
+                const bal = await this.walletService.getBalance();
+                // unlocked_balance arrives as a JS number from the RPC; coerce to integer BigInt.
+                const unlocked = (bal && !bal.error) ? BigInt(Math.round(Number(bal.unlocked_balance) || 0)) : null;
+                if (unlocked !== null && unlocked < totalNeeded) {
+                    const ids = pending.rows.map(p => p.id);
+                    await this.db.query(
+                        `UPDATE payouts SET status = 'pending', last_error = $2, last_retry_at = NOW() WHERE id = ANY($1)`,
+                        [ids, 'Deferred: insufficient unlocked balance (Monero outputs locked ~10 blocks)']
+                    ).catch(() => {});
+                    console.warn(`⏳ Deferring ${pending.rows.length} payout(s): unlocked ${unlocked} < needed ${totalNeeded}. Outputs likely locked; will retry next block/interval.`);
+                    return;
+                }
+            } catch (balErr) {
+                // If the balance check itself fails, fall through and let the transfer try.
+                console.error('Payout balance pre-check failed, proceeding:', balErr.message);
+            }
+
             console.log(`📦 Processing batch of ${pending.rows.length} pending payout(s)`);
 
             // Build destinations for transfer_split
@@ -1435,10 +1468,14 @@ class GameModeManager {
                     });
                     console.log(`💸 Single payout ${p.id} completed: ${result.txHash}`);
                 } catch (err) {
-                    console.error(`❌ Single payout ${p.id} failed:`, err.message);
+                    // Insufficient-unlocked-funds is a pre-broadcast error -> retry on the next
+                    // batch run (revert to pending). Other failures -> 'failed' (retry service,
+                    // which re-checks the chain before re-sending).
+                    const status = isInsufficientFundsError(err.message) ? 'pending' : 'failed';
+                    console.error(`❌ Single payout ${p.id} failed -> ${status}:`, err.message);
                     await this.db.query(
-                        `UPDATE payouts SET status = 'failed', last_error = $1, last_retry_at = NOW() WHERE id = $2`,
-                        [err.message, p.id]
+                        `UPDATE payouts SET status = $1, last_error = $2, last_retry_at = NOW() WHERE id = $3`,
+                        [status, err.message, p.id]
                     ).catch(() => {});
                 }
             } else {
@@ -1473,17 +1510,22 @@ class GameModeManager {
                     });
                     console.log(`💸 Batch payout completed: ${pending.rows.length} payouts in tx ${txHash}`);
                 } catch (err) {
-                    console.error(`❌ Batch payout failed (${pending.rows.length} payouts):`, err.message);
-                    // CRITICAL: a batch failure is ambiguous — transfer_split may have already
-                    // broadcast on-chain even though the RPC response errored. These rows have no
-                    // tx_hash, so the retry service's blockchain guard can't protect them and an
-                    // auto-retry could DOUBLE-PAY. Mark 'needs_review' (which the retry service
-                    // does NOT pick up) and alert an operator instead.
+                    // An insufficient-unlocked-funds error is raised BEFORE broadcast (no tx
+                    // went out), so it's safe to retry: revert to 'pending' and let the next
+                    // run send it once outputs unlock — no operator alert needed (transient).
+                    //
+                    // ANY OTHER error is ambiguous: transfer_split may have broadcast on-chain
+                    // even though the RPC response errored. Those rows have no tx_hash, so the
+                    // retry service's blockchain guard can't protect them and an auto-retry
+                    // could DOUBLE-PAY. Mark 'needs_review' (retry service skips it) + alert.
+                    const fundsIssue = isInsufficientFundsError(err.message);
+                    const status = fundsIssue ? 'pending' : 'needs_review';
+                    console.error(`❌ Batch payout failed (${pending.rows.length} payouts) -> ${status}:`, err.message);
                     await this.db.query(
-                        `UPDATE payouts SET status = 'needs_review', last_error = $1, last_retry_at = NOW() WHERE id = ANY($2)`,
-                        [String(err.message).slice(0, 500), ids]
+                        `UPDATE payouts SET status = $1, last_error = $2, last_retry_at = NOW() WHERE id = ANY($3)`,
+                        [status, String(err.message).slice(0, 500), ids]
                     ).catch(() => {});
-                    if (this.alertService && typeof this.alertService.sendAlert === 'function') {
+                    if (!fundsIssue && this.alertService && typeof this.alertService.sendAlert === 'function') {
                         this.alertService.sendAlert('batch_payout_failed', {
                             subject: '⚠️ Batch payout failed — manual review required',
                             html: `<p>A batch of ${pending.rows.length} payout(s) failed and was marked <b>needs_review</b> to avoid a possible double-payout.</p>`

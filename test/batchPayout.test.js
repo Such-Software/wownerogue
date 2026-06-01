@@ -89,6 +89,8 @@ describe('Batch payout dispatch', () => {
 
     test('an ambiguous batch failure is marked needs_review, not failed', async () => {
         const walletService = {
+            // Enough unlocked balance so the pre-flight check passes and we reach the transfer.
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
             processPayout: jest.fn(),
             processBatchPayout: jest.fn().mockRejectedValue(new Error('RPC timeout'))
         };
@@ -101,11 +103,59 @@ describe('Batch payout dispatch', () => {
         await gmm._processPendingPayouts();
 
         // Failure handling uses db.query (outside a transaction) to mark the batch needs_review.
-        const failCall = db.query.mock.calls.find(c => /needs_review/i.test(c[0]));
+        // Status is passed as a bound param ($1), so check the params array, not the SQL text.
+        const failCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'needs_review');
         expect(failCall).toBeDefined();
         expect(failCall[0]).toMatch(/id = ANY/i);
         // Must NOT mark them 'failed' (which the retry service would auto-resend).
-        const failedCall = db.query.mock.calls.find(c => /status = 'failed'/i.test(c[0]));
+        const failedCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'failed');
         expect(failedCall).toBeUndefined();
+    });
+
+    test('MONERO LOCKING: defers the batch to pending when unlocked balance is insufficient (no transfer attempted)', async () => {
+        // TWO_PENDING needs 200000000000 + 300000000000 = 500000000000 atomic.
+        // Unlocked balance is far below that (outputs locked ~10 blocks) -> defer, do not send.
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '500000000000', unlocked_balance: '1000000000' }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn()
+        };
+        const { gmm, db } = buildGmm(walletService);
+
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        // No on-chain transfer was attempted.
+        expect(walletService.processBatchPayout).not.toHaveBeenCalled();
+        expect(walletService.processPayout).not.toHaveBeenCalled();
+
+        // The defer UPDATE sets status = 'pending' literally in SQL and passes ids as $1.
+        const deferSql = db.query.mock.calls.find(c => /SET status = 'pending'/i.test(c[0]) && /id = ANY/i.test(c[0]));
+        expect(deferSql).toBeDefined();
+        expect(deferSql[1][0]).toEqual([10, 11]); // ids array param
+    });
+
+    test('a pre-broadcast insufficient-funds batch error is retried (pending), not needs_review', async () => {
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn().mockRejectedValue(new Error('not enough unlocked money to transfer'))
+        };
+        const { gmm, db } = buildGmm(walletService);
+
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        // A funds error means nothing broadcast -> safe to retry: status='pending', NOT needs_review.
+        const pendingCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'pending' && /id = ANY/i.test(c[0]));
+        expect(pendingCall).toBeDefined();
+        const reviewCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'needs_review');
+        expect(reviewCall).toBeUndefined();
     });
 });
