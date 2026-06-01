@@ -14,8 +14,35 @@ function esc(value) {
         .replace(/'/g, '&#39;');
 }
 
-function renderVerifyPage(gameId, gameRecord, gameName) {
-    const name = gameName || 'Wownerogue';
+function renderVerifyPage(gameId, gameRecord, opts = {}) {
+    // Back-compat: opts may be a plain gameName string (older callers).
+    if (typeof opts === 'string') opts = { gameName: opts };
+    const name = opts.gameName || 'Wownerogue';
+    const baseUrl = (opts.baseUrl || '').replace(/\/$/, '');
+    const ogImage = opts.ogImage ? `${baseUrl}/${opts.ogImage.replace(/^\//, '')}` : '';
+    const pageUrl = `${baseUrl}/verify/${esc(gameId)}`;
+
+    // Social card description reflects the actual result when we have a record.
+    let ogDescription = `Provably-fair roguelike — escape the dungeon before the next block. Verify any game was fair.`;
+    if (gameRecord) {
+        const escaped = gameRecord.status === 'won';
+        const bag = gameRecord.treasure_found ? ' with the treasure bag' : '';
+        ogDescription = escaped
+            ? `Escaped the dungeon${bag} in ${gameRecord.moves_made || '?'} moves. Cryptographically verified provably fair.`
+            : `A provably-fair run that didn't make it out. Verify the seed generated this exact dungeon.`;
+    }
+    const ogTitle = `${name} — Provably-Fair Roguelike`;
+    const metaTags = `
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="${esc(ogTitle)}">
+  <meta property="og:description" content="${esc(ogDescription)}">
+  ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}">` : ''}
+  ${ogImage ? `<meta property="og:image" content="${esc(ogImage)}">` : ''}
+  <meta name="twitter:card" content="${ogImage ? 'summary_large_image' : 'summary'}">
+  <meta name="twitter:title" content="${esc(ogTitle)}">
+  <meta name="twitter:description" content="${esc(ogDescription)}">
+  ${ogImage ? `<meta name="twitter:image" content="${esc(ogImage)}">` : ''}`;
+
     const recordBlock = gameRecord ? `
   <div class="box">
     <h3>Game Record</h3>
@@ -32,7 +59,9 @@ function renderVerifyPage(gameId, gameRecord, gameName) {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>${esc(name)} - Game Verification</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(name)} - Game Verification</title>${metaTags}
   <style>
     body { background: #0a0a0a; color: #0f0; font-family: monospace; padding: 20px; max-width: 800px; margin: 0 auto; }
     h1 { color: #0ff; }

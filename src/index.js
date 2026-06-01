@@ -550,6 +550,52 @@ app.get('/api/leaderboard', asyncHandler(async (req, res) => {
   res.json({ leaderboard: result.rows, period, board });
 }));
 
+// Public "social proof" stats strip: players online, games + escapes in the last 24h, and
+// total paid out. Cached in-memory for 10s so a public, unauthenticated endpoint can't hammer
+// the DB (one query set per 10s regardless of traffic).
+let _statsCache = { at: 0, data: null };
+app.get('/api/stats', asyncHandler(async (req, res) => {
+  const now = Date.now();
+  const online = io.sockets.sockets.size || io.engine.clientsCount || 0;
+
+  if (_statsCache.data && (now - _statsCache.at) < 10000) {
+    return res.json({ ..._statsCache.data, online });
+  }
+
+  const config = paymentConfigManager.getConfig();
+  const decimals = Number(config.currency?.decimals ?? 12);
+  const divisor = Number.isFinite(decimals) ? Math.pow(10, decimals) : 1;
+  const currencyLabel = gameModeManager.currencyLabel || config.currency?.symbol || 'WOW';
+
+  let gamesToday = 0, escapesToday = 0, totalPaidOut = 0;
+  try {
+    const [games, payouts] = await Promise.all([
+      db.query(`SELECT COUNT(*) AS games,
+                       COUNT(*) FILTER (WHERE status = 'won') AS escapes
+                FROM games WHERE created_at > NOW() - INTERVAL '24 hours'`),
+      // Only count payouts that actually left the wallet.
+      db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payouts WHERE status = 'completed'`)
+    ]);
+    gamesToday = parseInt(games.rows[0]?.games || 0, 10);
+    escapesToday = parseInt(games.rows[0]?.escapes || 0, 10);
+    // amount is atomic units (BIGINT); divide for display. Number() is safe at these magnitudes.
+    totalPaidOut = Number(payouts.rows[0]?.total || 0) / divisor;
+  } catch (e) {
+    // Best-effort; serve whatever we have rather than 500 on a public widget.
+  }
+
+  const data = {
+    gamesToday,
+    escapesToday,
+    totalPaidOut,
+    currencyLabel,
+    // Paid out is only meaningful where payouts are enabled (stagenet / payout instances).
+    payoutsEnabled: !!(gameModeManager.directPayoutEnabled || gameModeManager.creditsPayoutEnabled)
+  };
+  _statsCache = { at: now, data };
+  res.json({ ...data, online });
+}));
+
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();
   const decimals = Number(config.currency?.decimals ?? 12);
@@ -641,7 +687,15 @@ app.get('/verify/:gameId', asyncHandler(async (req, res) => {
   }
   
   // Return the server-rendered HTML verification page (see src/views/verifyPage.js).
-  res.send(renderVerifyPage(gameId, gameRecord, gameModeManager.gameName));
+  // Pass an absolute base URL (honours the trusted reverse proxy) + a brand-specific social
+  // card image so shared /verify links unfurl with a preview on Twitter/Discord/etc.
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const ogImage = (process.env.CRYPTO_TYPE === 'XMR') ? 'og-card-xmr.png' : 'og-card-wow.png';
+  res.send(renderVerifyPage(gameId, gameRecord, {
+    gameName: gameModeManager.gameName,
+    baseUrl,
+    ogImage
+  }));
 }));
 
 // API endpoint for programmatic verification

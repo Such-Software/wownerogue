@@ -158,6 +158,35 @@ const SocketHandlers = {
         socket.on('spectate_start', this.onSpectateStart);
         socket.on('spectator_update', this.onSpectatorUpdate);
         socket.on('spectate_ended', this.onSpectateEnded);
+
+        // Global win feed (someone escaped) -> floating toast
+        socket.on('win_feed', this.onWinFeed);
+    },
+
+    // Show a transient "someone just escaped" toast so the room feels alive. Toasts stack in a
+    // fixed container (top-right), auto-dismiss, and never block the UI.
+    onWinFeed: function(data) {
+        if (!data) return;
+        var name = String(data.name || 'Someone').slice(0, 24);
+        var bag = data.treasure ? ' 💰 with the bag' : '';
+        var paid = data.paid ? ' <span style="color:#fbbf24;">(payout!)</span>' : '';
+        try {
+            var $c = $('#win-feed');
+            if (!$c.length) {
+                $c = $('<div id="win-feed"></div>').appendTo('body');
+            }
+            var $t = $('<div class="win-toast"></div>').html(
+                '🏆 <strong>' + escapeHtml(name) + '</strong> escaped' + bag + paid
+            );
+            $c.append($t);
+            // Fade in, hold, fade out, remove.
+            requestAnimationFrame(function () { $t.addClass('show'); });
+            setTimeout(function () { $t.removeClass('show'); }, 5000);
+            setTimeout(function () { $t.remove(); }, 5600);
+            // Cap the number of simultaneous toasts.
+            var $all = $c.children('.win-toast');
+            if ($all.length > 4) { $all.first().remove(); }
+        } catch (e) { /* non-critical */ }
     },
 
     onConnect: function() {
@@ -523,12 +552,55 @@ const SocketHandlers = {
             ));
         }
 
+        // Offer a one-tap "Share to X" on wins (brag mechanic). The verify link unfurls with a
+        // social card (OG meta on the /verify page), so a shared tweet shows a preview.
+        if (won) {
+            SocketHandlers._appendShareWin(data);
+        }
+
         UI.scrollChat();
         if (won) {
             SocketHandlers._setBannerStatus('Won', '#0f0');
         } else {
             SocketHandlers._setBannerStatus('Lost', '#f00');
         }
+    },
+
+    // Build an absolute verify URL for this game (used by the share button).
+    _verifyUrlFor: function(data) {
+        var path = (data && data.proof && (data.proof.verificationUrl ||
+            (data.proof.gameId ? '/verify/' + data.proof.gameId : null)));
+        if (!path) return null;
+        try { return new URL(path, window.location.origin).href; }
+        catch (e) { return window.location.origin + path; }
+    },
+
+    _appendShareWin: function(data) {
+        var url = SocketHandlers._verifyUrlFor(data);
+        if (!url) return; // no proof -> nothing to verify/share
+
+        var bag = data && data.treasure ? ' with the bag 💰' : '';
+        var score = (data && typeof data.score === 'number') ? (' (score ' + data.score + ')') : '';
+        var text = '🏆 I escaped the dungeon' + bag + score + ' in this provably-fair crypto roguelike!';
+        var intent = 'https://twitter.com/intent/tweet?text=' +
+            encodeURIComponent(text) + '&url=' + encodeURIComponent(url);
+
+        var $row = $('<li class="share-win" style="margin-top:6px; padding:8px; background:rgba(0,40,0,0.4); border-radius:4px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">');
+        $row.append($('<strong style="color:#4ade80;">').text('Brag about it:'));
+
+        var $x = $('<button type="button" class="share-x-btn" style="cursor:pointer; background:#000; color:#fff; border:1px solid #555; border-radius:4px; padding:4px 10px; font-size:12px;">𝕏 Share to X</button>');
+        $x.on('click', function () { window.open(intent, '_blank', 'noopener'); });
+
+        var $copy = $('<button type="button" class="share-copy-btn" style="cursor:pointer; background:#053655; color:#0af; border:1px solid #0af; border-radius:4px; padding:4px 10px; font-size:12px;">🔗 Copy link</button>');
+        $copy.on('click', function () {
+            var done = function () { $copy.text('✅ Copied!'); setTimeout(function () { $copy.text('🔗 Copy link'); }, 1500); };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(done).catch(function () { window.prompt('Copy this link:', url); });
+            } else { window.prompt('Copy this link:', url); }
+        });
+
+        $row.append($x).append($copy);
+        $('#messages').append($row);
     },
 
     onQueueCancelled: function(data) {
@@ -1097,6 +1169,37 @@ const SocketHandlers = {
         if (!data || !data.games) return;
         SocketHandlers._activeGames = data.games;
         SocketHandlers._updateGamesListPanel(data);
+        SocketHandlers._updateLiveCta(data);
+    },
+
+    // "Land on action": when live games are in progress, surface a prominent, dismissible CTA
+    // in the status area so a new visitor immediately sees the room is alive and can jump into
+    // spectating with one click. Deliberately NON-intrusive — it never hijacks the canvas or
+    // interrupts someone who came to play (hidden while in a game / spectating, and dismissible).
+    _liveCtaDismissed: false,
+    _updateLiveCta: function(data) {
+        var el = document.getElementById('liveCta');
+        if (!el) return;
+        var liveCount = (data.games || []).length;
+        var inGame = (typeof Game !== 'undefined' && (Game._gameActive || Game._isSpectating)) || SocketHandlers._spectatorMode || SocketHandlers._isQueued;
+        var panelOpen = $('#gamesListPanel').is(':visible');
+
+        if (liveCount > 0 && !inGame && !panelOpen && !SocketHandlers._liveCtaDismissed) {
+            el.innerHTML = '🔴 ' + liveCount + ' game' + (liveCount === 1 ? '' : 's') +
+                ' live right now — <span style="text-decoration:underline;">watch &raquo;</span>';
+            el.style.display = 'block';
+            if (!el._bound) {
+                el._bound = true;
+                el.addEventListener('click', function () {
+                    SocketHandlers._liveCtaDismissed = true; // don't nag after they engage
+                    el.style.display = 'none';
+                    if (window.socket) socket.emit('get_active_games', { page: 1, pageSize: 20 });
+                    SocketHandlers._showGamesPanel();
+                });
+            }
+        } else {
+            el.style.display = 'none';
+        }
     },
 
     onSpectateStart: function(data) {

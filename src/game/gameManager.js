@@ -152,6 +152,19 @@ class GameManager {
                         score: finalScore,
                         treasure: game.player.hasTreasure || false
                     });
+
+                    // Global "win feed": announce actual escapes to everyone so the room feels
+                    // alive (the leaderboard_update above also fires for lost-with-treasure runs;
+                    // the feed should only celebrate real escapes). Payout amount is intentionally
+                    // omitted — it's processed asynchronously and not reliably known yet here.
+                    if (status === 'won') {
+                        this.io.emit('win_feed', {
+                            name: displayName || 'Someone',
+                            treasure: game.player.hasTreasure || false,
+                            score: finalScore,
+                            paid: !!(payoutInfo && payoutInfo.amount)
+                        });
+                    }
                 } catch (lbErr) {
                     // Non-critical, don't block game over
                     if (this.debugManager.CONSOLE_LOGGING) {

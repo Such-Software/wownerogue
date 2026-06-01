@@ -315,6 +315,37 @@ li.debug {
 
 
 /* =========================================================================
+   Win feed toasts (global "someone escaped" announcements)
+   ========================================================================= */
+#win-feed {
+    position: fixed;
+    top: 56px;
+    right: 12px;
+    z-index: 1800;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    pointer-events: none;
+    max-width: min(320px, 80vw);
+}
+.win-toast {
+    background: rgba(0, 30, 0, 0.92);
+    border: 1px solid #0f0;
+    border-left: 4px solid #4ade80;
+    border-radius: 6px;
+    color: #cffccf;
+    font-family: 'PixelOperator', monospace;
+    font-size: 13px;
+    padding: 8px 12px;
+    box-shadow: 0 0 14px rgba(0, 255, 0, 0.18);
+    opacity: 0;
+    transform: translateX(40px);
+    transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.win-toast.show { opacity: 1; transform: translateX(0); }
+.win-toast strong { color: #4ade80; }
+
+/* =========================================================================
    Mobile / touch support
    ========================================================================= */
 #touch-dpad { display: none; }

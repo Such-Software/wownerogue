@@ -80,6 +80,7 @@
     <script src="js/ui/transactionHistory.js"></script>
     <script src="js/ui/leaderboard.js"></script>
     <script src="js/ui/helpModal.js"></script>
+    <script src="js/ui/publicStats.js"></script>
     <script src="js/network/socketHandlers.js"></script>
     <script src="js/network/smirkAuth.js"></script>
     <script src="js/input/inputHandler.js"></script>
@@ -98,6 +99,8 @@
         <div class="status">
             <div id="blockHeight">Block Height: <span id="heightValue">Loading...</span></div>
             <div id="connectionStatus">Status: <span id="statusValue">Connecting...</span></div>
+            <div id="publicStats" style="display:none; margin-top:4px; font-size:11px; color:#9cf; font-family:monospace; line-height:1.4;"></div>
+            <div id="liveCta" style="display:none; margin-top:6px; cursor:pointer; background:rgba(80,0,0,0.55); border:1px solid #f33; border-radius:4px; padding:5px 10px; font-size:12px; font-family:monospace; color:#ff8a8a; font-weight:bold;" title="Watch a live game"></div>
             <div id="creditsDisplay" style="display:none; margin-top:4px; font-size:13px; font-family:monospace; color:#0f0; background:#001a00; padding:4px 8px; border:1px solid #0a0; border-radius:4px; font-weight:bold;"></div>
             <button id="startButton" style="background: #0a5c0a; color: #ff0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; display: none;">
                 🎮 <span class="lbl-full">START GAME</span><span class="lbl-short">START</span>
