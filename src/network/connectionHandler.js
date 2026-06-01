@@ -16,9 +16,43 @@ class ConnectionHandler {
         this.rateLimiter = rateLimiter;
         
         this.clientSocketMap = new Map();
-        
+
+        // Per-IP concurrent-socket cap. The rate limiter already caps NEW connections
+        // (10/min/IP) and game starts (15/min/IP), but nothing stopped one IP from
+        // *holding open* hundreds of sockets (trickle in under the rate limit, keep alive)
+        // to hoard server resources / spectator slots. Track live sockets per IP and reject
+        // beyond the cap. Default 10 — generous for shared NATs / multi-tab, lethal to farms.
+        this.maxSocketsPerIp = parseInt(process.env.MAX_SOCKETS_PER_IP, 10) || 10;
+        this.socketsByIp = new Map();   // ip -> Set<socketId>
+        this.socketIpMap = new Map();   // socketId -> ip (for O(1) disconnect cleanup)
+
         // Memory leak prevention - cleanup old mappings
         this.mapCleanupInterval = setInterval(() => this.cleanupMappings(), 300000); // 5 minutes
+    }
+
+    /** Register a live socket for its IP. @returns {boolean} false if the IP is at the cap. */
+    _trackIpSocket(ip, socketId) {
+        if (!ip) return true; // can't attribute -> don't block
+        let set = this.socketsByIp.get(ip);
+        if (set && set.size >= this.maxSocketsPerIp && !set.has(socketId)) {
+            return false;
+        }
+        if (!set) { set = new Set(); this.socketsByIp.set(ip, set); }
+        set.add(socketId);
+        this.socketIpMap.set(socketId, ip);
+        return true;
+    }
+
+    /** Drop a socket from its IP's live set. */
+    _untrackIpSocket(socketId) {
+        const ip = this.socketIpMap.get(socketId);
+        if (!ip) return;
+        const set = this.socketsByIp.get(ip);
+        if (set) {
+            set.delete(socketId);
+            if (set.size === 0) this.socketsByIp.delete(ip);
+        }
+        this.socketIpMap.delete(socketId);
     }
 
     /**
@@ -46,6 +80,19 @@ class ConnectionHandler {
 
             // Record the connection attempt
             await this.rateLimiter.recordAttempt(ip, 'connection:new', ip);
+
+            // Per-IP concurrent-socket cap (resource/hoarding protection).
+            if (!this._trackIpSocket(ip, socket.id)) {
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.log(`🚫 Concurrent socket cap (${this.maxSocketsPerIp}) reached for IP ${ip}`);
+                }
+                socket.emit('rate_limited', {
+                    action: 'connection',
+                    message: 'Too many simultaneous connections from your network.'
+                });
+                socket.disconnect(true);
+                return;
+            }
 
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log('A user connected');
@@ -117,6 +164,9 @@ class ConnectionHandler {
             console.log('User disconnected', socket.client.id);
         }
         
+        // Release the per-IP concurrent-socket slot.
+        this._untrackIpSocket(socket.id);
+
         // Clean up client socket mappings
         const clientId = this.clientSocketMap.get(socket.id);
         if (clientId) {
@@ -320,6 +370,17 @@ class ConnectionHandler {
         // Remove stale mappings
         for (const key of toDelete) {
             if (this.clientSocketMap.delete(key)) {
+                cleanedCount++;
+            }
+        }
+
+        // Reconcile the per-IP concurrent-socket tracking against live sockets, in case a
+        // disconnect was ever missed (otherwise a leaked entry could wrongly cap an IP).
+        for (const [socketId, ip] of this.socketIpMap.entries()) {
+            if (!activeSocketIds.has(socketId)) {
+                const set = this.socketsByIp.get(ip);
+                if (set) { set.delete(socketId); if (set.size === 0) this.socketsByIp.delete(ip); }
+                this.socketIpMap.delete(socketId);
                 cleanedCount++;
             }
         }
