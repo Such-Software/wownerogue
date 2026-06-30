@@ -14,7 +14,12 @@ class AlertService {
         this.db = db;
         this.debugManager = debugManager;
 
-        // Resend configuration
+        // Notifications hub (preferred): DB-backed dedup/throttle that survives restarts, so a stuck
+        // condition is ~5 emails, not thousands. Falls back to direct Resend if NOTIFY_HUB_URL unset.
+        this.hubUrl = process.env.NOTIFY_HUB_URL || '';   // e.g. http://10.42.1.20:8765/api/notify
+        this.notifySource = process.env.NOTIFY_SOURCE || process.env.GAME_NAME || 'wowngeon';
+
+        // Resend configuration (legacy fallback)
         this.resendApiKey = process.env.RESEND_API_KEY;
         this.adminEmail = process.env.ADMIN_EMAIL;
         this.fromEmail = process.env.ALERT_FROM_EMAIL || 'alerts@monerogue.app';
@@ -38,12 +43,14 @@ class AlertService {
         this.walletDisconnectedSince = null;
         this.walletDisconnectAlertThreshold = 300000; // 5 minutes
 
-        this.enabled = !!(this.resendApiKey && this.adminEmail);
+        this.enabled = !!(this.hubUrl || (this.resendApiKey && this.adminEmail));
 
-        if (this.enabled) {
-            console.log('📧 Alert service enabled - alerts will be sent to', this.adminEmail);
+        if (this.hubUrl) {
+            console.log('📧 Alerts → notifications hub:', this.hubUrl, `(source=${this.notifySource})`);
+        } else if (this.enabled) {
+            console.log('📧 Alert service enabled (direct Resend) - alerts to', this.adminEmail);
         } else {
-            console.log('📧 Alert service disabled - set RESEND_API_KEY and ADMIN_EMAIL to enable');
+            console.log('📧 Alert service disabled - set NOTIFY_HUB_URL (or RESEND_API_KEY + ADMIN_EMAIL)');
         }
     }
 
@@ -58,35 +65,67 @@ class AlertService {
     /**
      * Send an email alert via Resend
      */
-    async sendAlert(type, { subject, html }) {
+    async sendAlert(type, { subject, html, level = 'warn', body = '' }) {
         if (!this.enabled) {
             return { sent: false, reason: 'Alert service not configured' };
         }
 
+        // Preferred: the central hub dedups + throttles (DB-backed, so it survives restarts — unlike
+        // the in-memory cooldown that re-spammed on every restart). Stable key = source:type.
+        if (this.hubUrl) {
+            return this._postHub({
+                key: `${this.notifySource}:${type}`,
+                level,
+                title: subject,
+                body: body || this._stripHtml(html),
+            });
+        }
+
+        // Legacy fallback: direct Resend with the in-memory cooldown.
         if (this.isOnCooldown(type)) {
             return { sent: false, reason: 'On cooldown' };
         }
-
         try {
-            // Dynamic import to avoid requiring resend if not configured
             const { Resend } = require('resend');
             const resend = new Resend(this.resendApiKey);
-
             const result = await resend.emails.send({
-                from: this.fromEmail,
-                to: this.adminEmail,
-                subject: subject,
-                html: html
+                from: this.fromEmail, to: this.adminEmail, subject, html,
             });
-
             this.lastAlertSent.set(type, Date.now());
             console.log(`📧 Alert sent: ${type} - ${subject}`);
-
             return { sent: true, id: result.data?.id };
         } catch (error) {
             console.error(`❌ Failed to send alert: ${error.message}`);
             return { sent: false, error: error.message };
         }
+    }
+
+    /**
+     * Clear a firing alert in the hub (one ✅ resolve if it had alerted). No-op without the hub.
+     */
+    async resolveAlert(type) {
+        if (!this.hubUrl) return { sent: false, reason: 'no hub' };
+        return this._postHub({ key: `${this.notifySource}:${type}`, resolve: true });
+    }
+
+    async _postHub({ key, level, title = '', body = '', resolve = false }) {
+        try {
+            const res = await fetch(this.hubUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: this.notifySource, key, level, title, body, resolve }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (data.sent) console.log(`📧 hub ${resolve ? 'resolve' : 'alert'} sent: ${key}`);
+            return { sent: !!data.sent, deduped: !!data.deduped, hub: true };
+        } catch (error) {
+            console.error(`❌ notify hub post failed (${key}): ${error.message}`);
+            return { sent: false, error: error.message };
+        }
+    }
+
+    _stripHtml(html) {
+        return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000);
     }
 
     /**
@@ -122,6 +161,7 @@ class AlertService {
 
                 await this.sendAlert('balance_critical', {
                     subject: `🚨 CRITICAL: Wallet Balance Depleted - ${balanceFormatted} ${cryptoType}`,
+                    level: 'crit',
                     html: `
                         <h2 style="color: #dc3545;">🚨 CRITICAL: Wallet Balance Depleted</h2>
                         <p><strong>NEW GAMES HAVE BEEN HALTED.</strong></p>
@@ -170,11 +210,13 @@ class AlertService {
                     `
                 });
             } else {
-                // Balance is healthy - clear critical flag if set
+                // Balance is healthy - clear critical flag + any firing balance alerts in the hub
                 if (this.isBalanceCritical) {
                     this.isBalanceCritical = false;
                     console.log(`✅ Wallet balance restored above thresholds. Games can resume.`);
                 }
+                this.resolveAlert('balance_critical');
+                this.resolveAlert('balance_warn');
             }
         } catch (error) {
             console.error('Failed to check wallet balance for alerts:', error.message);
@@ -227,7 +269,10 @@ class AlertService {
      */
     async checkWalletConnection() {
         if (this.walletService?.isHealthy) {
-            this.walletDisconnectedSince = null;
+            if (this.walletDisconnectedSince) {          // was down, now back → clear the hub alert
+                this.walletDisconnectedSince = null;
+                this.resolveAlert('wallet_disconnect');
+            }
             return;
         }
 
@@ -313,6 +358,7 @@ class AlertService {
 
         await this.sendAlert('payout_failed', {
             subject: `💀 Payout Permanently Failed - ${amountFormatted} ${cryptoType}`,
+            level: 'crit',
             html: `
                 <h2>Payout Permanently Failed</h2>
                 <p>A payout has failed after all retry attempts:</p>
