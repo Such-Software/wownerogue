@@ -85,13 +85,40 @@
     ThreeRenderer.prototype._fallbackAvatar = function (e) {
         var T = this.THREE;
         var g = new T.Group();
-        var body = new T.Mesh(new T.CapsuleGeometry(0.24, 0.56, 4, 8), this._mat(e.color || '#9aa4b2'));
-        body.position.y = 0.52;
+        var body = new T.Mesh(new T.CapsuleGeometry(0.44, 1.18, 4, 12), this._mat(e.color || '#9aa4b2'));
+        body.position.y = 1.0;
         g.add(body);
-        var face = new T.Mesh(new T.BoxGeometry(0.11, 0.07, 0.035), this._mat('#0a0c0f'));
-        face.position.set(0, 0.7, 0.23);
+        var face = new T.Mesh(new T.BoxGeometry(0.22, 0.12, 0.06), this._mat('#0a0c0f'));
+        face.position.set(0, 1.32, 0.44);
         g.add(face);
         return g;
+    };
+
+    ThreeRenderer.prototype._fitModel = function (model) {
+        var T = this.THREE;
+        var wrapper = new T.Group();
+        model.updateMatrixWorld(true);
+        var box = new T.Box3();
+        var foundMesh = false;
+        model.traverse(function (obj) {
+            if (!obj.isMesh || !obj.geometry) return;
+            if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
+            var meshBox = obj.geometry.boundingBox.clone();
+            meshBox.applyMatrix4(obj.matrixWorld);
+            box.union(meshBox);
+            foundMesh = true;
+        });
+        if (!foundMesh) box.setFromObject(model);
+        var size = new T.Vector3();
+        var center = new T.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        var maxDim = Math.max(size.x, size.y, size.z) || 1;
+        var scale = 5.0 / maxDim;
+        model.position.set(-center.x, -box.min.y, -center.z);
+        wrapper.scale.setScalar(scale);
+        wrapper.add(model);
+        return wrapper;
     };
 
     ThreeRenderer.prototype._loadModel = function (resolved, cb) {
@@ -117,6 +144,16 @@
         });
     };
 
+    ThreeRenderer.prototype._playAction = function (shell, name) {
+        if (!shell || !shell._actions || shell._activeActionName === name) return;
+        var next = shell._actions[name] || shell._actions[Object.keys(shell._actions)[0]];
+        if (!next) return;
+        if (shell._activeAction && shell._activeAction !== next) shell._activeAction.fadeOut(0.12);
+        next.reset().fadeIn(0.12).play();
+        shell._activeAction = next;
+        shell._activeActionName = name;
+    };
+
     ThreeRenderer.prototype._visualFor = function (e) {
         var appearance = (e && e.appearance) || { avatar: (e && e.avatar) || 'default' };
         if (root.RK && RK.avatarVisuals && RK.avatarVisuals.resolve) {
@@ -135,12 +172,11 @@
         if (visual && visual.allowed !== false && visual.model) {
             this._loadModel(visual, function (rec) {
                 if (!rec || !rec.gltf || !shell.parent) return;
-                shell.remove(shell._body);
                 var model = rec.gltf.scene.clone(true);
-                model.scale.setScalar(0.55);
                 model.rotation.y = Math.PI;
-                shell.add(model);
-                shell._body = model;
+                var fitted = self._fitModel(model);
+                shell.add(fitted);
+                shell._model = fitted;
                 if (rec.gltf.animations && rec.gltf.animations.length) {
                     var mixer = new T.AnimationMixer(model);
                     shell._mixer = mixer;
@@ -148,8 +184,7 @@
                     rec.gltf.animations.forEach(function (clip) {
                         shell._actions[String(clip.name).toLowerCase()] = mixer.clipAction(clip);
                     });
-                    var idle = shell._actions.idle || shell._actions[Object.keys(shell._actions)[0]];
-                    if (idle) idle.play();
+                    self._playAction(shell, 'idle');
                     self.mixers.push(mixer);
                 }
             });
@@ -189,11 +224,25 @@
     ThreeRenderer.prototype._animate = function () {
         if (!this.renderer) return;
         var dt = this.clock.getDelta();
+        var now = Date.now();
         for (var i = 0; i < this.mixers.length; i++) this.mixers[i].update(dt);
         for (var id in this.entities) {
             var ent = this.entities[id], o = ent.obj;
-            o.position.x += ((ent.tx || 0) - o.position.x) * 0.18;
-            o.position.z += ((ent.tz || 0) - o.position.z) * 0.18;
+            var dx = (ent.tx || 0) - o.position.x;
+            var dz = (ent.tz || 0) - o.position.z;
+            var moving = Math.abs(dx) + Math.abs(dz) > 0.025;
+            o.position.x += dx * 0.18;
+            o.position.z += dz * 0.18;
+            o.position.y = moving
+                ? Math.abs(Math.sin(now / 95)) * 0.08
+                : Math.sin(now / 620) * 0.018;
+            if (o._body) {
+                o._body.rotation.z = moving ? Math.sin(now / 120) * 0.055 : 0;
+            }
+            if (o._model) {
+                o._model.rotation.z = moving ? Math.sin(now / 120) * 0.045 : 0;
+            }
+            this._playAction(o, moving ? 'run' : 'idle');
             if (ent.e && ent.e.facing) {
                 var r = ent.e.facing === 'up' ? Math.PI : ent.e.facing === 'left' ? -Math.PI / 2 : ent.e.facing === 'right' ? Math.PI / 2 : 0;
                 o.rotation.y += (r - o.rotation.y) * 0.18;

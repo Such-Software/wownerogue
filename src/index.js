@@ -66,15 +66,16 @@ const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, deb
 // CSP locks down where scripts/styles/connections may come from. Inline scripts/styles
 // are still permitted ('unsafe-inline') because the current pages rely on them heavily;
 // removing that is tracked as Phase 4.4 (nonce-based CSP). connect-src 'self' covers
-// same-origin Socket.IO websockets under CSP Level 3.
+// same-origin Socket.IO websockets under CSP Level 3. blob: is limited to render-kit
+// GLB texture decoding; GLTFLoader turns embedded textures into blob URLs.
 app.use((req, res, next) => {
     res.setHeader('Content-Security-Policy', [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdn.jsdelivr.net",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data:",
+        "img-src 'self' data: blob:",
         "font-src 'self'",
-        "connect-src 'self' https://smirk.cash https://cdn.socket.io https://cdn.jsdelivr.net",
+        "connect-src 'self' blob: https://smirk.cash https://cdn.socket.io https://cdn.jsdelivr.net",
         "object-src 'none'",
         "base-uri 'self'",
         "frame-ancestors 'self'",
