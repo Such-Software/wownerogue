@@ -35,4 +35,21 @@ describe('sceneFromTavern (render kit adapter)', () => {
         const s = scene.sceneFromTavern({ cols: 2, rows: 1, layout: ['?~'], occupants: [] });
         expect(s.grid[0]).toEqual(['wall', 'wall']);
     });
+
+    test('uses walkability when a designed room has no ASCII layout', () => {
+        const s = scene.sceneFromTavern({
+            cols: 3,
+            rows: 2,
+            layout: null,
+            walkable: [
+                [true, false, true],
+                [false, true, true]
+            ],
+            occupants: []
+        });
+        expect(s.grid).toEqual([
+            ['floor', 'wall', 'floor'],
+            ['wall', 'floor', 'floor']
+        ]);
+    });
 });

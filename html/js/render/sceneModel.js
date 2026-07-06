@@ -23,6 +23,7 @@
     function sceneFromTavern(state, youId) {
         state = state || {};
         var layout = state.layout || [];
+        var walkable = state.walkable || null;
         var rows = state.rows || layout.length;
         var cols = state.cols || (layout[0] ? layout[0].length : 0);
 
@@ -31,7 +32,9 @@
             var srcRow = layout[y] || '';
             var row = [];
             for (var x = 0; x < cols; x++) {
-                row.push(TAVERN_TILE_OF[srcRow[x]] || 'wall');
+                if (layout[y]) row.push(TAVERN_TILE_OF[srcRow[x]] || 'wall');
+                else if (walkable && walkable[y]) row.push(walkable[y][x] ? 'floor' : 'wall');
+                else row.push('wall');
             }
             grid.push(row);
         }

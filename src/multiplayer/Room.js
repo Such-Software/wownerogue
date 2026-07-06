@@ -201,6 +201,7 @@ class Room {
             cols: this.cols,
             rows: this.rows,
             layout: this.layout,
+            walkable: this.walkable,
             solidOccupants: this.solidOccupants,
             roomUrl: this.roomUrl || null
         };

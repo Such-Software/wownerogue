@@ -189,32 +189,39 @@
         return out;
     };
 
+    function isoMale(n) {
+        var base = 'assets/kenney/iso-dungeon/characters/male' + n + '/Male_' + n + '_';
+        var run = [];
+        for (var i = 0; i < 10; i++) run.push(base + 'Run' + i + '.png');
+        return {
+            idle: base + 'Idle0.png',
+            run: run,
+            imageW: 48,
+            imageH: 92
+        };
+    }
+
     RK.isoAssets = {
         pack: 'iso-dungeon',
         tile: { w: 84, h: 42, imageW: 92, imageH: 184 },
         tiles: {
             floor: 'assets/kenney/iso-dungeon/tiles/planks_S.png',
-            wall: 'assets/kenney/iso-dungeon/tiles/stoneWall_S.png',
+            wall: 'assets/kenney/iso-dungeon/tiles/stoneWallHalf_S.png',
             bar: 'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
             table: 'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
             fallback: 'assets/kenney/iso-dungeon/tiles/planks_S.png'
         },
-        character: {
-            idle: 'assets/kenney/iso-dungeon/characters/male0/Male_0_Idle0.png',
-            run: [
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run0.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run1.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run2.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run3.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run4.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run5.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run6.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run7.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run8.png',
-                'assets/kenney/iso-dungeon/characters/male0/Male_0_Run9.png'
-            ],
-            imageW: 74,
-            imageH: 148
+        character: isoMale(0),
+        characters: {
+            fallback: isoMale(0),
+            'char-villager': isoMale(0),
+            'char-elder': isoMale(1),
+            'char-barbarian': isoMale(2),
+            'char-monk': isoMale(3),
+            'char-ranger': isoMale(4),
+            'char-bard': isoMale(5),
+            'char-rogue': isoMale(6),
+            'char-merchant': isoMale(7)
         }
     };
 

@@ -82,7 +82,7 @@ describe('render pack visual resolver', () => {
     RK.setEntitlementSnapshot({ totalCreditsPurchased: 1 });
     const iso = RK.avatarVisuals.resolve({ avatar: 'char-ranger' }, { projection: 'iso' });
     expect(iso).toMatchObject({ projection: 'iso', kind: 'iso', pack: 'iso-dungeon', allowed: true });
-    expect(iso.character.idle).toContain('Male_0_Idle0.png');
+    expect(iso.character.idle).toContain('Male_4_Idle0.png');
 
     const compat = RK.resolveAppearance(
       { appearance: { avatar: 'kenney-survivor-female' } },
@@ -95,6 +95,15 @@ describe('render pack visual resolver', () => {
     const RK = loadRenderKit();
     expect(RK.isoAssets.tiles.floor).toContain('planks_S.png');
     expect(RK.isoAssets.tiles.floor).not.toContain('stone_S.png');
+    expect(RK.isoAssets.tiles.wall).toContain('stoneWallHalf_S.png');
+  });
+
+  test('iso pack exposes only real imported character variants', () => {
+    const RK = loadRenderKit();
+    expect(RK.isoAssets.characters['char-villager'].idle).toContain('Male_0_Idle0.png');
+    expect(RK.isoAssets.characters['char-merchant'].idle).toContain('Male_7_Idle0.png');
+    expect(RK.isoAssets.characters['char-wizard']).toBeUndefined();
+    expect(RK.isoAssets.characters['char-goblin']).toBeUndefined();
   });
 
   test('projection visuals expose the saved base tint as a render color', () => {

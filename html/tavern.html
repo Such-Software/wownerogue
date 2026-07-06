@@ -232,7 +232,11 @@
             buildModebar();
             setMode(RK.loadMode('tiles'));
             // Load the designed room (if the server is using one); re-render when ready.
-            if (state.roomUrl) RK.loadRoom(state.roomUrl, function () { draw(); });
+            if (state.roomUrl) RK.loadRoom(state.roomUrl, function (room) {
+                if (room && room.desc && room.desc.walkable) state.walkable = room.desc.walkable;
+                rebuildScene();
+                draw();
+            });
             setStatus('You are in the tavern.');
         });
 
@@ -245,6 +249,7 @@
 
         function applyFull(s) {
             state.layout = s.layout || [];
+            state.walkable = s.walkable || null;
             state.cols = s.cols || (state.layout[0] ? state.layout[0].length : 0);
             state.rows = s.rows || state.layout.length;
             state.occupants = s.occupants || [];

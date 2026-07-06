@@ -54,6 +54,10 @@ function isCharAvatar(id) {
     return includes(CHAR_AVATARS, id);
 }
 
+function isModel3dAvatar(id) {
+    return includes(MODEL3D_AVATARS, id);
+}
+
 function isPremiumAvatar(id) {
     return !!AVATAR_PACKS[id];
 }
@@ -99,11 +103,20 @@ function normalizeAppearance(input = {}) {
     let avatar = input.avatar || input.id || 'default';
     if (!isValidAvatar(avatar)) avatar = 'default';
 
-    if (!isCharAvatar(avatar)) {
+    if (!isCharAvatar(avatar) && !isModel3dAvatar(avatar)) {
         return { avatar, tint: 'none', equipment: { ...DEFAULT_EQUIPMENT } };
     }
 
     const colors = normalizeColors(input.colors, input.tint);
+    if (isModel3dAvatar(avatar)) {
+        return {
+            avatar,
+            tint: colors.base,
+            equipment: { ...DEFAULT_EQUIPMENT },
+            colors
+        };
+    }
+
     return {
         avatar,
         tint: colors.base,
@@ -129,6 +142,7 @@ module.exports = {
     avatarPack,
     isValidAvatar,
     isCharAvatar,
+    isModel3dAvatar,
     isPremiumAvatar,
     normalizeEquipment,
     normalizeColors,

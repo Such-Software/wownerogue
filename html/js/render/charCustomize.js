@@ -7,6 +7,8 @@
 
     var DEFAULT_EQUIPMENT = { body: 'none', head: 'none', shield: 'none', weapon: 'none' };
     var DEFAULT_COLORS = { base: 'none', skin: 'natural', hair: 'copper', body: 'none', head: 'none', shield: 'none', weapon: 'none' };
+    var thumbImages = {};
+    var thumbBounds = {};
 
     function cloneEquipment(eq) {
         eq = eq || {};
@@ -110,8 +112,169 @@
         } catch (_) { return null; }
     };
 
-    function drawBaseThumb(ctx, a, draft, onReady) {
+    function projectionForMode(mode) {
+        if (mode === 'iso' || mode === '3d' || mode === 'ascii') return mode;
+        return 'topdown';
+    }
+
+    function hasIsoCharacter(a) {
+        return !!(a && a.kind === 'char' && RK.isoAssets && RK.isoAssets.characters && RK.isoAssets.characters[a.id]);
+    }
+
+    function appearanceVisibleInProjection(a, projection) {
+        if (!a) return false;
+        if (a.kind === 'color') return true;
+        if (projection === 'topdown') return a.kind === 'char' || a.kind === 'skin';
+        if (projection === 'iso') return hasIsoCharacter(a);
+        if (projection === '3d') return a.kind === 'model3d';
+        return false;
+    }
+
+    function loadThumbImage(url, onReady) {
+        if (!url) return null;
+        if (thumbImages[url]) return thumbImages[url];
+        var rec = thumbImages[url] = { ready: false, error: false, img: new Image() };
+        rec.img.onload = function () { rec.ready = true; if (onReady) onReady(); };
+        rec.img.onerror = function () { rec.error = true; };
+        rec.img.src = url;
+        return rec;
+    }
+
+    function tintColorForThumb(a, draft) {
+        var source = {};
+        var d = draft || {};
+        for (var dk in d) source[dk] = d[dk];
+        source.avatar = a.id;
+        if (a.kind === 'color') return a.color;
+        if (RK.avatarVisuals && RK.avatarVisuals.tintColorFor) return RK.avatarVisuals.tintColorFor(source, '#9aa4b2');
+        return '#9aa4b2';
+    }
+
+    function isoCharacterForThumb(a, draft) {
+        var source = {};
+        var d = draft || {};
+        for (var dk in d) source[dk] = d[dk];
+        source.avatar = a.id;
+        if (RK.avatarVisuals && RK.avatarVisuals.resolve) {
+            var visual = RK.avatarVisuals.resolve(source, { projection: 'iso', context: 'customizer' });
+            if (visual && visual.character) return visual.character;
+        }
+        var chars = RK.isoAssets && RK.isoAssets.characters;
+        return (chars && (chars[a.id] || chars.fallback)) || (RK.isoAssets && RK.isoAssets.character) || null;
+    }
+
+    function imageBounds(img) {
+        var key = img && img.src;
+        if (!img || !key) return null;
+        if (thumbBounds[key]) return thumbBounds[key];
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        var cv = document.createElement('canvas');
+        cv.width = w;
+        cv.height = h;
+        var ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        var data = ctx.getImageData(0, 0, w, h).data;
+        var minX = w, minY = h, maxX = -1, maxY = -1;
+        for (var y = 0; y < h; y++) {
+            for (var x = 0; x < w; x++) {
+                if (data[(y * w + x) * 4 + 3] < 8) continue;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+        thumbBounds[key] = maxX < minX ? { x: 0, y: 0, w: w, h: h } : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+        return thumbBounds[key];
+    }
+
+    function drawTintedImage(ctx, img, bounds, x, y, w, h, tint) {
+        bounds = bounds || { x: 0, y: 0, w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+        if (!tint) {
+            ctx.drawImage(img, bounds.x, bounds.y, bounds.w, bounds.h, x, y, w, h);
+            return;
+        }
+        var cv = document.createElement('canvas');
+        cv.width = bounds.w;
+        cv.height = bounds.h;
+        var tctx = cv.getContext('2d');
+        tctx.drawImage(img, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+        tctx.globalCompositeOperation = 'source-atop';
+        tctx.globalAlpha = 0.42;
+        tctx.fillStyle = tint;
+        tctx.fillRect(0, 0, cv.width, cv.height);
+        tctx.globalAlpha = 1;
+        tctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(cv, x, y, w, h);
+    }
+
+    function drawProjectionThumb(ctx, a, draft, projection, onReady) {
+        var color = tintColorForThumb(a, draft);
         ctx.clearRect(0, 0, 72, 80);
+        if (projection === 'ascii') {
+            ctx.fillStyle = color || '#9aa4b2';
+            ctx.font = '42px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('@', 36, 43);
+            return;
+        }
+        if (projection === 'iso') {
+            ctx.imageSmoothingEnabled = true;
+            ctx.fillStyle = '#705842';
+            ctx.beginPath();
+            ctx.moveTo(36, 54);
+            ctx.lineTo(62, 42);
+            ctx.lineTo(36, 30);
+            ctx.lineTo(10, 42);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+            ctx.stroke();
+            var ch = isoCharacterForThumb(a, draft);
+            var rec = loadThumbImage(ch && ch.idle, onReady);
+            if (rec && rec.ready) {
+                var b = imageBounds(rec.img);
+                var dh = 52;
+                var dw = dh * (b.w / b.h);
+                drawTintedImage(ctx, rec.img, b, 36 - dw / 2, 74 - dh, dw, dh, color);
+            } else {
+                ctx.fillStyle = color || '#9aa4b2';
+                ctx.beginPath();
+                ctx.ellipse(36, 37, 8, 16, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#0a0c0f';
+                ctx.fillRect(32, 34, 8, 3);
+            }
+            return;
+        }
+        if (projection === '3d') {
+            ctx.imageSmoothingEnabled = true;
+            ctx.fillStyle = color || '#64748b';
+            ctx.beginPath();
+            ctx.ellipse(36, 45, 17, 24, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.28)';
+            ctx.beginPath();
+            ctx.ellipse(29, 34, 6, 9, -0.5, 0, Math.PI * 2);
+            ctx.fill();
+            if (a.kind === 'model3d') {
+                ctx.fillStyle = '#d7dbe0';
+                ctx.font = '15px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('3D', 36, 49);
+            }
+            return;
+        }
+    }
+
+    function drawBaseThumb(ctx, a, draft, projection, onReady) {
+        ctx.clearRect(0, 0, 72, 80);
+        if (projection && projection !== 'topdown') {
+            drawProjectionThumb(ctx, a, draft, projection, onReady);
+            return;
+        }
         if (a.kind === 'color') {
             ctx.beginPath(); ctx.arc(36, 44, 21, 0, Math.PI * 2);
             ctx.fillStyle = a.color; ctx.fill();
@@ -163,7 +326,11 @@
         cv.width = 72; cv.height = 80;
         cv.style.cssText = 'display:block;margin:0 auto;image-rendering:pixelated;';
         var ctx = cv.getContext('2d');
-        function draw() { drawBaseThumb(ctx, a, getDraft && getDraft(), draw); }
+        function draw() {
+            var d = getDraft && getDraft();
+            var projection = (d && d.__projection) || 'topdown';
+            drawBaseThumb(ctx, a, d, projection, draw);
+        }
         draw();
         if (redraw) redraw.push(draw);
         return cv;
@@ -266,8 +433,7 @@
         }
 
         function activeProjection() {
-            if (selectedMode === 'iso' || selectedMode === '3d' || selectedMode === 'ascii') return selectedMode;
-            return 'topdown';
+            return projectionForMode(selectedMode);
         }
 
         function ensureColorDraft() {
@@ -455,7 +621,9 @@
             selectedMode = mode.id;
             if (RK.saveMode) RK.saveMode(mode.id);
             markRenderMode();
+            buildAvatarGrid();
             renderEditor();
+            redrawAll();
         }
 
         function buildRenderModes() {
@@ -567,26 +735,74 @@
             redrawAll();
         }
 
-        RK.appearances().forEach(function (a) {
-            var card = document.createElement('button');
-            var locked = !!(RK.canUseAppearance && !RK.canUseAppearance(a));
-            card.type = 'button';
-            card.className = 'rk-option-card' + (locked ? ' is-locked' : '');
-            if (locked) card.title = 'Premium pack - buy credits to unlock';
-            card.appendChild(thumbCanvas(a, function () { return draft; }, redrawers));
-            var lab = document.createElement('div');
-            lab.className = 'rk-option-label';
-            lab.textContent = a.label + (a.premium ? ' *' : '');
-            card.appendChild(lab);
-            card.onclick = function () { selectAvatar(a); };
-            grid.appendChild(card);
-            cards[a.id] = card;
-        });
+        function visibleAppearances() {
+            var projection = activeProjection();
+            return RK.appearances().filter(function (a) {
+                return appearanceVisibleInProjection(a, projection);
+            });
+        }
+
+        function appearanceForId(list, id) {
+            for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+            return null;
+        }
+
+        function ensureVisibleAvatar() {
+            var list = visibleAppearances();
+            if (appearanceForId(list, draft.avatar)) return;
+            if (!list.length) return;
+            draft.avatar = list[0].id;
+            if (RK.isChar && RK.isChar(draft.avatar)) ensureCharDraft();
+            else if (draftKind() === 'model3d') {
+                ensureColorDraft();
+                draft.equipment = cloneEquipment(DEFAULT_EQUIPMENT);
+            } else {
+                draft.tint = 'none';
+                draft.equipment = cloneEquipment(DEFAULT_EQUIPMENT);
+                delete draft.colors;
+            }
+        }
+
+        function buildAvatarGrid() {
+            ensureVisibleAvatar();
+            grid.innerHTML = '';
+            cards = {};
+            redrawers = [];
+            visibleAppearances().forEach(function (a) {
+                var card = document.createElement('button');
+                var locked = !!(RK.canUseAppearance && !RK.canUseAppearance(a));
+                card.type = 'button';
+                card.className = 'rk-option-card' + (locked ? ' is-locked' : '');
+                if (locked) card.title = 'Premium pack - buy credits to unlock';
+                card.appendChild(thumbCanvas(a, function () {
+                    var d = {};
+                    for (var dk in draft) d[dk] = draft[dk];
+                    d.__projection = activeProjection();
+                    return d;
+                }, redrawers));
+                var lab = document.createElement('div');
+                lab.className = 'rk-option-label';
+                lab.textContent = a.label + (a.premium ? ' *' : '');
+                card.appendChild(lab);
+                card.onclick = function () { selectAvatar(a); };
+                grid.appendChild(card);
+                cards[a.id] = card;
+            });
+            mark();
+        }
 
         function drawPreview() {
             pctx.clearRect(0, 0, preview.width, preview.height);
             var base = baseAppearance(draft.avatar);
-            if (base.kind === 'color') {
+            var projection = activeProjection();
+            if (projection !== 'topdown') {
+                var temp = document.createElement('canvas');
+                temp.width = 72;
+                temp.height = 80;
+                drawProjectionThumb(temp.getContext('2d'), base, draft, projection, redrawAll);
+                pctx.imageSmoothingEnabled = projection !== 'ascii';
+                pctx.drawImage(temp, 0, 0, 72, 80, 21, 12, 108, 120);
+            } else if (base.kind === 'color') {
                 pctx.beginPath(); pctx.arc(75, 86, 34, 0, Math.PI * 2);
                 pctx.fillStyle = base.color; pctx.fill();
                 pctx.lineWidth = 3; pctx.strokeStyle = 'rgba(255,255,255,0.35)'; pctx.stroke();
@@ -610,10 +826,12 @@
                     pctx.drawImage(rec.img, 0, row * s.frameH, s.frameW, s.frameH, 75 - dw / 2, 158 - dh, dw, dh);
                 }
             } else {
-                drawBaseThumb(pctx, base, draft, redrawAll);
+                drawBaseThumb(pctx, base, draft, 'topdown', redrawAll);
             }
             previewName.textContent = base.label || base.id;
-            previewMeta.textContent = base.premium ? 'Premium pack' : (base.kind === 'char' ? 'Customizable' : 'Free');
+            previewMeta.textContent = projection !== 'topdown'
+                ? (projection.toUpperCase() + ' identity')
+                : (base.premium ? 'Premium pack' : (base.kind === 'char' ? 'Customizable' : 'Free'));
         }
 
         function redrawAll() {
@@ -638,7 +856,7 @@
 
         document.body.appendChild(wrap);
         buildRenderModes();
-        mark();
+        buildAvatarGrid();
         renderEditor();
         redrawAll();
     };

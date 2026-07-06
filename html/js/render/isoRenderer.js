@@ -17,6 +17,7 @@
         this.ctx = this.canvas.getContext('2d');
         this.cache = {};
         this.tintCache = {};
+        this.boundsCache = {};
         this.last = {};
         this.lastScene = null;
         this.enabled = !(root.RK && RK.canUsePack && this.assets.pack && !RK.canUsePack(this.assets.pack));
@@ -65,6 +66,40 @@
         this.ctx.drawImage(img, cx - w / 2, baseY - h, w, h);
     };
 
+    IsoRenderer.prototype._imageBounds = function (img) {
+        if (!img) return null;
+        var key = img.src || img._rkBoundsKey || null;
+        if (key && this.boundsCache[key]) return this.boundsCache[key];
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        var cv = document.createElement('canvas');
+        cv.width = w;
+        cv.height = h;
+        var ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        var data = ctx.getImageData(0, 0, w, h).data;
+        var minX = w, minY = h, maxX = -1, maxY = -1;
+        for (var y = 0; y < h; y++) {
+            for (var x = 0; x < w; x++) {
+                if (data[(y * w + x) * 4 + 3] < 8) continue;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+        var bounds = maxX < minX ? { x: 0, y: 0, w: w, h: h } : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+        if (key) this.boundsCache[key] = bounds;
+        return bounds;
+    };
+
+    IsoRenderer.prototype._drawSpriteImage = function (img, cx, baseY, h) {
+        var b = this._imageBounds(img);
+        if (!b) return;
+        var w = h * (b.w / b.h);
+        this.ctx.drawImage(img, b.x, b.y, b.w, b.h, cx - w / 2, baseY - h, w, h);
+    };
+
     IsoRenderer.prototype._tintedImage = function (img, tint) {
         if (!img || !tint) return img;
         var key = img.src + '|' + tint;
@@ -80,6 +115,7 @@
         ctx.fillRect(0, 0, cv.width, cv.height);
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = 'source-over';
+        cv._rkBoundsKey = key;
         this.tintCache[key] = cv;
         return cv;
     };
@@ -163,7 +199,7 @@
                     var tint = root.RK && RK.avatarVisuals && RK.avatarVisuals.tintColorFor
                         ? RK.avatarVisuals.tintColorFor(frame.visual && frame.visual.appearance)
                         : null;
-                    this._drawImage(this._tintedImage(rec.img, tint), it.sx, it.sy + this.tileH * 0.95, ch.imageW || 74, ch.imageH || 148);
+                    this._drawSpriteImage(this._tintedImage(rec.img, tint), it.sx, it.sy + this.tileH * 0.95, ch.imageH || 92);
                 } else {
                     ctx.beginPath();
                     ctx.arc(it.sx, it.sy, 8, 0, Math.PI * 2);
@@ -195,6 +231,7 @@
         this.ctx = null;
         this.cache = {};
         this.tintCache = {};
+        this.boundsCache = {};
         this.last = {};
         this.lastScene = null;
     };

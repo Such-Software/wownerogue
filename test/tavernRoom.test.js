@@ -23,6 +23,20 @@ describe('Room — shared real-time engine (Tavern instance)', () => {
         expect(ids).toEqual(['alice', 'bob']);
     });
 
+    test('full state includes walkability for designed rooms without ASCII layout', () => {
+        const room = new Room({
+            id: 'designed',
+            roomData: {
+                cols: 2,
+                rows: 2,
+                walkable: [[true, false], [false, true]]
+            }
+        });
+        const state = room.fullState();
+        expect(state.layout).toBeNull();
+        expect(state.walkable).toEqual([[true, false], [false, true]]);
+    });
+
     test('server-authoritative movement: a valid step moves and sets facing', () => {
         const room = new Room({ id: 'r' });
         const occ = room.addOccupant('alice');
