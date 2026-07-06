@@ -133,17 +133,19 @@ const SocketHandlers = {
         socket.on('queue_cancelled', this.onQueueCancelled);
         
         // Payment/Address handlers
-    socket.on('address_detected', this.onAddressDetected);
-    socket.on('address_confirmed', this.onAddressConfirmed);
-    socket.on('address_update_error', this.onAddressUpdateError);
-    socket.on('address_prompt', this.onAddressPrompt);
+        socket.on('address_detected', this.onAddressDetected);
+        socket.on('address_confirmed', this.onAddressConfirmed);
+        socket.on('address_update_error', this.onAddressUpdateError);
+        socket.on('address_prompt', this.onAddressPrompt);
         socket.on('game_mode_info', this.onGameModeInfo);
         socket.on('payment_created', this.onPaymentCreated);
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
         socket.on('show_payment_options', this.onShowPaymentOptions);
         socket.on('balance_critical', this.onBalanceCritical);
-    socket.on('credits_update', this.onCreditsUpdate);
+        socket.on('credits_update', this.onCreditsUpdate);
+        socket.on('identity_update', this.onIdentityUpdate);
+        socket.on('identity_error', this.onIdentityError);
         socket.on('user_count', this.onUserCount);
         
         // Block height handler
@@ -205,6 +207,7 @@ const SocketHandlers = {
             clientId: socket.id,
             userAgent: navigator.userAgent
         });
+        socket.emit('identity:get');
         // Update small status banner immediately
         SocketHandlers._setBannerStatus('Connected', '#0f0');
     },
@@ -228,6 +231,12 @@ const SocketHandlers = {
         if (data && typeof data.credits === 'number') {
             SocketHandlers._updateCreditsDisplay(data.credits);
         }
+        if (typeof SinglePlayerAvatar !== 'undefined') {
+            SinglePlayerAvatar.applyEntitlements({
+                credits: data && data.credits,
+                totalCreditsPurchased: data && data.totalCreditsPurchased
+            });
+        }
         if (data && data.payoutAddress) {
             $('#messages').append($('<li class="address-confirmed" style="color:#0f0;">').text('Payout address restored.'));
             UI.scrollChat();
@@ -244,6 +253,27 @@ const SocketHandlers = {
         if (!data) return;
         if (typeof data.balance === 'number') {
             SocketHandlers._updateCreditsDisplay(data.balance);
+        }
+        if (typeof SinglePlayerAvatar !== 'undefined') {
+            SinglePlayerAvatar.applyEntitlements({
+                credits: data.balance,
+                balance: data.balance,
+                totalCreditsPurchased: data.totalCreditsPurchased,
+                total_credits_purchased: data.total_credits_purchased
+            });
+        }
+    },
+
+    onIdentityUpdate: function(data) {
+        if (typeof SinglePlayerAvatar !== 'undefined') {
+            SinglePlayerAvatar.applyIdentity(data);
+        }
+    },
+
+    onIdentityError: function(data) {
+        if (data && data.message) {
+            $('#messages').append($('<li class="error" style="color:#f66;">').text(data.message));
+            UI.scrollChat();
         }
     },
 
@@ -682,6 +712,9 @@ const SocketHandlers = {
         SocketHandlers._cryptoType = data.cryptoType || 'WOW';
         SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
+        if (data.entitlements && typeof SinglePlayerAvatar !== 'undefined') {
+            SinglePlayerAvatar.applyEntitlements(data.entitlements);
+        }
 
         // Mode availability (Solo / Tavern / Multiplayer). Backward compatible: if the server
         // doesn't send `modes`, assume solo-only (the historical behavior).

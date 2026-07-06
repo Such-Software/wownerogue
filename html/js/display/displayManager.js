@@ -115,6 +115,9 @@ var DisplayManager = {
     clearDisplay: function() {
         if (!this.ensureDisplay()) return;
         this.forceClearToBlack();
+        if (window.SinglePlayerAvatar && window.SinglePlayerAvatar.clearOverlay) {
+            window.SinglePlayerAvatar.clearOverlay();
+        }
     }
 };
 

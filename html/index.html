@@ -71,6 +71,12 @@
     <script src="js/display/renderEngine.js"></script>
     <script src="js/core/gameState.js"></script>
     <script src="js/core/game.js"></script>
+    <script src="js/render/atlas.js"></script>
+    <script src="js/render/skins.js"></script>
+    <script src="js/render/charSprites.js"></script>
+    <script src="js/render/assetPacks.js"></script>
+    <script src="js/render/charCustomize.js"></script>
+    <script src="js/core/singlePlayerAvatar.js"></script>
     
     <!-- Other modules -->
     <script src="js/ui/ui.js"></script>
@@ -110,6 +116,9 @@
             </button>
             <button id="tavernButton" style="background: #2a0a3a; color: #d8b4fe; border: 2px solid #a855f7; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;" onclick="window.location.href='/tavern'">
                 🍺 <span class="lbl-full">TAVERN</span><span class="lbl-short">TAVERN</span>
+            </button>
+            <button id="characterButton" style="background: #163044; color: #a7d8ff; border: 2px solid #5aa7d8; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px;">
+                🧍 <span id="characterButtonLabel" class="lbl-full">CHARACTER</span><span class="lbl-short">CHAR</span>
             </button>
             <button id="shopButton" style="background: #004400; color: #0f0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
                 🛒 SHOP
@@ -355,6 +364,10 @@
                     }, 50);
                 } else {
                     console.error("Game object not found!");
+                }
+
+                if (typeof SinglePlayerAvatar !== 'undefined') {
+                    SinglePlayerAvatar.init();
                 }
                 
                 // Initialize SocketHandlers (CRITICAL for receiving game_start events!)

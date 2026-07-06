@@ -40,6 +40,9 @@ var RenderEngine = {
         const playerWY = player.y;
         const centerX = Math.floor(this._screenWidth / 2);
         const centerY = Math.floor(this._screenHeight / 2);
+        const avatarOverlayReady = !!(window.SinglePlayerAvatar &&
+            window.SinglePlayerAvatar.canDrawPlayer &&
+            window.SinglePlayerAvatar.canDrawPlayer(gameState));
 
         const topLeftWX = playerWX - centerX;
         const topLeftWY = playerWY - centerY;
@@ -222,10 +225,12 @@ var RenderEngine = {
                 
                 // Render player (always on top)
                 if (wx === playerWX && wy === playerWY) {
-                    charStack.push(playerTile); 
-                    // Don't apply shadows to player - keep them clearly visible
-                    fgStack.push("transparent");
-                    bgStack.push("transparent");
+                    if (!avatarOverlayReady) {
+                        charStack.push(playerTile);
+                        // Don't apply shadows to player - keep them clearly visible
+                        fgStack.push("transparent");
+                        bgStack.push("transparent");
+                    }
                 }
                 
                 if (charStack.length > 0) {
@@ -250,6 +255,14 @@ var RenderEngine = {
                     }
                 }
             }
+        }
+
+        if (avatarOverlayReady && window.SinglePlayerAvatar.drawPlayer) {
+            window.SinglePlayerAvatar.drawPlayer(gameState, {
+                screenX: centerX,
+                screenY: centerY,
+                cell: window.options ? window.options.tileWidth : 32
+            });
         }
 
         // Render message at bottom if present
