@@ -4,6 +4,7 @@
  */
 
 const ChatHistoryManager = require('./chatHistoryManager');
+const SocketChatProvider = require('./chat/SocketChatProvider');
 const { clientIp, stableId } = require('./rateLimitContext');
 
 class ChatHandler {
@@ -23,7 +24,18 @@ class ChatHandler {
             debugManager: debugManager,
             maxHistoryMessages: 50
         });
-        
+
+        // Chat delivery + history go through a ChatProvider seam so the backend is swappable
+        // (e.g. a Nostr channel later). The default provider shares the ChatHistoryManager
+        // instance above, so ban checks / stats that read this.chatHistory keep working and
+        // lifecycle (initialize/shutdown) stays owned here.
+        this.chatProvider = new SocketChatProvider({
+            io: this.io,
+            broadcastManager: this.broadcastManager,
+            debugManager: this.debugManager,
+            historyManager: this.chatHistory
+        });
+
         // Memory leak prevention - cleanup old timestamps
         this._chatLastSent = new Map();
         this.chatCleanupInterval = setInterval(() => this.cleanupChatTimestamps(), 300000); // 5 minutes
@@ -45,7 +57,7 @@ class ChatHandler {
      */
     async sendChatHistoryToUser(socketId, messageCount = 50) {
         try {
-            const messages = await this.chatHistory.getRecentMessages(messageCount);
+            const messages = await this.chatProvider.getHistory({ scope: 'global', limit: messageCount });
             if (messages.length > 0) {
                 this.io.to(socketId).emit('chat_history', { messages });
                 if (this.debugManager?.CONSOLE_LOGGING) {
@@ -319,18 +331,16 @@ class ChatHandler {
             .slice(0, MAX_MESSAGE_LENGTH);
         const username = socket.id.substring(0, 6);
 
-        // Save message to history with user_id (async, don't block broadcast)
-        this.chatHistory.saveMessage({
-            socketId: socket.id,
+        // Deliver + persist through the chat provider (global scope). The provider saves to
+        // history (fire-and-forget) and broadcasts, matching the previous inline behaviour.
+        await this.chatProvider.publish({
+            scope: 'global',
             username: username,
-            message: safe,
-            type: 'chat',
+            text: safe,
+            ts: now,
+            socketId: socket.id,
             userId: userId
-        }).catch(err => {
-            console.error('Failed to save chat message:', err.message);
         });
-
-        this.broadcastManager.broadcastChatMessage(username, safe, now, socket.id);
     }
 
     /**

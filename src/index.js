@@ -74,7 +74,7 @@ app.use((req, res, next) => {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data:",
         "font-src 'self'",
-        "connect-src 'self' https://smirk.cash",
+        "connect-src 'self' https://smirk.cash https://cdn.socket.io https://cdn.jsdelivr.net",
         "object-src 'none'",
         "base-uri 'self'",
         "frame-ancestors 'self'",
@@ -102,6 +102,11 @@ app.use(express.json()); // Parse JSON for API endpoints
 // Serve main page
 app.get('/', function(req, res) {
    res.sendFile('index.html', { root: htmlPath });
+});
+
+// Human-friendly tavern route. The static file remains /tavern.html for direct asset serving.
+app.get(['/tavern', '/tavern/'], function(req, res) {
+   res.sendFile('tavern.html', { root: htmlPath });
 });
 
 // Serve admin panel

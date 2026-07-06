@@ -16,6 +16,8 @@ const {
 const { ValidationError, normalizeError } = require('../utils/errors');
 const paymentConfig = require('../config/paymentConfig');
 const money = require('../money/atomic');
+const Entitlements = require('../multiplayer/entitlements');
+const ProductGrants = require('../payments/productGrants');
 
 // A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it
 // is SAFE to retry (no double-pay risk) — unlike an ambiguous post-broadcast failure. Monero
@@ -263,6 +265,17 @@ class GameModeManager {
         };
     }
 
+    getCosmeticProducts() {
+        const products = this.configSnapshot?.products?.cosmetic;
+        return Array.isArray(products) ? products : [];
+    }
+
+    getCosmeticProduct(productId) {
+        const products = this.getCosmeticProducts();
+        if (!productId) return products[0] || null;
+        return products.find(p => p.id === productId) || null;
+    }
+
     calculatePayout(mode, { treasureFound = false } = {}) {
         const normalizedMode = (mode || this.gameMode || 'FREE').toUpperCase();
         const usingCredits = normalizedMode === 'PAID_CREDITS';
@@ -292,12 +305,14 @@ class GameModeManager {
      * @param {object} packageInfo - Package info (credits, bonus, etc.)
      * @returns {object} Result with success, creditsAdded, newBalance, alreadyProcessed
      */
-    async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null, receivedAmount = null) {
+    async processProductPaymentConfirmation(socketId, paymentId, productInfo = null, receivedAmount = null) {
         try {
             // Look up user from payment record's user_id (stable across socket reconnects)
             // This avoids the bug where socket ID changes if user refreshes during confirmation
             const paymentLookup = await this.db.query(`
-                SELECT user_id, description, status FROM payments WHERE id = $1
+                SELECT user_id, description, status, payment_type, product_id, product_grants
+                FROM payments
+                WHERE id = $1
             `, [paymentId]);
 
             if (paymentLookup.rows.length === 0) {
@@ -312,18 +327,29 @@ class GameModeManager {
             }
 
             const userId = paymentLookup.rows[0].user_id;
+            const paymentRow = paymentLookup.rows[0];
 
             // Determine credits to add from package info or payment description
-            let creditsToAdd = 10; // Default fallback
-            if (packageInfo && packageInfo.credits) {
-                creditsToAdd = Number(packageInfo.credits) + (Number(packageInfo.bonus) || 0);
+            const paymentType = paymentRow.payment_type || 'credits_package';
+            let fallbackCredits = paymentType === 'credits_package' ? 10 : 0;
+            if (productInfo && productInfo.credits) {
+                fallbackCredits = Number(productInfo.credits) + (Number(productInfo.bonus) || 0);
             } else {
                 const desc = paymentLookup.rows[0].description || '';
                 const match = desc.match(/(\d+)\s*credits?/i);
                 if (match) {
-                    creditsToAdd = parseInt(match[1], 10) || 10;
+                    fallbackCredits = parseInt(match[1], 10) || fallbackCredits;
                 }
             }
+            const durableProduct = {
+                id: paymentRow.product_id,
+                grants: paymentRow.product_grants || undefined
+            };
+            const product = productInfo || durableProduct;
+            const productGrants = ProductGrants.normalizeProductGrants(product, { credits: fallbackCredits });
+            const creditsToAdd = productGrants.credits;
+            const productId = product?.id || paymentRow.product_id || paymentType;
+            const grantJson = ProductGrants.serializeProductGrants(productGrants);
 
             // CRITICAL: Wrap all three operations in a transaction.
             // If any step fails, the payment stays 'pending' and can be recovered.
@@ -334,35 +360,71 @@ class GameModeManager {
                     SET status = 'confirmed',
                         credits_purchased = $1,
                         confirmed_at = NOW(),
-                        received_amount = COALESCE($3, received_amount)
+                        received_amount = COALESCE($3, received_amount),
+                        product_id = COALESCE(product_id, $4),
+                        product_grants = $5::jsonb
                     WHERE id = $2 AND status = 'pending'
                     RETURNING id
-                `, [creditsToAdd, paymentId, receivedAmount]);
+                `, [creditsToAdd, paymentId, receivedAmount, productId, JSON.stringify(grantJson)]);
 
                 if (paymentUpdateResult.rows.length === 0) {
                     // Already processed by another instance - not an error
                     return { alreadyProcessed: true };
                 }
 
-                // Step 2: Add credits to user (using payment's user_id, not socket lookup)
+                // Step 2: Add credits / premium tier to user (using payment's user_id, not socket lookup)
                 const updateResult = await client.query(`
                     UPDATE users
                     SET credits = credits + $1,
                         total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1,
+                        premium_level = CASE
+                            WHEN $3::text IS NULL THEN premium_level
+                            ELSE $3::text
+                        END,
                         updated_at = NOW()
                     WHERE id = $2
-                    RETURNING credits
-                `, [creditsToAdd, userId]);
+                    RETURNING id, credits, total_credits_purchased, premium_level
+                `, [creditsToAdd, userId, productGrants.premiumLevel]);
 
                 const newBalance = updateResult.rows[0]?.credits ?? creditsToAdd;
+                const totalCreditsPurchased = updateResult.rows[0]?.total_credits_purchased ?? creditsToAdd;
+                const premiumLevel = updateResult.rows[0]?.premium_level || 'free';
 
-                // Step 3: Record credit transaction for audit trail
-                await client.query(`
-                    INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
-                    VALUES ($1, $2, 'package_purchase', $3, 'purchase')
-                `, [userId, creditsToAdd, newBalance]);
+                // Step 3: Record credit transaction for audit trail when credits were granted.
+                if (creditsToAdd > 0) {
+                    await client.query(`
+                        INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                        VALUES ($1, $2, 'package_purchase', $3, 'purchase')
+                    `, [userId, creditsToAdd, newBalance]);
+                }
 
-                return { newBalance };
+                // Step 4: Grant cosmetic/render packs. Idempotent so retrying a confirmed
+                // product cannot duplicate entitlements.
+                for (const pack of productGrants.packs) {
+                    await client.query(`
+                        INSERT INTO user_pack_entitlements (user_id, pack_id, source, expires_at, metadata)
+                        VALUES ($1, $2, $3, $4, $5::jsonb)
+                        ON CONFLICT (user_id, pack_id) DO UPDATE
+                        SET source = EXCLUDED.source,
+                            expires_at = EXCLUDED.expires_at,
+                            metadata = user_pack_entitlements.metadata || EXCLUDED.metadata
+                    `, [
+                        userId,
+                        pack.id,
+                        pack.source || 'product_purchase',
+                        pack.expiresAt || null,
+                        JSON.stringify({ productId, paymentId })
+                    ]);
+                }
+
+                const grantRows = await client.query(`
+                    SELECT pack_id
+                    FROM user_pack_entitlements
+                    WHERE user_id = $1
+                      AND (expires_at IS NULL OR expires_at > NOW())
+                `, [userId]);
+
+                return { newBalance, totalCreditsPurchased, premiumLevel, packGrants: grantRows.rows || [] };
             });
 
             if (result.alreadyProcessed) {
@@ -370,16 +432,26 @@ class GameModeManager {
                 return { success: false, alreadyProcessed: true, reason: 'Payment already processed' };
             }
 
-            console.log(`Credits package confirmed: +${creditsToAdd} credits for user ${userId}, new balance: ${result.newBalance}`);
+            const entitlements = Entitlements.snapshotForUser({
+                id: userId,
+                credits: result.newBalance,
+                total_credits_purchased: result.totalCreditsPurchased,
+                premium_level: result.premiumLevel
+            }, result.packGrants);
+
+            console.log(`Product payment confirmed: ${productId} (+${creditsToAdd} credits) for user ${userId}, new balance: ${result.newBalance}`);
 
             return {
                 success: true,
                 creditsAdded: creditsToAdd,
-                newBalance: result.newBalance
+                newBalance: result.newBalance,
+                totalCreditsPurchased: result.totalCreditsPurchased,
+                grantsApplied: grantJson,
+                entitlements
             };
         } catch (error) {
-            const normalized = normalizeError(error, 'Failed to process credits package confirmation');
-            console.error('Error processing credits package:', normalized.message);
+            const normalized = normalizeError(error, 'Failed to process product payment confirmation');
+            console.error('Error processing product payment:', normalized.message);
             return {
                 success: false,
                 reason: normalized.safeMessage
@@ -387,18 +459,23 @@ class GameModeManager {
         }
     }
 
-    async _findReusablePayment(userId, paymentType) {
+    async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null, receivedAmount = null) {
+        return this.processProductPaymentConfirmation(socketId, paymentId, packageInfo, receivedAmount);
+    }
+
+    async _findReusablePayment(userId, paymentType, productId = null) {
         if (!userId) return null;
         const result = await this.db.query(`
-            SELECT id, subaddress, expected_amount, payment_type, status, created_at, expires_at, description
+            SELECT id, subaddress, expected_amount, payment_type, status, created_at, expires_at, description, product_id, product_grants
             FROM payments
             WHERE user_id = $1
               AND payment_type = $2
+              AND ($3::text IS NULL OR product_id = $3)
               AND status = 'pending'
               AND (expires_at IS NULL OR expires_at > NOW())
             ORDER BY created_at DESC
             LIMIT 1
-        `, [userId, paymentType]);
+        `, [userId, paymentType, productId || null]);
         return result.rows[0] || null;
     }
 
@@ -409,7 +486,10 @@ class GameModeManager {
         if (!packageInfo) return null;
         return {
             ...packageInfo,
-            price: typeof packageInfo.price === 'bigint' ? Number(packageInfo.price) : packageInfo.price
+            price: typeof packageInfo.price === 'bigint' ? Number(packageInfo.price) : packageInfo.price,
+            grants: ProductGrants.publicGrantSummary(ProductGrants.normalizeProductGrants(packageInfo, {
+                credits: Number(packageInfo.credits || 0) + Number(packageInfo.bonus || 0)
+            }))
         };
     }
 
@@ -425,6 +505,8 @@ class GameModeManager {
             expiresAt: row.expires_at,
             paymentType,
             description: row.description,
+            productId: row.product_id || null,
+            grants: row.product_grants || null,
             package: this._serializePackageInfo(packageInfo),
             reused: true
         };
@@ -823,7 +905,7 @@ class GameModeManager {
                     total_games_played = total_games_played + 1,
                     updated_at = NOW()
                 WHERE id = $2 AND credits >= $1
-                RETURNING credits
+                RETURNING credits, total_credits_purchased
             `, [creditsToSpend, user.id]);
 
             if (updateRes.rows.length === 0) {
@@ -831,6 +913,7 @@ class GameModeManager {
             }
 
             const remainingCredits = updateRes.rows[0].credits;
+            const totalCreditsPurchased = updateRes.rows[0].total_credits_purchased || user.total_credits_purchased || 0;
 
             await client.query(`
                 UPDATE games SET game_mode = 'PAID_CREDITS', payout_address = $2,
@@ -844,7 +927,7 @@ class GameModeManager {
                 VALUES ($1, $2, 'game_entry', $3, 'spend')
             `, [user.id, -creditsToSpend, remainingCredits]);
 
-            return { remainingCredits };
+            return { remainingCredits, totalCreditsPurchased };
         });
 
         if (result.insufficient) {
@@ -861,6 +944,7 @@ class GameModeManager {
         return {
             success: true,
             creditsRemaining: result.remainingCredits,
+            totalCreditsPurchased: result.totalCreditsPurchased,
             creditsSpent: creditsToSpend,
             effectiveMode: 'PAID_CREDITS'
         };
@@ -915,11 +999,14 @@ class GameModeManager {
             let amount;
             let description;
             let packageInfo = null;
+            let productId = null;
+            let productGrants = ProductGrants.normalizeProductGrants({}, { credits: 0 });
 
             switch (paymentType) {
                 case 'single_game': {
                     amount = this.singleGamePrice;
                     description = `${this.gameName} single game entry (${this.currencyLabel})`;
+                    productId = 'single_game';
                     break;
                 }
                 case 'credits_package': {
@@ -939,10 +1026,29 @@ class GameModeManager {
                     const packagePrice = selectedPackage?.price ?? this.creditsPackagePrice;
                     amount = typeof packagePrice === 'bigint' ? Number(packagePrice) : Number(packagePrice);
                     packageInfo = selectedPackage;
+                    productId = selectedPackage?.id || 'credits_package';
                     const creditCount = selectedPackage?.credits ?? 10;
                     const bonusCredits = selectedPackage?.bonus ?? 0;
+                    productGrants = ProductGrants.normalizeProductGrants(selectedPackage, {
+                        credits: Number(creditCount) + Number(bonusCredits || 0)
+                    });
                     const bonusText = bonusCredits > 0 ? ` (+${bonusCredits} bonus)` : '';
                     description = `${this.gameName} ${creditCount}${bonusText} credits package (${this.currencyLabel})`;
+                    break;
+                }
+                case 'cosmetic_pack': {
+                    const product = this.getCosmeticProduct(options.productId || options.packageId);
+                    if (!product) {
+                        throw new ValidationError('Unknown cosmetic product requested', {
+                            safeMessage: 'Unsupported product requested.'
+                        });
+                    }
+                    const price = product.price ?? 0;
+                    amount = typeof price === 'bigint' ? Number(price) : Number(price);
+                    packageInfo = product;
+                    productId = product.id;
+                    productGrants = ProductGrants.normalizeProductGrants(product, { credits: 0 });
+                    description = `${this.gameName} ${product.label || product.id} (${this.currencyLabel})`;
                     break;
                 }
                 default:
@@ -952,7 +1058,7 @@ class GameModeManager {
             }
 
             if (reuseExisting) {
-                const existingRow = await this._findReusablePayment(user.id, paymentType);
+                const existingRow = await this._findReusablePayment(user.id, paymentType, productId);
                 if (existingRow) {
                     const existing = this._mapPaymentRowToRequest(existingRow, paymentType, packageInfo);
                     if (existing && !existing.description) {
@@ -983,10 +1089,21 @@ class GameModeManager {
 
             // Store payment info in database (address_index enables monitoring restoration after restart)
             const insertResult = await this.db.query(`
-                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, description, created_at, expires_at, address_index)
-                VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7, $8)
+                INSERT INTO payments (user_id, socket_id, subaddress, expected_amount, payment_type, status, description, created_at, expires_at, address_index, product_id, product_grants)
+                VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7, $8, $9, $10::jsonb)
                 RETURNING id, expires_at
-            `, [user.id, socketId, paymentResult.address, amount, paymentType, description, expiresAt, paymentResult.addressIndex ?? null]);
+            `, [
+                user.id,
+                socketId,
+                paymentResult.address,
+                amount,
+                paymentType,
+                description,
+                expiresAt,
+                paymentResult.addressIndex ?? null,
+                productId,
+                JSON.stringify(ProductGrants.serializeProductGrants(productGrants))
+            ]);
 
             const insertedRow = insertResult.rows[0];
             
@@ -999,6 +1116,8 @@ class GameModeManager {
                 expiresAt: insertedRow?.expires_at || expiresAt,
                 package: this._serializePackageInfo(packageInfo),
                 paymentType,
+                productId,
+                grants: ProductGrants.publicGrantSummary(productGrants),
                 description,
                 reused: false,
                 expiredAddresses
@@ -1150,11 +1269,25 @@ class GameModeManager {
         const packages = this.configSnapshot?.modes?.credits?.packages || [];
         const creditPackages = packages.map(pkg => ({
             id: pkg.id,
+            label: pkg.label || pkg.id,
             credits: pkg.credits,
             price: typeof pkg.price === 'bigint' ? Number(pkg.price) : pkg.price,
             bonus: pkg.bonus || 0,
+            grants: ProductGrants.publicGrantSummary(ProductGrants.normalizeProductGrants(pkg, {
+                credits: Number(pkg.credits || 0) + Number(pkg.bonus || 0)
+            })),
             priceFormatted: this.formatAtomicHuman(
                 typeof pkg.price === 'bigint' ? Number(pkg.price) : pkg.price, 
+                2
+            )
+        }));
+        const cosmeticProducts = this.getCosmeticProducts().map(product => ({
+            id: product.id,
+            label: product.label || product.id,
+            price: typeof product.price === 'bigint' ? Number(product.price) : product.price,
+            grants: ProductGrants.publicGrantSummary(ProductGrants.normalizeProductGrants(product, { credits: 0 })),
+            priceFormatted: this.formatAtomicHuman(
+                typeof product.price === 'bigint' ? Number(product.price) : product.price,
                 2
             )
         }));
@@ -1172,6 +1305,7 @@ class GameModeManager {
             creditsPackagePrice: this.creditsPackagePrice,
             creditsPerGame: this.creditsPerGameCost,
             creditPackages: creditPackages,
+            cosmeticProducts: cosmeticProducts,
             creditsPayoutBaseValue: this.creditsPayoutBaseValue,
             paymentsEnabled: this.paymentsEnabled,
             freePlayEnabled: this.freePlayEnabled,
@@ -1196,7 +1330,15 @@ class GameModeManager {
             // Smirk wallet integration. Smirk only works on mainnet, so it is forced off on
             // any test network (stagenet/testnet) regardless of SMIRK_ENABLED.
             smirkEnabled: process.env.SMIRK_ENABLED !== 'false' && !this.isTestNetwork,
-            explorerTxUrl: process.env.EXPLORER_TX_URL || null
+            explorerTxUrl: process.env.EXPLORER_TX_URL || null,
+            // Which top-level modes this instance offers. Solo (the single-player dungeon) is
+            // on unless explicitly disabled; Tavern and Multiplayer are opt-in. The client uses
+            // this to show/hide entry points, so any single mode can run on its own.
+            modes: {
+                solo: process.env.SOLO_ENABLED !== 'false',
+                tavern: process.env.TAVERN_ENABLED === 'true',
+                multiplayer: process.env.MULTIPLAYER_ENABLED === 'true'
+            }
         };
     }
 

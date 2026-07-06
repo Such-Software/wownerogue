@@ -87,6 +87,12 @@ const DEFAULT_CONFIG = Object.freeze({
             happyHour: null
         }
     },
+    products: {
+        // Standalone products that do not grant a game entry. Example:
+        // { id: 'pack_3d', label: '3D Character Pack', price: 500000000000n,
+        //   grants: { packs: ['kenney-3d-characters'] } }
+        cosmetic: []
+    },
     limits: {
         maxGamesPerHour: 60,
         maxPayoutsPerDay: 100,
@@ -211,6 +217,31 @@ function safeParseJson(value, fallback) {
     }
 }
 
+function cloneGrantPayload(grants) {
+    if (!grants || typeof grants !== 'object') return undefined;
+    return cloneConfig(grants);
+}
+
+function normalizeConfiguredProduct(product, fallback = {}) {
+    if (!product || typeof product !== 'object') return null;
+    const id = product.id || fallback.id;
+    if (!id) return null;
+    const out = {
+        id,
+        label: product.label || fallback.label || id,
+        price: parseAtomicValue(product.price, fallback.price || 0n)
+    };
+    if (product.credits != null || fallback.credits != null) {
+        out.credits = parseInteger(product.credits, fallback.credits || 0);
+    }
+    if (product.bonus != null || fallback.bonus != null) {
+        out.bonus = parseInteger(product.bonus || 0, fallback.bonus || 0);
+    }
+    const grants = cloneGrantPayload(product.grants || fallback.grants);
+    if (grants) out.grants = grants;
+    return out;
+}
+
 class PaymentConfigManager {
     constructor(options = {}) {
         this.logger = options.logger || console;
@@ -274,12 +305,11 @@ class PaymentConfigManager {
 
         const packageJson = safeParseJson(process.env.CREDITS_PACKAGES, null);
         if (Array.isArray(packageJson) && packageJson.length > 0) {
-            config.modes.credits.packages = packageJson.map(pkg => ({
-                id: pkg.id,
-                credits: parseInteger(pkg.credits, 0),
-                price: parseAtomicValue(pkg.price, 0n),
-                bonus: parseInteger(pkg.bonus || 0, 0)
-            })).filter(pkg => pkg.id);
+            config.modes.credits.packages = packageJson.map(pkg => normalizeConfiguredProduct(pkg, {
+                credits: 0,
+                bonus: 0,
+                price: 0n
+            })).filter(pkg => pkg && pkg.id);
         } else if (process.env.CREDITS_PACKAGE_PRICE) {
             const overridePrice = parseAtomicValue(process.env.CREDITS_PACKAGE_PRICE, null);
             if (overridePrice !== null) {
@@ -287,6 +317,13 @@ class PaymentConfigManager {
                     index === 0 ? { ...pkg, price: overridePrice } : pkg
                 );
             }
+        }
+
+        const cosmeticProducts = safeParseJson(process.env.COSMETIC_PRODUCTS, null);
+        if (Array.isArray(cosmeticProducts)) {
+            config.products.cosmetic = cosmeticProducts
+                .map(product => normalizeConfiguredProduct(product, { price: 0n }))
+                .filter(Boolean);
         }
 
         config.payouts.enabled = parseBoolean(process.env.PAYOUTS_ENABLED, config.payouts.enabled);
@@ -383,6 +420,14 @@ class PaymentConfigManager {
                 if (pkg.credits <= 0) {
                     throw new Error(`Credit package ${pkg.id} has invalid credit count`);
                 }
+            }
+        }
+        for (const product of this.config.products.cosmetic || []) {
+            if (!product.id) {
+                throw new Error('Each cosmetic product requires an id');
+            }
+            if (product.price <= 0n) {
+                throw new Error(`Cosmetic product ${product.id} has invalid price`);
             }
         }
     }

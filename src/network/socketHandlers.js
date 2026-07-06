@@ -16,6 +16,8 @@ const ConnectionHandler = require('./connectionHandler');
 const ChatHandler = require('./chatHandler');
 const QueueHandler = require('./queueHandler');
 const SpectatorManager = require('./spectatorManager');
+const TavernManager = require('./tavernManager');
+const IdentityService = require('./identityService');
 const SuspendedGameManager = require('./suspendedGameManager');
 const MemoryManager = require('../utils/memoryManager');
 const { normalizeError } = require('../utils/errors');
@@ -39,6 +41,7 @@ class SocketHandlers {
                 'game:queue': { window: 30000, max: 5 },
                 'chat:message': { window: 10000, max: 12 },
                 'address:set': { window: 300000, max: 3 },
+                'identity:update': { window: 10000, max: 8 },
                 'connection:new': { window: 60000, max: 10 }
             }
         });
@@ -118,6 +121,13 @@ class SocketHandlers {
             sessionManager: this.sessionManager
         });
 
+        this.identityService = new IdentityService({
+            db: this.gameModeManager?.db,
+            gameModeManager: this.gameModeManager,
+            sessionManager: this.sessionManager,
+            debugManager: this.debugManager
+        });
+
         // Address / payout handling encapsulated in AddressManager
         this.addressManager = new AddressManager({
             gameModeManager: this.gameModeManager,
@@ -179,6 +189,25 @@ class SocketHandlers {
         
         // Wire spectator manager to game manager (for game over notifications)
         this.gameManager.setSpectatorManager(this.spectatorManager);
+
+        // Initialize tavern manager (social hangout mode). Inert unless TAVERN_ENABLED=true.
+        // Load the designed tavern room (imported .tmx); fall back to the procedural map if absent.
+        let tavernRoomData = null;
+        const tavernRoomUrl = 'assets/kenney/tavern_room.json';
+        try {
+            const roomPath = require('path').join(__dirname, '../../html', tavernRoomUrl);
+            tavernRoomData = JSON.parse(require('fs').readFileSync(roomPath, 'utf8'));
+        } catch (e) {
+            if (this.debugManager.CONSOLE_LOGGING) console.log('Tavern room JSON not found; using default map:', e.message);
+        }
+        this.tavernManager = new TavernManager({
+            io: this.io,
+            debugManager: this.debugManager,
+            roomData: tavernRoomData,
+            roomUrl: tavernRoomData ? tavernRoomUrl : null,
+            entitlementProvider: async (socket) => this._entitlementsForSocket(socket)
+        });
+        this.tavernManager.initialize();
 
         // Initialize suspended game manager for reconnection support
         this.suspendedGameManager = new SuspendedGameManager({
@@ -336,6 +365,9 @@ class SocketHandlers {
         if (this.gameModeManager) {
             socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
         }
+        this._emitIdentity(socket).catch(err => {
+            if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to send identity snapshot:', err.message);
+        });
 
         // Send chat history to new user
         if (this.chatHandler && typeof this.chatHandler.sendChatHistoryToUser === 'function') {
@@ -374,11 +406,15 @@ class SocketHandlers {
                     if (sessionUser) {
                         socket.emit('credits_update', {
                             balance: sessionUser.credits || 0,
+                            totalCreditsPurchased: sessionUser.total_credits_purchased || 0,
                             creditsPerGame: this.gameModeManager?.creditsPerGameCost || 1
                         });
                     }
                 } catch (e) { /* ignore — credits will update on next action */ }
             }
+            this._emitIdentity(socket).catch(err => {
+                if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to re-send identity snapshot:', err.message);
+            });
         });
         socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
         socket.on('play_free', () => this.handleAutoStart(socket, { free: true })); // Explicit free-play choice
@@ -391,11 +427,24 @@ class SocketHandlers {
         socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
         socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
         socket.on('address:update', (data) => this.handleAddressUpdate(socket, data));
+        socket.on('identity:get', () => this.handleIdentityGet(socket));
+        socket.on('identity:update', (data) => this.handleIdentityUpdate(socket, data));
         
         // Spectator handlers
         socket.on('get_active_games', (options) => this.handleGetActiveGames(socket, options));
         socket.on('spectate_game', (data) => this.handleSpectateGame(socket, data));
         socket.on('leave_spectate', () => this.handleLeaveSpectate(socket));
+
+        // Tavern handlers (social hangout mode; refused server-side unless enabled)
+        socket.on('tavern_join', (data) => {
+            Promise.resolve(this.tavernManager.join(socket, data)).catch(err => {
+                console.error('Tavern join failed:', err.message);
+                socket.emit('tavern_error', { message: 'Could not enter the tavern.' });
+            });
+        });
+        socket.on('tavern_move', (data) => this.tavernManager.move(socket, data));
+        socket.on('tavern_chat', (data) => this.tavernManager.chat(socket, data));
+        socket.on('tavern_leave', () => this.tavernManager.leave(socket));
     }
 
     /**
@@ -497,7 +546,10 @@ class SocketHandlers {
                 }
                 // Emit credits_update if credits were spent
                 if (startRes.creditsRemaining !== undefined) {
-                    this.io.to(socket.id).emit('credits_update', { balance: startRes.creditsRemaining });
+                    this.io.to(socket.id).emit('credits_update', {
+                        balance: startRes.creditsRemaining,
+                        totalCreditsPurchased: startRes.totalCreditsPurchased || 0
+                    });
                 }
             }
 
@@ -755,12 +807,57 @@ class SocketHandlers {
                 this.spectatorManager.handleDisconnect(socketId);
             }
 
+            // Clean up tavern presence
+            if (this.tavernManager) {
+                this.tavernManager.handleDisconnect(socketId);
+            }
+
             // Evict the cached session row LAST (after the suspend logic above read it),
             // so the sessions map doesn't grow unbounded with every socket ever seen.
             if (this.sessionManager?.removeSocket) {
                 this.sessionManager.removeSocket(socketId);
             }
         });
+    }
+
+    async _emitIdentity(socket, extra = {}) {
+        if (!this.identityService || !socket) return null;
+        const snapshot = await this.identityService.identityForSocket(socket);
+        socket.emit('identity_update', { ...snapshot, ...extra });
+        return snapshot;
+    }
+
+    async _entitlementsForSocket(socket) {
+        if (!this.identityService || !socket) return { premium: false, level: 'free', packs: {}, totalCreditsPurchased: 0 };
+        return this.identityService.entitlementsForSocket(socket);
+    }
+
+    async handleIdentityGet(socket) {
+        try {
+            await this._emitIdentity(socket);
+        } catch (err) {
+            socket.emit('identity_error', { message: 'Could not load character identity.' });
+        }
+    }
+
+    async handleIdentityUpdate(socket, data = {}) {
+        try {
+            const rlId = stableId(socket, this.sessionManager);
+            const rlIp = clientIp(socket);
+            const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'identity:update', rlIp);
+            if (!rateLimitResult.allowed) {
+                socket.emit('identity_error', { message: 'Character changes are temporarily rate limited.' });
+                return;
+            }
+            await this.rateLimiter.recordAttempt(rlId, 'identity:update', rlIp);
+
+            const input = data && data.appearance ? data.appearance : data;
+            const snapshot = await this.identityService.saveAppearanceForSocket(socket, input);
+            socket.emit('identity_update', { ...snapshot, saved: true });
+        } catch (err) {
+            const normalized = normalizeError(err, 'Failed to update character identity');
+            socket.emit('identity_error', { message: normalized.safeMessage || 'Could not save character identity.' });
+        }
     }
 
     /**
@@ -1082,7 +1179,8 @@ class SocketHandlers {
             chat: this.chatHandler.getStats(),
             games: this.gameManager.getStats(),
             queue: this.queueHandler.getStats(),
-            spectators: this.spectatorManager ? this.spectatorManager.getStats() : null
+            spectators: this.spectatorManager ? this.spectatorManager.getStats() : null,
+            tavern: this.tavernManager ? this.tavernManager.getStats() : null
         };
     }
 
@@ -1095,6 +1193,10 @@ class SocketHandlers {
         }
 
         // Shutdown components in reverse order of initialization
+        if (this.tavernManager) {
+            this.tavernManager.shutdown();
+        }
+
         if (this.spectatorManager) {
             this.spectatorManager.shutdown();
         }

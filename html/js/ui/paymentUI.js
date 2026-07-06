@@ -101,6 +101,43 @@ const PaymentUI = {
         return (atomicAmount / divisor).toFixed(decimals === 12 ? 4 : 2);
     },
 
+    escapeHtml: function(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+            return ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[ch];
+        });
+    },
+
+    grantLabel: function(packId) {
+        const pack = window.RK && window.RK.PACKS ? window.RK.PACKS[packId] : null;
+        const labels = {
+            'generated-skins': 'Premium skins',
+            'iso-dungeon': 'Isometric dungeon',
+            'kenney-3d-characters': '3D characters',
+            'roguelike-interior': 'Roguelike interior'
+        };
+        return (pack && pack.label) || labels[packId] || packId;
+    },
+
+    grantSummaryHtml: function(grants, options = {}) {
+        if (!grants) return '';
+        const parts = [];
+        if (options.includeCredits && Number(grants.credits || 0) > 0) {
+            parts.push(`${Number(grants.credits)} credits`);
+        }
+        (grants.packs || []).forEach(packId => parts.push(this.grantLabel(packId)));
+        if (grants.premiumLevel) {
+            parts.push(`${grants.premiumLevel} tier`);
+        }
+        if (parts.length === 0) return '';
+        return `<div style="font-size:0.78em;color:#fbbf24;margin-top:4px;margin-left:${options.indent || 0}px;">Includes: ${this.escapeHtml(parts.join(' • '))}</div>`;
+    },
+
     render: function() {
         if (!this.config) return;
 
@@ -109,6 +146,7 @@ const PaymentUI = {
         const currency = this.config.currencyLabel || this.config.cryptoType || 'WOW';
         const hasCredits = this.userCredits >= (this.config.creditsPerGame || 1);
         const creditPackages = this.config.creditPackages || [];
+        const cosmeticProducts = this.config.cosmeticProducts || [];
         
         const $container = $('.game-modes');
         $container.empty();
@@ -228,6 +266,7 @@ const PaymentUI = {
                 const bonusText = pkg.bonus > 0 
                     ? `<span style="color:#4ade80;"> +${pkg.bonus} bonus</span>` 
                     : '';
+                const grantSummary = this.grantSummaryHtml(pkg.grants, { indent: 22 });
                 
                 const checked = index === 0 ? 'checked' : '';
                 if (index === 0) this.selectedPackageId = pkg.id;
@@ -241,6 +280,7 @@ const PaymentUI = {
                         <div style="font-size:0.8em;color:#888;margin-top:4px;margin-left:22px;">
                             ${perGamePrice} ${currency}/game for ${totalCredits} games
                         </div>
+                        ${grantSummary}
                     </label>
                 `;
             });
@@ -259,6 +299,39 @@ const PaymentUI = {
                             style="width:100%;padding:10px;margin-top:10px;background:#7c3aed;border:none;color:#fff;cursor:pointer;border-radius:4px;font-weight:bold;">
                         🛒 Buy Selected Package
                     </button>
+                </div>
+            `);
+        }
+
+        // === SECTION 4: Standalone cosmetic/render products ===
+        if (this.config.paymentsEnabled && cosmeticProducts.length > 0) {
+            let productsHtml = '';
+            cosmeticProducts.forEach(product => {
+                const priceFormatted = product.priceFormatted || this.formatPrice(product.price);
+                const label = this.escapeHtml(product.label || product.id);
+                const grantSummary = this.grantSummaryHtml(product.grants, { includeCredits: true });
+                productsHtml += `
+                    <div style="padding:10px;margin:5px 0;background:#252540;border:1px solid #444;border-radius:4px;">
+                        <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;">
+                            <strong style="color:#f0f0f0;">${label}</strong>
+                            <span style="color:#fbbf24;font-weight:bold;">${priceFormatted} ${currency}</span>
+                        </div>
+                        ${grantSummary}
+                        <button class="mode-option" data-mode="SHOP" data-action="buy_product" data-package-id="${this.escapeHtml(product.id)}"
+                                style="width:100%;padding:8px;margin-top:8px;background:#334155;border:none;color:#fff;cursor:pointer;border-radius:4px;">
+                            Unlock Pack
+                        </button>
+                    </div>
+                `;
+            });
+
+            $container.append(`
+                <div class="payment-section" style="margin-bottom:15px;padding:12px;background:#1a1a2e;border:1px solid #444;border-radius:6px;">
+                    <div style="margin-bottom:10px;">
+                        <strong style="color:#f0f0f0;">Premium Packs</strong>
+                        <span style="font-size:0.85em;color:#888;margin-left:10px;">Cosmetics and render modes</span>
+                    </div>
+                    ${productsHtml}
                 </div>
             `);
         }
@@ -314,11 +387,17 @@ const PaymentUI = {
         let paymentType = 'single_game';
         if (action === 'buy_credits') {
             paymentType = 'credits_package';
+        } else if (action === 'buy_product') {
+            paymentType = 'cosmetic_pack';
         }
         
         const requestData = { type: paymentType };
         if (packageId) {
-            requestData.packageId = packageId;
+            if (paymentType === 'cosmetic_pack') {
+                requestData.productId = packageId;
+            } else {
+                requestData.packageId = packageId;
+            }
         }
         
         if (window.socket) {
@@ -339,10 +418,13 @@ const PaymentUI = {
         $('.game-modes').hide();
         
         const isCreditsPurchase = data.paymentType === 'credits_package';
+        const isProductPurchase = data.paymentType === 'cosmetic_pack';
         let headerText = '💳 Payment Required';
         if (isCreditsPurchase && data.package) {
             const bonus = data.package.bonus > 0 ? ` +${data.package.bonus} bonus` : '';
             headerText = `🎫 Buy ${data.package.credits}${bonus} Credits`;
+        } else if (isProductPurchase && data.package) {
+            headerText = `Buy ${data.package.label || data.package.id || 'Pack'}`;
         }
         $('.payment-header strong').text(headerText);
         
@@ -354,9 +436,9 @@ const PaymentUI = {
         if (data.reused) {
             $('#payment-status').html('<span style="color:#ff0">♻️ Using existing pending payment</span>');
         } else {
-            const statusText = isCreditsPurchase 
+            const statusText = isCreditsPurchase
                 ? 'Send payment to receive credits...'
-                : 'Waiting for payment...';
+                : (isProductPurchase ? 'Send payment to unlock this pack...' : 'Waiting for payment...');
             $('#payment-status').text(statusText);
         }
     },

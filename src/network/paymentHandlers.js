@@ -72,9 +72,9 @@ class PaymentHandlers {
         }
 
         try {
-            const { type, packageId } = data;
+            const { type, packageId, productId } = data;
             const paymentType = type || data.gameMode || 'single_game';
-            const options = { packageId, reuseExisting: true };
+            const options = { packageId, productId, reuseExisting: true };
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, options);
             const cryptoType = this.gameModeManager.cryptoType;
             
@@ -86,7 +86,9 @@ class PaymentHandlers {
                     paymentRequest.address,
                     paymentRequest.amount,
                     cryptoType,
-                    paymentType === 'credits_package' ? 'Credits package' : 'Single game',
+                    paymentType === 'single_game'
+                        ? 'Single game'
+                        : (paymentRequest.package?.label || (paymentType === 'credits_package' ? 'Credits package' : 'Product purchase')),
                     this.gameModeManager.currencyDecimals
                 );
             } catch (qrErr) {
@@ -102,6 +104,8 @@ class PaymentHandlers {
                 currency: cryptoType,
                 cryptoType: cryptoType,
                 package: paymentRequest.package,
+                productId: paymentRequest.productId,
+                grants: paymentRequest.grants,
                 paymentType: paymentType,
                 qr: qrDataUrl,
                 reused: !!paymentRequest.reused
@@ -196,6 +200,14 @@ class PaymentHandlers {
                 amount = Number(primaryPackage?.price ?? this.gameModeManager.creditsPackagePrice);
                 const credits = primaryPackage?.credits ?? this.gameModeManager.creditsPerGameCost * 10;
                 description = `${credits} credit package`;
+            } else if (paymentType === 'cosmetic_pack') {
+                const product = this.gameModeManager.getCosmeticProduct(options.productId || options.packageId);
+                if (!product) {
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Invalid product selection.');
+                    return;
+                }
+                amount = Number(product.price);
+                description = product.label || product.id;
             } else {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Invalid game mode configuration.');
                 return;
@@ -210,6 +222,7 @@ class PaymentHandlers {
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, {
                 reuseExisting: true,
                 packageId: options.packageId,
+                productId: options.productId,
                 userId: sessionUserId
             });
             const reused = !!paymentRequest.reused;
@@ -243,6 +256,8 @@ class PaymentHandlers {
                 amountFormatted: formattedAmount,
                 humanAmount: formattedAmount,
                 paymentType,
+                productId: paymentRequest.productId,
+                grants: paymentRequest.grants,
                 gameMode,
                 cryptoType,
                 description,
@@ -256,7 +271,10 @@ class PaymentHandlers {
                 ? '🔁 Existing payment request still pending. Use the details below to pay.'
                 : `💳 PAYMENT REQUIRED (${description})`;
 
-            const statusBody = `\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${paymentRequest.address}\n\n⚠️  Send EXACTLY ${formattedAmount} ${cryptoType}.\n🔄 Added to queue once mempool seen.\n⏰ Expires in 30 minutes.`;
+            const nextStep = paymentType === 'single_game'
+                ? '🔄 Added to queue once mempool seen.'
+                : '🔄 Purchase applies after block confirmation.';
+            const statusBody = `\n\nAmount: ${formattedAmount} ${cryptoType}\nAddress: ${paymentRequest.address}\n\n⚠️  Send EXACTLY ${formattedAmount} ${cryptoType}.\n${nextStep}\n⏰ Expires in 30 minutes.`;
 
             this.broadcastManager.sendStatusUpdate(
                 socket.id,
@@ -291,17 +309,16 @@ class PaymentHandlers {
                 if (this.mempoolNotified.has(paymentRequest.address)) return;
                 this.mempoolNotified.set(paymentRequest.address, Date.now());
 
-                // Check payment type — credits_package should NOT queue for a game
                 const mapping = this.socketPaymentMap.get(socket.id);
-                const isCredits = mapping && mapping.paymentType === 'credits_package';
+                const isGameEntry = !mapping || mapping.paymentType === 'single_game';
 
-                const detectMessage = isCredits
-                    ? 'Payment detected in mempool! Awaiting block confirmation to add credits...'
+                const detectMessage = !isGameEntry
+                    ? 'Payment detected in mempool! Awaiting block confirmation to apply your purchase...'
                     : 'Payment detected in mempool! Adding you to the game queue...';
                 socket.emit('payment_detected', { paymentId: paymentRequest.id, message: detectMessage, amount: status.amount, confirmations: 0 });
 
-                // Only queue for single_game payments (credits just add balance, no game queue)
-                if (!isCredits) {
+                // Only queue for single_game payments. Product purchases just apply grants.
+                if (isGameEntry) {
                     const existingIdx = this.queueManager.getPlayerIndex(socket.id);
                     if (existingIdx === -1) {
                         // Try to get DB userId from session
@@ -362,28 +379,38 @@ class PaymentHandlers {
                 this.confirmedPayments.add(paymentRequest.id);
                 this._confirmedTimestamps.set(paymentRequest.id, Date.now());
 
-                // Handle credits_package: add credits to user
+                // Handle non-game products: add credits / cosmetic grants / premium tier.
                 const mapping = this.socketPaymentMap.get(socket.id);
-                if (mapping && mapping.paymentType === 'credits_package' && this.gameModeManager) {
+                if (mapping && mapping.paymentType !== 'single_game' && this.gameModeManager) {
                     try {
-                        // processCreditsPackageConfirmation now atomically checks status='pending'
-                        const creditsResult = await this.gameModeManager.processCreditsPackageConfirmation(
+                        // Product confirmation atomically checks status='pending' and applies grants.
+                        const creditsResult = await this.gameModeManager.processProductPaymentConfirmation(
                             socket.id,
                             paymentRequest.id,
                             mapping.package,
                             Math.round(status.amount || 0)
                         );
                         if (creditsResult.success) {
-                            socket.emit('credits_update', { balance: creditsResult.newBalance });
+                            socket.emit('credits_update', {
+                                balance: creditsResult.newBalance,
+                                totalCreditsPurchased: creditsResult.totalCreditsPurchased || 0,
+                                ...(creditsResult.entitlements || {})
+                            });
+                            if (creditsResult.entitlements) {
+                                socket.emit('identity_update', { entitlements: creditsResult.entitlements });
+                            }
+                            const packs = creditsResult.grantsApplied?.packs || [];
+                            const packText = packs.length ? `\nUnlocked: ${packs.map(p => p.id).join(', ')}` : '';
                             socket.emit('payment_confirmed', {
                                 paymentId: paymentRequest.id,
-                                message: `Payment confirmed! Added ${creditsResult.creditsAdded} credits. New balance: ${creditsResult.newBalance}`,
+                                message: `Payment confirmed! Added ${creditsResult.creditsAdded} credits. New balance: ${creditsResult.newBalance}${packText}`,
                                 creditsAdded: creditsResult.creditsAdded,
                                 newBalance: creditsResult.newBalance,
+                                grantsApplied: creditsResult.grantsApplied,
                                 confirmations: status.confirmations
                             });
                             this.broadcastManager.sendStatusUpdate(socket.id, 'success',
-                                `✅ CREDITS PURCHASED!\n\n+${creditsResult.creditsAdded} credits added.\nNew balance: ${creditsResult.newBalance} credits.\n\nType 'enter' to start a game!`);
+                                `✅ PURCHASE CONFIRMED!\n\n+${creditsResult.creditsAdded} credits added.\nNew balance: ${creditsResult.newBalance} credits.${packText}\n\nType 'enter' to start a game!`);
                         } else if (creditsResult.alreadyProcessed) {
                             // Payment was already confirmed (e.g., after server restart) - just notify user
                             console.log(`[PaymentHandlers] Payment ${paymentRequest.id} already processed, skipping duplicate`);

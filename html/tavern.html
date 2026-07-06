@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tavern - Wownerogue</title>
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <!-- PixiJS (+ @pixi/unsafe-eval for the CSP) is lazy-loaded by renderModes.js only when the
+         Fancy mode is first selected, so ASCII/Tiled users never download the WebGL library. -->
+    <script src="js/render/sceneModel.js"></script>
+    <script src="js/render/skins.js"></script>
+    <script src="js/render/charCustomize.js"></script>
+    <script src="js/render/atlas.js"></script>
+    <script src="js/render/charSprites.js"></script>
+    <script src="js/render/assetPacks.js"></script>
+    <script src="js/render/designedRoom.js"></script>
+    <script src="js/render/asciiRenderer.js"></script>
+    <script src="js/render/tileRenderer.js"></script>
+    <script src="js/render/fancyRenderer.js"></script>
+    <script src="js/render/isoRenderer.js"></script>
+    <script src="js/render/threeRenderer.js"></script>
+    <script src="js/render/renderModes.js"></script>
+    <style>
+        :root { --bg: #0f1216; --panel: #171b21; --line: #2a313a; --text: #d7dbe0; --accent: #3fb950; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text);
+               font-family: ui-monospace, Menlo, Consolas, monospace; }
+        .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+        h1 { font-size: 18px; margin: 4px 0 12px; }
+        .muted { color: #8b949e; font-size: 13px; }
+        .rk-canvas { background: #0a0c0f; border: 1px solid var(--line); border-radius: 6px;
+                     display: block; max-width: 100%; }
+        .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+                 padding: 12px; margin-bottom: 12px; }
+        label { font-size: 13px; margin-right: 6px; }
+        input, select, button { font: inherit; background: #0a0c0f; color: var(--text);
+                 border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
+        button { background: var(--accent); color: #08130a; border: 0; cursor: pointer; font-weight: 600; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        #status { min-height: 18px; font-size: 13px; }
+        .hidden { display: none; }
+        #modebar { display: flex; gap: 6px; margin-bottom: 8px; }
+        .modebtn { background: #0a0c0f; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+        .modebtn.active { background: var(--accent); color: #08130a; border-color: var(--accent); }
+        .modebtn.locked { opacity: 0.55; }
+        #chatPanel { margin-top: 12px; }
+        #chatLog { height: 160px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px;
+                   padding: 8px; background: #0a0c0f; font-size: 13px; line-height: 1.45; }
+        #chatLog .cname { color: var(--accent); font-weight: 600; }
+        #chatLog .cline { margin: 2px 0; word-break: break-word; }
+        #chatLog .csys { color: #8b949e; font-style: italic; }
+        #chatForm { display: flex; gap: 6px; margin-top: 8px; }
+        #chatInput { flex: 1; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Tavern <span class="muted">— early preview</span></h1>
+
+        <div id="joinPanel" class="panel">
+            <label for="name">Name</label>
+            <input id="name" maxlength="16" placeholder="anon" autocomplete="off">
+            <button id="customizeBtn" type="button">🎭 Customize</button>
+            <span id="appearancePreview" class="muted"></span>
+            <button id="joinBtn">Enter tavern</button>
+        </div>
+
+        <div id="modebar" class="hidden"></div>
+        <div id="stage" class="hidden"></div>
+        <p id="status" class="muted"></p>
+        <p class="muted">Move with arrow keys or WASD. ★ modes are premium (credit unlock).</p>
+
+        <div id="chatPanel" class="panel hidden">
+            <div id="chatLog" aria-live="polite"></div>
+            <form id="chatForm" autocomplete="off">
+                <input id="chatInput" maxlength="200" placeholder="Say something…">
+                <button type="submit">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        var socketOpts = {};
+        try {
+            var resumeToken = localStorage.getItem('wownerogue_token');
+            if (resumeToken) socketOpts.auth = { resumeToken: resumeToken };
+        } catch (_) {}
+        var socket = io(socketOpts);
+        var RK = window.RK;
+
+        var statusEl = document.getElementById('status');
+        var joinPanel = document.getElementById('joinPanel');
+        var joinBtn = document.getElementById('joinBtn');
+        var stageEl = document.getElementById('stage');
+        var modebar = document.getElementById('modebar');
+        var chatLog = document.getElementById('chatLog');
+        var chatForm = document.getElementById('chatForm');
+        var chatInput = document.getElementById('chatInput');
+
+        // Character customization — persisted appearance identity, chosen before entering.
+        var customizeBtn = document.getElementById('customizeBtn');
+        var appearancePreview = document.getElementById('appearancePreview');
+        var selectedAppearance = ((RK.loadIdentity && RK.loadIdentity()) || {}).appearance || RK.normalizeAppearance('default');
+        function updateAppearancePreview() {
+            var a = RK.appearance ? RK.appearance(selectedAppearance) : null;
+            appearancePreview.textContent = a ? ('- ' + a.label + (a.premium ? ' *' : '')) : '';
+        }
+        customizeBtn.addEventListener('click', function () {
+            RK.openCustomize(selectedAppearance, function (appearance) {
+                selectedAppearance = RK.normalizeAppearance(appearance);
+                updateAppearancePreview();
+                socket.emit('identity:update', { appearance: selectedAppearance });
+            });
+        });
+        updateAppearancePreview();
+
+        var state = { layout: null, cols: 0, rows: 0, occupants: [], you: null, channel: null };
+        var currentRenderer = null;
+        var currentMode = null;
+        var currentScene = null;
+
+        function setStatus(msg) { statusEl.textContent = msg; }
+        function applyEntitlements(data) {
+            if (RK.setEntitlementSnapshot) RK.setEntitlementSnapshot(data || {});
+            updateAppearancePreview();
+            if (!modebar.classList.contains('hidden')) {
+                buildModebar();
+                if (currentMode && !RK.canUseMode(currentMode)) setMode('tiles');
+            }
+        }
+
+        // ---- Rendering ---------------------------------------------------------------
+        function rebuildScene() {
+            if (!state.layout) return;
+            currentScene = RK.scene.sceneFromTavern(state, state.you);
+        }
+        function draw() {
+            if (currentRenderer && currentScene) currentRenderer.render(currentScene);
+        }
+        function setMode(mode) {
+            if (!RK.canUseMode(mode)) { setStatus(mode + ' is a premium mode (credit unlock).'); return; }
+            if (currentRenderer) { currentRenderer.destroy(); currentRenderer = null; }
+            currentMode = mode;
+            RK.saveMode(mode);
+            updateModeButtons();
+            if (mode === 'fancy' && !RK.pixiReady()) setStatus('Loading Fancy renderer…');
+            // Async: Fancy lazy-loads PixiJS on first use.
+            RK.createRendererAsync(mode, stageEl, {}, function (r) {
+                if (currentMode !== mode) { r.destroy(); return; } // switched again while loading
+                currentRenderer = r;
+                draw();
+                var active = r.name || mode;
+                setStatus(active === mode
+                    ? 'Render mode: ' + active
+                    : '“' + mode + '” unavailable here — using “' + active + '”.');
+            });
+        }
+        function buildModebar() {
+            modebar.innerHTML = '';
+            RK.RENDER_MODES.forEach(function (m) {
+                var b = document.createElement('button');
+                b.className = 'modebtn';
+                b.dataset.mode = m.id;
+                b.textContent = m.label + (m.premium ? ' ★' : '');
+                if (!RK.canUseMode(m.id)) { b.classList.add('locked'); b.title = 'Premium pack — buy credits to unlock'; }
+                b.addEventListener('click', function () { setMode(m.id); });
+                modebar.appendChild(b);
+            });
+            updateModeButtons();
+        }
+        function updateModeButtons() {
+            Array.prototype.forEach.call(modebar.children, function (b) {
+                b.classList.toggle('active', b.dataset.mode === currentMode);
+            });
+        }
+
+        // ---- Join / state ------------------------------------------------------------
+        joinBtn.addEventListener('click', function () {
+            var name = document.getElementById('name').value || '';
+            var appearance = RK.normalizeAppearance(selectedAppearance);
+            joinBtn.disabled = true;
+            socket.emit('tavern_join', { name: name, avatar: appearance.avatar, appearance: appearance });
+        });
+
+        socket.on('tavern_error', function (e) {
+            joinBtn.disabled = false;
+            setStatus((e && e.message) || 'Could not enter the tavern.');
+        });
+        socket.on('game_mode_info', function (data) {
+            if (data && data.entitlements) applyEntitlements(data.entitlements);
+        });
+        socket.on('credits_update', applyEntitlements);
+        socket.on('session_token', function (data) {
+            try { if (data && data.token) localStorage.setItem('wownerogue_token', data.token); } catch (_) {}
+        });
+        socket.on('session_resumed', function (data) {
+            try { if (data && data.token) localStorage.setItem('wownerogue_token', data.token); } catch (_) {}
+            applyEntitlements(data || {});
+        });
+        socket.on('identity_update', function (data) {
+            if (!data) return;
+            if (data.entitlements) applyEntitlements(data.entitlements);
+            if (data.appearance) {
+                selectedAppearance = RK.normalizeAppearance(data.appearance);
+                RK.saveIdentity(selectedAppearance);
+                updateAppearancePreview();
+            }
+        });
+        socket.on('identity_error', function (data) {
+            if (data && data.message) setStatus(data.message);
+        });
+
+        socket.on('tavern_joined', function (data) {
+            state.you = data.you;
+            applyFull(data.state);
+            joinPanel.classList.add('hidden');
+            modebar.classList.remove('hidden');
+            stageEl.classList.remove('hidden');
+            document.getElementById('chatPanel').classList.remove('hidden');
+            rebuildScene();
+            buildModebar();
+            setMode(RK.loadMode('tiles'));
+            // Load the designed room (if the server is using one); re-render when ready.
+            if (state.roomUrl) RK.loadRoom(state.roomUrl, function () { draw(); });
+            setStatus('You are in the tavern.');
+        });
+
+        socket.on('tavern_update', function (snap) {
+            if (!snap) return;
+            state.occupants = snap.occupants || [];
+            rebuildScene();
+            draw();
+        });
+
+        function applyFull(s) {
+            state.layout = s.layout || [];
+            state.cols = s.cols || (state.layout[0] ? state.layout[0].length : 0);
+            state.rows = s.rows || state.layout.length;
+            state.occupants = s.occupants || [];
+            state.channel = 'tavern:' + (s.roomId || 'main');
+            state.roomUrl = s.roomUrl || null;
+        }
+
+        // ---- Chat --------------------------------------------------------------------
+        socket.on('chat_broadcast', function (m) {
+            if (!m || !state.channel || m.scope !== state.channel) return;
+            addChatLine(m.username, m.message);
+        });
+        socket.on('tavern_notice', function (n) {
+            if (n && n.message) addSystemLine(n.message);
+        });
+        function addSystemLine(text) {
+            var line = document.createElement('div');
+            line.className = 'cline csys';
+            line.textContent = text;
+            chatLog.appendChild(line);
+            while (chatLog.childElementCount > 200) chatLog.removeChild(chatLog.firstChild);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+        function addChatLine(name, message) {
+            var line = document.createElement('div');
+            line.className = 'cline';
+            line.innerHTML = '<span class="cname"></span> ';
+            line.firstChild.textContent = name || '???';
+            line.insertAdjacentHTML('beforeend', message); // server-escaped
+            chatLog.appendChild(line);
+            while (chatLog.childElementCount > 200) chatLog.removeChild(chatLog.firstChild);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+        chatForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var text = chatInput.value;
+            if (text && text.trim()) socket.emit('tavern_chat', { text: text });
+            chatInput.value = '';
+        });
+
+        // ---- Input -------------------------------------------------------------------
+        var KEYS = {
+            ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+            w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right'
+        };
+        window.addEventListener('keydown', function (e) {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+            var dir = KEYS[e.key];
+            if (!dir || !state.you) return;
+            e.preventDefault();
+            socket.emit('tavern_move', { dir: dir });
+        });
+
+        setStatus('Connecting…');
+        socket.on('connect', function () {
+            socket.emit('register_client', { clientId: socket.id, userAgent: navigator.userAgent });
+            socket.emit('identity:get');
+            setStatus('Connected. Choose a name and enter.');
+        });
+        socket.on('disconnect', function () { setStatus('Disconnected.'); });
+    })();
+    </script>
+</body>
+</html>

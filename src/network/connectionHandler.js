@@ -280,7 +280,8 @@ class ConnectionHandler {
                 this.io.to(socket.id).emit('session_resumed', {
                     token: sessionInfo.token,
                     payoutAddress: sessionInfo.user.payout_address || null,
-                    credits: sessionInfo.user.credits || 0
+                    credits: sessionInfo.user.credits || 0,
+                    totalCreditsPurchased: sessionInfo.user.total_credits_purchased || 0
                 });
             } else {
                 this.io.to(socket.id).emit('session_token', { token: sessionInfo.token });
@@ -298,6 +299,7 @@ class ConnectionHandler {
             // Credits convenience push (include creditsPerGame for games remaining calculation)
             this.io.to(socket.id).emit('credits_update', {
                 balance: sessionInfo.user.credits || 0,
+                totalCreditsPurchased: sessionInfo.user.total_credits_purchased || 0,
                 creditsPerGame: this.gameModeManager?.creditsPerGameCost || 1
             });
 

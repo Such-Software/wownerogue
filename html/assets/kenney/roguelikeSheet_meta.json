@@ -1,0 +1,18 @@
+{
+  "_note": "Generated tile metadata for Kenney's roguelikeSheet (a grid sheet with no shipped names). Labelled by sight from the room's palette. This is the 'metadata layer' themes use; packs that ship XML (<SubTexture name=...>) are parsed instead of hand-labelled.",
+  "tile": 16, "spacing": 1, "cols": 57,
+  "names": {
+    "23": "barrel", "32": "barrel", "25": "crate",
+    "28": "counter_sink", "29": "counter", "194": "counter_stove", "677": "sink",
+    "87": "shelf", "88": "bookshelf", "258": "dresser", "360": "nightstand",
+    "311": "wardrobe", "368": "wardrobe", "138": "wardrobe",
+    "129": "bed", "201": "mirror", "482": "clock", "282": "banner", "141": "sack",
+    "137": "chair", "190": "chair", "191": "table", "197": "bench", "198": "bench", "312": "table",
+    "156": "window", "158": "window", "159": "window", "215": "window", "216": "window",
+    "550": "door", "620": "rubble", "585": "bush", "642": "tree", "897": "item",
+    "119": "floor_wood", "120": "floor_stone", "982": "floor_plank", "983": "floor_plank", "984": "floor_plank",
+    "922": "rug", "923": "rug", "924": "rug", "979": "rug", "980": "rug", "981": "rug", "1036": "rug", "1037": "rug", "1038": "rug",
+    "697": "wall", "698": "wall", "699": "wall", "700": "wall", "701": "wall",
+    "756": "wall", "757": "wall", "758": "wall", "868": "wall", "869": "wall", "871": "wall", "872": "wall", "873": "wall", "874": "wall"
+  }
+}

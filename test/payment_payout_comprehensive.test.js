@@ -485,6 +485,49 @@ describe('Payment & Payout Comprehensive Tests', () => {
             expect(result.package).toBeDefined();
         });
 
+        test('creates cosmetic_pack payment request with durable product grants', async () => {
+            const user = { id: 1, credits: 0 };
+            gmm.configSnapshot.products = {
+                cosmetic: [{
+                    id: 'pack_3d',
+                    label: '3D Character Pack',
+                    price: 250000000000n,
+                    grants: { packs: ['kenney-3d-characters'] }
+                }]
+            };
+
+            mockDb.query.mockResolvedValueOnce({ rows: [user] }); // getOrCreateUser
+            mockDb.query.mockResolvedValueOnce({ rows: [] }); // update last_active
+            mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payment
+            mockDb.query.mockResolvedValueOnce({ rows: [] }); // expire stale payments
+
+            mockWalletService.createPaymentRequest.mockResolvedValueOnce({
+                address: 'wow1packpayment',
+                expiresAt: new Date()
+            });
+
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ id: 1001, expires_at: new Date() }]
+            }); // INSERT payment
+
+            const result = await gmm.createPaymentRequest('socket1', 'cosmetic_pack', { productId: 'pack_3d' });
+
+            expect(result.address).toBe('wow1packpayment');
+            expect(result.paymentType).toBe('cosmetic_pack');
+            expect(result.productId).toBe('pack_3d');
+            expect(result.grants.packs).toEqual(['kenney-3d-characters']);
+            expect(mockWalletService.createPaymentRequest).toHaveBeenCalledWith(
+                250000000000,
+                expect.stringContaining('3D Character Pack'),
+                1,
+                'socket1'
+            );
+
+            const insertCall = mockDb.query.mock.calls.find(([sql]) => /INSERT INTO payments/i.test(sql));
+            expect(insertCall[1][8]).toBe('pack_3d');
+            expect(JSON.parse(insertCall[1][9]).packs[0].id).toBe('kenney-3d-characters');
+        });
+
         test('reuses existing pending payment request', async () => {
             const user = { id: 1, credits: 0 };
             gmm.singleGamePrice = 100000000000;

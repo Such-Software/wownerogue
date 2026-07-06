@@ -34,3 +34,15 @@ temp/
 .DS_Store
 Thumbs.db
 TEMP_TODO.md
+
+# 3D models / generation source artifacts (produced by the sprite pipeline — never commit;
+# see ~/src/docs/animated-sprite-pipeline.md)
+*.glb
+*.fbx
+*.blend
+*.blend1
+*.obj
+*.stl
+
+# AI-generated / heavy premium assets — hosted & lazy-loaded, not in the code tree
+html/assets/generated/

@@ -1,0 +1,169 @@
+// IsoRenderer — canvas isometric projection using Kenney's Isometric Miniature Dungeon pack.
+// It draws the same Scene as the top-down renderers, preserving the shared Room contract.
+(function (root) {
+    'use strict';
+
+    function IsoRenderer(host, opts) {
+        opts = opts || {};
+        this.name = 'iso';
+        this.host = host;
+        this.assets = (root.RK && RK.isoAssets) || {};
+        this.tileW = opts.tileW || (this.assets.tile && this.assets.tile.w) || 84;
+        this.tileH = opts.tileH || (this.assets.tile && this.assets.tile.h) || 42;
+        this.imageW = opts.imageW || (this.assets.tile && this.assets.tile.imageW) || 92;
+        this.imageH = opts.imageH || (this.assets.tile && this.assets.tile.imageH) || 184;
+        this.canvas = document.createElement('canvas');
+        this.canvas.className = 'rk-canvas';
+        this.ctx = this.canvas.getContext('2d');
+        this.cache = {};
+        this.last = {};
+        this.lastScene = null;
+        this._raf = null;
+        this._animating = false;
+        host.appendChild(this.canvas);
+        this._preload();
+    }
+
+    IsoRenderer.prototype._load = function (url) {
+        if (!url) return null;
+        if (this.cache[url]) return this.cache[url];
+        var rec = this.cache[url] = { ready: false, img: new Image() };
+        var self = this;
+        rec.img.onload = function () { rec.ready = true; self._invalidate(); };
+        rec.img.onerror = function () { rec.error = true; };
+        rec.img.src = url;
+        return rec;
+    };
+
+    IsoRenderer.prototype._invalidate = function () {
+        if (this._raf || !this.lastScene) return;
+        var self = this;
+        this._raf = requestAnimationFrame(function () {
+            self._raf = null;
+            if (self.lastScene) self.render(self.lastScene);
+        });
+    };
+
+    IsoRenderer.prototype._preload = function () {
+        var tiles = this.assets.tiles || {};
+        for (var k in tiles) this._load(tiles[k]);
+        var ch = this.assets.character || {};
+        this._load(ch.idle);
+        (ch.run || []).forEach(this._load.bind(this));
+    };
+
+    IsoRenderer.prototype._project = function (x, y, originX, originY) {
+        return {
+            x: originX + (x - y) * this.tileW / 2,
+            y: originY + (x + y) * this.tileH / 2
+        };
+    };
+
+    IsoRenderer.prototype._drawImage = function (img, cx, baseY, w, h) {
+        this.ctx.drawImage(img, cx - w / 2, baseY - h, w, h);
+    };
+
+    IsoRenderer.prototype._tileUrl = function (kind) {
+        var tiles = this.assets.tiles || {};
+        return tiles[kind] || tiles.fallback || tiles.floor;
+    };
+
+    IsoRenderer.prototype._charFrame = function (e, now) {
+        var key = e.id || 'anon';
+        var st = this.last[key] || (this.last[key] = { x: e.x, y: e.y, t: 0 });
+        if (st.x !== e.x || st.y !== e.y) { st.x = e.x; st.y = e.y; st.t = now; }
+        var moving = (now - st.t) < 360;
+        var resolved = (root.RK && RK.resolveAppearance) ? RK.resolveAppearance(e, 'iso') : null;
+        var ch = (resolved && resolved.character) || (this.assets.character || {});
+        if (!moving || !ch.run || ch.run.length === 0) return ch.idle;
+        this._animating = true;
+        return ch.run[Math.floor(now / 80) % ch.run.length];
+    };
+
+    IsoRenderer.prototype.render = function (scene) {
+        if (!scene) return;
+        this.lastScene = scene;
+        this._animating = false;
+        var margin = 28;
+        var originX = margin + scene.rows * this.tileW / 2 + this.tileW;
+        var originY = margin + this.imageH;
+        this.canvas.width = Math.ceil((scene.cols + scene.rows) * this.tileW / 2 + margin * 2 + this.tileW * 2);
+        this.canvas.height = Math.ceil((scene.cols + scene.rows) * this.tileH / 2 + this.imageH + margin * 2);
+
+        var ctx = this.ctx;
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.fillStyle = scene.background || '#0a0c0f';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.imageSmoothingEnabled = true;
+
+        var items = [], x, y, kind, p;
+        for (y = 0; y < scene.rows; y++) {
+            for (x = 0; x < scene.cols; x++) {
+                kind = scene.grid[y][x];
+                p = this._project(x, y, originX, originY);
+                items.push({ type: 'tile', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y });
+                if (kind === 'bar' || kind === 'table') {
+                    items.push({ type: 'prop', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y + 0.25 });
+                }
+            }
+        }
+        for (var i = 0; i < scene.entities.length; i++) {
+            var e = scene.entities[i];
+            p = this._project(e.x, e.y, originX, originY);
+            items.push({ type: 'entity', e: e, sx: p.x, sy: p.y, depth: e.x + e.y + 0.55 });
+        }
+        items.sort(function (a, b) { return a.depth === b.depth ? (a.y || 0) - (b.y || 0) : a.depth - b.depth; });
+
+        var now = Date.now();
+        for (i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (it.type === 'tile') {
+                var tileKind = (it.kind === 'bar' || it.kind === 'table') ? 'floor' : it.kind;
+                var rec = this._load(this._tileUrl(tileKind));
+                if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
+            } else if (it.type === 'prop') {
+                rec = this._load(this._tileUrl(it.kind));
+                if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
+            } else if (it.type === 'entity') {
+                var frame = this._charFrame(it.e, now);
+                rec = this._load(frame);
+                if (rec && rec.ready) {
+                    var ch = this.assets.character || {};
+                    this._drawImage(rec.img, it.sx, it.sy + this.tileH * 0.95, ch.imageW || 74, ch.imageH || 148);
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(it.sx, it.sy, 8, 0, Math.PI * 2);
+                    ctx.fillStyle = it.e.color || '#d7dbe0';
+                    ctx.fill();
+                }
+                if (it.e.you) {
+                    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(it.sx, it.sy + this.tileH * 0.7, 20, 8, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                if (it.e.label) {
+                    ctx.fillStyle = '#d7dbe0';
+                    ctx.font = '11px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(it.e.label, it.sx, it.sy - 62);
+                }
+            }
+        }
+        if (this._animating) this._invalidate();
+    };
+
+    IsoRenderer.prototype.destroy = function () {
+        if (this._raf) cancelAnimationFrame(this._raf);
+        if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
+        this.canvas = null;
+        this.ctx = null;
+        this.cache = {};
+        this.last = {};
+        this.lastScene = null;
+    };
+
+    root.RK = root.RK || {};
+    root.RK.IsoRenderer = IsoRenderer;
+})(window);

@@ -683,6 +683,14 @@ const SocketHandlers = {
         SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
 
+        // Mode availability (Solo / Tavern / Multiplayer). Backward compatible: if the server
+        // doesn't send `modes`, assume solo-only (the historical behavior).
+        var modes = data.modes || { solo: true, tavern: false, multiplayer: false };
+        SocketHandlers._modes = modes;
+        if (modes.tavern) { $('#tavernButton').show(); } else { $('#tavernButton').hide(); }
+        // Tavern-only / no single-player instance: don't surface the solo start button.
+        if (modes.solo === false) { $('#startButton').hide(); }
+
         // Initialize Smirk auth if enabled and not already initialized
         if (SocketHandlers._smirkEnabled && typeof SmirkAuth !== 'undefined' && !SmirkAuth._initialized) {
             SmirkAuth.init();
@@ -769,13 +777,18 @@ const SocketHandlers = {
         try {
             // Use human-readable amount (e.g. "1"), NOT atomic units (e.g. 100000000000)
             var payAmount = data.humanAmount || data.amountFormatted || String(data.amount);
+            var description = 'Single game entry';
+            if (data.paymentType === 'credits_package') {
+                description = 'Buy ' + (data.package ? data.package.credits : '') + ' credits';
+            } else if (data.paymentType === 'cosmetic_pack') {
+                description = 'Unlock ' + (data.package ? (data.package.label || data.package.id || 'premium pack') : 'premium pack');
+            }
+
             await window.smirk.requestPayment({
                 address: data.address,
                 amount: payAmount,
                 asset: (SocketHandlers._cryptoType || 'WOW').toLowerCase(),
-                description: data.paymentType === 'credits_package'
-                    ? 'Buy ' + (data.package ? data.package.credits : '') + ' credits'
-                    : 'Single game entry'
+                description: description
             });
 
             // User confirmed in Smirk — TX submitted, server monitoring handles the rest

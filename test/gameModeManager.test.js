@@ -199,6 +199,64 @@ describe('GameModeManager', () => {
             expect(result.creditsAdded).toBe(15); // 10 + 5 bonus
         });
 
+        test('applies bundled pack grants from package info', async () => {
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{ user_id: 1, description: '', status: 'pending', payment_type: 'credits_package' }]
+            });
+
+            mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // UPDATE payments
+                .mockResolvedValueOnce({ rows: [{ id: 1, credits: 15, total_credits_purchased: 15, premium_level: 'supporter' }] }) // UPDATE users
+                .mockResolvedValueOnce({ rows: [] }) // INSERT credit_transactions
+                .mockResolvedValueOnce({ rows: [] }) // INSERT pack entitlement
+                .mockResolvedValueOnce({ rows: [{ pack_id: 'kenney-3d-characters' }] }); // SELECT active grants
+
+            const result = await gmm.processCreditsPackageConfirmation('socket1', 123, {
+                id: 'bundle',
+                credits: 10,
+                grants: {
+                    credits: 15,
+                    packs: ['kenney-3d-characters'],
+                    premiumLevel: 'supporter'
+                }
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.creditsAdded).toBe(15);
+            expect(result.grantsApplied.packs.map(p => p.id)).toEqual(['kenney-3d-characters']);
+            expect(result.entitlements.packs['kenney-3d-characters']).toBe(true);
+
+            const entitlementInsert = mockClient.query.mock.calls.find(([sql]) => /INSERT INTO user_pack_entitlements/i.test(sql));
+            expect(entitlementInsert).toBeDefined();
+            expect(entitlementInsert[1][1]).toBe('kenney-3d-characters');
+        });
+
+        test('applies standalone cosmetic pack product without granting credits', async () => {
+            mockDb.query.mockResolvedValueOnce({
+                rows: [{
+                    user_id: 1,
+                    description: '3D pack',
+                    status: 'pending',
+                    payment_type: 'cosmetic_pack',
+                    product_id: 'pack_3d',
+                    product_grants: { credits: 0, packs: [{ id: 'kenney-3d-characters' }], premiumLevel: null }
+                }]
+            });
+
+            mockClient.query
+                .mockResolvedValueOnce({ rows: [{ id: 456 }] }) // UPDATE payments
+                .mockResolvedValueOnce({ rows: [{ id: 1, credits: 0, total_credits_purchased: 0, premium_level: 'free' }] }) // UPDATE users
+                .mockResolvedValueOnce({ rows: [] }) // INSERT pack entitlement
+                .mockResolvedValueOnce({ rows: [{ pack_id: 'kenney-3d-characters' }] }); // SELECT active grants
+
+            const result = await gmm.processProductPaymentConfirmation('socket1', 456, null, 1000);
+
+            expect(result.success).toBe(true);
+            expect(result.creditsAdded).toBe(0);
+            expect(result.entitlements.packs['kenney-3d-characters']).toBe(true);
+            expect(mockClient.query.mock.calls.some(([sql]) => /INSERT INTO credit_transactions/i.test(sql))).toBe(false);
+        });
+
         test('falls back to default credits when package info missing and no description', async () => {
             // Step 1: db.query — SELECT payment lookup with no credits in description
             mockDb.query.mockResolvedValueOnce({
