@@ -18,10 +18,11 @@
         this.cache = {};
         this.last = {};
         this.lastScene = null;
+        this.enabled = !(root.RK && RK.canUsePack && this.assets.pack && !RK.canUsePack(this.assets.pack));
         this._raf = null;
         this._animating = false;
         host.appendChild(this.canvas);
-        this._preload();
+        if (this.enabled) this._preload();
     }
 
     IsoRenderer.prototype._load = function (url) {
@@ -68,16 +69,26 @@
         return tiles[kind] || tiles.fallback || tiles.floor;
     };
 
+    IsoRenderer.prototype._visualFor = function (e) {
+        var appearance = (e && e.appearance) || { avatar: (e && e.avatar) || 'default' };
+        if (root.RK && RK.avatarVisuals && RK.avatarVisuals.resolve) {
+            return RK.avatarVisuals.resolve(appearance, { projection: 'iso', context: 'tavern', entity: e });
+        }
+        if (root.RK && RK.resolveAppearance) return RK.resolveAppearance(e, 'iso');
+        return null;
+    };
+
     IsoRenderer.prototype._charFrame = function (e, now) {
+        var visual = this._visualFor(e);
+        if (visual && visual.allowed === false) return null;
         var key = e.id || 'anon';
         var st = this.last[key] || (this.last[key] = { x: e.x, y: e.y, t: 0 });
         if (st.x !== e.x || st.y !== e.y) { st.x = e.x; st.y = e.y; st.t = now; }
         var moving = (now - st.t) < 360;
-        var resolved = (root.RK && RK.resolveAppearance) ? RK.resolveAppearance(e, 'iso') : null;
-        var ch = (resolved && resolved.character) || (this.assets.character || {});
-        if (!moving || !ch.run || ch.run.length === 0) return ch.idle;
+        var ch = (visual && visual.character) || (this.assets.character || {});
+        if (!moving || !ch.run || ch.run.length === 0) return { url: ch.idle, character: ch };
         this._animating = true;
-        return ch.run[Math.floor(now / 80) % ch.run.length];
+        return { url: ch.run[Math.floor(now / 80) % ch.run.length], character: ch };
     };
 
     IsoRenderer.prototype.render = function (scene) {
@@ -126,9 +137,9 @@
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
             } else if (it.type === 'entity') {
                 var frame = this._charFrame(it.e, now);
-                rec = this._load(frame);
+                rec = this._load(frame && frame.url);
                 if (rec && rec.ready) {
-                    var ch = this.assets.character || {};
+                    var ch = frame.character || this.assets.character || {};
                     this._drawImage(rec.img, it.sx, it.sy + this.tileH * 0.95, ch.imageW || 74, ch.imageH || 148);
                 } else {
                     ctx.beginPath();

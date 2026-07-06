@@ -235,8 +235,23 @@
         }
     };
 
+    RK.packForProjection = function (projection) {
+        for (var id in RK.PACKS) {
+            if (RK.PACKS[id].projection === projection) return RK.PACKS[id];
+        }
+        return null;
+    };
+
     RK.resolveAppearance = function (entity, projection) {
         entity = entity || {};
+        var baseAppearance = entity.appearance || { avatar: entity.avatar || 'default', tint: 'none', equipment: FREE_EQUIPMENT };
+        if (RK.avatarVisuals && RK.avatarVisuals.resolve) {
+            return RK.avatarVisuals.resolve(baseAppearance, {
+                projection: projection || 'topdown',
+                context: 'room-entity',
+                entity: entity
+            });
+        }
         var appearance = entity.appearance || { avatar: entity.avatar || 'default', tint: 'none', equipment: FREE_EQUIPMENT };
         var avatar = appearance.avatar || entity.avatar || 'default';
         if (projection === 'iso') {

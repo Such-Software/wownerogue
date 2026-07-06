@@ -62,8 +62,21 @@
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
             // Roguelike character sprite, or premium animated skin; else the fallback circle.
-            if (window.RK && RK.isChar && RK.isChar(e.avatar) && RK.drawCharCanvas(ctx, e, cell, now)) continue;
-            if (window.RK && RK.isSkin && RK.isSkin(e.avatar) && RK.drawSkinCanvas(ctx, e, cell, now)) continue;
+            if (window.RK && RK.avatarVisuals && RK.avatarVisuals.drawTopdownWorld) {
+                var visual = RK.avatarVisuals.resolve(e.appearance || { avatar: e.avatar }, {
+                    projection: 'topdown',
+                    context: 'tavern',
+                    entity: e
+                });
+                if (RK.avatarVisuals.drawTopdownWorld(ctx, visual, e, {
+                    screenX: e.x,
+                    screenY: e.y,
+                    cell: cell
+                }, { now: now })) continue;
+            } else {
+                if (window.RK && RK.isChar && RK.isChar(e.avatar) && RK.drawCharCanvas(ctx, e, cell, now)) continue;
+                if (window.RK && RK.isSkin && RK.isSkin(e.avatar) && RK.drawSkinCanvas(ctx, e, cell, now)) continue;
+            }
             var cx = e.x * cell + cell / 2, cy = e.y * cell + cell / 2, r = cell * 0.36;
             ctx.beginPath();
             ctx.arc(cx, cy, r, 0, Math.PI * 2);

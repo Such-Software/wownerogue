@@ -32,6 +32,7 @@
     };
 
     RK.createRenderer = function (mode, host, opts) {
+        if (!RK.canUseMode(mode)) return new RK.TileRenderer(host, opts);
         if (mode === 'ascii' && RK.AsciiRenderer) return new RK.AsciiRenderer(host, opts);
         if (mode === 'iso' && RK.IsoRenderer) return new RK.IsoRenderer(host, opts);
         if (mode === '3d' && RK.ThreeRenderer && RK.THREE) return new RK.ThreeRenderer(host, opts);
@@ -92,6 +93,10 @@
 
     // Create a renderer, loading Pixi on demand for Fancy; falls back to Tiled if Pixi fails.
     RK.createRendererAsync = function (mode, host, opts, cb) {
+        if (!RK.canUseMode(mode)) {
+            cb(new RK.TileRenderer(host, opts));
+            return;
+        }
         if (mode === 'fancy') {
             RK.ensurePixi(function (ok) {
                 if (!ok) { cb(new RK.TileRenderer(host, opts)); return; }

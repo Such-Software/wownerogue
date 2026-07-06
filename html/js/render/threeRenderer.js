@@ -117,14 +117,23 @@
         });
     };
 
+    ThreeRenderer.prototype._visualFor = function (e) {
+        var appearance = (e && e.appearance) || { avatar: (e && e.avatar) || 'default' };
+        if (root.RK && RK.avatarVisuals && RK.avatarVisuals.resolve) {
+            return RK.avatarVisuals.resolve(appearance, { projection: '3d', context: 'tavern', entity: e });
+        }
+        if (root.RK && RK.resolveAppearance) return RK.resolveAppearance(e, '3d');
+        return null;
+    };
+
     ThreeRenderer.prototype._makeEntity = function (e) {
         var T = this.THREE, self = this;
         var shell = new T.Group();
         shell._body = this._fallbackAvatar(e);
         shell.add(shell._body);
-        var resolved = (root.RK && RK.resolveAppearance) ? RK.resolveAppearance(e, '3d') : null;
-        if (root.RK && RK.canUsePack && resolved && RK.canUsePack(resolved.pack)) {
-            this._loadModel(resolved, function (rec) {
+        var visual = this._visualFor(e);
+        if (visual && visual.allowed !== false && visual.model) {
+            this._loadModel(visual, function (rec) {
                 if (!rec || !rec.gltf || !shell.parent) return;
                 shell.remove(shell._body);
                 var model = rec.gltf.scene.clone(true);
