@@ -6,6 +6,8 @@ describe('single-player character identity wiring', () => {
   const socketHandlers = fs.readFileSync(path.join(__dirname, '../html/js/network/socketHandlers.js'), 'utf8');
   const renderEngine = fs.readFileSync(path.join(__dirname, '../html/js/display/renderEngine.js'), 'utf8');
   const screenManager = fs.readFileSync(path.join(__dirname, '../html/js/display/screenManager.js'), 'utf8');
+  const avatarVisuals = fs.readFileSync(path.join(__dirname, '../html/js/render/avatarVisuals.js'), 'utf8');
+  const singlePlayerAvatar = fs.readFileSync(path.join(__dirname, '../html/js/core/singlePlayerAvatar.js'), 'utf8');
 
   test('main page loads the avatar visual resolver before the overlay bridge', () => {
     const order = [
@@ -13,6 +15,7 @@ describe('single-player character identity wiring', () => {
       'js/render/skins.js',
       'js/render/charSprites.js',
       'js/render/assetPacks.js',
+      'js/render/renderModes.js',
       'js/render/charCustomize.js',
       'js/render/avatarVisuals.js',
       'js/core/singlePlayerAvatar.js'
@@ -39,5 +42,11 @@ describe('single-player character identity wiring', () => {
     expect(screenManager).toContain('role: "player"');
     expect(screenManager).toContain('SinglePlayerAvatar.clearOverlay');
     expect(screenManager).toContain('SinglePlayerAvatar.drawLegendIcon');
+  });
+
+  test('welcome legend uses compact one-row avatar metrics', () => {
+    expect(singlePlayerAvatar).toContain("context: 'legend'");
+    expect(singlePlayerAvatar).toContain('scale: 0.78');
+    expect(avatarVisuals).toContain("visual.context === 'legend'");
   });
 });

@@ -198,7 +198,12 @@
                 y: tileY * cell,
                 w: cols * cell,
                 h: cell
-            }, { onReady: requestRedraw });
+            }, {
+                context: 'legend',
+                scale: 0.78,
+                offsetY: Math.max(1, Math.round(cell * 0.08)),
+                onReady: requestRedraw
+            });
         }
     };
 

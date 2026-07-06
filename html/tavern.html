@@ -139,8 +139,17 @@
         function draw() {
             if (currentRenderer && currentScene) currentRenderer.render(currentScene);
         }
+        function lockedModeMessage(mode) {
+            var meta = RK.modeMeta ? RK.modeMeta(mode) : null;
+            var label = (meta && meta.label) || mode;
+            if (meta && meta.pack && RK.pack) {
+                var pack = RK.pack(meta.pack);
+                return label + ' is locked. Buy any credits or unlock ' + ((pack && pack.label) || 'the pack') + '.';
+            }
+            return label + ' is locked. Buy any credits to unlock premium modes.';
+        }
         function setMode(mode) {
-            if (!RK.canUseMode(mode)) { setStatus(mode + ' is a premium mode (credit unlock).'); return; }
+            if (!RK.canUseMode(mode)) { setStatus(lockedModeMessage(mode)); return; }
             if (currentRenderer) { currentRenderer.destroy(); currentRenderer = null; }
             currentMode = mode;
             RK.saveMode(mode);
@@ -164,7 +173,7 @@
                 b.className = 'modebtn';
                 b.dataset.mode = m.id;
                 b.textContent = m.label + (m.premium ? ' ★' : '');
-                if (!RK.canUseMode(m.id)) { b.classList.add('locked'); b.title = 'Premium pack — buy credits to unlock'; }
+                if (!RK.canUseMode(m.id)) { b.classList.add('locked'); b.title = lockedModeMessage(m.id); }
                 b.addEventListener('click', function () { setMode(m.id); });
                 modebar.appendChild(b);
             });
