@@ -53,6 +53,7 @@ function loadRenderKit() {
     fs.readFileSync(path.join(__dirname, '../html/js/render/renderModes.js'), 'utf8'),
     context
   );
+  RK.RENDER_MODE_TEST_UNLOCKS = false;
 
   return RK;
 }
@@ -96,6 +97,23 @@ describe('render pack visual resolver', () => {
     RK.setEntitlementSnapshot({ totalCreditsPurchased: 1 });
     expect(RK.canUseMode('iso')).toBe(true);
     expect(RK.createRenderer('iso', {}, {}).name).toBe('iso');
+  });
+
+  test('temporary render test unlocks bypass mode gates only for render packs', () => {
+    const RK = loadRenderKit();
+    RK.setEntitlementSnapshot({ totalCreditsPurchased: 0, premium: false, packs: {} });
+
+    expect(RK.canUseMode('iso')).toBe(false);
+    expect(RK.canUsePack('iso-dungeon')).toBe(false);
+
+    RK.RENDER_MODE_TEST_UNLOCKS = true;
+    expect(RK.canUseMode('ascii')).toBe(true);
+    expect(RK.canUseMode('fancy')).toBe(true);
+    expect(RK.canUseMode('iso')).toBe(true);
+    expect(RK.canUseMode('3d')).toBe(true);
+    expect(RK.canUsePack('iso-dungeon')).toBe(true);
+    expect(RK.canUsePack('kenney-3d-characters')).toBe(true);
+    expect(RK.canUsePack('generated-skins')).toBe(false);
   });
 
   test('render pack code stays out of payment and account APIs', () => {

@@ -33,6 +33,21 @@
         '192,117,28': 2,
         '198,101,39': 3
     };
+    var GEAR_SOURCE = {
+        '114,88,57': 0,
+        '149,92,24': 1,
+        '163,84,34': 1,
+        '176,128,82': 1,
+        '177,92,35': 2,
+        '192,117,28': 2,
+        '198,101,39': 3,
+        '200,164,128': 2,
+        '135,135,135': 0,
+        '202,202,202': 2,
+        '204,204,204': 2,
+        '232,232,232': 3,
+        '247,247,247': 3
+    };
 
     RK.CHAR_TINTS = {
         none:   { id: 'none', label: 'Natural', color: null, ramp: null },
@@ -80,9 +95,9 @@
         },
         head: {
             none:   { id: 'none', label: 'None', frame: null },
-            hood:   { id: 'hood', label: 'Hood', frame: 24, tint: false },
-            helm:   { id: 'helm', label: 'Helm', frame: 454, tint: false },
-            horns:  { id: 'horns', label: 'Horns', frame: 354, tint: false },
+            hood:   { id: 'hood', label: 'Hood', frame: 24 },
+            helm:   { id: 'helm', label: 'Helm', frame: 454 },
+            horns:  { id: 'horns', label: 'Horns', frame: 354 },
             cap:    { id: 'cap', label: 'Cap', frame: 462 }
         },
         shield: {
@@ -90,14 +105,14 @@
             round:  { id: 'round', label: 'Round', frame: 254 },
             kite:   { id: 'kite', label: 'Kite', frame: 304 },
             tower:  { id: 'tower', label: 'Tower', frame: 202 },
-            buckler:{ id: 'buckler', label: 'Buckler', frame: 411, tint: false }
+            buckler:{ id: 'buckler', label: 'Buckler', frame: 411 }
         },
         weapon: {
             none:   { id: 'none', label: 'None', frame: null },
             staff:  { id: 'staff', label: 'Staff', frame: 154 },
-            sword:  { id: 'sword', label: 'Sword', frame: 369, tint: false },
-            axe:    { id: 'axe', label: 'Axe', frame: 375, tint: false },
-            bow:    { id: 'bow', label: 'Bow', frame: 107, tint: false }
+            sword:  { id: 'sword', label: 'Sword', frame: 369 },
+            axe:    { id: 'axe', label: 'Axe', frame: 375 },
+            bow:    { id: 'bow', label: 'Bow', frame: 107 }
         }
     };
     RK.CHAR_EQUIPMENT_SLOTS = EQUIP_SLOTS.slice();
@@ -234,7 +249,8 @@
         var skin = RK.CHAR_SKIN_TONES[colors.skin];
         var hair = RK.CHAR_HAIR_COLORS[colors.hair];
         var slotTint = RK.CHAR_TINTS[slot === 'base' ? colors.base : (colors[slot] || tintId)];
-        var needsSlotTint = slotTint && slotTint.ramp && (slot !== 'base' || colors.base !== 'none');
+        var slotRamp = slotTint && slotTint.ramp ? slotTint.ramp.map(hexToRgb) : null;
+        var needsSlotTint = !!slotRamp && (slot !== 'base' || colors.base !== 'none');
         var needsBodyPalette = slot === 'base' && ((skin && colors.skin !== 'natural') || (hair && colors.hair !== 'copper') || needsSlotTint);
         if (!a || (!needsBodyPalette && !needsSlotTint)) return null;
         var key = idx + '|' + slot + '|' + JSON.stringify(colors);
@@ -250,8 +266,10 @@
         if (slot === 'base') {
             applyRamp(img, SKIN_SOURCE, skin && colors.skin !== 'natural' ? skin.ramp.map(hexToRgb) : null);
             applyRamp(img, HAIR_SOURCE, hair && colors.hair !== 'copper' ? hair.ramp.map(hexToRgb) : null);
+        } else {
+            applyRamp(img, GEAR_SOURCE, slotRamp);
         }
-        applyRamp(img, TINT_SOURCE, slotTint && slotTint.ramp ? slotTint.ramp.map(hexToRgb) : null);
+        applyRamp(img, TINT_SOURCE, slotRamp);
         ctx.putImageData(img, 0, 0);
         tintedTiles[key] = cv;
         return cv;
@@ -295,7 +313,8 @@
         EQUIP_SLOTS.forEach(function (slot) {
             var item = RK.CHAR_EQUIPMENT[slot][eq[slot]];
             if (!item || item.frame == null) return;
-            out.push({ slot: slot, id: item.id, frame: item.frame, tint: item.tint === false ? 'none' : tint, colorable: item.tint !== false });
+            var colorable = item.colorable !== false;
+            out.push({ slot: slot, id: item.id, frame: item.frame, tint: colorable ? tint : 'none', colorable: colorable });
         });
         return out;
     };

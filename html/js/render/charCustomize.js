@@ -177,8 +177,9 @@
                 ctx.beginPath(); ctx.moveTo(17, 26); ctx.lineTo(35, 26); ctx.stroke();
                 return;
             }
-            var tint = item.tint === false ? 'none' : ((draft.colors && draft.colors[slot]) || draft.tint);
-            var colors = item.tint === false ? null : draft.colors;
+            var colorable = item.colorable !== false;
+            var tint = colorable ? ((draft.colors && draft.colors[slot]) || draft.tint) : 'none';
+            var colors = colorable ? draft.colors : null;
             if (!RK.drawCharTileCanvas || !RK.drawCharTileCanvas(ctx, item.frame, tint, 2, 2, 48, 48, colors, slot)) {
                 RK.loadCharAtlas(draw);
                 ctx.fillStyle = '#666'; ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.fillText('...', 26, 30);
@@ -416,6 +417,7 @@
 
         function modeStatus(mode, unlocked) {
             if (!mode || !mode.premium) return 'Included';
+            if (unlocked && RK.renderModeTestUnlocks && RK.renderModeTestUnlocks()) return 'Test';
             return unlocked ? 'Unlocked' : 'Locked';
         }
 
@@ -479,6 +481,10 @@
             }
         }
 
+        function equipmentColorable(item) {
+            return !!(item && item.frame != null && item.colorable !== false);
+        }
+
         function renderEditor() {
             editSection.innerHTML = '';
             if (!isCharDraft()) return;
@@ -493,6 +499,7 @@
             (RK.CHAR_EQUIPMENT_SLOTS || []).forEach(function (slot) {
                 var catalog = RK.CHAR_EQUIPMENT[slot] || {};
                 var opts = row(slot.charAt(0).toUpperCase() + slot.slice(1), editSection);
+                var selectedItem = catalog[draft.equipment[slot]];
                 for (var id in catalog) {
                     (function (item) {
                         opts.appendChild(optionButton(item.label, draft.equipment[slot] === item.id, function () {
@@ -502,7 +509,9 @@
                         }, optionTileCanvas(slot, item, draft, null)));
                     })(catalog[id]);
                 }
-                renderColorRow(slot.charAt(0).toUpperCase() + slot.slice(1) + ' color', slot, 'tint', editSection);
+                if (equipmentColorable(selectedItem)) {
+                    renderColorRow(slot.charAt(0).toUpperCase() + slot.slice(1) + ' color', slot, 'tint', editSection);
+                }
             });
         }
 

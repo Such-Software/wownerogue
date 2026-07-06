@@ -16,6 +16,10 @@
     ];
 
     RK.entitlements = RK.entitlements || { premium: false, level: 'free', packs: {} };
+    // Temporary production QA switch while Iso/3D/Fancy are being proven out. Flip this back to
+    // false when render modes return behind credits/pack entitlements.
+    RK.RENDER_MODE_TEST_UNLOCKS = true;
+    RK.renderModeTestUnlocks = function () { return RK.RENDER_MODE_TEST_UNLOCKS === true; };
 
     RK.modeMeta = function (id) {
         for (var i = 0; i < RK.RENDER_MODES.length; i++) {
@@ -27,6 +31,7 @@
     RK.canUseMode = function (id) {
         var m = RK.modeMeta(id);
         if (!m) return false;
+        if (RK.renderModeTestUnlocks && RK.renderModeTestUnlocks()) return true;
         if (m.pack && RK.canUsePack) return RK.canUsePack(m.pack);
         return !m.premium || !!RK.entitlements.premium;
     };
