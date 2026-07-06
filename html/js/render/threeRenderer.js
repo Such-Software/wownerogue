@@ -4,6 +4,12 @@
     'use strict';
 
     function colorNum(hex) { return parseInt(String(hex || '#9aa4b2').replace('#', ''), 16) || 0x9aa4b2; }
+    function tintForVisual(visual, fallback) {
+        if (root.RK && RK.avatarVisuals && RK.avatarVisuals.tintColorFor) {
+            return RK.avatarVisuals.tintColorFor(visual && visual.appearance, fallback);
+        }
+        return fallback || null;
+    }
 
     function ThreeRenderer(host, opts) {
         opts = opts || {};
@@ -82,16 +88,34 @@
         this.world.position.set(0, 0, 0);
     };
 
-    ThreeRenderer.prototype._fallbackAvatar = function (e) {
+    ThreeRenderer.prototype._fallbackAvatar = function (e, visual) {
         var T = this.THREE;
         var g = new T.Group();
-        var body = new T.Mesh(new T.CapsuleGeometry(0.44, 1.18, 4, 12), this._mat(e.color || '#9aa4b2'));
+        var body = new T.Mesh(new T.CapsuleGeometry(0.44, 1.18, 4, 12), this._mat(tintForVisual(visual, e.color || '#9aa4b2')));
         body.position.y = 1.0;
         g.add(body);
         var face = new T.Mesh(new T.BoxGeometry(0.22, 0.12, 0.06), this._mat('#0a0c0f'));
         face.position.set(0, 1.32, 0.44);
         g.add(face);
         return g;
+    };
+
+    ThreeRenderer.prototype._applyModelTint = function (model, visual) {
+        var tint = tintForVisual(visual, null);
+        if (!tint || !model) return;
+        var T = this.THREE;
+        var color = new T.Color(colorNum(tint));
+        model.traverse(function (obj) {
+            if (!obj.isMesh || !obj.material) return;
+            var materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+            var next = materials.map(function (mat) {
+                if (!mat || !mat.color) return mat;
+                var copy = mat.clone();
+                copy.color.copy(color);
+                return copy;
+            });
+            obj.material = Array.isArray(obj.material) ? next : next[0];
+        });
     };
 
     ThreeRenderer.prototype._fitModel = function (model) {
@@ -166,13 +190,14 @@
     ThreeRenderer.prototype._makeEntity = function (e) {
         var T = this.THREE, self = this;
         var shell = new T.Group();
-        shell._body = this._fallbackAvatar(e);
-        shell.add(shell._body);
         var visual = this._visualFor(e);
+        shell._body = this._fallbackAvatar(e, visual);
+        shell.add(shell._body);
         if (visual && visual.allowed !== false && visual.model) {
             this._loadModel(visual, function (rec) {
                 if (!rec || !rec.gltf || !shell.parent) return;
                 var model = rec.gltf.scene.clone(true);
+                self._applyModelTint(model, visual);
                 model.rotation.y = Math.PI;
                 var fitted = self._fitModel(model);
                 shell.add(fitted);

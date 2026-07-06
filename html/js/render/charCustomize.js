@@ -62,17 +62,21 @@
         var avatar = input.avatar || input.id || 'default';
         if (!baseAppearance(avatar) || baseAppearance(avatar).id !== avatar) avatar = 'default';
 
+        var base = baseAppearance(avatar);
         var isChar = !!(RK.isChar && RK.isChar(avatar));
+        var isModel = base && base.kind === 'model3d';
         var tint = 'none';
         var equipment = cloneEquipment(DEFAULT_EQUIPMENT);
         var colors = null;
-        if (isChar) {
+        if (isChar || isModel) {
             colors = cloneColors(input.colors, input.tint);
             tint = colors.base;
+        }
+        if (isChar) {
             equipment = RK.normalizeCharEquipment ? RK.normalizeCharEquipment(input.equipment) : cloneEquipment(input.equipment);
         }
         var out = { avatar: avatar, tint: tint, equipment: equipment };
-        if (isChar) out.colors = colors;
+        if (isChar || isModel) out.colors = colors;
         return out;
     };
 
@@ -177,7 +181,7 @@
                 ctx.beginPath(); ctx.moveTo(17, 26); ctx.lineTo(35, 26); ctx.stroke();
                 return;
             }
-            var colorable = item.colorable !== false;
+            var colorable = item.colorable === true;
             var tint = colorable ? ((draft.colors && draft.colors[slot]) || draft.tint) : 'none';
             var colors = colorable ? draft.colors : null;
             if (!RK.drawCharTileCanvas || !RK.drawCharTileCanvas(ctx, item.frame, tint, 2, 2, 48, 48, colors, slot)) {
@@ -252,10 +256,28 @@
             return !!(RK.isChar && RK.isChar(draft.avatar));
         }
 
-        function ensureCharDraft() {
+        function draftKind() {
+            return (baseAppearance(draft.avatar) || {}).kind;
+        }
+
+        function supportsColorDraft() {
+            var kind = draftKind();
+            return isCharDraft() || kind === 'model3d';
+        }
+
+        function activeProjection() {
+            if (selectedMode === 'iso' || selectedMode === '3d' || selectedMode === 'ascii') return selectedMode;
+            return 'topdown';
+        }
+
+        function ensureColorDraft() {
             if (!draft.colors) draft.colors = cloneColors(null, draft.tint);
-            if (!draft.equipment) draft.equipment = cloneEquipment(DEFAULT_EQUIPMENT);
             draft.tint = draft.colors.base;
+        }
+
+        function ensureCharDraft() {
+            ensureColorDraft();
+            if (!draft.equipment) draft.equipment = cloneEquipment(DEFAULT_EQUIPMENT);
         }
 
         var wrap = document.createElement('div');
@@ -433,6 +455,7 @@
             selectedMode = mode.id;
             if (RK.saveMode) RK.saveMode(mode.id);
             markRenderMode();
+            renderEditor();
         }
 
         function buildRenderModes() {
@@ -482,18 +505,29 @@
         }
 
         function equipmentColorable(item) {
-            return !!(item && item.frame != null && item.colorable !== false);
+            return !!(item && item.frame != null && item.colorable === true);
         }
 
         function renderEditor() {
             editSection.innerHTML = '';
-            if (!isCharDraft()) return;
-            ensureCharDraft();
+            if (!supportsColorDraft()) return;
+            if (isCharDraft()) ensureCharDraft();
+            else ensureColorDraft();
+
+            var projection = activeProjection();
+            if (projection !== 'topdown' || !isCharDraft()) {
+                sectionTitle('Color', editSection);
+                renderColorRow('Color', 'base', 'tint', editSection);
+                return;
+            }
+
+            var bodyItem = draft.equipment && draft.equipment.body;
+            var headItem = draft.equipment && draft.equipment.head;
 
             sectionTitle('Color', editSection);
-            renderColorRow('Cloth', 'base', 'tint', editSection);
+            if (!bodyItem || bodyItem === 'none') renderColorRow('Cloth', 'base', 'tint', editSection);
             renderColorRow('Skin', 'skin', 'skin', editSection);
-            renderColorRow('Hair', 'hair', 'hair', editSection);
+            if (!headItem || headItem === 'none') renderColorRow('Hair', 'hair', 'hair', editSection);
 
             sectionTitle('Equipment', editSection);
             (RK.CHAR_EQUIPMENT_SLOTS || []).forEach(function (slot) {
@@ -520,6 +554,9 @@
             draft.avatar = a.id;
             if (RK.isChar && RK.isChar(draft.avatar)) {
                 ensureCharDraft();
+            } else if (draftKind() === 'model3d') {
+                ensureColorDraft();
+                draft.equipment = cloneEquipment(DEFAULT_EQUIPMENT);
             } else {
                 draft.tint = 'none';
                 draft.equipment = cloneEquipment(DEFAULT_EQUIPMENT);

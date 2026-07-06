@@ -16,6 +16,7 @@
         this.canvas.className = 'rk-canvas';
         this.ctx = this.canvas.getContext('2d');
         this.cache = {};
+        this.tintCache = {};
         this.last = {};
         this.lastScene = null;
         this.enabled = !(root.RK && RK.canUsePack && this.assets.pack && !RK.canUsePack(this.assets.pack));
@@ -64,6 +65,25 @@
         this.ctx.drawImage(img, cx - w / 2, baseY - h, w, h);
     };
 
+    IsoRenderer.prototype._tintedImage = function (img, tint) {
+        if (!img || !tint) return img;
+        var key = img.src + '|' + tint;
+        if (this.tintCache[key]) return this.tintCache[key];
+        var cv = document.createElement('canvas');
+        cv.width = img.naturalWidth || img.width;
+        cv.height = img.naturalHeight || img.height;
+        var ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.42;
+        ctx.fillStyle = tint;
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        this.tintCache[key] = cv;
+        return cv;
+    };
+
     IsoRenderer.prototype._tileUrl = function (kind) {
         var tiles = this.assets.tiles || {};
         return tiles[kind] || tiles.fallback || tiles.floor;
@@ -86,9 +106,9 @@
         if (st.x !== e.x || st.y !== e.y) { st.x = e.x; st.y = e.y; st.t = now; }
         var moving = (now - st.t) < 360;
         var ch = (visual && visual.character) || (this.assets.character || {});
-        if (!moving || !ch.run || ch.run.length === 0) return { url: ch.idle, character: ch };
+        if (!moving || !ch.run || ch.run.length === 0) return { url: ch.idle, character: ch, visual: visual };
         this._animating = true;
-        return { url: ch.run[Math.floor(now / 80) % ch.run.length], character: ch };
+        return { url: ch.run[Math.floor(now / 80) % ch.run.length], character: ch, visual: visual };
     };
 
     IsoRenderer.prototype.render = function (scene) {
@@ -140,7 +160,10 @@
                 rec = this._load(frame && frame.url);
                 if (rec && rec.ready) {
                     var ch = frame.character || this.assets.character || {};
-                    this._drawImage(rec.img, it.sx, it.sy + this.tileH * 0.95, ch.imageW || 74, ch.imageH || 148);
+                    var tint = root.RK && RK.avatarVisuals && RK.avatarVisuals.tintColorFor
+                        ? RK.avatarVisuals.tintColorFor(frame.visual && frame.visual.appearance)
+                        : null;
+                    this._drawImage(this._tintedImage(rec.img, tint), it.sx, it.sy + this.tileH * 0.95, ch.imageW || 74, ch.imageH || 148);
                 } else {
                     ctx.beginPath();
                     ctx.arc(it.sx, it.sy, 8, 0, Math.PI * 2);
@@ -171,6 +194,7 @@
         this.canvas = null;
         this.ctx = null;
         this.cache = {};
+        this.tintCache = {};
         this.last = {};
         this.lastScene = null;
     };

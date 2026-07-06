@@ -33,22 +33,6 @@
         '192,117,28': 2,
         '198,101,39': 3
     };
-    var GEAR_SOURCE = {
-        '114,88,57': 0,
-        '149,92,24': 1,
-        '163,84,34': 1,
-        '176,128,82': 1,
-        '177,92,35': 2,
-        '192,117,28': 2,
-        '198,101,39': 3,
-        '200,164,128': 2,
-        '135,135,135': 0,
-        '202,202,202': 2,
-        '204,204,204': 2,
-        '232,232,232': 3,
-        '247,247,247': 3
-    };
-
     RK.CHAR_TINTS = {
         none:   { id: 'none', label: 'Natural', color: null, ramp: null },
         rose:   { id: 'rose', label: 'Rose',   color: '#d85c78', ramp: ['#8f3d54', '#b84f6b', '#d96f8c', '#f4aac0'] },
@@ -266,8 +250,6 @@
         if (slot === 'base') {
             applyRamp(img, SKIN_SOURCE, skin && colors.skin !== 'natural' ? skin.ramp.map(hexToRgb) : null);
             applyRamp(img, HAIR_SOURCE, hair && colors.hair !== 'copper' ? hair.ramp.map(hexToRgb) : null);
-        } else {
-            applyRamp(img, GEAR_SOURCE, slotRamp);
         }
         applyRamp(img, TINT_SOURCE, slotRamp);
         ctx.putImageData(img, 0, 0);
@@ -313,7 +295,7 @@
         EQUIP_SLOTS.forEach(function (slot) {
             var item = RK.CHAR_EQUIPMENT[slot][eq[slot]];
             if (!item || item.frame == null) return;
-            var colorable = item.colorable !== false;
+            var colorable = item.colorable === true;
             out.push({ slot: slot, id: item.id, frame: item.frame, tint: colorable ? tint : 'none', colorable: colorable });
         });
         return out;

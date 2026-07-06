@@ -37,6 +37,10 @@ function loadRenderKit() {
     'monero-knight': { id: 'monero-knight', label: 'Monero Knight', pack: 'generated-skins' }
   };
   RK.isSkin = id => !!RK.SKINS[id];
+  RK.CHAR_TINTS = {
+    none: { id: 'none', label: 'Natural', color: null },
+    gold: { id: 'gold', label: 'Gold', color: '#d29922' }
+  };
   RK.CHARS = { 'char-ranger': { id: 'char-ranger', label: 'Ranger', frame: 432 } };
   RK.isChar = id => !!RK.CHARS[id];
 
@@ -85,6 +89,21 @@ describe('render pack visual resolver', () => {
       '3d'
     );
     expect(compat.model.url).toContain('survivorFemaleA.glb');
+  });
+
+  test('iso floor uses a flat tile instead of a raised block tile', () => {
+    const RK = loadRenderKit();
+    expect(RK.isoAssets.tiles.floor).toContain('planks_S.png');
+    expect(RK.isoAssets.tiles.floor).not.toContain('stone_S.png');
+  });
+
+  test('projection visuals expose the saved base tint as a render color', () => {
+    const RK = loadRenderKit();
+    const visual = RK.avatarVisuals.resolve(
+      { avatar: 'char-ranger', colors: { base: 'gold' }, tint: 'gold' },
+      { projection: 'iso' }
+    );
+    expect(RK.avatarVisuals.tintColorFor(visual.appearance)).toBe('#d29922');
   });
 
   test('renderer factory falls back when premium modes are locked', () => {

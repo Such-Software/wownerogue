@@ -193,7 +193,7 @@
         pack: 'iso-dungeon',
         tile: { w: 84, h: 42, imageW: 92, imageH: 184 },
         tiles: {
-            floor: 'assets/kenney/iso-dungeon/tiles/stone_S.png',
+            floor: 'assets/kenney/iso-dungeon/tiles/planks_S.png',
             wall: 'assets/kenney/iso-dungeon/tiles/stoneWall_S.png',
             bar: 'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
             table: 'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',

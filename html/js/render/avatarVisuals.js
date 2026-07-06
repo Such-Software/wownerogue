@@ -48,6 +48,20 @@
         return 'Character';
     }
 
+    function tintColorFor(appearance, fallback) {
+        var ap = normalize(appearance);
+        var base = ap && ap.colors && ap.colors.base;
+        var tint = base || (ap && ap.tint);
+        if (tint && tint !== 'none' && RK.CHAR_TINTS && RK.CHAR_TINTS[tint] && RK.CHAR_TINTS[tint].color) {
+            return RK.CHAR_TINTS[tint].color;
+        }
+        if (RK.appearance) {
+            var info = RK.appearance(ap);
+            if (info && info.color) return info.color;
+        }
+        return fallback || null;
+    }
+
     function packFor(appearance, kind, projection) {
         if (projection === 'iso') return 'iso-dungeon';
         if (projection === '3d') return 'kenney-3d-characters';
@@ -280,6 +294,7 @@
         normalize: normalize,
         kindFor: kindFor,
         resolve: resolve,
+        tintColorFor: tintColorFor,
         ensureCanvasReady: ensureCanvasReady,
         drawIcon: drawIcon,
         drawTopdownWorld: drawTopdownWorld
