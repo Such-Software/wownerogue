@@ -7,6 +7,8 @@ const CHAR_AVATARS = [
 ];
 
 const CHAR_TINTS = ['none', 'rose', 'teal', 'moss', 'gold', 'violet', 'ash'];
+const CHAR_SKIN_TONES = ['natural', 'fair', 'warm', 'umber', 'olive', 'ash'];
+const CHAR_HAIR_COLORS = ['copper', 'brown', 'black', 'blond', 'silver', 'violet'];
 const CHAR_EQUIPMENT_SLOTS = ['body', 'head', 'shield', 'weapon'];
 const CHAR_EQUIPMENT = {
     body: ['none', 'robe', 'jerkin', 'mail', 'sash'],
@@ -30,6 +32,15 @@ const DEFAULT_EQUIPMENT = CHAR_EQUIPMENT_SLOTS.reduce((out, slot) => {
     out[slot] = 'none';
     return out;
 }, {});
+const DEFAULT_COLORS = Object.freeze({
+    base: 'none',
+    skin: 'natural',
+    hair: 'copper',
+    body: 'none',
+    head: 'none',
+    shield: 'none',
+    weapon: 'none'
+});
 
 function includes(list, id) {
     return list.indexOf(id) !== -1;
@@ -60,6 +71,26 @@ function normalizeEquipment(input = {}) {
     return out;
 }
 
+function validTint(id, fallback = 'none') {
+    return includes(CHAR_TINTS, id) ? id : fallback;
+}
+
+function normalizeColors(input = {}, legacyTint = 'none') {
+    const colors = input && typeof input === 'object' ? input : {};
+    const tintFor = slot => validTint(
+        Object.prototype.hasOwnProperty.call(colors, slot) ? colors[slot] : legacyTint
+    );
+    return {
+        base: tintFor('base'),
+        skin: includes(CHAR_SKIN_TONES, colors.skin) ? colors.skin : DEFAULT_COLORS.skin,
+        hair: includes(CHAR_HAIR_COLORS, colors.hair) ? colors.hair : DEFAULT_COLORS.hair,
+        body: tintFor('body'),
+        head: tintFor('head'),
+        shield: tintFor('shield'),
+        weapon: tintFor('weapon')
+    };
+}
+
 function normalizeAppearance(input = {}) {
     if (input && input.appearance && !input.avatar) input = input.appearance;
     if (typeof input === 'string') input = { avatar: input };
@@ -72,11 +103,12 @@ function normalizeAppearance(input = {}) {
         return { avatar, tint: 'none', equipment: { ...DEFAULT_EQUIPMENT } };
     }
 
-    const tint = includes(CHAR_TINTS, input.tint) ? input.tint : 'none';
+    const colors = normalizeColors(input.colors, input.tint);
     return {
         avatar,
-        tint,
-        equipment: normalizeEquipment(input.equipment)
+        tint: colors.base,
+        equipment: normalizeEquipment(input.equipment),
+        colors
     };
 }
 
@@ -86,9 +118,12 @@ module.exports = {
     MODEL3D_AVATARS,
     CHAR_AVATARS,
     CHAR_TINTS,
+    CHAR_SKIN_TONES,
+    CHAR_HAIR_COLORS,
     CHAR_EQUIPMENT,
     CHAR_EQUIPMENT_SLOTS,
     DEFAULT_EQUIPMENT,
+    DEFAULT_COLORS,
     avatarIds: () => ALL_AVATARS.slice(),
     premiumAvatarIds: () => Object.keys(AVATAR_PACKS),
     avatarPack,
@@ -96,5 +131,6 @@ module.exports = {
     isCharAvatar,
     isPremiumAvatar,
     normalizeEquipment,
+    normalizeColors,
     normalizeAppearance
 };

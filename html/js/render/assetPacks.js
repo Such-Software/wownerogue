@@ -7,6 +7,7 @@
 
     RK.TILE_KINDS = ['floor', 'wall', 'bar', 'table'];
     var FREE_EQUIPMENT = { body: 'none', head: 'none', shield: 'none', weapon: 'none' };
+    var FREE_COLORS = { base: 'none', skin: 'natural', hair: 'copper', body: 'none', head: 'none', shield: 'none', weapon: 'none' };
 
     RK.PACKS = {
         'roguelike-interior': {
@@ -173,6 +174,14 @@
         return out;
     }
 
+    function normalizeColors(colors, tint) {
+        if (RK.normalizeCharColors) return RK.normalizeCharColors(colors, tint);
+        colors = colors || {};
+        var out = {};
+        for (var k in FREE_COLORS) out[k] = colors[k] || (k === 'base' ? (tint || FREE_COLORS[k]) : FREE_COLORS[k]);
+        return out;
+    }
+
     RK.packAppearances = function () {
         var out = [];
         for (var id in RK.EXTRA_APPEARANCES) out.push(RK.EXTRA_APPEARANCES[id]);
@@ -237,6 +246,7 @@
                 avatar: avatar,
                 tint: appearance.tint || 'none',
                 equipment: normalizeEquipment(appearance.equipment),
+                colors: normalizeColors(appearance.colors, appearance.tint),
                 character: RK.isoAssets.character
             };
         }
@@ -247,7 +257,8 @@
                 avatar: avatar,
                 model: RK.threeAssets.models[avatar] || RK.threeAssets.models.fallback,
                 tint: appearance.tint || 'none',
-                equipment: normalizeEquipment(appearance.equipment)
+                equipment: normalizeEquipment(appearance.equipment),
+                colors: normalizeColors(appearance.colors, appearance.tint)
             };
         }
         return { projection: 'topdown', avatar: avatar, appearance: appearance };

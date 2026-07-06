@@ -17,6 +17,22 @@
         '213,201,228': 3,
         '255,153,204': 2  // hot-pink accent used by a few weapon overlays
     };
+    var SKIN_SOURCE = {
+        '156,118,80': 0,
+        '161,125,82': 0,
+        '170,143,111': 1,
+        '176,128,82': 1,
+        '200,164,128': 2,
+        '229,196,157': 3
+    };
+    var HAIR_SOURCE = {
+        '114,88,57': 0,
+        '149,92,24': 1,
+        '163,84,34': 1,
+        '177,92,35': 2,
+        '192,117,28': 2,
+        '198,101,39': 3
+    };
 
     RK.CHAR_TINTS = {
         none:   { id: 'none', label: 'Natural', color: null, ramp: null },
@@ -27,6 +43,32 @@
         violet: { id: 'violet', label: 'Violet', color: '#a084c4', ramp: ['#74558f', '#8f6eb0', '#a084c4', '#d5c9e4'] },
         ash:    { id: 'ash', label: 'Ash',     color: '#878787', ramp: ['#4f4f4f', '#646464', '#878787', '#cacaca'] }
     };
+    RK.CHAR_SKIN_TONES = {
+        natural: { id: 'natural', label: 'Natural', color: '#e5c49d', ramp: ['#9c7650', '#aa8f6f', '#c8a480', '#e5c49d'] },
+        fair:    { id: 'fair',    label: 'Fair',    color: '#f2d6b3', ramp: ['#b38361', '#c9a07a', '#e2be94', '#f2d6b3'] },
+        warm:    { id: 'warm',    label: 'Warm',    color: '#c78355', ramp: ['#704226', '#9a5d37', '#c78355', '#e0a777'] },
+        umber:   { id: 'umber',   label: 'Umber',   color: '#8b5a3c', ramp: ['#3e291d', '#5b3a28', '#8b5a3c', '#b7825c'] },
+        olive:   { id: 'olive',   label: 'Olive',   color: '#9f9a64', ramp: ['#5b5a38', '#777246', '#9f9a64', '#c2bb83'] },
+        ash:     { id: 'ash',     label: 'Ash',     color: '#a7a7a7', ramp: ['#585858', '#767676', '#a7a7a7', '#d1d1d1'] }
+    };
+    RK.CHAR_HAIR_COLORS = {
+        copper: { id: 'copper', label: 'Copper', color: '#c66527', ramp: ['#724627', '#a35424', '#c66527', '#d8893d'] },
+        brown:  { id: 'brown',  label: 'Brown',  color: '#7b5437', ramp: ['#34261b', '#573a28', '#7b5437', '#a47a53'] },
+        black:  { id: 'black',  label: 'Black',  color: '#333333', ramp: ['#111111', '#202020', '#333333', '#555555'] },
+        blond:  { id: 'blond',  label: 'Blond',  color: '#d7b45a', ramp: ['#80662d', '#a9863a', '#d7b45a', '#f0d98a'] },
+        silver: { id: 'silver', label: 'Silver', color: '#c8c8c8', ramp: ['#686868', '#929292', '#c8c8c8', '#ececec'] },
+        violet: { id: 'violet', label: 'Violet', color: '#9f7aea', ramp: ['#46315f', '#694c93', '#9f7aea', '#d8c4ff'] }
+    };
+    var DEFAULT_COLORS = {
+        base: 'none',
+        skin: 'natural',
+        hair: 'copper',
+        body: 'none',
+        head: 'none',
+        shield: 'none',
+        weapon: 'none'
+    };
+    RK.CHAR_DEFAULT_COLORS = DEFAULT_COLORS;
 
     RK.CHAR_EQUIPMENT = {
         body: {
@@ -78,6 +120,27 @@
     function validTint(id) {
         return (id && RK.CHAR_TINTS[id]) ? id : 'none';
     }
+    function validSkin(id) {
+        return (id && RK.CHAR_SKIN_TONES[id]) ? id : 'natural';
+    }
+    function validHair(id) {
+        return (id && RK.CHAR_HAIR_COLORS[id]) ? id : 'copper';
+    }
+    RK.normalizeCharColors = function (colors, legacyTint) {
+        var input = colors || {};
+        function tintFor(slot) {
+            return validTint(Object.prototype.hasOwnProperty.call(input, slot) ? input[slot] : legacyTint);
+        }
+        return {
+            base: tintFor('base'),
+            skin: validSkin(input.skin),
+            hair: validHair(input.hair),
+            body: tintFor('body'),
+            head: tintFor('head'),
+            shield: tintFor('shield'),
+            weapon: tintFor('weapon')
+        };
+    };
 
     function validEquipment(slot, id) {
         var catalog = RK.CHAR_EQUIPMENT[slot] || {};
@@ -97,10 +160,12 @@
         e = e || {};
         var ap = e.appearance || {};
         var avatar = e.avatar || ap.avatar || 'char-villager';
+        var colors = RK.normalizeCharColors(ap.colors, ap.tint);
         return {
             avatar: avatar,
-            tint: validTint(ap.tint),
-            equipment: RK.normalizeCharEquipment(ap.equipment)
+            tint: colors.base,
+            equipment: RK.normalizeCharEquipment(ap.equipment),
+            colors: colors
         };
     };
 
@@ -108,6 +173,8 @@
         var ap = RK.charAppearance(e);
         return [
             ap.avatar, ap.tint,
+            ap.colors.base, ap.colors.skin, ap.colors.hair,
+            ap.colors.body, ap.colors.head, ap.colors.shield, ap.colors.weapon,
             ap.equipment.body, ap.equipment.head, ap.equipment.shield, ap.equipment.weapon
         ].join('|');
     };
@@ -147,13 +214,30 @@
         return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
     }
 
-    function tintedTileCanvas(idx, tintId) {
+    function applyRamp(img, source, ramp) {
+        if (!ramp) return;
+        for (var i = 0; i < img.data.length; i += 4) {
+            if (img.data[i + 3] === 0) continue;
+            var k = img.data[i] + ',' + img.data[i + 1] + ',' + img.data[i + 2];
+            var ri = source[k];
+            if (ri == null) continue;
+            var rgb = ramp[Math.min(ri, ramp.length - 1)];
+            img.data[i] = rgb.r; img.data[i + 1] = rgb.g; img.data[i + 2] = rgb.b;
+        }
+    }
+
+    function tintedTileCanvas(idx, tintId, colors, slot) {
         var a = RK.charAtlas();
         tintId = validTint(tintId);
-        if (!a || tintId === 'none') return null;
-        var tint = RK.CHAR_TINTS[tintId];
-        if (!tint || !tint.ramp) return null;
-        var key = idx + '|' + tintId;
+        colors = RK.normalizeCharColors(colors, tintId);
+        slot = slot || 'base';
+        var skin = RK.CHAR_SKIN_TONES[colors.skin];
+        var hair = RK.CHAR_HAIR_COLORS[colors.hair];
+        var slotTint = RK.CHAR_TINTS[slot === 'base' ? colors.base : (colors[slot] || tintId)];
+        var needsSlotTint = slotTint && slotTint.ramp && (slot !== 'base' || colors.base !== 'none');
+        var needsBodyPalette = slot === 'base' && ((skin && colors.skin !== 'natural') || (hair && colors.hair !== 'copper') || needsSlotTint);
+        if (!a || (!needsBodyPalette && !needsSlotTint)) return null;
+        var key = idx + '|' + slot + '|' + JSON.stringify(colors);
         if (tintedTiles[key]) return tintedTiles[key];
 
         var cv = document.createElement('canvas');
@@ -163,26 +247,24 @@
         ctx.drawImage(a.img, src.x, src.y, TILE, TILE, 0, 0, TILE, TILE);
 
         var img = ctx.getImageData(0, 0, TILE, TILE);
-        var ramp = tint.ramp.map(hexToRgb);
-        for (var i = 0; i < img.data.length; i += 4) {
-            var k = img.data[i] + ',' + img.data[i + 1] + ',' + img.data[i + 2];
-            var ri = TINT_SOURCE[k];
-            if (ri == null || img.data[i + 3] === 0) continue;
-            var rgb = ramp[Math.min(ri, ramp.length - 1)];
-            img.data[i] = rgb.r; img.data[i + 1] = rgb.g; img.data[i + 2] = rgb.b;
+        if (slot === 'base') {
+            applyRamp(img, SKIN_SOURCE, skin && colors.skin !== 'natural' ? skin.ramp.map(hexToRgb) : null);
+            applyRamp(img, HAIR_SOURCE, hair && colors.hair !== 'copper' ? hair.ramp.map(hexToRgb) : null);
         }
+        applyRamp(img, TINT_SOURCE, slotTint && slotTint.ramp ? slotTint.ramp.map(hexToRgb) : null);
         ctx.putImageData(img, 0, 0);
         tintedTiles[key] = cv;
         return cv;
     }
 
-    RK.charTileTexture = function (idx, tintId) {
+    RK.charTileTexture = function (idx, tintId, colors, slot) {
         tintId = validTint(tintId);
-        if (tintId === 'none') return RK.charTexture(idx);
         if (typeof PIXI === 'undefined') return null;
-        var key = idx + '|' + tintId;
+        colors = RK.normalizeCharColors(colors, tintId);
+        slot = slot || 'base';
+        var key = idx + '|' + slot + '|' + JSON.stringify(colors);
         if (tintedTextures[key]) return tintedTextures[key];
-        var cv = tintedTileCanvas(idx, tintId);
+        var cv = tintedTileCanvas(idx, tintId, colors, slot);
         if (!cv) return RK.charTexture(idx);
         var tx = PIXI.Texture.from(cv);
         if (tx.baseTexture) tx.baseTexture.scaleMode = PIXI.SCALE_MODES.NEAREST;
@@ -190,10 +272,10 @@
         return tx;
     };
 
-    RK.drawCharTileCanvas = function (ctx, idx, tintId, dx, dy, dw, dh) {
+    RK.drawCharTileCanvas = function (ctx, idx, tintId, dx, dy, dw, dh, colors, slot) {
         var a = RK.charAtlas();
         if (!a) return false;
-        var tinted = tintedTileCanvas(idx, tintId);
+        var tinted = tintedTileCanvas(idx, tintId, colors, slot);
         ctx.imageSmoothingEnabled = false;
         if (tinted) {
             ctx.drawImage(tinted, 0, 0, TILE, TILE, dx, dy, dw, dh);
@@ -206,13 +288,14 @@
 
     RK.charOverlayParts = function (appearance) {
         appearance = appearance || {};
-        var tint = validTint(appearance.tint);
+        var colors = RK.normalizeCharColors(appearance.colors, appearance.tint);
+        var tint = colors.base;
         var eq = RK.normalizeCharEquipment(appearance.equipment);
         var out = [];
         EQUIP_SLOTS.forEach(function (slot) {
             var item = RK.CHAR_EQUIPMENT[slot][eq[slot]];
             if (!item || item.frame == null) return;
-            out.push({ slot: slot, id: item.id, frame: item.frame, tint: item.tint === false ? 'none' : tint });
+            out.push({ slot: slot, id: item.id, frame: item.frame, tint: item.tint === false ? 'none' : tint, colorable: item.tint !== false });
         });
         return out;
     };
@@ -234,9 +317,9 @@
             ctx.beginPath(); ctx.ellipse(cx, e.y * cell + cell - 2, dw * 0.3, cell * 0.16, 0, 0, Math.PI * 2); ctx.stroke();
         }
         function drawComposite(dx, dy2) {
-            RK.drawCharTileCanvas(ctx, f.idx, appearance.tint, dx, dy2, dw, dh);
+            RK.drawCharTileCanvas(ctx, f.idx, appearance.tint, dx, dy2, dw, dh, appearance.colors, 'base');
             RK.charOverlayParts(appearance).forEach(function (part) {
-                RK.drawCharTileCanvas(ctx, part.frame, part.tint, dx, dy2, dw, dh);
+                RK.drawCharTileCanvas(ctx, part.frame, part.tint, dx, dy2, dw, dh, part.colorable ? appearance.colors : null, part.slot);
             });
         }
         if (f.flip) {
@@ -260,9 +343,9 @@
         var ap = RK.charAppearance({ avatar: appearance && appearance.avatar, appearance: appearance });
         var ch = RK.CHARS[ap.avatar];
         if (!ch) return false;
-        RK.drawCharTileCanvas(ctx, ch.frame, ap.tint, dx, dy, size, size);
+        RK.drawCharTileCanvas(ctx, ch.frame, ap.tint, dx, dy, size, size, ap.colors, 'base');
         RK.charOverlayParts(ap).forEach(function (part) {
-            RK.drawCharTileCanvas(ctx, part.frame, part.tint, dx, dy, size, size);
+            RK.drawCharTileCanvas(ctx, part.frame, part.tint, dx, dy, size, size, part.colorable ? ap.colors : null, part.slot);
         });
         return true;
     };

@@ -79,7 +79,8 @@ describe('TavernManager', () => {
             const appearance = {
                 avatar: 'char-ranger',
                 tint: 'teal',
-                equipment: { body: 'mail', head: 'hood', shield: 'round', weapon: 'bow' }
+                equipment: { body: 'mail', head: 'hood', shield: 'round', weapon: 'bow' },
+                colors: { base: 'teal', skin: 'warm', hair: 'silver', body: 'gold', head: 'none', shield: 'rose', weapon: 'none' }
             };
 
             await mgr.join(s, { name: 'Alice', avatar: 'green', appearance });
@@ -101,15 +102,17 @@ describe('TavernManager', () => {
                 appearance: {
                     avatar: 'char-ranger',
                     tint: 'bad',
-                    equipment: { body: 'mail', head: 'bad', shield: 'round', weapon: 'laser' }
+                    equipment: { body: 'mail', head: 'bad', shield: 'round', weapon: 'laser' },
+                    colors: { base: 'violet', skin: 'bad', hair: 'black', body: 'gold', head: 'bad', shield: 'rose', weapon: 'bad' }
                 }
             });
             const occ = mgr.room.getOccupant('a');
             expect(occ.avatar).toBe('char-ranger');
             expect(occ.appearance).toEqual({
                 avatar: 'char-ranger',
-                tint: 'none',
-                equipment: { body: 'mail', head: 'none', shield: 'round', weapon: 'none' }
+                tint: 'violet',
+                equipment: { body: 'mail', head: 'none', shield: 'round', weapon: 'none' },
+                colors: { base: 'violet', skin: 'natural', hair: 'black', body: 'gold', head: 'none', shield: 'rose', weapon: 'none' }
             });
             expect(occ.name).not.toMatch(/[<>]/);
             expect(occ.name.length).toBeLessThanOrEqual(16);

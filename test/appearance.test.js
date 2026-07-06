@@ -1,15 +1,29 @@
 const Appearance = require('../src/multiplayer/appearance');
 
 describe('appearance catalog normalization', () => {
-    test('normalizes character tint and equipment slots', () => {
+    test('normalizes character colors and equipment slots', () => {
         expect(Appearance.normalizeAppearance({
             avatar: 'char-ranger',
             tint: 'moss',
-            equipment: { body: 'mail', head: 'helm', shield: 'bad', weapon: 'bow' }
+            equipment: { body: 'mail', head: 'helm', shield: 'bad', weapon: 'bow' },
+            colors: { base: 'teal', skin: 'warm', hair: 'silver', body: 'gold', head: 'bad', shield: 'rose', weapon: 'ash' }
+        })).toEqual({
+            avatar: 'char-ranger',
+            tint: 'teal',
+            equipment: { body: 'mail', head: 'helm', shield: 'none', weapon: 'bow' },
+            colors: { base: 'teal', skin: 'warm', hair: 'silver', body: 'gold', head: 'none', shield: 'rose', weapon: 'ash' }
+        });
+    });
+
+    test('uses legacy tint as the default character color ramp', () => {
+        expect(Appearance.normalizeAppearance({
+            avatar: 'char-ranger',
+            tint: 'moss'
         })).toEqual({
             avatar: 'char-ranger',
             tint: 'moss',
-            equipment: { body: 'mail', head: 'helm', shield: 'none', weapon: 'bow' }
+            equipment: { body: 'none', head: 'none', shield: 'none', weapon: 'none' },
+            colors: { base: 'moss', skin: 'natural', hair: 'copper', body: 'moss', head: 'moss', shield: 'moss', weapon: 'moss' }
         });
     });
 

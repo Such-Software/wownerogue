@@ -265,10 +265,10 @@
         var h = this.cell * 1.8;
         var body = new PIXI.Container();
         body.y = this.cell * 0.5;
-        var baseTex = window.RK.charTileTexture(ch.frame, appearance.tint);
+        var baseTex = window.RK.charTileTexture(ch.frame, appearance.tint, appearance.colors, 'base');
         if (baseTex) body.addChild(configureCharPart(new PIXI.Sprite(baseTex), h));
         window.RK.charOverlayParts(appearance).forEach(function (part) {
-            var tex = window.RK.charTileTexture(part.frame, part.tint);
+            var tex = window.RK.charTileTexture(part.frame, part.tint, part.colorable ? appearance.colors : null, part.slot);
             if (tex) body.addChild(configureCharPart(new PIXI.Sprite(tex), h));
         });
         c.addChild(body);
