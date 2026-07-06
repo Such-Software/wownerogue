@@ -1,6 +1,5 @@
-// SinglePlayerAvatar bridges the shared character identity/render kit into the legacy ROT.js
-// dungeon display. The dungeon still draws through ROT; this module owns a sprite overlay that
-// can be cleared safely back to the classic @ tile whenever assets or identity are unavailable.
+// SinglePlayerAvatar stores the selected identity for the legacy single-player page and manages
+// the overlay canvas used by old ROT.js screens. It delegates visual decisions to RK.avatarVisuals.
 (function (root) {
     'use strict';
 
@@ -11,16 +10,15 @@
         return DEFAULT_APPEARANCE;
     }
 
-    function baseKind(appearance) {
-        if (!appearance || !root.RK) return 'color';
-        if (root.RK.isChar && root.RK.isChar(appearance.avatar)) return 'char';
-        if (root.RK.isSkin && root.RK.isSkin(appearance.avatar)) return 'skin';
-        return 'color';
-    }
-
-    function requestGameRedraw() {
+    function requestRedraw() {
         if (root.Game && root.Game._gameActive && root.Game._drawGameScreen) {
             root.Game._drawGameScreen();
+        } else if (root.ScreenManager && root.DisplayManager && root.DisplayManager.ensureDisplay && root.DisplayManager.ensureDisplay()) {
+            if (root.ScreenManager.isShowingWaitingScreen && root.ScreenManager.isShowingWaitingScreen() && root.ScreenManager.drawWaitingScreen) {
+                root.ScreenManager.drawWaitingScreen(true);
+            } else if (root.ScreenManager.drawWelcomeScreen) {
+                root.ScreenManager.drawWelcomeScreen();
+            }
         }
     }
 
@@ -64,7 +62,7 @@
             this._appearance = normalize(appearance);
             if (opts.save !== false && root.RK && root.RK.saveIdentity) root.RK.saveIdentity(this._appearance);
             this.updateButton();
-            if (opts.redraw !== false) requestGameRedraw();
+            if (opts.redraw !== false) requestRedraw();
         },
 
         applyIdentity: function (data) {
@@ -136,41 +134,21 @@
             return this._appearance || normalize(DEFAULT_APPEARANCE);
         },
 
-        _ensureAssets: function (appearance) {
-            var kind = baseKind(appearance);
-            var self = this;
-            if (kind === 'char') {
-                if (root.RK.charAtlas && root.RK.charAtlas()) return true;
-                if (root.RK.loadCharAtlas && !this._loading.char) {
-                    this._loading.char = true;
-                    root.RK.loadCharAtlas(function () {
-                        self._loading.char = false;
-                        requestGameRedraw();
-                    });
-                }
-                return false;
+        resolveVisual: function (opts) {
+            opts = opts || {};
+            if (!root.RK || !root.RK.avatarVisuals) {
+                return { appearance: this.currentAppearance(), kind: 'legacy', fallbackTile: opts.fallbackTile || '@' };
             }
-            if (kind === 'skin') {
-                if (root.RK.skinSheet && root.RK.skinSheet(appearance.avatar)) return true;
-                if (root.RK.loadSkin && !this._loading[appearance.avatar]) {
-                    this._loading[appearance.avatar] = true;
-                    var rec = root.RK.loadSkin(appearance.avatar);
-                    if (rec && rec.cbs) rec.cbs.push(function () {
-                        self._loading[appearance.avatar] = false;
-                        requestGameRedraw();
-                    });
-                }
-                return false;
-            }
-            return false;
+            return root.RK.avatarVisuals.resolve(this.currentAppearance(), opts);
+        },
+
+        _ensureVisual: function (visual) {
+            if (!root.RK || !root.RK.avatarVisuals || !visual || !visual.canvas) return false;
+            return root.RK.avatarVisuals.ensureCanvasReady(visual, requestRedraw);
         },
 
         canDrawPlayer: function () {
-            if (!root.RK) return false;
-            var appearance = this.currentAppearance();
-            var kind = baseKind(appearance);
-            if (kind !== 'char' && kind !== 'skin') return false;
-            return this._ensureAssets(appearance);
+            return this._ensureVisual(this.resolveVisual({ projection: 'legacy-rot', context: 'dungeon-player' }));
         },
 
         _updateFacing: function (player) {
@@ -188,7 +166,8 @@
         },
 
         drawPlayer: function (gameState, viewport) {
-            if (!gameState || !gameState.player || !viewport || !this.canDrawPlayer()) {
+            var visual = this.resolveVisual({ projection: 'legacy-rot', context: 'dungeon-player' });
+            if (!gameState || !gameState.player || !viewport || !this._ensureVisual(visual)) {
                 this.clearOverlay();
                 return false;
             }
@@ -196,62 +175,30 @@
             if (!ctx) return false;
 
             this.clearOverlay();
-            var appearance = this.currentAppearance();
-            var kind = baseKind(appearance);
             var player = gameState.player;
             var facing = this._updateFacing(player);
-            var cell = viewport.cell || (root.options && root.options.tileWidth) || 32;
-            var now = Date.now();
-
-            if (kind === 'char') return this._drawChar(ctx, appearance, player, viewport.screenX, viewport.screenY, cell, facing, now);
-            if (kind === 'skin') return this._drawSkin(ctx, appearance, player, viewport.screenX, viewport.screenY, cell, facing, now);
-            return false;
+            return root.RK.avatarVisuals.drawTopdownWorld(ctx, visual, {
+                id: 'single-player',
+                x: player.x,
+                y: player.y,
+                facing: facing
+            }, viewport, { onReady: requestRedraw });
         },
 
-        _drawChar: function (ctx, appearance, player, sx, sy, cell, facing, now) {
-            var ch = root.RK.CHARS && root.RK.CHARS[appearance.avatar];
-            if (!ch || !root.RK.charFrame || !root.RK.drawCharTileCanvas) return false;
-            var e = { id: 'single-player', x: player.x, y: player.y, facing: facing };
-            var frame = root.RK.charFrame(ch, e, now);
-            var dw = cell * 1.8;
-            var dh = dw * frame.squash;
-            var cx = sx * cell + cell / 2;
-            var dy = (sy * cell + cell) - dh + frame.bob;
-            var ap = root.RK.charAppearance({ avatar: appearance.avatar, appearance: appearance });
-
-            ctx.imageSmoothingEnabled = false;
-            function drawComposite(dx, dy2) {
-                root.RK.drawCharTileCanvas(ctx, ch.frame, ap.tint, dx, dy2, dw, dh, ap.colors, 'base');
-                root.RK.charOverlayParts(ap).forEach(function (part) {
-                    root.RK.drawCharTileCanvas(ctx, part.frame, part.tint, dx, dy2, dw, dh, part.colorable ? ap.colors : null, part.slot);
-                });
-            }
-            if (frame.flip) {
-                ctx.save();
-                ctx.translate(cx + dw / 2, dy);
-                ctx.scale(-1, 1);
-                drawComposite(0, 0);
-                ctx.restore();
-            } else {
-                drawComposite(cx - dw / 2, dy);
-            }
-            return true;
-        },
-
-        _drawSkin: function (ctx, appearance, player, sx, sy, cell, facing, now) {
-            var rec = root.RK.skinSheet && root.RK.skinSheet(appearance.avatar);
-            var skin = root.RK.SKINS && root.RK.SKINS[appearance.avatar];
-            if (!rec || !skin || !root.RK.skinFrame) return false;
-            var e = { id: 'single-player-skin', x: player.x, y: player.y, facing: facing };
-            var fr = root.RK.skinFrame(skin, e, now);
-            var dh = cell * (skin.scale || 1.7);
-            var dw = dh * (skin.frameW / skin.frameH);
-            var cx = sx * cell + cell / 2;
-            var dx = cx - dw / 2;
-            var dy = (sy * cell + cell) - dh;
-            ctx.imageSmoothingEnabled = true;
-            ctx.drawImage(rec.img, fr.col * skin.frameW, fr.row * skin.frameH, skin.frameW, skin.frameH, dx, dy, dw, dh);
-            return true;
+        drawLegendIcon: function (tileX, tileY, opts) {
+            opts = opts || {};
+            var visual = this.resolveVisual({ projection: 'legacy-rot', context: 'legend', fallbackTile: opts.fallbackTile || '@2' });
+            if (!this._ensureVisual(visual)) return false;
+            var ctx = this._syncOverlay();
+            if (!ctx || !root.RK || !root.RK.avatarVisuals) return false;
+            var cell = opts.cell || (root.options && root.options.tileWidth) || 32;
+            var cols = opts.cols || 2;
+            return root.RK.avatarVisuals.drawIcon(ctx, visual, {
+                x: tileX * cell,
+                y: tileY * cell,
+                w: cols * cell,
+                h: cell
+            }, { onReady: requestRedraw });
         }
     };
 

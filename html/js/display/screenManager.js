@@ -105,23 +105,38 @@ var ScreenManager = {
             ? GameTiles.getTreasureTile() 
             : (this._cryptoType === 'XMR' ? '$M' : '$W');
         const legendItems = [
-            { tile: "@2", text: "This is you" },
+            { tile: "@2", text: "This is you", role: "player", span: 2 },
             { tile: ">", text: " Escape the dungeon" }, 
             { tile: "~", text: " Avoid the monster" },
             { tile: treasureTile, text: "Secure the bag" }
         ];
         
+        if (window.SinglePlayerAvatar && window.SinglePlayerAvatar.clearOverlay) {
+            window.SinglePlayerAvatar.clearOverlay();
+        }
+
         const centerX = Math.floor(this._screenWidth / 2) - 10;
         for (let item of legendItems) {
             let x = centerX;
+            const span = item.span || item.tile.length || 1;
+            let iconDrawn = false;
             
-            // Draw the special tile
-            if (window.options?.tileMap?.hasOwnProperty(item.tile)) {
+            if (item.role === "player" && window.SinglePlayerAvatar && window.SinglePlayerAvatar.drawLegendIcon) {
+                iconDrawn = window.SinglePlayerAvatar.drawLegendIcon(x, y, {
+                    fallbackTile: item.tile,
+                    cols: span
+                });
+            }
+
+            // Draw the special tile when the resolved avatar visual is not canvas-ready.
+            if (!iconDrawn && window.options?.tileMap?.hasOwnProperty(item.tile)) {
                 display.draw(x, y, item.tile, "transparent", "transparent");
-                x += item.tile.length;
-            } else {
+                x += span;
+            } else if (!iconDrawn) {
                 display.draw(x, y, "?", "transparent", "transparent");
                 x += 1;
+            } else {
+                x += span;
             }
             
             // Draw the descriptive text

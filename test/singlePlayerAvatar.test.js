@@ -5,14 +5,16 @@ describe('single-player character identity wiring', () => {
   const indexHtml = fs.readFileSync(path.join(__dirname, '../html/index.html'), 'utf8');
   const socketHandlers = fs.readFileSync(path.join(__dirname, '../html/js/network/socketHandlers.js'), 'utf8');
   const renderEngine = fs.readFileSync(path.join(__dirname, '../html/js/display/renderEngine.js'), 'utf8');
+  const screenManager = fs.readFileSync(path.join(__dirname, '../html/js/display/screenManager.js'), 'utf8');
 
-  test('main page loads shared character renderer dependencies before the overlay bridge', () => {
+  test('main page loads the avatar visual resolver before the overlay bridge', () => {
     const order = [
       'js/render/atlas.js',
       'js/render/skins.js',
       'js/render/charSprites.js',
       'js/render/assetPacks.js',
       'js/render/charCustomize.js',
+      'js/render/avatarVisuals.js',
       'js/core/singlePlayerAvatar.js'
     ].map(src => indexHtml.indexOf(src));
 
@@ -31,5 +33,11 @@ describe('single-player character identity wiring', () => {
     expect(renderEngine).toContain('SinglePlayerAvatar.canDrawPlayer');
     expect(renderEngine).toContain('if (!avatarOverlayReady)');
     expect(renderEngine).toContain('SinglePlayerAvatar.drawPlayer');
+  });
+
+  test('welcome legend resolves the player icon through the avatar bridge', () => {
+    expect(screenManager).toContain('role: "player"');
+    expect(screenManager).toContain('SinglePlayerAvatar.clearOverlay');
+    expect(screenManager).toContain('SinglePlayerAvatar.drawLegendIcon');
   });
 });
