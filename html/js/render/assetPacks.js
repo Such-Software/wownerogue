@@ -203,6 +203,7 @@
 
     RK.isoAssets = {
         pack: 'iso-dungeon',
+        avatar: 'char-villager',
         tile: { w: 84, h: 42, imageW: 92, imageH: 184 },
         tiles: {
             floor: 'assets/kenney/iso-dungeon/tiles/planks_S.png',
@@ -211,17 +212,18 @@
             table: 'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
             fallback: 'assets/kenney/iso-dungeon/tiles/planks_S.png'
         },
-        character: isoMale(0),
+        // The Kenney files named Male_0..Male_7 are directional renders of the same body,
+        // not different character classes. The customizer exposes one honest Iso body for now.
+        character: isoMale(3),
+        directions: {
+            down: isoMale(3),
+            up: isoMale(7),
+            left: isoMale(0),
+            right: isoMale(5)
+        },
         characters: {
-            fallback: isoMale(0),
-            'char-villager': isoMale(0),
-            'char-elder': isoMale(1),
-            'char-barbarian': isoMale(2),
-            'char-monk': isoMale(3),
-            'char-ranger': isoMale(4),
-            'char-bard': isoMale(5),
-            'char-rogue': isoMale(6),
-            'char-merchant': isoMale(7)
+            fallback: isoMale(3),
+            'char-villager': isoMale(3)
         }
     };
 

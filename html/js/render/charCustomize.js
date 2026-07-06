@@ -117,17 +117,21 @@
         return 'topdown';
     }
 
+    function isoAvatarId() {
+        return (RK.isoAssets && RK.isoAssets.avatar) || 'char-villager';
+    }
+
     function hasIsoCharacter(a) {
-        return !!(a && a.kind === 'char' && RK.isoAssets && RK.isoAssets.characters && RK.isoAssets.characters[a.id]);
+        return !!(a && a.kind === 'char' && a.id === isoAvatarId());
     }
 
     function appearanceVisibleInProjection(a, projection) {
         if (!a) return false;
-        if (a.kind === 'color') return true;
-        if (projection === 'topdown') return a.kind === 'char' || a.kind === 'skin';
+        if (projection === 'topdown') return a.kind === 'color' || a.kind === 'char' || a.kind === 'skin';
         if (projection === 'iso') return hasIsoCharacter(a);
         if (projection === '3d') return a.kind === 'model3d';
-        return false;
+        if (projection === 'ascii') return a.kind === 'color';
+        return a.kind === 'color';
     }
 
     function loadThumbImage(url, onReady) {
@@ -140,7 +144,8 @@
         return rec;
     }
 
-    function tintColorForThumb(a, draft) {
+    function tintColorForThumb(a, draft, projection) {
+        if (projection === 'iso') return null;
         var source = {};
         var d = draft || {};
         for (var dk in d) source[dk] = d[dk];
@@ -161,6 +166,13 @@
         }
         var chars = RK.isoAssets && RK.isoAssets.characters;
         return (chars && (chars[a.id] || chars.fallback)) || (RK.isoAssets && RK.isoAssets.character) || null;
+    }
+
+    function isoSkinTintForDraft(draft) {
+        var colors = cloneColors(draft && draft.colors, draft && draft.tint);
+        if (!colors.skin || colors.skin === 'natural') return null;
+        var tone = RK.CHAR_SKIN_TONES && RK.CHAR_SKIN_TONES[colors.skin];
+        return (tone && tone.color) || null;
     }
 
     function imageBounds(img) {
@@ -210,7 +222,7 @@
     }
 
     function drawProjectionThumb(ctx, a, draft, projection, onReady) {
-        var color = tintColorForThumb(a, draft);
+        var color = tintColorForThumb(a, draft, projection);
         ctx.clearRect(0, 0, 72, 80);
         if (projection === 'ascii') {
             ctx.fillStyle = color || '#9aa4b2';
@@ -238,7 +250,7 @@
                 var b = imageBounds(rec.img);
                 var dh = 52;
                 var dw = dh * (b.w / b.h);
-                drawTintedImage(ctx, rec.img, b, 36 - dw / 2, 74 - dh, dw, dh, color);
+                drawTintedImage(ctx, rec.img, b, 36 - dw / 2, 74 - dh, dw, dh, isoSkinTintForDraft(draft));
             } else {
                 ctx.fillStyle = color || '#9aa4b2';
                 ctx.beginPath();
@@ -683,6 +695,11 @@
             else ensureColorDraft();
 
             var projection = activeProjection();
+            if (projection === 'iso' && isCharDraft()) {
+                sectionTitle('Color', editSection);
+                renderColorRow('Skin', 'skin', 'skin', editSection);
+                return;
+            }
             if (projection !== 'topdown' || !isCharDraft()) {
                 sectionTitle('Color', editSection);
                 renderColorRow('Color', 'base', 'tint', editSection);
@@ -782,7 +799,7 @@
                 }, redrawers));
                 var lab = document.createElement('div');
                 lab.className = 'rk-option-label';
-                lab.textContent = a.label + (a.premium ? ' *' : '');
+                lab.textContent = (activeProjection() === 'iso' ? 'Adventurer' : a.label) + (a.premium ? ' *' : '');
                 card.appendChild(lab);
                 card.onclick = function () { selectAvatar(a); };
                 grid.appendChild(card);
@@ -828,7 +845,7 @@
             } else {
                 drawBaseThumb(pctx, base, draft, 'topdown', redrawAll);
             }
-            previewName.textContent = base.label || base.id;
+            previewName.textContent = projection === 'iso' ? 'Adventurer' : (base.label || base.id);
             previewMeta.textContent = projection !== 'topdown'
                 ? (projection.toUpperCase() + ' identity')
                 : (base.premium ? 'Premium pack' : (base.kind === 'char' ? 'Customizable' : 'Free'));

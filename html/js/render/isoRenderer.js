@@ -50,9 +50,16 @@
     IsoRenderer.prototype._preload = function () {
         var tiles = this.assets.tiles || {};
         for (var k in tiles) this._load(tiles[k]);
+        var self = this;
+        function loadCharacter(ch) {
+            if (!ch) return;
+            self._load(ch.idle);
+            (ch.run || []).forEach(self._load.bind(self));
+        }
         var ch = this.assets.character || {};
-        this._load(ch.idle);
-        (ch.run || []).forEach(this._load.bind(this));
+        loadCharacter(ch);
+        var dirs = this.assets.directions || {};
+        for (var d in dirs) loadCharacter(dirs[d]);
     };
 
     IsoRenderer.prototype._project = function (x, y, originX, originY) {
@@ -120,6 +127,15 @@
         return cv;
     };
 
+    IsoRenderer.prototype._skinTintFor = function (visual) {
+        var ap = visual && visual.appearance;
+        var skin = ap && ap.colors && ap.colors.skin;
+        if (!skin || skin === 'natural') return null;
+        var tones = root.RK && RK.CHAR_SKIN_TONES;
+        var tone = tones && tones[skin];
+        return (tone && tone.color) || null;
+    };
+
     IsoRenderer.prototype._tileUrl = function (kind) {
         var tiles = this.assets.tiles || {};
         return tiles[kind] || tiles.fallback || tiles.floor;
@@ -137,11 +153,13 @@
     IsoRenderer.prototype._charFrame = function (e, now) {
         var visual = this._visualFor(e);
         if (visual && visual.allowed === false) return null;
+        var dirs = this.assets.directions || {};
+        var facing = (e && e.facing) || 'down';
         var key = e.id || 'anon';
         var st = this.last[key] || (this.last[key] = { x: e.x, y: e.y, t: 0 });
         if (st.x !== e.x || st.y !== e.y) { st.x = e.x; st.y = e.y; st.t = now; }
         var moving = (now - st.t) < 360;
-        var ch = (visual && visual.character) || (this.assets.character || {});
+        var ch = dirs[facing] || (visual && visual.character) || (this.assets.character || {});
         if (!moving || !ch.run || ch.run.length === 0) return { url: ch.idle, character: ch, visual: visual };
         this._animating = true;
         return { url: ch.run[Math.floor(now / 80) % ch.run.length], character: ch, visual: visual };
@@ -196,9 +214,7 @@
                 rec = this._load(frame && frame.url);
                 if (rec && rec.ready) {
                     var ch = frame.character || this.assets.character || {};
-                    var tint = root.RK && RK.avatarVisuals && RK.avatarVisuals.tintColorFor
-                        ? RK.avatarVisuals.tintColorFor(frame.visual && frame.visual.appearance)
-                        : null;
+                    var tint = this._skinTintFor(frame.visual);
                     this._drawSpriteImage(this._tintedImage(rec.img, tint), it.sx, it.sy + this.tileH * 0.95, ch.imageH || 92);
                 } else {
                     ctx.beginPath();
