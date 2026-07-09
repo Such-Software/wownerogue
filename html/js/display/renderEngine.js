@@ -258,11 +258,18 @@ var RenderEngine = {
         }
 
         if (avatarOverlayReady && window.SinglePlayerAvatar.drawPlayer) {
-            window.SinglePlayerAvatar.drawPlayer(gameState, {
+            var drew = window.SinglePlayerAvatar.drawPlayer(gameState, {
                 screenX: centerX,
                 screenY: centerY,
                 cell: window.options ? window.options.tileWidth : 32
             });
+            // Fallback: if the overlay couldn't render (display not ready, atlas stale, etc.),
+            // draw the @ tile so the player is never invisible. The @ was suppressed above
+            // because canDrawPlayer returned true, but the overlay draw may still fail.
+            if (!drew) {
+                try { display.draw(centerX, centerY, playerTile, "#FFF", "transparent"); }
+                catch (_) { /* ignore — next frame will retry */ }
+            }
         }
 
         // Render message at bottom if present

@@ -96,7 +96,8 @@
         var p = RK.pack(id);
         if (!p) return false;
         if (!p.premium) return true;
-        if (RK.renderModeTestUnlocks && RK.renderModeTestUnlocks() && (p.projection === 'iso' || p.projection === '3d')) return true;
+        // Production QA switch: when enabled, all premium packs are available for testing.
+        if (RK.renderModeTestUnlocks && RK.renderModeTestUnlocks()) return true;
         return !!(RK.entitlements && RK.entitlements.packs && RK.entitlements.packs[id]);
     };
     RK.canUseAppearance = function (a) {

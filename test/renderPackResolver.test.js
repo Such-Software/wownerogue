@@ -132,21 +132,27 @@ describe('render pack visual resolver', () => {
     expect(RK.createRenderer('iso', {}, {}).name).toBe('iso');
   });
 
-  test('temporary render test unlocks bypass mode gates only for render packs', () => {
+  test('temporary render test unlocks bypass all premium gates for QA', () => {
     const RK = loadRenderKit();
     RK.setEntitlementSnapshot({ totalCreditsPurchased: 0, premium: false, packs: {} });
 
+    // With test unlocks off, premium modes and packs are gated by entitlements
     expect(RK.canUseMode('iso')).toBe(false);
     expect(RK.canUsePack('iso-dungeon')).toBe(false);
 
+    // With test unlocks on, ALL premium modes and packs are available for QA
     RK.RENDER_MODE_TEST_UNLOCKS = true;
-    expect(RK.canUseMode('ascii')).toBe(true);
     expect(RK.canUseMode('fancy')).toBe(true);
     expect(RK.canUseMode('iso')).toBe(true);
     expect(RK.canUseMode('3d')).toBe(true);
     expect(RK.canUsePack('iso-dungeon')).toBe(true);
     expect(RK.canUsePack('kenney-3d-characters')).toBe(true);
-    expect(RK.canUsePack('generated-skins')).toBe(false);
+    expect(RK.canUsePack('generated-skins')).toBe(true);
+
+    // Free modes and packs are always available regardless
+    RK.RENDER_MODE_TEST_UNLOCKS = false;
+    expect(RK.canUseMode('tiles')).toBe(true);
+    expect(RK.canUseMode('ascii')).toBe(true); // ASCII is the free accessible fallback
   });
 
   test('render pack code stays out of payment and account APIs', () => {
@@ -173,3 +179,18 @@ describe('render pack visual resolver', () => {
     });
   });
 });
+
+  test('ASCII is the free accessible fallback, not premium-gated', () => {
+    const RK = loadRenderKit();
+    RK.setEntitlementSnapshot({ totalCreditsPurchased: 0, premium: false, packs: {} });
+    RK.RENDER_MODE_TEST_UNLOCKS = false;
+
+    const asciiMeta = RK.modeMeta('ascii');
+    expect(asciiMeta.premium).toBe(false);
+    expect(RK.canUseMode('ascii')).toBe(true);
+  });
+
+  test('render mode test unlocks default to false in production', () => {
+    const RK = loadRenderKit();
+    expect(RK.RENDER_MODE_TEST_UNLOCKS).toBe(false);
+  });

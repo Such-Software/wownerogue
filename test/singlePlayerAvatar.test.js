@@ -49,4 +49,23 @@ describe('single-player character identity wiring', () => {
     expect(singlePlayerAvatar).toContain('scale: 0.78');
     expect(avatarVisuals).toContain("visual.context === 'legend'");
   });
+
+  test('dungeon renderer falls back to @ tile when overlay draw fails', () => {
+    expect(renderEngine).toContain('var drew = window.SinglePlayerAvatar.drawPlayer');
+    expect(renderEngine).toContain('if (!drew)');
+    expect(renderEngine).toContain('display.draw(centerX, centerY, playerTile');
+  });
+
+  test('customizer does not auto-switch avatar identity on render mode change', () => {
+    const charCustomize = fs.readFileSync(path.join(__dirname, '../html/js/render/charCustomize.js'), 'utf8');
+    const buildAvatarGridMatch = charCustomize.match(/function buildAvatarGrid\(\)[\s\S]*?grid\.innerHTML/);
+    expect(buildAvatarGridMatch).toBeTruthy();
+    expect(buildAvatarGridMatch[0]).not.toContain('ensureVisibleAvatar()');
+  });
+
+  test('equipment option tiles register for async redraw', () => {
+    const charCustomize = fs.readFileSync(path.join(__dirname, '../html/js/render/charCustomize.js'), 'utf8');
+    expect(charCustomize).toContain('optionTileCanvas(slot, item, draft, equipRedrawers)');
+    expect(charCustomize).not.toContain('optionTileCanvas(slot, item, draft, null)');
+  });
 });

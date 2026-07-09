@@ -53,7 +53,7 @@
                     if (root.socket && root.socket.emit) {
                         root.socket.emit('identity:update', { appearance: normalized });
                     }
-                });
+                }, { projection: 'topdown' });
             });
         },
 

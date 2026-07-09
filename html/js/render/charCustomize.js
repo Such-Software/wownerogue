@@ -112,6 +112,13 @@
         } catch (_) { return null; }
     };
 
+    function projectionToMode(projection) {
+        if (projection === 'iso') return 'iso';
+        if (projection === '3d') return '3d';
+        if (projection === 'ascii') return 'ascii';
+        return 'tiles';
+    }
+
     function projectionForMode(mode) {
         if (mode === 'iso' || mode === '3d' || mode === 'ascii') return mode;
         return 'topdown';
@@ -424,11 +431,13 @@
         document.head.appendChild(style);
     }
 
-    RK.openCustomize = function (current, onSave) {
+    RK.openCustomize = function (current, onSave, opts) {
+        opts = opts || {};
         ensureCustomizeStyle();
 
         var draft = RK.normalizeAppearance(current);
-        var redrawers = [];
+        var redrawers = [];      // avatar thumbnail draws (reset in buildAvatarGrid)
+        var equipRedrawers = [];  // equipment option tile draws (reset in renderEditor)
         var cards = {};
 
         function isCharDraft() {
@@ -519,10 +528,14 @@
         content.className = 'rk-customize-content';
         body.appendChild(content);
 
-        var selectedMode = RK.loadMode ? RK.loadMode('tiles') : 'tiles';
+        // The main game page only uses top-down rendering, so the customizer there should
+        // default to top-down and not offer the tavern's render-mode picker. The tavern passes
+        // no opts, so it gets the full picker and the user's saved mode.
+        var selectedMode = opts.projection ? projectionToMode(opts.projection) : (RK.loadMode ? RK.loadMode('tiles') : 'tiles');
+        var showRenderModes = !opts.projection && RK.RENDER_MODES && RK.RENDER_MODES.length;
         var modeCards = {};
         var renderModeGrid = null;
-        if (RK.RENDER_MODES && RK.RENDER_MODES.length) {
+        if (showRenderModes) {
             var renderSection = document.createElement('section');
             renderSection.className = 'rk-customize-section';
             content.appendChild(renderSection);
@@ -690,6 +703,7 @@
 
         function renderEditor() {
             editSection.innerHTML = '';
+            equipRedrawers = [];
             if (!supportsColorDraft()) return;
             if (isCharDraft()) ensureCharDraft();
             else ensureColorDraft();
@@ -725,7 +739,7 @@
                             draft.equipment[slot] = item.id;
                             renderEditor();
                             redrawAll();
-                        }, optionTileCanvas(slot, item, draft, null)));
+                        }, optionTileCanvas(slot, item, draft, equipRedrawers)));
                     })(catalog[id]);
                 }
                 if (equipmentColorable(selectedItem)) {
@@ -781,7 +795,10 @@
         }
 
         function buildAvatarGrid() {
-            ensureVisibleAvatar();
+            // Don't auto-switch the avatar when the render mode changes — only an explicit
+            // click on a different avatar card should change the saved identity. If the current
+            // avatar isn't native to this projection, it stays selected (the resolver handles
+            // fallback rendering) so browsing render modes never silently mutates the identity.
             grid.innerHTML = '';
             cards = {};
             redrawers = [];
@@ -799,7 +816,7 @@
                 }, redrawers));
                 var lab = document.createElement('div');
                 lab.className = 'rk-option-label';
-                lab.textContent = (activeProjection() === 'iso' ? 'Adventurer' : a.label) + (a.premium ? ' *' : '');
+                lab.textContent = a.label + (a.premium ? ' *' : '');
                 card.appendChild(lab);
                 card.onclick = function () { selectAvatar(a); };
                 grid.appendChild(card);
@@ -845,15 +862,21 @@
             } else {
                 drawBaseThumb(pctx, base, draft, 'topdown', redrawAll);
             }
-            previewName.textContent = projection === 'iso' ? 'Adventurer' : (base.label || base.id);
-            previewMeta.textContent = projection !== 'topdown'
-                ? (projection.toUpperCase() + ' identity')
-                : (base.premium ? 'Premium pack' : (base.kind === 'char' ? 'Customizable' : 'Free'));
+            var visible = appearanceVisibleInProjection(base, projection);
+            previewName.textContent = base.label || base.id;
+            var metaParts = [];
+            if (projection !== 'topdown') metaParts.push(projection.toUpperCase() + ' view');
+            if (!visible && projection !== 'topdown') metaParts.push('fallback render');
+            if (base.premium) metaParts.push('Premium pack');
+            else if (base.kind === 'char') metaParts.push('Customizable');
+            else if (base.kind === 'color') metaParts.push('Free');
+            previewMeta.textContent = metaParts.join(' · ') || 'Free';
         }
 
         function redrawAll() {
             drawPreview();
             redrawers.forEach(function (fn) { try { fn(); } catch (_) { /* ignore */ } });
+            equipRedrawers.forEach(function (fn) { try { fn(); } catch (_) { /* ignore */ } });
         }
 
         function mark() {

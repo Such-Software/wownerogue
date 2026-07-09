@@ -8,7 +8,7 @@
     // is client-side, so this is a soft/honour gate for cosmetics, not a hard security boundary.
     RK.RENDER_MODES = [
         { id: 'tiles', label: 'Tiled', premium: false },
-        { id: 'ascii', label: 'ASCII', premium: true },
+        { id: 'ascii', label: 'ASCII', premium: false },
         { id: 'fancy', label: 'Fancy', premium: true, pack: 'generated-skins' },
         { id: 'iso', label: 'Iso', premium: true, pack: 'iso-dungeon' },
         { id: '3d', label: '3D', premium: true, pack: 'kenney-3d-characters' }
@@ -16,9 +16,9 @@
     ];
 
     RK.entitlements = RK.entitlements || { premium: false, level: 'free', packs: {} };
-    // Temporary production QA switch while Iso/3D/Fancy are being proven out. Flip this back to
-    // false when render modes return behind credits/pack entitlements.
-    RK.RENDER_MODE_TEST_UNLOCKS = true;
+    // Production QA switch: set to true to temporarily bypass premium render-mode gating for
+    // testing. Default false — premium modes (Fancy/Iso/3D) gate behind pack entitlements.
+    RK.RENDER_MODE_TEST_UNLOCKS = false;
     RK.renderModeTestUnlocks = function () { return RK.RENDER_MODE_TEST_UNLOCKS === true; };
 
     RK.modeMeta = function (id) {
