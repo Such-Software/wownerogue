@@ -74,6 +74,143 @@
         AVATAR_COLORS: AVATAR_COLORS
     };
 
+    // ---- Dungeon game-state adapter ------------------------------------------------
+    // Converts a game state (from the server's game_start/game_update/spectator_update) into a
+    // renderer-agnostic Scene, so the render kit can draw the dungeon just like the tavern.
+    // This is the bridge for milestone R1 (main game → render kit) and T2b (tavern spectator).
+
+    var DUNGEON_LEGEND = {
+    wall:     { char: '#',  color: '#2a2f38', solid: true },
+    floor:    { char: '·',  color: '#15191f', solid: false },
+    floor2:   { char: '·',  color: '#181c22', solid: false },
+    entrance: { char: '<',  color: '#3fb950', solid: false },
+    exit:     { char: '>',  color: '#d29922', solid: false },
+    treasure: { char: '$',  color: '#fbbf24', solid: false },
+    torch:    { char: '#',  color: '#3a3028', solid: true },
+    dark:     { char: ' ',  color: '#0a0c0f', solid: true }
+};
+
+// Map dungeon tile characters to scene tile kinds.
+function dungeonTileKind(ch) {
+    if (ch === '#') return 'wall';
+    if (ch === 'torch') return 'torch';
+    if (ch === "'1" || ch === 0) return 'floor';
+    if (ch === "'2") return 'floor2';
+    if (ch === '<') return 'entrance';
+    if (ch === '>') return 'exit';
+    if (ch === '$' || ch === '$W' || ch === '$M') return 'treasure';
+    return 'floor';
+}
+
+function sceneFromGameState(state, opts) {
+    state = state || {};
+    opts = opts || {};
+    var visible = state.visibleTiles || {};
+    var explored = state.exploredTiles || {};
+    var lighting = state.lighting || {};
+    var rows = visible.length || (state.dungeonRows || 0);
+    var cols = 0;
+    for (var y = 0; y < rows; y++) {
+        if (visible[y]) cols = Math.max(cols, visible[y].length);
+        if (explored[y]) cols = Math.max(cols, explored[y].length);
+    }
+    if (!cols && state.dungeonCols) cols = state.dungeonCols;
+
+    var grid = [];
+    var lightGrid = [];
+    for (var y = 0; y < rows; y++) {
+        var row = [];
+        var lrow = [];
+        for (var x = 0; x < cols; x++) {
+            var ch = null;
+            var isVisible = visible[y] && visible[y][x] !== undefined;
+            if (isVisible) {
+                ch = visible[y][x];
+            } else if (explored[y] && explored[y][x] !== undefined) {
+                ch = explored[y][x];
+            }
+            if (ch === null || ch === undefined || ch === ' ') {
+                row.push('dark');
+                lrow.push(0);
+            } else {
+                row.push(dungeonTileKind(ch));
+                // Lighting: 0 = fully lit, higher = darker. Convert to brightness (1 = lit).
+                var la = (lighting[y] && lighting[y][x]) || 0;
+                lrow.push(isVisible ? Math.max(0.15, 1 - Math.min(la, 0.8)) : 0.25);
+            }
+        }
+        grid.push(row);
+        lightGrid.push(lrow);
+    }
+
+    var entities = [];
+
+    // Entrance / exit / treasure as entities (so they layer above tiles).
+    if (state.entrance) {
+        entities.push({ id: 'entrance', x: state.entrance[0], y: state.entrance[1], kind: 'feature', char: '<', color: '#3fb950', label: null });
+    }
+    if (state.exit) {
+        entities.push({ id: 'exit', x: state.exit[0], y: state.exit[1], kind: 'feature', char: '>', color: '#d29922', label: null });
+    }
+    if (state.treasure) {
+        var tChar = opts.cryptoType === 'XMR' ? '$M' : '$W';
+        entities.push({ id: 'treasure', x: state.treasure[0], y: state.treasure[1], kind: 'feature', char: tChar, color: '#fbbf24', label: null });
+    }
+
+    // Items.
+    if (state.items) {
+        for (var key in state.items) {
+            if (state.items.hasOwnProperty(key)) {
+                var item = state.items[key];
+                if (item && typeof item.x === 'number') {
+                    entities.push({ id: 'item:' + key, x: item.x, y: item.y, kind: 'item', char: '$', color: '#fbbf24', label: null });
+                }
+            }
+        }
+    }
+
+    // Monster.
+    if (state.monster) {
+        entities.push({
+            id: 'monster', x: state.monster.x, y: state.monster.y,
+            kind: 'monster', char: '~', color: '#f85149', label: null
+        });
+    }
+
+    // Player.
+    if (state.player) {
+        var playerEntity = {
+            id: 'player', x: state.player.x, y: state.player.y,
+            kind: 'player', char: '@', color: '#9aa4b2',
+            facing: state.player.facing || 'down', label: null,
+            you: !state.isSpectating
+        };
+        // Attach the player's appearance if available (for render-kit character rendering).
+        if (opts.playerAppearance) {
+            playerEntity.avatar = opts.playerAppearance.avatar || 'default';
+            playerEntity.appearance = opts.playerAppearance;
+        } else {
+            playerEntity.avatar = 'default';
+            playerEntity.appearance = { avatar: 'default', tint: 'none', equipment: { body: 'none', head: 'none', shield: 'none', weapon: 'none' } };
+        }
+        entities.push(playerEntity);
+    }
+
+    return {
+        cols: cols,
+        rows: rows,
+        grid: grid,
+        legend: DUNGEON_LEGEND,
+        entities: entities,
+        lightGrid: lightGrid,
+        background: '#0a0c0f',
+        isDungeon: true
+    };
+}
+
+    api.sceneFromGameState = sceneFromGameState;
+    api.DUNGEON_LEGEND = DUNGEON_LEGEND;
+
     root.RK = root.RK || {};
     root.RK.scene = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

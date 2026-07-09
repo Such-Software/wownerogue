@@ -109,9 +109,15 @@
         'roguelike-interior': {
             id: 'roguelike-interior',
             label: 'Kenney Roguelike Interior',
-            tileset: { url: 'assets/kenney/roguelikeIndoor.png', tile: 16, spacing: 1 },
-            // Defaults are null until mapped via the tile-picker (localStorage overrides win).
-            tiles: { floor: null, wall: null, bar: null, table: null }
+            tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
+            // Default tile picks from the sheet metadata ( roguelikeSheet_meta.json).
+            // The tile-picker overlay can override these per-user via localStorage.
+            tiles: {
+                floor: [5, 2],    // tile 119 — floor_wood
+                wall: [13, 12],   // tile 697 — stone wall
+                bar: [28, 0],     // tile 28  — counter
+                table: [20, 3]    // tile 191 — table
+            }
         }
     };
     RK.activeThemeId = 'roguelike-interior';

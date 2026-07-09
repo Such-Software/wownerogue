@@ -29,7 +29,7 @@
 
         ctx.font = glyphFont;
         // For a designed room, ASCII shows a floor-plan from the walkability grid.
-        var room = (window.RK && RK.roomReady && RK.roomReady()) ? RK.activeRoom.desc : null;
+        var room = (!scene.isDungeon && window.RK && RK.roomReady && RK.roomReady()) ? RK.activeRoom.desc : null;
         for (var y = 0; y < scene.rows; y++) {
             for (var x = 0; x < scene.cols; x++) {
                 if (room) {
@@ -39,7 +39,13 @@
                 } else {
                     var def = scene.legend[scene.grid[y][x]] || { char: '?', color: '#555' };
                     ctx.fillStyle = def.color;
+                    // Dungeon lighting: dim tiles in shadow.
+                    if (scene.lightGrid && scene.lightGrid[y] && scene.lightGrid[y][x] != null) {
+                        var b = scene.lightGrid[y][x];
+                        if (b < 1) ctx.globalAlpha = b;
+                    }
                     ctx.fillText(def.char, x * cell + cell / 2, y * cell + cell / 2);
+                    ctx.globalAlpha = 1;
                 }
             }
         }
@@ -48,6 +54,23 @@
             var e = scene.entities[i];
             var cx = e.x * cell + cell / 2, cy = e.y * cell + cell / 2;
             ctx.font = glyphFont;
+            ctx.fillStyle = e.color || '#fff';
+            // Dungeon features and entities use their own char/color.
+            if (e.kind === 'feature' || e.kind === 'item' || e.kind === 'monster') {
+                ctx.fillStyle = e.color || '#fff';
+                ctx.fillText(e.char || '?', cx, cy);
+                if (e.you) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(e.x * cell + 2, e.y * cell + 2, cell - 4, cell - 4);
+                }
+                if (e.label) {
+                    ctx.font = '10px monospace';
+                    ctx.fillStyle = '#d7dbe0';
+                    ctx.fillText(e.label, cx, e.y * cell - 1);
+                }
+                continue;
+            }
             ctx.fillStyle = e.color || '#fff';
             ctx.fillText(e.char || '@', cx, cy);
             if (e.you) {

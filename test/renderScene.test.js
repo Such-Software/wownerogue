@@ -53,3 +53,67 @@ describe('sceneFromTavern (render kit adapter)', () => {
         ]);
     });
 });
+
+describe('sceneFromGameState (dungeon adapter)', () => {
+  const api = require('../html/js/render/sceneModel.js');
+
+  test('converts visible tiles, entities, and lighting into a dungeon Scene', () => {
+    const scene = api.sceneFromGameState({
+      visibleTiles: [['#', "'1", '>'], ["'1", "'1", "'1"]],
+      exploredTiles: [['#', "'1", '>'], ["'1", "'1", "'1"]],
+      lighting: [[0, 0.5, 0], [0, 0, 0]],
+      entrance: [0, 1],
+      exit: [2, 0],
+      treasure: null,
+      player: { x: 1, y: 1, facing: 'down' },
+      monster: { x: 2, y: 1 },
+      items: {},
+      isSpectating: true
+    });
+
+    expect(scene.isDungeon).toBe(true);
+    expect(scene.cols).toBe(3);
+    expect(scene.rows).toBe(2);
+    expect(scene.grid[0]).toEqual(['wall', 'floor', 'exit']);
+    expect(scene.grid[1]).toEqual(['floor', 'floor', 'floor']);
+    expect(scene.lightGrid[0][1]).toBeCloseTo(0.5, 1);
+    // Entities: entrance, exit, monster, player (no treasure)
+    const kinds = scene.entities.map(e => e.kind);
+    expect(kinds).toContain('feature');
+    expect(kinds).toContain('monster');
+    expect(kinds).toContain('player');
+    // Player entity should be marked as not-you for spectators
+    const player = scene.entities.find(e => e.kind === 'player');
+    expect(player.you).toBe(false);
+  });
+
+  test('treasure entity appears when treasure position is set', () => {
+    const scene = api.sceneFromGameState({
+      visibleTiles: [["'1", '$']],
+      entrance: [0, 0],
+      exit: [1, 0],
+      treasure: [1, 0],
+      player: { x: 0, y: 0 },
+      monster: null,
+      items: {},
+      isSpectating: false
+    });
+    const treasure = scene.entities.find(e => e.id === 'treasure');
+    expect(treasure).toBeTruthy();
+    expect(treasure.char).toContain('$');
+  });
+
+  test('unexplored tiles become dark', () => {
+    const scene = api.sceneFromGameState({
+      visibleTiles: [["'1", undefined]],
+      exploredTiles: [["'1", undefined]],
+      lighting: [[0, 0]],
+      player: { x: 0, y: 0 },
+      monster: null,
+      items: {},
+      isSpectating: true
+    });
+    expect(scene.grid[0][1]).toBe('dark');
+    expect(scene.lightGrid[0][1]).toBe(0);
+  });
+});

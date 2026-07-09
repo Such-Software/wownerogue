@@ -20,6 +20,7 @@
     <script src="js/render/fancyRenderer.js"></script>
     <script src="js/render/isoRenderer.js"></script>
     <script src="js/render/threeRenderer.js"></script>
+    <script src="js/render/tavernLife.js"></script>
     <script src="js/render/renderModes.js"></script>
     <style>
         :root { --bg: #0f1216; --panel: #171b21; --line: #2a313a; --text: #d7dbe0; --accent: #3fb950; }
@@ -78,6 +79,21 @@
                 <button type="submit">Send</button>
             </form>
         </div>
+
+        <!-- Spectator camera: watch live dungeon runs from inside the tavern -->
+        <button id="watchGamesBtn" class="hidden" style="margin-top:8px;">👁️ Watch Live Games</button>
+        <div id="spectatorPanel" class="panel hidden">
+            <h3 style="margin:0 0 8px;font-size:14px;">Live Games</h3>
+            <div id="gameList" style="max-height:200px;overflow-y:auto;font-size:13px;"></div>
+            <button id="closeGameListBtn" style="margin-top:8px;">Close</button>
+        </div>
+        <div id="spectatorStage" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span id="spectatorLabel" class="muted"></span>
+                <button id="leaveSpectateBtn">← Back to tavern</button>
+            </div>
+            <div id="spectatorRender" style="position:relative;min-height:300px;"></div>
+        </div>
     </div>
 
     <script>
@@ -120,6 +136,8 @@
         var currentRenderer = null;
         var currentMode = null;
         var currentScene = null;
+        var tavernLife = null;
+        var rafActive = false;
 
         function setStatus(msg) { statusEl.textContent = msg; }
         function applyEntitlements(data) {
@@ -137,7 +155,26 @@
             currentScene = RK.scene.sceneFromTavern(state, state.you);
         }
         function draw() {
-            if (currentRenderer && currentScene) currentRenderer.render(currentScene);
+            if (!currentScene) return;
+            // Inject client-side NPCs (bartender, patrons, cat) into the scene.
+            if (tavernLife) tavernLife.injectInto(currentScene);
+            if (currentRenderer) currentRenderer.render(currentScene);
+        }
+
+        // rAF loop for smooth NPC animation + speech bubbles.
+        function startRafLoop() {
+            if (rafActive) return;
+            rafActive = true;
+            function loop() {
+                if (!rafActive) return;
+                if (currentScene && tavernLife) {
+                    // Re-inject NPCs if the scene was rebuilt by a snapshot.
+                    if (!currentScene._npcInjected) tavernLife.injectInto(currentScene);
+                    tavernLife.update(currentScene, currentRenderer && currentRenderer.cell || 24, currentMode || 'tiles');
+                }
+                root.requestAnimationFrame(loop);
+            }
+            root.requestAnimationFrame(loop);
         }
         function lockedModeMessage(mode) {
             var meta = RK.modeMeta ? RK.modeMeta(mode) : null;
@@ -152,6 +189,7 @@
             if (!RK.canUseMode(mode)) { setStatus(lockedModeMessage(mode)); return; }
             if (currentRenderer) { currentRenderer.destroy(); currentRenderer = null; }
             currentMode = mode;
+            if (tavernLife) tavernLife.setMode(mode);
             RK.saveMode(mode);
             updateModeButtons();
             if (mode === 'fancy' && !RK.pixiReady()) setStatus('Loading Fancy renderer…');
@@ -199,6 +237,7 @@
         });
         socket.on('game_mode_info', function (data) {
             if (data && data.entitlements) applyEntitlements(data.entitlements);
+            if (data && data.cryptoType) SocketHandlers_cryptoType = data.cryptoType;
         });
         socket.on('credits_update', applyEntitlements);
         socket.on('session_token', function (data) {
@@ -231,6 +270,14 @@
             rebuildScene();
             buildModebar();
             setMode(RK.loadMode('tiles'));
+            // Spawn client-side NPCs (bartender, patrons, cat) for a lively tavern.
+            tavernLife = new RK.TavernLife(stageEl, function () { return currentScene; }, function () {
+                return currentRenderer && currentRenderer.cell || 24;
+            });
+            tavernLife.setMode(currentMode || 'tiles');
+            tavernLife.spawn();
+            tavernLife.welcomeBubbles();
+            startRafLoop();
             // Load the designed room (if the server is using one); re-render when ready.
             if (state.roomUrl) RK.loadRoom(state.roomUrl, function (room) {
                 if (room && room.desc && room.desc.walkable) state.walkable = room.desc.walkable;
@@ -238,6 +285,7 @@
                 draw();
             });
             setStatus('You are in the tavern.');
+            watchGamesBtn.classList.remove('hidden');
         });
 
         socket.on('tavern_update', function (snap) {
@@ -261,6 +309,12 @@
         socket.on('chat_broadcast', function (m) {
             if (!m || !state.channel || m.scope !== state.channel) return;
             addChatLine(m.username, m.message);
+            // Show a speech bubble above the speaker's avatar.
+            if (tavernLife && m.socketId) {
+                // m.message is server-escaped HTML; strip tags for the bubble.
+                var text = m.message ? m.message.replace(/<[^>]*>/g, '') : '';
+                tavernLife.showPlayerBubble(m.socketId, text);
+            }
         });
         socket.on('tavern_notice', function (n) {
             if (n && n.message) addSystemLine(n.message);

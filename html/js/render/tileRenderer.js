@@ -30,7 +30,7 @@
         ctx.fillStyle = scene.background || '#000';
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        if (window.RK && RK.roomReady && RK.roomReady()) {
+        if (!scene.isDungeon && window.RK && RK.roomReady && RK.roomReady()) {
             // A designed room (imported .tmx) is loaded — draw its layered tiles.
             RK.drawRoomCanvas(ctx, cell);
         } else {
@@ -54,6 +54,14 @@
                         ctx.fillStyle = 'rgba(255,255,255,0.06)';
                         ctx.fillRect(px, py, cell, Math.max(1, cell * 0.14));
                     }
+                    // Dungeon lighting: darken tiles based on the light grid.
+                    if (scene.lightGrid && scene.lightGrid[y] && scene.lightGrid[y][x] != null) {
+                        var brightness = scene.lightGrid[y][x];
+                        if (brightness < 1) {
+                            ctx.fillStyle = 'rgba(0,0,0,' + (1 - brightness) + ')';
+                            ctx.fillRect(px, py, cell, cell);
+                        }
+                    }
                 }
             }
         }
@@ -61,6 +69,38 @@
         var now = Date.now();
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
+            // Dungeon features (entrance, exit, treasure) — draw as colored glyphs.
+            if (e.kind === 'feature') {
+                var cx = e.x * cell + cell / 2, cy = e.y * cell + cell / 2;
+                ctx.fillStyle = e.color || '#fff';
+                ctx.font = (cell - 4) + 'px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(e.char || '?', cx, cy);
+                continue;
+            }
+            // Dungeon items.
+            if (e.kind === 'item') {
+                var ix = e.x * cell + cell / 2, iy = e.y * cell + cell / 2;
+                ctx.fillStyle = e.color || '#fbbf24';
+                ctx.font = (cell - 4) + 'px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('$', ix, iy);
+                continue;
+            }
+            // Dungeon monster.
+            if (e.kind === 'monster') {
+                var mx = e.x * cell + cell / 2, my = e.y * cell + cell / 2, mr = cell * 0.34;
+                ctx.beginPath();
+                ctx.arc(mx, my, mr, 0, Math.PI * 2);
+                ctx.fillStyle = e.color || '#f85149';
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,100,100,0.4)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                continue;
+            }
             // Roguelike character sprite, or premium animated skin; else the fallback circle.
             if (window.RK && RK.avatarVisuals && RK.avatarVisuals.drawTopdownWorld) {
                 var visual = RK.avatarVisuals.resolve(e.appearance || { avatar: e.avatar }, {
