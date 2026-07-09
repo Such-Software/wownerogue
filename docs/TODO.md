@@ -1,3 +1,19 @@
+## Match Mode (Complete)
+
+All milestones implemented. See `docs/MATCH_MODE.md` for architecture and configuration.
+
+- [x] Design review: economy models, block-cadence lifecycle, ticket system, premium integration
+- [x] Database schema: `matches`, `match_entrants`, `match_events`, `match_queue_entries`, `race_entry_transactions`, `users.race_entries`, `payouts.match_id`
+- [x] Engine scaffold: `MatchRoom`, `MatchEngine`, `MatchState` with unit tests
+- [x] Per-economy queues and block-cadence `MatchScheduler`
+- [x] Socket.IO `MatchManager` and free races
+- [x] Credits/prestige races and separate Prestige leaderboard
+- [x] Crypto race-entry tickets and winner-take-pot payout
+- [x] Client (`match.html`, `matchClient.js`) and Tavern spectator integration
+- [x] Reconnect/AFK tests
+- [x] Final doc pass and operator deployment notes
+- [x] Unit tests: 40 passing across 7 suites
+
 # Wownerogue Development Todo
 
 ## High Priority

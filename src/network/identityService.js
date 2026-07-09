@@ -107,6 +107,25 @@ class IdentityService {
             this.sessionManager.sessions.set(socketId, user);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers for match mode (user lookup by stable id, not socket)
+    // -------------------------------------------------------------------------
+
+    async userForId(userId) {
+        if (!this.db || userId == null) return null;
+        try {
+            const result = await this.db.query(`
+                SELECT * FROM users WHERE id = $1 LIMIT 1
+            `, [userId]);
+            return result.rows && result.rows[0] ? result.rows[0] : null;
+        } catch (err) {
+            if (this.debugManager?.CONSOLE_LOGGING) {
+                console.warn('[IdentityService] userForId failed:', err.message);
+            }
+            return null;
+        }
+    }
 }
 
 module.exports = IdentityService;

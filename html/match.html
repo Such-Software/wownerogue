@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wownerogue — Match Race</title>
+    <style>
+        :root { --bg: #0a0c0f; --text: #c9d1d9; --accent: #58a65c; --line: #30363d; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        #app { max-width: 900px; margin: 0 auto; padding: 16px; }
+        h1 { margin: 0 0 8px; font-size: 1.4rem; }
+        .muted { color: #8b949e; font-size: 0.85rem; }
+        #panel { background: #11161b; border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+        button { background: #21262d; border: 1px solid var(--line); color: var(--text); padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+        button.primary { background: var(--accent); color: #08130a; border-color: var(--accent); font-weight: 600; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .economies { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+        .economy { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+        .economy.active { border-color: var(--accent); background: rgba(88,166,92,0.12); }
+        .economy.locked { opacity: 0.55; cursor: not-allowed; }
+        #status { min-height: 24px; margin: 8px 0; }
+        #stage { width: 100%; aspect-ratio: 16 / 10; background: #000; border: 1px solid var(--line); border-radius: 8px; }
+        #hud { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-size: 0.85rem; }
+        #hud span { background: #161b22; padding: 4px 8px; border-radius: 4px; }
+        .hidden { display: none !important; }
+    </style>
+
+    <!-- Render kit -->
+    <script src="js/render/sceneModel.js"></script>
+    <script src="js/render/skins.js"></script>
+    <script src="js/render/atlas.js"></script>
+    <script src="js/render/charSprites.js"></script>
+    <script src="js/render/assetPacks.js"></script>
+    <script src="js/render/avatarVisuals.js"></script>
+    <script src="js/render/asciiRenderer.js"></script>
+    <script src="js/render/tileRenderer.js"></script>
+    <script src="js/render/renderModes.js"></script>
+</head>
+<body>
+    <div id="app">
+        <h1>🏁 Race Queue</h1>
+        <p class="muted">Multiplayer dungeon race. A new race starts every block when at least two players are queued.</p>
+
+        <div id="panel">
+            <div id="queuePanel">
+                <div class="muted">Select economy:</div>
+                <div id="economies" class="economies"></div>
+                <div id="status">Connect to server to see available economies.</div>
+
+                <div style="display:flex; gap:8px;">
+                    <button id="queueBtn" class="primary">Join Queue</button>
+                    <button id="leaveBtn" class="hidden">Leave Queue</button>
+                </div>
+            </div>
+
+            <div id="racePanel" class="hidden">
+                <div id="hud">
+                    <span id="raceEconomy"></span>
+                    <span id="raceTimer"></span>
+                    <span id="racePlace"></span>
+                </div>
+                <div id="stage"></div>
+                <p class="muted">Move with arrow keys or WASD. Reach the exit (→) first.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/matchClient.js"></script>
+</body>
+</html>

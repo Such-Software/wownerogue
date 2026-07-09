@@ -44,6 +44,11 @@ function normalizeProductGrants(product = {}, fallback = {}) {
         }
     }
 
+    let raceEntries = 0;
+    if (explicit.race_entries != null || explicit.raceEntries != null) {
+        raceEntries = asInt(explicit.race_entries || explicit.raceEntries, 0);
+    }
+
     const packs = [];
     const packInputs = Array.isArray(explicit.packs) ? explicit.packs : [];
     for (const p of packInputs) {
@@ -56,6 +61,7 @@ function normalizeProductGrants(product = {}, fallback = {}) {
     return {
         credits: Math.max(0, credits),
         packs,
+        raceEntries: Math.max(0, raceEntries),
         premiumLevel: normalizePremiumLevel(explicit.premiumLevel || explicit.premium_level)
     };
 }
@@ -63,6 +69,7 @@ function normalizeProductGrants(product = {}, fallback = {}) {
 function serializeProductGrants(grants = {}) {
     return {
         credits: asInt(grants.credits, 0),
+        raceEntries: asInt(grants.raceEntries || grants.race_entries, 0),
         packs: Array.isArray(grants.packs)
             ? grants.packs.map(normalizePackGrant).filter(Boolean)
             : [],
@@ -74,6 +81,7 @@ function publicGrantSummary(grants = {}) {
     const normalized = serializeProductGrants(grants);
     return {
         credits: normalized.credits,
+        raceEntries: normalized.raceEntries,
         packs: normalized.packs.map(p => p.id),
         premiumLevel: normalized.premiumLevel
     };

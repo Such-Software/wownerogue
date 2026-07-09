@@ -9,6 +9,7 @@ A browser-based roguelike synchronized with Monero (XMR) and Wownero (WOW) block
 - **Persistent chat** with 30-day history
 - **Transaction history** - view payment and payout records
 - **Multiple game modes**: Free play, per-game payments, or credit bundles
+- **Real-time multiplayer races**: free, prestige-credit, or crypto winner-take-pot races every block
 - Configurable difficulty with house edge tuning
 - Automatic wallet RPC integration for payments and payouts
 
@@ -36,6 +37,19 @@ Open http://localhost:3000 to play.
 | **PAID_CREDITS** | 10 credits/5 WOW | Optional | Buy credit bundles |
 
 When both modes are enabled (`ALLOW_MIXED_MODE=true`), players with credits can start games instantly without the payment modal.
+
+## Match Mode (Multiplayer Races)
+
+Optional real-time multiplayer races are available when `MATCH_ENABLED=true`. A new race starts every
+crypto block as long as at least two players are queued. Supported economies:
+
+| Economy | Entry | Payout | Leaderboard |
+|---|---|---|---|
+| **Free** | None | None | Pleb |
+| **Prestige Credits** | Credits | None | Prestige |
+| **Crypto Race** | Race-entry ticket | Winner-take-pot minus house fee | Hall of Champions |
+
+See `docs/MATCH_MODE.md` for full architecture, configuration, and API details.
 
 ## Difficulty Presets
 

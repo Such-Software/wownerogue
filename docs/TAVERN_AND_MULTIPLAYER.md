@@ -1,9 +1,10 @@
 # Tavern & Multiplayer — Design & Build Plan
 
-**Status:** In development. Shared engine scaffold landed under `src/multiplayer/`; unit tests pass.
+Match mode (multiplayer races) now has its own dedicated design doc: see `docs/MATCH_MODE.md`.
 
-Two new, optional game modes. Both are disabled by default and gated by config, so existing
-single-player play is unaffected.
+**Status:** Tavern is complete; multiplayer race mode is implemented (see `docs/MATCH_MODE.md`).
+PvP combat remains a future extension. Both modes are disabled by default and gated by config, so
+existing single-player play is unaffected.
 
 ## Shared engine: one Room, two modes
 
@@ -23,9 +24,9 @@ transport-agnostic makes it unit-testable in isolation and reusable as a standal
 choose an avatar, move around a shared map, and chat. A spectator camera lets them watch live
 single-player or multiplayer games from inside the room.
 
-**Multiplayer** — a shared match Room. Players race to escape a dungeon before the next block,
-contend with monsters and environmental hazards, and (later) fight each other. Match rooms enable
-occupant collision; the Tavern does not.
+**Multiplayer Race** — a shared match Room. Players race to escape a dungeon before the next block
+and contend with a shared monster. Match rooms enable occupant collision; the Tavern does not.
+PvP combat is planned for a later milestone.
 
 ## Operator Policy
 

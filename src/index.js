@@ -527,11 +527,27 @@ app.get('/api/leaderboard', asyncHandler(async (req, res) => {
   // Per-game leaderboard split (whitelisted -> safe to interpolate):
   //   champions = games played with credits/entry-fee (Hall of Champions)
   //   pleb      = free games (Pleb board)
+  //   prestige  = credit-prestige match races
   //   all       = everyone (default, backward compatible)
   const board = req.query.board || 'all';
   let boardFilter = '';
   if (board === 'champions') boardFilter = "AND g.game_mode IN ('PAID_SINGLE','PAID_CREDITS')";
   else if (board === 'pleb') boardFilter = "AND g.game_mode = 'FREE'";
+
+  if (board === 'prestige') {
+    const result = await db.query(`
+      SELECT
+        user_id as id,
+        COALESCE(display_name, 'Anon#' || user_id) as name,
+        best_score,
+        wins,
+        races as games_played
+      FROM prestige_leaderboard
+      ORDER BY best_score DESC
+      LIMIT $1
+    `, [limit]);
+    return res.json({ leaderboard: result.rows, period, board });
+  }
 
   const result = await db.query(`
     SELECT

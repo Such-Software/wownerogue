@@ -7,6 +7,10 @@ const user = require('../db/user');
 const GameManager = require('../game/gameManager');
 const MovementManager = require('../game/movementManager');
 const QueueManager = require('./queueManager');
+const MatchQueue = require('./matchQueue');
+const MatchScheduler = require('./matchScheduler');
+const MatchManager = require('./matchManager');
+const TavernMatchBridge = require('./tavernMatchBridge');
 const PaymentHandlers = require('./paymentHandlers');
 const AddressManager = require('./addressManager');
 const SessionManager = require('./sessionManager');
@@ -208,6 +212,36 @@ class SocketHandlers {
             entitlementProvider: async (socket) => this._entitlementsForSocket(socket)
         });
         this.tavernManager.initialize();
+        // Initialize match mode queue, scheduler, and manager. Inert unless MATCH_ENABLED=true.
+        this.matchQueue = new MatchQueue({
+            db: this.gameModeManager?.db || null,
+            gameModeManager: this.gameModeManager,
+            debugManager: this.debugManager
+        });
+        this.matchManager = new MatchManager({
+            io: this.io,
+            db: this.gameModeManager?.db || null,
+            debugManager: this.debugManager,
+            identityService: this.identityService,
+            gameModeManager: this.gameModeManager
+        });
+        this.matchScheduler = new MatchScheduler({
+            matchQueue: this.matchQueue,
+            matchManager: this.matchManager,
+            debugManager: this.debugManager
+        });
+        this.matchQueue.initialize().then(() => {
+            this.matchManager.initialize?.();
+            this.tavernMatchBridge = new TavernMatchBridge({
+                matchManager: this.matchManager,
+                tavernManager: this.tavernManager,
+                io: this.io,
+                debugManager: this.debugManager
+            });
+            this.tavernMatchBridge.initialize();
+        }).catch(err => console.error('[SocketHandlers] Match queue init failed:', err));
+
+
 
         // Initialize suspended game manager for reconnection support
         this.suspendedGameManager = new SuspendedGameManager({
@@ -445,6 +479,17 @@ class SocketHandlers {
         socket.on('tavern_move', (data) => this.tavernManager.move(socket, data));
         socket.on('tavern_chat', (data) => this.tavernManager.chat(socket, data));
         socket.on('tavern_leave', () => this.tavernManager.leave(socket));
+        // Match mode handlers
+        socket.on('match_queue', (data) => this._handleMatchQueue(socket, data));
+        socket.on('match_move', (data) => this.matchManager.move(socket, data));
+        socket.on('match_leave', () => this.matchManager.leave(socket));
+        // Tavern match spectator bridge
+        socket.on('tavern_match_list', () => {
+            const list = this.tavernMatchBridge ? this.tavernMatchBridge.getActiveMatches() : [];
+            socket.emit('tavern_match_list', list);
+        });
+
+
     }
 
     /**
@@ -810,6 +855,7 @@ class SocketHandlers {
             // Clean up tavern presence
             if (this.tavernManager) {
                 this.tavernManager.handleDisconnect(socketId);
+            this.matchManager.handleDisconnect(socketId, null);
             }
 
             // Evict the cached session row LAST (after the suspend logic above read it),
@@ -1039,6 +1085,13 @@ class SocketHandlers {
      */
     async startGamesForWaiting(blockHeight) {
         return await this.queueHandler.startGamesForWaiting(blockHeight);
+        // Also drain match-mode queues on the new block.
+        if (this.matchScheduler) {
+            this.matchScheduler.onBlock(blockHeight).catch(err => {
+                if (this.debugManager.CONSOLE_LOGGING) console.error('[SocketHandlers] Match scheduler block error:', err);
+            });
+        }
+
     }
 
     /**
@@ -1195,6 +1248,15 @@ class SocketHandlers {
         // Shutdown components in reverse order of initialization
         if (this.tavernManager) {
             this.tavernManager.shutdown();
+        }
+        if (this.matchManager) {
+            this.matchManager.shutdown();
+        }
+        if (this.matchQueue) {
+            this.matchQueue.shutdown().catch(() => {});
+        }
+        if (this.matchScheduler) {
+            this.matchScheduler.shutdown();
         }
 
         if (this.spectatorManager) {

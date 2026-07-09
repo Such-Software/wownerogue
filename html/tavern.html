@@ -87,6 +87,22 @@
             <div id="gameList" style="max-height:200px;overflow-y:auto;font-size:13px;"></div>
             <button id="closeGameListBtn" style="margin-top:8px;">Close</button>
         </div>
+
+        <!-- Match mode panel -->
+        <button id="matchQueueBtn" class="hidden" style="margin-top:8px;">🏁 Queue for Race</button>
+        <div id="matchPanel" class="panel hidden">
+            <h3 style="margin:0 0 8px;font-size:14px;">Race Queue</h3>
+            <div id="matchEconomies" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>
+            <div id="matchQueueStatus" class="muted" style="margin-bottom:8px;">Choose an economy.</div>
+            <div style="display:flex;gap:6px;">
+                <button id="joinMatchQueueBtn">Join Queue</button>
+                <button id="leaveMatchQueueBtn" class="hidden">Leave Queue</button>
+            </div>
+            <hr style="border-color:var(--line);margin:12px 0;">
+            <h4 style="margin:0 0 8px;font-size:13px;">Active Races</h4>
+            <div id="activeMatchList" style="max-height:160px;overflow-y:auto;font-size:13px;"></div>
+            <button id="closeMatchPanelBtn" style="margin-top:8px;">Close</button>
+        </div>
         <div id="spectatorStage" class="hidden">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <span id="spectatorLabel" class="muted"></span>
@@ -363,6 +379,117 @@
             socket.emit('identity:get');
             setStatus('Connected. Choose a name and enter.');
         });
+        // ---- Tavern Match spectator / queue UI -------------------------------
+        var matchQueueBtn = document.getElementById('matchQueueBtn');
+        var matchPanel = document.getElementById('matchPanel');
+        var matchEconomies = document.getElementById('matchEconomies');
+        var matchQueueStatus = document.getElementById('matchQueueStatus');
+        var joinMatchQueueBtn = document.getElementById('joinMatchQueueBtn');
+        var leaveMatchQueueBtn = document.getElementById('leaveMatchQueueBtn');
+        var activeMatchList = document.getElementById('activeMatchList');
+        var closeMatchPanelBtn = document.getElementById('closeMatchPanelBtn');
+        var selectedMatchEconomy = 'free';
+        var inMatchQueue = false;
+
+        function buildMatchEconomies(info) {
+            if (!info || !info.modes || !info.modes.match || !info.modes.match.enabled) return;
+            var economies = info.modes.match.economies || {};
+            var labels = { free: 'Free', credits_prestige: 'Prestige', crypto_race: 'Crypto' };
+            matchEconomies.innerHTML = '';
+            Object.keys(labels).forEach(function (key) {
+                if (!economies[key]) return;
+                var b = document.createElement('button');
+                b.textContent = labels[key];
+                b.className = 'modebtn' + (key === selectedMatchEconomy ? ' active' : '');
+                b.addEventListener('click', function () {
+                    selectedMatchEconomy = key;
+                    Array.prototype.forEach.call(matchEconomies.children, function (c) { c.classList.remove('active'); });
+                    b.classList.add('active');
+                });
+                matchEconomies.appendChild(b);
+            });
+        }
+
+        socket.on('game_mode_info', function (data) {
+            // Extend existing handler: also build match economies.
+            if (data && data.entitlements) applyEntitlements(data.entitlements);
+            if (data && data.cryptoType) SocketHandlers_cryptoType = data.cryptoType;
+            if (data && data.modes && data.modes.match && data.modes.match.enabled) {
+                matchQueueBtn.classList.remove('hidden');
+                buildMatchEconomies(data);
+            }
+        });
+
+        socket.on('match_queue_joined', function (res) {
+            if (res.success) {
+                inMatchQueue = true;
+                joinMatchQueueBtn.classList.add('hidden');
+                leaveMatchQueueBtn.classList.remove('hidden');
+                matchQueueStatus.textContent = 'Queued for ' + selectedMatchEconomy + ' (position ' + (res.position || '?') + ').';
+            } else {
+                matchQueueStatus.textContent = 'Queue failed: ' + (res.reason || 'unknown');
+            }
+        });
+
+        socket.on('match_queue_left', function (res) {
+            inMatchQueue = false;
+            joinMatchQueueBtn.classList.remove('hidden');
+            leaveMatchQueueBtn.classList.add('hidden');
+            matchQueueStatus.textContent = res.success ? 'Left queue.' : 'Leave failed: ' + (res.reason || 'unknown');
+        });
+
+        socket.on('tavern_match_list', function (list) {
+            activeMatchList.innerHTML = '';
+            if (!list || list.length === 0) {
+                activeMatchList.textContent = 'No active races right now.';
+                return;
+            }
+            list.forEach(function (m) {
+                var row = document.createElement('div');
+                row.className = 'gamerow';
+                row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line);';
+                row.innerHTML = '<span>' + (m.economy || 'race') + ' — ' + (m.players ? m.players.length : 0) + ' players</span> <button class="watchMatchBtn" data-matchid="' + m.matchId + '">Watch</button>';
+                activeMatchList.appendChild(row);
+            });
+            Array.prototype.forEach.call(activeMatchList.querySelectorAll('.watchMatchBtn'), function (b) {
+                b.addEventListener('click', function () {
+                    var matchId = b.dataset.matchid;
+                    // Switch spectator renderer to the public match state stream.
+                    enterSpectatorMode(matchId);
+                });
+            });
+        });
+
+        socket.on('tavern_match_tick', function (state) {
+            if (currentSpectatingMatchId && state.matchId === currentSpectatingMatchId) {
+                var scene = RK.sceneFromGameState ? RK.sceneFromGameState(state, null) : null;
+                if (scene && spectatorRenderer) spectatorRenderer.render(scene);
+            }
+        });
+
+        socket.on('tavern_match_end', function (data) {
+            if (currentSpectatingMatchId && data.matchId === currentSpectatingMatchId) {
+                spectatorLabel.textContent = 'Race ended. Winner: ' + (data.winnerId ? data.winnerId.slice(0, 6) : 'none');
+            }
+        });
+
+        matchQueueBtn.addEventListener('click', function () {
+            matchPanel.classList.toggle('hidden');
+            if (!matchPanel.classList.contains('hidden')) socket.emit('tavern_match_list');
+        });
+        closeMatchPanelBtn.addEventListener('click', function () { matchPanel.classList.add('hidden'); });
+
+        joinMatchQueueBtn.addEventListener('click', function () {
+            if (inMatchQueue) return;
+            socket.emit('match_queue', { economy: selectedMatchEconomy, action: 'join' });
+        });
+        leaveMatchQueueBtn.addEventListener('click', function () {
+            if (!inMatchQueue) return;
+            socket.emit('match_queue', { economy: selectedMatchEconomy, action: 'leave' });
+        });
+
+        // ---- End match UI ----------------------------------------------------
+
         socket.on('disconnect', function () { setStatus('Disconnected.'); });
     })();
     </script>

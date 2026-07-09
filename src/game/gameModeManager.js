@@ -265,6 +265,18 @@ class GameModeManager {
         };
     }
 
+
+    _getMatchEconomies() {
+        const out = { free: true };
+        if (this.creditsModeEnabled || this.freePlayEnabled) {
+            out.credits_prestige = true;
+        }
+        if (process.env.MATCH_CRYPTO_RACE_ENABLED === 'true' && (this.directModeEnabled || this.creditsModeEnabled)) {
+            out.crypto_race = true;
+        }
+        return out;
+    }
+
     getCosmeticProducts() {
         const products = this.configSnapshot?.products?.cosmetic;
         return Array.isArray(products) ? products : [];
@@ -398,7 +410,22 @@ class GameModeManager {
                     `, [userId, creditsToAdd, newBalance]);
                 }
 
-                // Step 4: Grant cosmetic/render packs. Idempotent so retrying a confirmed
+                // Step 4: Grant race entry tickets if the product includes them.
+                const raceEntriesToAdd = productGrants.raceEntries || 0;
+                if (raceEntriesToAdd > 0) {
+                    const raceEntryUpdate = await client.query(`
+                        UPDATE users
+                        SET race_entries = race_entries + $1
+                        WHERE id = $2
+                        RETURNING race_entries
+                    `, [raceEntriesToAdd, userId]);
+                    await client.query(`
+                        INSERT INTO race_entry_transactions (user_id, delta, balance_after, reason, payment_id, metadata)
+                        VALUES ($1, $2, $3, 'purchase', $4, $5::jsonb)
+                    `, [userId, raceEntriesToAdd, raceEntryUpdate.rows[0].race_entries, paymentId, JSON.stringify({ productId })]);
+                }
+
+                // Step 5: Grant cosmetic/render packs. Idempotent so retrying a confirmed
                 // product cannot duplicate entitlements.
                 for (const pack of productGrants.packs) {
                     await client.query(`
@@ -1337,7 +1364,12 @@ class GameModeManager {
             modes: {
                 solo: process.env.SOLO_ENABLED !== 'false',
                 tavern: process.env.TAVERN_ENABLED === 'true',
-                multiplayer: process.env.MULTIPLAYER_ENABLED === 'true'
+                multiplayer: process.env.MULTIPLAYER_ENABLED === 'true',
+                match: {
+                    enabled: process.env.MATCH_ENABLED === 'true',
+                    economies: this._getMatchEconomies(),
+                    maxPlayers: parseInt(process.env.MATCH_MAX_PLAYERS, 10) || 4
+                }
             }
         };
     }
