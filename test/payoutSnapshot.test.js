@@ -57,7 +57,7 @@ describe('Payout uses the snapshot recorded at game start', () => {
     // live 2x = 200000000000), treasure pays 999999.
     db.query
       .mockResolvedValueOnce({ rows: [{
-        id: 1, game_mode: 'PAID_SINGLE', payout_address: 'wow1addr',
+        id: 1, user_id: 1, game_mode: 'PAID_SINGLE', payout_address: 'wow1addr',
         payout_escape_amount: '123456', payout_treasure_amount: '999999',
         payout_escape_mult: '2.000', payout_treasure_mult: '3.000'
       }] })                                   // game record lookup
@@ -79,7 +79,7 @@ describe('Payout uses the snapshot recorded at game start', () => {
     const { gmm, db } = buildGmm();
 
     db.query
-      .mockResolvedValueOnce({ rows: [{ id: 1, game_mode: 'PAID_SINGLE', payout_address: 'wow1addr' }] }) // no snapshot cols
+      .mockResolvedValueOnce({ rows: [{ id: 1, user_id: 1, game_mode: 'PAID_SINGLE', payout_address: 'wow1addr' }] }) // no snapshot cols
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 1, payout_address: 'wow1addr' }] })

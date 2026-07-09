@@ -344,7 +344,18 @@ class SocketHandlers {
                 if (restored) {
                     restoredGame = restored.game;
                     const suspendedState = restored.suspendedState;
-                    
+
+                    // G1/C3: resume the block-timeout clock from the ORIGINAL entry block,
+                    // not the reconnect height. suspendedGameManager persists the entry block
+                    // and hands it back here; restore it onto the in-memory user so
+                    // checkGamesTimeout continues counting from where it left off. If it's
+                    // missing, leave blockRec unset — checkGamesTimeout records the first
+                    // observed height rather than treating the game as instant-death.
+                    const entryBlock = (restored.blockRec ?? suspendedState?.blockRec ?? null);
+                    if (memUser && entryBlock != null) {
+                        memUser.blockRec = entryBlock;
+                    }
+
                     if (this.debugManager.CONSOLE_LOGGING) {
                         console.log(`🔄 [handleConnection] Restored game ${restoredGame.id} for user ${dbUserId}`);
                     }
@@ -450,8 +461,8 @@ class SocketHandlers {
                 if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to re-send identity snapshot:', err.message);
             });
         });
-        socket.on('auto_start', () => this.handleAutoStart(socket)); // New handler for start button
-        socket.on('play_free', () => this.handleAutoStart(socket, { free: true })); // Explicit free-play choice
+        socket.on('auto_start', (data) => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {})); // New handler for start button
+        socket.on('play_free', (data) => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true })); // Explicit free-play choice
         socket.on('join_queue', () => this.handleJoinQueue(socket)); // Queue instead of auto-start
         socket.on('early_entry', () => this.handleEarlyEntry(socket)); // Early entry without waiting for block
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
@@ -479,10 +490,28 @@ class SocketHandlers {
         socket.on('tavern_move', (data) => this.tavernManager.move(socket, data));
         socket.on('tavern_chat', (data) => this.tavernManager.chat(socket, data));
         socket.on('tavern_leave', () => this.tavernManager.leave(socket));
-        // Match mode handlers
+        // Match mode handlers. Every match listener is wrapped so a match-layer fault can
+        // never crash the connection or leak a stack to the client — it logs and emits a
+        // benign 'match_error' instead (C5). Identity is always resolved from the CONNECTION,
+        // never from the client payload.
         socket.on('match_queue', (data) => this._handleMatchQueue(socket, data));
-        socket.on('match_move', (data) => this.matchManager.move(socket, data));
-        socket.on('match_leave', () => this.matchManager.leave(socket));
+        socket.on('match_move', (data) => {
+            try {
+                this.matchManager.move(socket, data);
+            } catch (err) {
+                if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] match_move error:', err.message);
+                socket.emit('match_error', { message: 'Move could not be processed.' });
+            }
+        });
+        socket.on('match_leave', () => {
+            try {
+                this.matchManager.leave(socket);
+            } catch (err) {
+                if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] match_leave error:', err.message);
+                socket.emit('match_error', { message: 'Could not leave the match.' });
+            }
+        });
+        socket.on('match_reconnect', (data) => this._handleMatchReconnect(socket, data));
         // Tavern match spectator bridge
         socket.on('tavern_match_list', () => {
             const list = this.tavernMatchBridge ? this.tavernMatchBridge.getActiveMatches() : [];
@@ -502,6 +531,13 @@ class SocketHandlers {
             // The player explicitly chose FREE play (Pleb board, no payment/payout). Only
             // honoured when the instance allows free play; otherwise fall through to paid.
             const wantsFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
+
+            // C7: optional client-supplied entropy for provably-fair seed derivation. Must be
+            // hex (≤64 chars); anything malformed is silently ignored (falls back to ''). This
+            // is purely additive — existing clients that send no seed are unaffected.
+            const clientSeed = (typeof opts.clientSeed === 'string' && /^[a-fA-F0-9]{0,64}$/.test(opts.clientSeed))
+                ? opts.clientSeed
+                : undefined;
 
             // Rate limiting for game starts — keyed on stable identity + IP so reconnecting
             // (new socket.id) can't reset the limit.
@@ -582,7 +618,7 @@ class SocketHandlers {
 
             // Process start (free / credits deduction / payment link)
             if (this.gameModeManager) {
-                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id, { forceFree: wantsFree });
+                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id, { forceFree: wantsFree, clientSeed });
                 if (!startRes.success) {
                     // Abort game
                     this.activeGames.delete(socket.id);
@@ -709,6 +745,89 @@ class SocketHandlers {
             const normalized = normalizeError?.(err, 'Failed to update payout address') || err;
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', normalized.safeMessage || 'Failed to update payout address.');
             this.io.to(socket.id).emit('address_update_error', { message: normalized.safeMessage || 'Failed to update payout address.' });
+        }
+    }
+
+    /**
+     * Resolve the stable match session/identity for a connection. Identity is derived ONLY
+     * from the CONNECTION (the session cache, then a DB lookup by socket) — never from any
+     * client-supplied payload — so a client can't act on another user's behalf (C5). Mirrors
+     * how other handlers resolve identity via sessionManager.
+     * @returns {Promise<{userId:number, socketId:string, sessionToken:(string|null), user:Object}|null>}
+     */
+    async _resolveMatchSession(socket) {
+        if (!this.sessionManager || !socket) return null;
+        let sessionUser = null;
+        try {
+            sessionUser = this.sessionManager.sessions?.get(socket.id) || null;
+        } catch (_) { sessionUser = null; }
+        if (!sessionUser) {
+            try { sessionUser = await this.sessionManager.getBySocket(socket.id); } catch (_) { sessionUser = null; }
+        }
+        if (!sessionUser || sessionUser.id == null) return null;
+        return {
+            userId: sessionUser.id,
+            socketId: socket.id,
+            sessionToken: sessionUser.anon_token || null,
+            user: sessionUser
+        };
+    }
+
+    /**
+     * Handle a match-mode queue join/leave (C5/S4). The economy comes from the payload but
+     * the IDENTITY is resolved from the connection, never from data. Never throws: any fault
+     * is logged and reported to the client via 'match_error'. If match mode is disabled /
+     * the queue is absent, respond benignly and return.
+     * @param {Object} socket
+     * @param {{action?:('join'|'leave'), economy?:string}} data
+     */
+    async _handleMatchQueue(socket, data = {}) {
+        try {
+            // Match disabled or queue not wired → benign no-op.
+            if (!this.matchQueue || (typeof this.matchQueue.isEnabled === 'function' && !this.matchQueue.isEnabled())) {
+                return;
+            }
+
+            const session = await this._resolveMatchSession(socket);
+            if (!session) {
+                socket.emit('match_error', { message: 'Please reconnect before joining a match.' });
+                return;
+            }
+
+            const economy = (data && typeof data.economy === 'string') ? data.economy : undefined;
+            const action = (data && data.action === 'leave') ? 'leave' : 'join';
+
+            // Carry economy on the session too, so a leave(session) that keys on economy and
+            // an enqueue(session,{economy}) that keys on the explicit arg both stay correct.
+            const matchSession = { ...session, economy };
+
+            if (action === 'leave') {
+                await this.matchQueue.leave(matchSession);
+            } else {
+                await this.matchQueue.enqueue(matchSession, { economy });
+            }
+        } catch (err) {
+            if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] _handleMatchQueue error:', err.message);
+            socket.emit('match_error', { message: 'Could not update the match queue. Please try again.' });
+        }
+    }
+
+    /**
+     * Handle a match-mode reconnect (C5). Resolves identity from the connection and hands the
+     * live socket + session to the match manager. Same never-throw discipline as the other
+     * match listeners; benign no-op when match mode is disabled.
+     */
+    async _handleMatchReconnect(socket, data = {}) {
+        try {
+            if (!this.matchManager || this.matchManager.enabled === false) {
+                return;
+            }
+            const session = await this._resolveMatchSession(socket);
+            if (!session) return;
+            await this.matchManager.handleReconnect(socket, session);
+        } catch (err) {
+            if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] match_reconnect error:', err.message);
+            socket.emit('match_error', { message: 'Could not rejoin the match.' });
         }
     }
 
@@ -855,7 +974,16 @@ class SocketHandlers {
             // Clean up tavern presence
             if (this.tavernManager) {
                 this.tavernManager.handleDisconnect(socketId);
-            this.matchManager.handleDisconnect(socketId, null);
+            }
+
+            // Clean up match presence (starts the AFK grace timer). New signature takes the
+            // live socket (C5). Guarded so a match-layer fault can't abort disconnect cleanup.
+            if (this.matchManager) {
+                try {
+                    this.matchManager.handleDisconnect(socket);
+                } catch (err) {
+                    if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] match handleDisconnect error:', err.message);
+                }
             }
 
             // Evict the cached session row LAST (after the suspend logic above read it),
@@ -1084,14 +1212,16 @@ class SocketHandlers {
      * Start games for waiting players when a new block is found
      */
     async startGamesForWaiting(blockHeight) {
-        return await this.queueHandler.startGamesForWaiting(blockHeight);
-        // Also drain match-mode queues on the new block.
+        // Start queued single-player games first and capture the result to return.
+        const result = await this.queueHandler.startGamesForWaiting(blockHeight);
+        // Then drain match-mode queues on the same block, fire-and-forget so a match-layer
+        // error can never block or fail single-player block processing (MP-C3).
         if (this.matchScheduler) {
             this.matchScheduler.onBlock(blockHeight).catch(err => {
                 if (this.debugManager.CONSOLE_LOGGING) console.error('[SocketHandlers] Match scheduler block error:', err);
             });
         }
-
+        return result;
     }
 
     /**
@@ -1110,9 +1240,25 @@ class SocketHandlers {
         const now = Date.now();
         const snapshot = Array.from(this.activeGames.entries());
         for (const [socketId, game] of snapshot) {
+            // G3: the snapshot can go stale while we await a previous game-over. If this game
+            // was concurrently won or otherwise ended (removed from activeGames on another
+            // async path), never re-end it here as a loss/timeout.
+            if (!this.activeGames.has(socketId)) continue;
+
             const user = this.connectionHandler.getUserBySocket(socketId);
+            if (!user) continue;
+
+            // G1/C3: only end when the entry block is DEFINED and a later block has arrived.
+            // If we've never recorded an entry block for this player, record the current
+            // height as the first observation instead of treating a missing value as either
+            // immortal (never times out) or instant-death (times out on the first tick).
+            if (user.blockRec == null) {
+                user.blockRec = currentHeight;
+                continue;
+            }
+
             const elapsedMs = now - (game.startedAt || now);
-            if (user && user.blockRec && currentHeight > user.blockRec && elapsedMs >= graceMs) {
+            if (currentHeight > user.blockRec && elapsedMs >= graceMs) {
                 if (this.debugManager.CONSOLE_LOGGING) {
                     console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
                 }

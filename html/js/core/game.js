@@ -124,6 +124,11 @@ var Game = {
             }
 
             this._drawGameScreen();
+
+            // JUICE: kick off the FX overlay (ambient embers + flicker + particle loop).
+            // Purely additive; all calls are no-ops if the FX overlay module is absent.
+            this._fxStart();
+
             return true;
 
         } catch (err) {
@@ -144,11 +149,29 @@ var Game = {
     
     // Update game state with new data from server
     updateGameState: function(data) {
+        // JUICE: snapshot treasure/item count so we can detect a server-driven pickup below.
+        const prevTreasureCount = (window.FX) ? this._fxTreasureCells().length : 0;
+
         const needsRedraw = GameState.updateGameState(data);
-        
+
         // Redraw the game screen if any relevant data changed
         if (needsRedraw) {
             this._drawGameScreen();
+        }
+
+        // JUICE: react to server-driven changes (pickups, proximity) with FX.
+        if (window.FX && needsRedraw) {
+            try {
+                const newTreasureCount = this._fxTreasureCells().length;
+                if (newTreasureCount < prevTreasureCount) {
+                    // A treasure/item vanished near us -> gold burst (pickup).
+                    const pp = this._playerScreenPixel();
+                    window.FX.burst(pp.x, pp.y, '#ffd700', 28);
+                } else {
+                    // Otherwise run proximity effects for server-authoritative moves.
+                    this._fxOnPlayerMoved();
+                }
+            } catch (e) { /* FX is best-effort; never break gameplay */ }
         }
     },
 
@@ -170,6 +193,29 @@ var Game = {
                 if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('timeout');
             } else {
                 if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('other');
+            }
+
+            // JUICE: celebratory or fatal FX on the outcome. Loop keeps running so the
+            // burst/shake actually renders; it is torn down on return-to-title (below).
+            if (window.FX) {
+                try {
+                    const pp = this._playerScreenPixel();
+                    const escaped = !!(data && data.reason === 'escaped');
+                    if (escaped) {
+                        // Win: gold burst + brief bright flash.
+                        window.FX.burst(pp.x, pp.y, '#ffd700', 40);
+                        window.FX.flash('rgba(255,215,0,1)', 0.35, 400);
+                        if (data && data.treasure) {
+                            window.FX.burst(pp.x, pp.y, '#fbbf24', 24);
+                        }
+                    } else {
+                        // Loss (monster / timeout / other): shake + red flash.
+                        window.FX.shake(12, 500);
+                        window.FX.flash('rgba(255,0,0,1)', 0.4, 450);
+                    }
+                    // Gameplay is over: quiet the ambient torch embers.
+                    if (window.FX.setAmbient) window.FX.setAmbient(false);
+                } catch (e) { /* best-effort */ }
             }
 
             // After short delay, allow user to return to title with Enter/start
@@ -208,6 +254,7 @@ var Game = {
             this._autoReturnTimer = setTimeout(() => {
                 if (this._awaitingRestart) {
                     this._awaitingRestart = false;
+                    this._fxStop(); // JUICE: tear down FX loop so it never leaks
                     if (ScreenManager && ScreenManager.drawWelcomeScreen) {
                         ScreenManager.drawWelcomeScreen();
                     }
@@ -222,6 +269,7 @@ var Game = {
                     if (e.key === 'Enter') {
                         this._awaitingRestart = false;
                         clearTimeout(this._autoReturnTimer);
+                        this._fxStop(); // JUICE: tear down FX loop so it never leaks
                         if (ScreenManager && ScreenManager.drawWelcomeScreen) {
                             ScreenManager.drawWelcomeScreen();
                         }
@@ -242,8 +290,14 @@ var Game = {
     _drawGameScreen: function() {
         if (!this._ensureDisplay()) return;
         const gameState = GameState.getGameStateForRender();
-        
+
         RenderEngine.drawGameScreen(gameState);
+
+        // JUICE: keep the FX overlay aligned to the base canvas and feed it the
+        // player's screen-space position so its torch lighting tracks the camera.
+        if (window.FX) {
+            try { this._fxSyncLighting(); } catch (e) { /* best-effort */ }
+        }
     },
 
     // Screen drawing methods - delegate to ScreenManager
@@ -296,6 +350,140 @@ var Game = {
         const moved = GameState.movePlayer(dx, dy, this._screenWidth, this._screenHeight);
         if (moved) {
             this._drawGameScreen();
+            // JUICE: sparkle near treasure, gold burst on pickup, red edge pulse near monsters.
+            if (window.FX) {
+                try { this._fxOnPlayerMoved(); } catch (e) { /* best-effort */ }
+            }
+        }
+    },
+
+    // ------------------------------------------------------------------
+    // JUICE / FX helpers. These ONLY call the window.FX overlay API (GFX1);
+    // they never define it. Every call is guarded so the game stays fully
+    // functional when the FX module is absent (match.html / tavern.html).
+    // Coordinates are computed with the SAME camera-centered mapping the
+    // renderer uses (the player is always drawn at the screen center).
+    // ------------------------------------------------------------------
+
+    // The ROT.js display container is the base canvas FX layers above.
+    _baseCanvas: function() {
+        if (typeof DisplayManager === 'undefined' || !DisplayManager.getDisplay) return null;
+        var display = DisplayManager.getDisplay();
+        return (display && display.getContainer) ? display.getContainer() : null;
+    },
+
+    // Convert a world cell -> center pixel in base-canvas space.
+    _cellToScreenPixel: function(wx, wy) {
+        var cell = (window.options && window.options.tileWidth) ? window.options.tileWidth : 32;
+        var centerX = Math.floor(this._screenWidth / 2);
+        var centerY = Math.floor(this._screenHeight / 2);
+        var player = (GameState && GameState._player) ? GameState._player : { x: wx, y: wy };
+        var sx = wx - player.x + centerX;
+        var sy = wy - player.y + centerY;
+        return { x: sx * cell + cell / 2, y: sy * cell + cell / 2, cell: cell };
+    },
+
+    // The player is camera-centered, so this is always the center of the view.
+    _playerScreenPixel: function() {
+        var p = (GameState && GameState._player) ? GameState._player : { x: 0, y: 0 };
+        return this._cellToScreenPixel(p.x, p.y);
+    },
+
+    // Chebyshev (king-move) distance — matches the grid feel.
+    _fxDist: function(ax, ay, bx, by) {
+        return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
+    },
+
+    // Collect every treasure/item world cell currently known.
+    _fxTreasureCells: function() {
+        var cells = [];
+        if (typeof GameState === 'undefined') return cells;
+        var t = GameState._treasure;
+        if (t && typeof t[0] === 'number' && typeof t[1] === 'number') {
+            cells.push({ x: t[0], y: t[1] });
+        }
+        var items = GameState._items;
+        if (items) {
+            for (var k in items) {
+                if (items.hasOwnProperty(k)) {
+                    var it = items[k];
+                    if (it && typeof it.x === 'number' && typeof it.y === 'number') {
+                        cells.push({ x: it.x, y: it.y });
+                    }
+                }
+            }
+        }
+        return cells;
+    },
+
+    // Fire proximity/pickup FX for the player's current position.
+    _fxOnPlayerMoved: function() {
+        if (!window.FX) return;
+        var player = (GameState && GameState._player) ? GameState._player : null;
+        if (!player) return;
+
+        var pp = this._playerScreenPixel();
+
+        // Treasure proximity: on-cell => gold burst, nearby => sparkle.
+        var cells = this._fxTreasureCells();
+        var onTreasure = false, nearTreasure = false;
+        for (var i = 0; i < cells.length; i++) {
+            var d = this._fxDist(player.x, player.y, cells[i].x, cells[i].y);
+            if (d === 0) onTreasure = true;
+            else if (d <= 2) nearTreasure = true;
+        }
+        if (onTreasure && window.FX.burst) {
+            window.FX.burst(pp.x, pp.y, '#ffd700', 24);
+        } else if (nearTreasure && window.FX.sparkle) {
+            window.FX.sparkle(pp.x, pp.y, '#fbbf24');
+        }
+
+        // Monster proximity: throttled red edge pulse, stronger the closer it is.
+        var m = GameState._monster;
+        if (m && typeof m.x === 'number' && typeof m.y === 'number' && window.FX.flash) {
+            var md = this._fxDist(player.x, player.y, m.x, m.y);
+            if (md <= 3) {
+                var now = Date.now();
+                if (!this._fxLastMonsterFlash || (now - this._fxLastMonsterFlash) > 550) {
+                    this._fxLastMonsterFlash = now;
+                    var alpha = (md <= 1) ? 0.22 : (md <= 2 ? 0.14 : 0.09);
+                    window.FX.flash('rgba(255,60,60,1)', alpha, 260);
+                }
+            }
+        }
+    },
+
+    // Attach + start the FX loop for a fresh game.
+    _fxStart: function() {
+        if (!window.FX) return;
+        this._fxLastMonsterFlash = 0;
+        try {
+            var base = this._baseCanvas();
+            if (base && window.FX.attach) window.FX.attach(base);
+            if (window.FX.setAmbient) window.FX.setAmbient(true);
+            if (window.FX.start) window.FX.start();
+        } catch (e) { /* best-effort */ }
+    },
+
+    // Stop + clear the FX loop so requestAnimationFrame never leaks.
+    _fxStop: function() {
+        if (!window.FX) return;
+        try {
+            if (window.FX.setAmbient) window.FX.setAmbient(false);
+            if (window.FX.stop) window.FX.stop();
+            if (window.FX.clear) window.FX.clear();
+        } catch (e) { /* best-effort */ }
+    },
+
+    // Keep the overlay aligned and feed it the camera-centered player position.
+    _fxSyncLighting: function() {
+        if (!window.FX) return;
+        var base = this._baseCanvas();
+        if (!base) return;
+        if (window.FX.syncTo) window.FX.syncTo(base);
+        if (window.FX.renderLighting && GameState && GameState._player) {
+            var pp = this._playerScreenPixel();
+            window.FX.renderLighting(pp.x, pp.y, pp.cell, { torches: GameState._torches || [] });
         }
     },
 

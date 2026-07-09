@@ -134,12 +134,20 @@ describe('SQL Injection Prevention', () => {
     let dbAvailable = false;
 
     beforeAll(async () => {
-        // Try to connect to real DB for DatabaseManager tests
-        realDb = new DatabaseManager();
-        await realDb.initialize();
-        // Check if connection was successful (initialize doesn't throw, it returns silently)
-        dbAvailable = realDb.connected === true;
-        
+        // Only attempt a real DB connection when a usable password is configured. Without one,
+        // node-postgres throws inside the SASL handshake *after* opening the TCP socket and
+        // orphans that socket (it survives pool.end()), which would keep Jest from exiting. A
+        // missing password simply means "DB not available" here — and these tests already fall
+        // back to mocks in that case.
+        const hasDbPassword = typeof process.env.DB_PASSWORD === 'string' && process.env.DB_PASSWORD.length > 0;
+        if (hasDbPassword) {
+            // Try to connect to real DB for DatabaseManager tests
+            realDb = new DatabaseManager();
+            await realDb.initialize();
+            // Check if connection was successful (initialize doesn't throw, it returns silently)
+            dbAvailable = realDb.connected === true;
+        }
+
         if (!dbAvailable) {
             console.log('⚠️ Database not available, DatabaseManager tests will use mocks');
         }
@@ -164,8 +172,10 @@ describe('SQL Injection Prevention', () => {
         if (sessionManager) {
             sessionManager.dispose();
         }
-        if (realDb && dbAvailable) {
-            await realDb.close();
+        // Always close the pool: initialize() creates it even when the connection fails, so
+        // gating on dbAvailable would leak the pg pool handle and keep Jest from exiting.
+        if (realDb) {
+            try { await realDb.close(); } catch (_) {}
         }
     });
 

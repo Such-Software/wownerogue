@@ -803,9 +803,24 @@ class GameModeManager {
     }
 
     /**
-     * Process game start (deduct credits or link payment)
+     * Process game start (deduct credits or link payment).
+     *
+     * C7: `options` is the optional trailing opts bag and may carry a `clientSeed`. The
+     * dungeon's effective RNG seed is derived at game CREATION via
+     * provablyFair.deriveSeed(serverSeed, clientSeed); this start entry point accepts and
+     * forwards the (already-validated) client seed so the flow stays in sync and the value
+     * is surfaced on the start result. Non-breaking: clientSeed is optional (defaults to '').
      */
     async processGameStart(socketId, gameId, options = {}) {
+        const clientSeed = typeof options.clientSeed === 'string' ? options.clientSeed : '';
+        const result = await this._dispatchGameStart(socketId, gameId, options);
+        if (result && typeof result === 'object' && clientSeed && result.clientSeed === undefined) {
+            result.clientSeed = clientSeed;
+        }
+        return result;
+    }
+
+    async _dispatchGameStart(socketId, gameId, options = {}) {
         try {
             const user = await this.getOrCreateUser(socketId);
 
@@ -979,29 +994,63 @@ class GameModeManager {
 
     async _processGameStartWithPayment(user, payment, gameId) {
         const snap = this._computePayoutSnapshot('PAID_SINGLE');
-        await this.db.withTransaction(async (client) => {
-            await client.query(`
-                UPDATE games
-                SET payment_id = $1, game_mode = 'PAID_SINGLE', payout_address = $3,
-                    payout_escape_amount = $4, payout_treasure_amount = $5,
-                    payout_escape_mult = $6, payout_treasure_mult = $7
-                WHERE dungeon_seed = $2
-            `, [payment.id, gameId, user.payout_address || null, snap.escapeAmount, snap.treasureAmount, snap.escapeMult, snap.treasureMult]);
+        // M3: claiming a confirmed single_game payment must be atomic. Re-verify the payment
+        // is still unclaimed and lock it FOR UPDATE inside the transaction, so two concurrent
+        // starts can't both consume the same payment. The unique index on games.payment_id
+        // (migration 023) is the final backstop; a 23505 there is treated as "already consumed".
+        try {
+            const result = await this.db.withTransaction(async (client) => {
+                const claim = await client.query(`
+                    SELECT id FROM payments
+                    WHERE id = $1 AND status = 'confirmed' AND payment_type = 'single_game'
+                      AND NOT EXISTS (SELECT 1 FROM games WHERE games.payment_id = payments.id)
+                    FOR UPDATE
+                `, [payment.id]);
 
-            await client.query(`
-                UPDATE users
-                SET total_games_played = total_games_played + 1,
-                    updated_at = NOW()
-                WHERE id = $1
-            `, [user.id]);
-        });
+                if (claim.rows.length === 0) {
+                    // Locked+re-checked: a concurrent start already linked this payment (or it is
+                    // no longer claimable). Abort WITHOUT linking or creating a duplicate game.
+                    return { alreadyConsumed: true };
+                }
 
-        console.log(`Linked game ${gameId} to payment ${payment.id}`);
-        return {
-            success: true,
-            paymentId: payment.id,
-            effectiveMode: 'PAID_SINGLE'
-        };
+                await client.query(`
+                    UPDATE games
+                    SET payment_id = $1, game_mode = 'PAID_SINGLE', payout_address = $3,
+                        payout_escape_amount = $4, payout_treasure_amount = $5,
+                        payout_escape_mult = $6, payout_treasure_mult = $7
+                    WHERE dungeon_seed = $2
+                `, [payment.id, gameId, user.payout_address || null, snap.escapeAmount, snap.treasureAmount, snap.escapeMult, snap.treasureMult]);
+
+                await client.query(`
+                    UPDATE users
+                    SET total_games_played = total_games_played + 1,
+                        updated_at = NOW()
+                    WHERE id = $1
+                `, [user.id]);
+
+                return { linked: true };
+            });
+
+            if (result.alreadyConsumed) {
+                console.warn(`⚠️ Payment ${payment.id} already consumed by a concurrent start; aborting duplicate for game ${gameId}.`);
+                return { success: false, reason: 'Payment already consumed', alreadyConsumed: true };
+            }
+
+            console.log(`Linked game ${gameId} to payment ${payment.id}`);
+            return {
+                success: true,
+                paymentId: payment.id,
+                effectiveMode: 'PAID_SINGLE'
+            };
+        } catch (error) {
+            // 23505 = unique_violation on games.payment_id: a concurrent start linked this
+            // payment first. Treat as already-consumed, never an uncaught throw / duplicate.
+            if (error && error.code === '23505') {
+                console.warn(`⚠️ payment_id unique violation linking game ${gameId} to payment ${payment.id}; treating as already consumed.`);
+                return { success: false, reason: 'Payment already consumed', alreadyConsumed: true };
+            }
+            throw error;
+        }
     }
 
     // processGameCompletion() removed — dead code, never called.
@@ -1171,7 +1220,7 @@ class GameModeManager {
      * with no live session) — `socket_id` is mutable and non-unique and must never be the
      * primary money key.
      */
-    async getOrCreateUser(socketId, ipAddress = null) {
+    async getOrCreateUser(socketId, { create = true } = {}) {
         try {
             // 1. Prefer the stable identity established by SessionManager (anon_token -> id).
             if (this.sessionManager && typeof this.sessionManager.getBySocket === 'function') {
@@ -1205,6 +1254,12 @@ class GameModeManager {
                 return userResult.rows[0];
             }
 
+            // Read-only callers (REST reads) pass { create: false }: never mint an orphan
+            // row for a socket that has no user yet — return null and let them 404/handle it.
+            if (!create) {
+                return null;
+            }
+
             // 3. Last resort: create a new user. This only fires when no session was
             // established for the socket (abnormal in normal flow, since every connection
             // creates a session) — log it so orphan-row creation is visible.
@@ -1212,7 +1267,7 @@ class GameModeManager {
                 INSERT INTO users (socket_id, ip_address)
                 VALUES ($1, $2)
                 RETURNING *
-            `, [socketId, ipAddress]);
+            `, [socketId, null]);
 
             console.warn(`👤 Created new user without a session (socket ${socketId}) — no anon_token identity resolved.`);
             return userResult.rows[0];
@@ -1374,6 +1429,29 @@ class GameModeManager {
         };
     }
 
+    /** Fire-and-forget operator alert (no-op when no alertService is wired). */
+    _alert(type, subject, html) {
+        if (this.alertService && typeof this.alertService.sendAlert === 'function') {
+            this.alertService.sendAlert(type, { subject, html }).catch(() => {});
+        }
+    }
+
+    /**
+     * Resolve the configured payout min/max (atomic BigInt) for a recorded game mode from
+     * the runtime config snapshot, or null when unavailable (older config / no snapshot).
+     */
+    _payoutBoundsForMode(recordedPaymentMode) {
+        const rules = this.configSnapshot?.payouts?.rules;
+        if (!rules) return null;
+        const rule = recordedPaymentMode === 'PAID_CREDITS' ? rules.credits : rules.direct;
+        if (!rule) return null;
+        const toBigOrNull = (v) => {
+            if (v === undefined || v === null) return null;
+            try { return money.toBig(v); } catch { return null; }
+        };
+        return { min: toBigOrNull(rule.minPayout), max: toBigOrNull(rule.maxPayout) };
+    }
+
     /**
      * Complete a game (called from socket handlers when game ends)
      * @param {string} socketId - Player's socket ID
@@ -1389,22 +1467,27 @@ class GameModeManager {
         }
 
         try {
-            // Retrieve the game record to get the actual payment_mode used at game start
+            // Retrieve the game record to get the actual payment_mode used at game start.
+            // M4/C4: match by dungeon_seed ALONE (the UUID is unique) — never by the mutable
+            // socket_id — and carry the stable users.id (games.user_id) so the paying user is
+            // resolved by identity, not by the socket that happened to finish the game.
             let recordedPaymentMode = this.gameMode; // fallback to global
             let gameDbId = null;
+            let gameUserId = null; // stable users.id carried on the game row
             let lockedPayoutAddress = null; // address locked at game start
             let payoutSnapshot = null; // payout terms snapshotted at game start
             try {
                 const gameRecord = await this.db.query(`
-                    SELECT id, game_mode, payout_address,
+                    SELECT id, user_id, game_mode, payout_address,
                            payout_escape_amount, payout_treasure_amount,
                            payout_escape_mult, payout_treasure_mult
                     FROM games
-                    WHERE dungeon_seed = $1 AND socket_id = $2
+                    WHERE dungeon_seed = $1
                     LIMIT 1
-                `, [gameId, socketId]);
+                `, [gameId]);
                 if (gameRecord.rows.length > 0) {
                     gameDbId = gameRecord.rows[0].id;
+                    gameUserId = gameRecord.rows[0].user_id ?? null;
                     recordedPaymentMode = (gameRecord.rows[0].game_mode || this.gameMode).toUpperCase();
                     lockedPayoutAddress = gameRecord.rows[0].payout_address || null;
                     const r = gameRecord.rows[0];
@@ -1428,14 +1511,13 @@ class GameModeManager {
             try {
                 await this.db.query(`
                     UPDATE games SET status = $1, treasure_found = $2, moves_made = COALESCE($3, moves_made), duration_seconds = COALESCE($4, duration_seconds), completed_at = NOW()
-                    WHERE dungeon_seed = $5 AND socket_id = $6
+                    WHERE dungeon_seed = $5
                 `, [
                     won ? 'won' : 'lost',
                     treasureFound,
                     metrics.moves ?? null,
                     metrics.durationSeconds ?? null,
-                    gameId,
-                    socketId
+                    gameId
                 ]);
             } catch (e) {
                 // Non-fatal if games table differs during early dev.
@@ -1450,6 +1532,14 @@ class GameModeManager {
             const payoutEligibleStartMode = (recordedPaymentMode === 'PAID_SINGLE' && this.directPayoutEnabled)
                 || (recordedPaymentMode === 'PAID_CREDITS' && this.creditsPayoutEnabled);
             if (payoutEligibleStartMode && won) {
+                // M4/C4: never insert a payout without a resolved game row — a null game_id
+                // would defeat the payouts dedup (game_id) guard and could double-pay.
+                if (!gameDbId) {
+                    console.error(`❌ completeGame: no game row for dungeon_seed ${gameId}; refusing to insert a payout.`);
+                    this._alert('payout_unresolved_game', '⚠️ Payout skipped — game row not found', `<p>completeGame could not resolve a games row for dungeon_seed <b>${gameId}</b> (socket ${socketId}). No payout was inserted.</p>`);
+                    return { success: true, mode: recordedPaymentMode, payout: null, reason: 'Game row not resolved', score: metrics.score ?? null };
+                }
+
                 // Use the payout terms snapshotted at game start (so a mid-game config change
                 // can't alter an in-flight payout). Fall back to live calculation only for
                 // older games that predate the snapshot columns.
@@ -1464,21 +1554,51 @@ class GameModeManager {
                     multiplier = live.multiplier;
                 }
 
-                // Check if payout was already processed for this game (prevent duplicates)
-                if (gameDbId) {
-                    const existingPayout = await this.db.query(`
-                        SELECT id FROM payouts WHERE game_id = $1 AND status IN ('pending', 'processing', 'completed')
-                    `, [gameDbId]);
-                    if (existingPayout.rows.length > 0) {
-                        console.log(`⚠️ Payout already exists for game ${gameId}, skipping duplicate`);
-                        return { success: true, mode: recordedPaymentMode, payout: null, reason: 'Payout already processed', score: metrics.score ?? null };
+                // M5: clamp/validate the payout against the configured min/max for this mode.
+                // Over-max -> cap + alert (never send more than policy allows). Under-min ->
+                // skip entirely (dust not worth an on-chain fee). Bounds are atomic BigInt.
+                const bounds = this._payoutBoundsForMode(recordedPaymentMode);
+                if (bounds) {
+                    let amtBig = null;
+                    try { amtBig = money.toBig(payoutAmount); } catch { amtBig = null; }
+                    if (amtBig !== null) {
+                        if (bounds.max !== null && amtBig > bounds.max) {
+                            console.warn(`⚠️ Payout ${amtBig} for game ${gameId} exceeds configured max ${bounds.max}; capping.`);
+                            this._alert('payout_over_max', '⚠️ Payout capped at configured maximum', `<p>Computed payout <b>${amtBig}</b> for game <b>${gameId}</b> exceeded the configured max <b>${bounds.max}</b> and was capped. Mode: ${recordedPaymentMode}.</p>`);
+                            amtBig = bounds.max;
+                            payoutAmount = amtBig.toString();
+                        }
+                        if (bounds.min !== null && amtBig < bounds.min) {
+                            console.log(`Payout ${amtBig} for game ${gameId} below configured min ${bounds.min}; skipping payout.`);
+                            return { success: true, mode: recordedPaymentMode, payout: null, reason: 'Below minimum payout', score: metrics.score ?? null };
+                        }
                     }
                 }
 
-                // Use payout address locked at game start, fall back to current user address
-                const userResult = await this.db.query(`SELECT * FROM users WHERE socket_id = $1 LIMIT 1`, [socketId]);
-                const userRow = userResult.rows[0];
-                const payoutAddress = lockedPayoutAddress || (userRow && userRow.payout_address);
+                // Check if payout was already processed for this game (prevent duplicates)
+                const existingPayout = await this.db.query(`
+                    SELECT id FROM payouts WHERE game_id = $1 AND status IN ('pending', 'processing', 'completed')
+                `, [gameDbId]);
+                if (existingPayout.rows.length > 0) {
+                    console.log(`⚠️ Payout already exists for game ${gameId}, skipping duplicate`);
+                    return { success: true, mode: recordedPaymentMode, payout: null, reason: 'Payout already processed', score: metrics.score ?? null };
+                }
+
+                // M4/C4: resolve the paying user by the STABLE users.id carried on the game
+                // row (games.user_id), never by the mutable socket that finished the game.
+                let userRow = null;
+                if (gameUserId != null) {
+                    const userResult = await this.db.query(`SELECT * FROM users WHERE id = $1 LIMIT 1`, [gameUserId]);
+                    userRow = userResult.rows[0] || null;
+                }
+                if (!userRow) {
+                    console.error(`❌ completeGame: could not resolve paying user (game user_id=${gameUserId}) for game ${gameId}; refusing payout.`);
+                    this._alert('payout_unresolved_user', '⚠️ Payout skipped — paying user not resolved', `<p>completeGame could not resolve the paying user (games.user_id=<b>${gameUserId}</b>) for game <b>${gameId}</b>. No payout was inserted.</p>`);
+                    return { success: true, mode: recordedPaymentMode, payout: null, reason: 'Paying user not resolved', score: metrics.score ?? null };
+                }
+
+                // Use payout address locked at game start, fall back to the user's address
+                const payoutAddress = lockedPayoutAddress || userRow.payout_address;
                 if (userRow && payoutAddress) {
                     // Create pending payout record, then schedule batch processing.
                     // Multiple wins within 5 seconds are batched into one transfer_split call,
@@ -1643,14 +1763,25 @@ class GameModeManager {
                     console.log(`💸 Single payout ${p.id} completed: ${result.txHash}`);
                 } catch (err) {
                     // Insufficient-unlocked-funds is a pre-broadcast error -> retry on the next
-                    // batch run (revert to pending). Other failures -> 'failed' (retry service,
-                    // which re-checks the chain before re-sending).
-                    const status = isInsufficientFundsError(err.message) ? 'pending' : 'failed';
+                    // batch run (revert to pending). ANY OTHER error is ambiguous: processPayout
+                    // (transfer_split) may have broadcast on-chain even though the RPC response
+                    // errored, and this row has a null tx_hash so the retry service's blockchain
+                    // guard can't protect it — an auto-retry could DOUBLE-PAY. Mark 'needs_review'
+                    // (retry service skips it) + alert, mirroring the batch path below.
+                    const fundsIssue = isInsufficientFundsError(err.message);
+                    const status = fundsIssue ? 'pending' : 'needs_review';
                     console.error(`❌ Single payout ${p.id} failed -> ${status}:`, err.message);
                     await this.db.query(
                         `UPDATE payouts SET status = $1, last_error = $2, last_retry_at = NOW() WHERE id = $3`,
                         [status, err.message, p.id]
                     ).catch(() => {});
+                    if (!fundsIssue && this.alertService && typeof this.alertService.sendAlert === 'function') {
+                        this.alertService.sendAlert('single_payout_failed', {
+                            subject: '⚠️ Payout failed — manual review required',
+                            html: `<p>Single payout <b>${p.id}</b> failed and was marked <b>needs_review</b> to avoid a possible double-payout.</p>`
+                                + `<p>Amount: ${p.amount} → ${p.payout_address}</p><p>Error: ${err.message}</p>`
+                        }).catch(() => {});
+                    }
                 }
             } else {
                 // Multiple payouts — batch via transfer_split with multiple destinations

@@ -29,6 +29,10 @@ class SocketChatProvider extends ChatProvider {
     async publish(msg = {}) {
         const { scope = 'global', username, text, ts = Date.now(), socketId = null, userId = null } = msg;
 
+        // Defense in depth (S1): never broadcast the raw full socket.id to other clients — it is
+        // a hijackable handle. Derive a short, non-sensitive public id for display/attribution.
+        const publicId = userId != null ? String(userId) : (socketId ? String(socketId).substring(0, 6) : null);
+
         if (scope === 'global') {
             if (this.history) {
                 // Fire-and-forget persistence, exactly as before (must not block delivery).
@@ -36,16 +40,16 @@ class SocketChatProvider extends ChatProvider {
                     .catch(err => console.error('Failed to save chat message:', err.message));
             }
             if (this.broadcastManager) {
-                this.broadcastManager.broadcastChatMessage(username, text, ts, socketId);
+                this.broadcastManager.broadcastChatMessage(username, text, ts, publicId);
             } else {
-                this.io.emit('chat_broadcast', { username, message: text, timestamp: ts, socketId });
+                this.io.emit('chat_broadcast', { username, message: text, timestamp: ts, publicId });
             }
             return;
         }
 
         // Room-scoped (e.g. tavern): delivered only to occupants of that room. The `scope`
         // field lets a room client filter these from any global broadcasts it also receives.
-        this.io.to(scope).emit('chat_broadcast', { username, message: text, timestamp: ts, socketId, scope });
+        this.io.to(scope).emit('chat_broadcast', { username, message: text, timestamp: ts, publicId, scope });
     }
 
     async getHistory({ scope = 'global', limit = 50 } = {}) {

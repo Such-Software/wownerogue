@@ -110,13 +110,24 @@ class DungeonGenerator {
     }
 
     static generate(width, height, options = {}) {
+        // G4: resolve the difficulty-preset overrides so the digger and treasure
+        // placement honour them (getConfig applies preset + env-var overrides on top
+        // of DUNGEON_CONFIGS). These become defaults that explicit `options` can override.
+        const presetConfig = this.getConfig(options.cryptoType || null);
         const defaultOptions = {
             floorVariation: DUNGEON_CONFIGS.FLOOR_VARIATION,
             torchEnabled: DUNGEON_CONFIGS.TORCH_ENABLED,
             torchDensity: DUNGEON_CONFIGS.TORCH_DENSITY,
             primaryFloor: DUNGEON_CONFIGS.PRIMARY_FLOOR,
             secondaryFloor: DUNGEON_CONFIGS.SECONDARY_FLOOR,
-            torchTile: DUNGEON_CONFIGS.TORCH_TILE
+            torchTile: DUNGEON_CONFIGS.TORCH_TILE,
+            // Preset-derived digger parameters (difficulty overrides)
+            roomWidthRange: presetConfig.ROOM_WIDTH_RANGE,
+            roomHeightRange: presetConfig.ROOM_HEIGHT_RANGE,
+            corridorLengthRange: presetConfig.CORRIDOR_LENGTH_RANGE,
+            dugPercentage: presetConfig.DUG_PERCENTAGE,
+            // Preset-derived treasure room placement ratio
+            roomPositionRatio: presetConfig.difficulty.treasure.roomPositionRatio
         };
 
         const config = { ...defaultOptions, ...options };
@@ -160,12 +171,14 @@ class DungeonGenerator {
             ROT.RNG.setSeed(seedInt);
         }
 
-        // Create dungeon using ROT.js Map.Digger
+        // Create dungeon using ROT.js Map.Digger.
+        // G4: honour the difficulty-preset overrides carried on config (falling back to
+        // the module constants) instead of always using DUNGEON_CONFIGS.
         const digger = new ROT.Map.Digger(width, height, {
-            roomWidth: DUNGEON_CONFIGS.ROOM_WIDTH_RANGE,
-            roomHeight: DUNGEON_CONFIGS.ROOM_HEIGHT_RANGE,
-            corridorLength: DUNGEON_CONFIGS.CORRIDOR_LENGTH_RANGE,
-            dugPercentage: DUNGEON_CONFIGS.DUG_PERCENTAGE
+            roomWidth: config.roomWidthRange || DUNGEON_CONFIGS.ROOM_WIDTH_RANGE,
+            roomHeight: config.roomHeightRange || DUNGEON_CONFIGS.ROOM_HEIGHT_RANGE,
+            corridorLength: config.corridorLengthRange || DUNGEON_CONFIGS.CORRIDOR_LENGTH_RANGE,
+            dugPercentage: (config.dugPercentage !== undefined) ? config.dugPercentage : DUNGEON_CONFIGS.DUG_PERCENTAGE
         });
 
         // Initialize the empty map with walls (1)
@@ -193,10 +206,12 @@ class DungeonGenerator {
         const exitCenter = exitRoom.getCenter();
         const exit = [exitCenter[0], exitCenter[1]];
 
-        // Place treasure in a middle room (not first or last)
+        // Place treasure in a middle room (not first or last).
+        // G4: use the difficulty-aware treasure room index instead of a hardcoded midpoint.
         let treasureRoom;
         if (rooms.length > 2) {
-            treasureRoom = rooms[Math.floor(rooms.length / 2)];
+            const treasureIndex = getTreasureRoomIndex(rooms, config.roomPositionRatio);
+            treasureRoom = rooms[treasureIndex];
         } else {
             // Fallback if we have fewer than 3 rooms
             treasureRoom = rooms[0];

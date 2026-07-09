@@ -799,9 +799,12 @@ router.get('/api/admin/users', adminAuth, asyncHandler(async (req, res) => {
     LIMIT $1 OFFSET $2
   `, params);
 
+  // Build the count query from the SAME params list as the main query so the
+  // shared ${whereClause} (which references $3 when searching) always has its
+  // parameter supplied. Passing a one-element array here threw for any search term.
   const countResult = await db.query(`
     SELECT COUNT(*) as total FROM users ${whereClause}
-  `, search && search.length >= 3 ? [`%${search}%`] : []);
+  `, search && search.length >= 3 ? params : []);
 
   res.json({
     users: result.rows.map(u => ({
@@ -882,9 +885,51 @@ router.get('/api/admin/users/:id', adminAuth, asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * Scan the wallet for a recent OUTGOING transfer to this payout's address (and,
+ * when known, matching amount). Used before force-retrying a needs_review payout
+ * that has no recorded tx_hash — if the funds already left the wallet we must NOT
+ * re-send. Conservative: any RPC failure is treated as "not clean" so we never
+ * risk a silent double-pay.
+ * Returns { clean: boolean, txid?: string }.
+ */
+async function isRecentTransferClean(payout) {
+  try {
+    const resp = await walletRPCService.rpcCall('get_transfers', {
+      out: true,
+      pending: true,
+      pool: true,
+      account_index: walletRPCService.accountIndex || 0
+    });
+    const target = String(payout.payout_address || '');
+    const amt = Number(payout.amount);
+    for (const bucket of ['out', 'pending', 'pool']) {
+      const list = resp.result?.[bucket];
+      if (!Array.isArray(list)) continue;
+      for (const tx of list) {
+        const dests = Array.isArray(tx.destinations) ? tx.destinations : [];
+        for (const d of dests) {
+          if (d.address === target && (!Number.isFinite(amt) || amt <= 0 || Number(d.amount) === amt)) {
+            return { clean: false, txid: tx.txid };
+          }
+        }
+        // Some transfers record the recipient at the top level without destinations.
+        if (target && tx.address === target) {
+          return { clean: false, txid: tx.txid };
+        }
+      }
+    }
+    return { clean: true };
+  } catch (err) {
+    // Can't verify -> assume NOT clean to avoid a double-pay.
+    return { clean: false, txid: null, error: err.message };
+  }
+}
+
 // POST /api/admin/payouts/:id/retry - Manually retry a failed payout
 router.post('/api/admin/payouts/:id/retry', adminAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const confirm = req.query.confirm === 'true' || !!(req.body && req.body.confirm === true);
 
   const payoutResult = await db.query(`
     SELECT * FROM payouts WHERE id = $1
@@ -898,6 +943,54 @@ router.post('/api/admin/payouts/:id/retry', adminAuth, asyncHandler(async (req, 
 
   if (payout.status === 'completed') {
     throw new ValidationError('Payout already completed');
+  }
+
+  // M2: never allow a silent double-pay. Before resetting a payout to 'pending'
+  // (which requeues it for a fresh transfer) prove the funds have NOT already left
+  // the wallet.
+  if (payout.tx_hash) {
+    // A tx hash is recorded — verify it is NOT on-chain before retrying.
+    let txStatus;
+    try {
+      txStatus = await walletRPCService.checkTransactionStatus(payout.tx_hash);
+    } catch (err) {
+      // RPC uncertain — refuse rather than risk re-sending.
+      return res.status(409).json({
+        success: false,
+        message: `Could not verify on-chain status of tx ${payout.tx_hash}: ${err.message}. Refusing to retry.`
+      });
+    }
+    if (txStatus && txStatus.exists) {
+      // Tx is on-chain (confirmed or in mempool): the payout already went out.
+      return res.status(409).json({
+        success: false,
+        message: `Payout tx ${payout.tx_hash} is already on-chain (confirmed=${txStatus.confirmed}, in_mempool=${txStatus.in_mempool}). Refusing to retry to avoid a double-pay.`,
+        onChain: true,
+        txStatus
+      });
+    }
+    // Not found on-chain -> safe to reset for retry.
+  } else if (payout.status === 'needs_review') {
+    // No tx_hash but flagged for manual review: require an explicit confirm flag AND
+    // a clean recent-transfer check before allowing a resend.
+    if (!confirm) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payout is in needs_review with no tx_hash. Pass ?confirm=true (or {confirm:true}) to force a retry after manual review.',
+        requiresConfirm: true
+      });
+    }
+    const clean = await isRecentTransferClean(payout);
+    if (!clean.clean) {
+      return res.status(409).json({
+        success: false,
+        message: clean.error
+          ? `Refusing to retry: could not verify recent transfers (${clean.error}).`
+          : `Refusing to retry: found a recent outgoing transfer to ${payout.payout_address} (txid ${clean.txid}) that may already fulfill this payout.`,
+        onChain: !clean.error,
+        txid: clean.txid || undefined
+      });
+    }
   }
 
   // Reset status to pending for retry

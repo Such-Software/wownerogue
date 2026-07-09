@@ -23,9 +23,11 @@ describe('rateLimitContext.clientIp', () => {
   test('uses handshake address by default (ignores XFF when proxy not trusted)', () => {
     expect(clientIp({ handshake: { headers: { 'x-forwarded-for': '9.9.9.9' }, address: '10.0.0.1' } })).toBe('10.0.0.1');
   });
-  test('uses first X-Forwarded-For hop when TRUST_PROXY=true', () => {
+  test('uses the rightmost (proxy-appended) X-Forwarded-For hop when TRUST_PROXY=true', () => {
     process.env.TRUST_PROXY = 'true';
-    expect(clientIp({ handshake: { headers: { 'x-forwarded-for': '9.9.9.9, 10.0.0.1' }, address: '10.0.0.1' } })).toBe('9.9.9.9');
+    // A single trusted nginx APPENDS the real client IP as the last hop; the leftmost entries
+    // are client-spoofable, so the rightmost is the only trustworthy one for rate limiting.
+    expect(clientIp({ handshake: { headers: { 'x-forwarded-for': '9.9.9.9, 10.0.0.1' }, address: '7.7.7.7' } })).toBe('10.0.0.1');
   });
 });
 

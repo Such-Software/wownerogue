@@ -13,6 +13,52 @@
     font-style: normal;
 }
 
+/* =========================================================================
+   DESIGN TOKENS — "dungeon console" palette
+   Single source of truth for the torch-lit dungeon aesthetic. Hard-coded hex
+   throughout the sheet is refactored to reference these incrementally.
+   ========================================================================= */
+:root {
+    /* Surfaces */
+    --bg:          #111;   /* deepest chrome (banner / footer)          */
+    --bg-panel:    #222;   /* side panels (status / chat)               */
+    --bg-deep:     #0a0a0f;/* modal interior                            */
+    --bg-input:    #444;   /* form fields                               */
+
+    /* Ink */
+    --ink:         #e0e0e0;/* default body text                         */
+    --ink-dim:     #888;   /* muted / secondary text                    */
+
+    /* Accents */
+    --neon:        #0f0;   /* neon-green primary                        */
+    --good:        #4ade80;/* success green                             */
+    --cyan:        #0ff;   /* cyan                                      */
+    --gold:        #fbbf24;/* torch gold                                */
+    --gold-bright: #ffd700;/* bright gold highlight                     */
+    --purple:      #8b5cf6;/* arcane purple                             */
+    --purple-soft: #c4b5fd;/* purple text                               */
+    --torch:       #f59e0b;/* torch-amber (frame glow)                  */
+
+    /* Structure */
+    --rule:        #444;   /* hairline borders / dividers               */
+    --danger:      #ef4444;/* danger / monster                          */
+    --danger-hot:  #f00;   /* hot red (close buttons)                   */
+
+    /* Reusable glows */
+    --glow-neon:   rgba(0, 255, 0, 0.28);
+    --glow-cyan:   rgba(0, 255, 255, 0.28);
+    --glow-purple: rgba(139, 92, 246, 0.30);
+    --glow-torch:  rgba(245, 158, 11, 0.30);
+}
+
+/* Global console shell: PixelOperator everywhere with a monospace fallback. */
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'PixelOperator', monospace;
+}
+
 /* Updated layout with 5-row structure */
 .container {
     display: grid;
@@ -29,41 +75,224 @@
     max-width: 100vw;
     overflow: hidden;
     gap: 1px;
-    background-color: #222;
+    background-color: var(--bg-panel);
 }
 
 /* Header area */
 .banner {
     grid-area: header;
-    background-color: #111;
+    background-color: var(--bg);
     padding: 5px;
     color: white;
     text-align: left;
-    border-bottom: 1px solid #444;
+    border-bottom: 1px solid var(--rule);
+    box-shadow: inset 0 -2px 12px rgba(245, 158, 11, 0.06);
     font-family: 'PixelOperator', monospace;
     font-weight: bold;
     font-size: 24px;
     letter-spacing: 1px;
 }
 
-/* Status area for block height display */
+/* Status area for block height display — the "control console" column */
 .status {
     grid-area: status;
-    background-color: #222;
+    position: relative;
+    background:
+        linear-gradient(180deg, rgba(245, 158, 11, 0.04), transparent 42%),
+        var(--bg-panel);
     padding: 10px;
-    color: #0f0;
-    font-family: monospace;
+    color: var(--neon);
+    font-family: 'PixelOperator', monospace;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    border-right: 1px solid #444;
+    border-right: 1px solid var(--rule);
+    box-shadow: inset 0 0 32px rgba(0, 0, 0, 0.45);
+}
+
+/* Torch-lit accent bar running down the console's leading edge. */
+.status::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--torch), transparent 65%);
+    box-shadow: 0 0 10px var(--torch);
+    opacity: 0.8;
+    pointer-events: none;
+    animation: torch-flicker 4s ease-in-out infinite;
+}
+
+#blockHeight, #connectionStatus {
+    font-size: 13px;
+    line-height: 1.5;
+    text-shadow: 0 0 6px rgba(0, 255, 0, 0.25);
+}
+
+/* =========================================================================
+   CONTROL BAR — primary action buttons (#startButton, #watchGamesButton,
+   #tavernButton, #characterButton, #shopButton, #animationToggleButton).
+   Presentation lives here; ids + click handlers stay untouched in the HTML.
+   Each variant only sets three custom props (accent / panel / label).
+   ========================================================================= */
+.ctrl-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    box-sizing: border-box;
+    margin-top: 6px;
+    padding: 8px 16px;
+    font-family: 'PixelOperator', monospace;
+    font-weight: bold;
+    font-size: 15px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    color: var(--btn-label, var(--ink));
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.25)),
+        var(--btn-panel, #1a1a1a);
+    border: 2px solid var(--btn-accent, var(--rule));
+    border-radius: 5px;
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    transition: box-shadow 0.18s ease, transform 0.08s ease,
+                border-color 0.18s ease, filter 0.18s ease;
+}
+
+.ctrl-btn:hover {
+    filter: brightness(1.15);
+    box-shadow: 0 0 14px var(--btn-glow, var(--glow-torch)),
+                inset 0 0 10px rgba(255, 255, 255, 0.06);
+}
+
+.ctrl-btn:active {
+    transform: translateY(1px);
+    box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.55);
+}
+
+.ctrl-btn:focus-visible {
+    outline: 2px solid var(--btn-label, var(--ink));
+    outline-offset: 2px;
+}
+
+/* Variants — colours preserved from the original inline styles. */
+.ctrl-btn--start    { --btn-panel: #0a5c0a; --btn-accent: var(--neon);   --btn-label: #ff0;      --btn-glow: var(--glow-neon); }
+.ctrl-btn--watch    { --btn-panel: #053655; --btn-accent: #0af;          --btn-label: #0af;      --btn-glow: var(--glow-cyan); }
+.ctrl-btn--tavern   { --btn-panel: #2a0a3a; --btn-accent: #a855f7;       --btn-label: #d8b4fe;   --btn-glow: var(--glow-purple); }
+.ctrl-btn--character{ --btn-panel: #163044; --btn-accent: #5aa7d8;       --btn-label: #a7d8ff;   --btn-glow: rgba(90, 167, 216, 0.32); }
+.ctrl-btn--shop     { --btn-panel: #004400; --btn-accent: var(--neon);   --btn-label: var(--neon); --btn-glow: var(--glow-neon); }
+.ctrl-btn--anim     { --btn-panel: #5c5c0a; --btn-accent: #aa0;          --btn-label: #ff0;      --btn-glow: var(--glow-torch); padding: 6px 12px; font-size: 13px; }
+
+/* The primary CTA gently pulses like a torch while idle (paused on hover). */
+.ctrl-btn--start { animation: torch-glow 3.4s ease-in-out infinite; }
+.ctrl-btn--start:hover { animation: none; }
+
+/* =========================================================================
+   HUD TOOLBAR — secondary "chip" controls (audio toggle + help / history /
+   scores / manage-address). Small, bordered, glow-on-hover.
+   ========================================================================= */
+.hud-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--rule);
+    font-size: 11px;
+    color: #ccc;
+}
+
+.hud-toolbar label {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.hud-chip {
+    font-family: 'PixelOperator', monospace;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 3px;
+    color: var(--chip-label, var(--ink));
+    background: var(--chip-panel, #1a1a1a);
+    border: 1px solid var(--chip-accent, var(--rule));
+    transition: box-shadow 0.18s ease, filter 0.18s ease, transform 0.08s ease;
+}
+
+.hud-chip:hover {
+    filter: brightness(1.2);
+    box-shadow: 0 0 9px var(--chip-glow, var(--glow-torch));
+}
+
+.hud-chip:active { transform: translateY(1px); }
+
+.hud-chip:focus-visible {
+    outline: 2px solid var(--chip-label, var(--ink));
+    outline-offset: 2px;
+}
+
+.hud-chip--push { margin-left: auto; }
+
+.hud-chip--help    { --chip-panel: #2d2d00; --chip-accent: var(--gold-bright); --chip-label: var(--gold-bright); --chip-glow: var(--glow-torch); }
+.hud-chip--history { --chip-panel: #1a1a4d; --chip-accent: var(--purple);      --chip-label: var(--purple-soft); --chip-glow: var(--glow-purple); }
+.hud-chip--scores  { --chip-panel: #4a2800; --chip-accent: var(--torch);       --chip-label: var(--gold);        --chip-glow: var(--glow-torch); }
+.hud-chip--address { --chip-panel: #053655; --chip-accent: var(--cyan);        --chip-label: var(--cyan);        --chip-glow: var(--glow-cyan); }
+
+/* Info readouts inside the console */
+#creditsDisplay {
+    margin-top: 4px;
+    font-size: 13px;
+    font-family: 'PixelOperator', monospace;
+    color: var(--neon);
+    background: #001a00;
+    padding: 4px 8px;
+    border: 1px solid #0a0;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+#publicStats {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #9cf;
+    font-family: 'PixelOperator', monospace;
+    line-height: 1.4;
+}
+
+#liveCta {
+    margin-top: 6px;
+    cursor: pointer;
+    background: rgba(80, 0, 0, 0.55);
+    border: 1px solid #f33;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-family: 'PixelOperator', monospace;
+    color: #ff8a8a;
+    font-weight: bold;
+    transition: box-shadow 0.18s ease, filter 0.18s ease;
+}
+#liveCta:hover {
+    filter: brightness(1.15);
+    box-shadow: 0 0 12px rgba(255, 51, 51, 0.4);
+}
+
+#sessionWarning {
+    color: var(--torch);
+    font-size: 10px;
+    margin-left: 6px;
 }
 
 /* Make sure rotdis is properly visible across all browsers */
 .rotdis {
     grid-area: game;
     background-color: #000;
-    border: 2px solid #444;
+    border: 2px solid var(--rule);
     display: flex !important; /* Using flex to center canvas */
     justify-content: center;
     align-items: center;
@@ -89,10 +318,10 @@
 /* Chat messages area */
 .chat-container {
     grid-area: chat;
-    background-color: #222;
+    background-color: var(--bg-panel);
     display: flex;
     flex-direction: column;
-    border-right: 1px solid #444;
+    border-right: 1px solid var(--rule);
     overflow: hidden; /* Prevents chat from causing scrolling */
 }
 
@@ -122,8 +351,8 @@
     grid-area: input;
     background-color: #333;
     padding: 10px;
-    border-top: 1px solid #444;
-    border-bottom: 1px solid #444;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
 }
 
 #chatForm {
@@ -135,9 +364,10 @@
     flex-grow: 1;
     padding: 8px;
     border: none;
-    background-color: #444;
+    background-color: var(--bg-input);
     color: #fff;
     border-radius: 3px 0 0 3px;
+    font-family: 'PixelOperator', monospace;
 }
 
 #chatForm button {
@@ -147,6 +377,12 @@
     border: none;
     cursor: pointer;
     border-radius: 0 3px 3px 0;
+    font-family: 'PixelOperator', monospace;
+    transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+#chatForm button:hover {
+    background-color: #0a5c0a;
+    box-shadow: 0 0 10px var(--glow-neon);
 }
 
 /* Add this to your stylesheet to use the font in other places */
@@ -159,17 +395,18 @@
 
 .footer {
     grid-area: footer;
-    background-color: #111;
-    color: #888;
+    background-color: var(--bg);
+    color: var(--ink-dim);
     padding: 5px;
     text-align: center;
     font-size: 0.8em;
     font-family: 'PixelOperator', sans-serif;
+    border-top: 1px solid var(--rule);
 }
 
 /* Game messages styling */
 li.game-start {
-    color: #0f0;
+    color: var(--neon);
     font-weight: bold;
     text-align: center;
     margin: 5px 0;
@@ -178,20 +415,20 @@ li.game-start {
 }
 
 li.error {
-    color: #f00;
+    color: var(--danger-hot);
     font-weight: bold;
     font-family: monospace;
     padding: 2px 5px;
     background: rgba(255,0,0,0.1);
-    border-left: 2px solid #f00;
+    border-left: 2px solid var(--danger-hot);
 }
 
 li.debug {
-    color: #0ff;
+    color: var(--cyan);
     font-family: monospace;
     font-size: 0.9em;
     padding-left: 10px;
-    border-left: 2px solid #0ff;
+    border-left: 2px solid var(--cyan);
 }
 
 /* Utility */
@@ -199,7 +436,16 @@ li.debug {
     display: none !important;
 }
 
-/* Modal styling */
+/* =========================================================================
+   SHARED PANEL FRAME
+   The overlay-centred modals (#addressModal / #helpModal via .modal-content)
+   and the fixed-position panels (#payment-ui / #history-panel via
+   .dungeon-modal, plus the JS-built #leaderboard-panel) all share one framed,
+   torch-lit, inner-glowing look. Each panel keeps its signature accent colour
+   through the --accent / --accent-glow / --panel-bg custom properties.
+   ========================================================================= */
+
+/* -- Overlay-centred modals (address / help) -- */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -212,15 +458,19 @@ li.debug {
 }
 
 .modal-content {
-    background: #0a0a0f;
-    border: 2px solid #0ff;
-    border-radius: 6px;
+    background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 45%),
+        var(--bg-deep);
+    border: 2px solid var(--cyan);
+    border-radius: 8px;
     width: min(480px, 90vw);
     padding: 20px;
-    color: #0ff;
+    color: var(--cyan);
     font-family: 'PixelOperator', monospace;
     position: relative;
-    box-shadow: 0 0 18px rgba(0, 255, 255, 0.2);
+    box-shadow: 0 0 18px var(--glow-cyan),
+                inset 0 0 42px rgba(0, 0, 0, 0.55);
+    animation: mc-pop 0.2s ease-out;
 }
 
 .modal-content h2 {
@@ -247,9 +497,9 @@ li.debug {
 #addressModalInput {
     width: 100%;
     background: #020205;
-    border: 1px solid #0ff;
+    border: 1px solid var(--cyan);
     border-radius: 4px;
-    color: #0ff;
+    color: var(--cyan);
     padding: 10px;
     font-family: monospace;
     resize: vertical;
@@ -267,11 +517,12 @@ li.debug {
 .modal-actions button {
     padding: 8px 16px;
     border-radius: 4px;
-    border: 1px solid #0ff;
+    border: 1px solid var(--cyan);
     background: #031c28;
-    color: #0ff;
+    color: var(--cyan);
     cursor: pointer;
     font-family: inherit;
+    transition: box-shadow 0.18s ease, filter 0.18s ease;
 }
 
 .modal-actions button#addressModalSave {
@@ -281,7 +532,8 @@ li.debug {
 }
 
 .modal-actions button:hover {
-    box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+    filter: brightness(1.12);
+    box-shadow: 0 0 10px var(--glow-cyan);
 }
 
 .modal-close {
@@ -290,10 +542,12 @@ li.debug {
     right: 10px;
     background: transparent;
     border: none;
-    color: #0ff;
+    color: var(--cyan);
     font-size: 18px;
     cursor: pointer;
+    transition: color 0.15s ease, transform 0.15s ease;
 }
+.modal-close:hover { color: #fff; transform: scale(1.15); }
 
 .modal-feedback {
     margin-top: 12px;
@@ -313,6 +567,77 @@ li.debug {
     color: #9cf6ff;
 }
 
+/* -- Fixed-position framed panels (payment / history) -- */
+.dungeon-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2000;
+    min-width: 400px;
+    max-width: 520px;
+    max-height: 85vh;
+    overflow-y: auto;
+    padding: 20px;
+    border: 2px solid var(--accent, var(--torch));
+    border-radius: 8px;
+    color: var(--ink);
+    background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 45%),
+        var(--panel-bg, rgba(12, 12, 20, 0.97));
+    box-shadow: 0 0 24px var(--accent-glow, var(--glow-torch)),
+                inset 0 0 44px rgba(0, 0, 0, 0.55);
+    animation: dm-fade 0.22s ease-out;
+}
+
+#payment-ui.dungeon-modal {
+    --accent: var(--neon);
+    --accent-glow: var(--glow-neon);
+    --panel-bg: rgba(0, 20, 0, 0.96);
+    color: var(--neon);
+}
+
+#history-panel.dungeon-modal {
+    --accent: var(--purple);
+    --accent-glow: var(--glow-purple);
+    --panel-bg: rgba(10, 10, 30, 0.98);
+    color: var(--ink);
+}
+
+/* Shared header bar for framed panels */
+.dm-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+}
+.dm-head strong { font-size: 1.15em; }
+
+/* Shared close control for framed panels */
+.dm-close {
+    background: #500;
+    color: var(--danger-hot);
+    border: 1px solid var(--danger-hot);
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 3px;
+    font-family: 'PixelOperator', monospace;
+    transition: box-shadow 0.15s ease, filter 0.15s ease;
+}
+.dm-close:hover {
+    filter: brightness(1.25);
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.4);
+}
+
+/* The JS-built leaderboard panel keeps its inline amber frame; give it the
+   same soft entrance + inner glow so it reads as part of the same system.
+   (Opacity-only animation avoids clobbering its translate() centring.) */
+#leaderboard-panel {
+    animation: dm-fade 0.22s ease-out;
+    box-shadow: 0 0 22px var(--glow-torch), inset 0 0 40px rgba(0, 0, 0, 0.5) !important;
+}
 
 /* =========================================================================
    Win feed toasts (global "someone escaped" announcements)
@@ -330,8 +655,8 @@ li.debug {
 }
 .win-toast {
     background: rgba(0, 30, 0, 0.92);
-    border: 1px solid #0f0;
-    border-left: 4px solid #4ade80;
+    border: 1px solid var(--neon);
+    border-left: 4px solid var(--good);
     border-radius: 6px;
     color: #cffccf;
     font-family: 'PixelOperator', monospace;
@@ -343,7 +668,52 @@ li.debug {
     transition: opacity 0.35s ease, transform 0.35s ease;
 }
 .win-toast.show { opacity: 1; transform: translateX(0); }
-.win-toast strong { color: #4ade80; }
+.win-toast strong { color: var(--good); }
+
+/* =========================================================================
+   Motion — tasteful transitions & keyframes (all respect reduced-motion)
+   ========================================================================= */
+@keyframes torch-flicker {
+    0%, 100% { opacity: 0.8; }
+    18%      { opacity: 0.55; }
+    36%      { opacity: 0.85; }
+    58%      { opacity: 0.5; }
+    77%      { opacity: 0.78; }
+}
+
+@keyframes torch-glow {
+    0%, 100% { box-shadow: 0 0 6px var(--btn-glow, var(--glow-torch)); }
+    50%      { box-shadow: 0 0 16px var(--btn-glow, var(--glow-torch)); }
+}
+
+@keyframes dm-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes mc-pop {
+    from { opacity: 0; transform: translateY(10px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .status::before,
+    .ctrl-btn,
+    .ctrl-btn--start,
+    .hud-chip,
+    .modal-content,
+    .dungeon-modal,
+    #leaderboard-panel,
+    .win-toast,
+    #liveCta,
+    .modal-actions button,
+    .modal-close,
+    .dm-close,
+    #chatForm button {
+        animation: none !important;
+        transition: none !important;
+    }
+}
 
 /* =========================================================================
    Mobile / touch support
@@ -394,7 +764,7 @@ li.debug {
     #staticbanner { font-size: 15px !important; }
     .status {
         border-right: none;
-        border-bottom: 1px solid #444;
+        border-bottom: 1px solid var(--rule);
         flex-direction: row;
         flex-wrap: wrap;
         gap: 4px 14px;
@@ -418,6 +788,8 @@ li.debug {
         min-width: 0;
         white-space: nowrap;
     }
+    /* Toolbar spans the full row when the console wraps. */
+    .hud-toolbar { flex-basis: 100%; margin-top: 6px; }
 
     /* Fixed-width modals would overflow tiny screens — make them fit */
     #payment-ui, #history-panel, #leaderboard-panel {
@@ -449,7 +821,7 @@ body.touch #touch-dpad { display: grid; }
     width: 44px; height: 44px;
     font-size: 17px;
     background: rgba(0,40,0,0.5);
-    color: #0f0;
+    color: var(--neon);
     border: 2px solid rgba(0,255,0,0.7);
     border-radius: 9px;
     padding: 0;

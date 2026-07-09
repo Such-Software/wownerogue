@@ -53,6 +53,24 @@ function verifySeed(seed, commitment) {
 }
 
 /**
+ * Derive the effective RNG seed from a server seed and an (optional) client seed.
+ * Uses HMAC-SHA256 with the server seed as key and the client seed as message so
+ * that neither party can unilaterally control the outcome:
+ *   - the server commits to hash(serverSeed) BEFORE seeing the client seed, and
+ *   - the client seed still perturbs the final layout.
+ * The commitment stays hash(serverSeed); a verifier with (serverSeed, clientSeed)
+ * can reproduce this derived seed and therefore the entire dungeon.
+ * @param {string} serverSeed - The secret server seed (revealed after the game)
+ * @param {string} [clientSeed=''] - Optional client-supplied seed
+ * @returns {string} 64-character hex string used as the effective RNG seed
+ */
+function deriveSeed(serverSeed, clientSeed = '') {
+    return crypto.createHmac('sha256', String(serverSeed))
+        .update(String(clientSeed ?? ''))
+        .digest('hex');
+}
+
+/**
  * Create a seeded random number generator
  * Uses the seed to create deterministic "random" numbers
  * This allows players to recreate the exact same dungeon
@@ -73,9 +91,10 @@ function createSeededRNG(seed) {
             .digest();
         counter++;
         
-        // Convert first 4 bytes to a number between 0 and 1
+        // Convert first 4 bytes to a number in [0, 1). Divide by 2^32 (not
+        // 0xFFFFFFFF) so the maximum value stays strictly below 1.
         const num = hash.readUInt32BE(0);
-        return num / 0xFFFFFFFF;
+        return num / 0x100000000;
     };
 }
 
@@ -121,16 +140,21 @@ function seededShuffle(rng, array) {
 /**
  * Create a game proof object for a new game
  * @param {string} gameId - Unique game identifier
- * @returns {object} Proof object with seed, commitment, and creation time
+ * @param {string} [clientSeed=''] - Optional client-supplied seed (non-breaking)
+ * @returns {object} Proof object with seeds, commitment, and creation time
  */
-function createGameProof(gameId) {
-    const seed = generateSeed();
-    const commitment = hashSeed(seed);
+function createGameProof(gameId, clientSeed = '') {
+    const serverSeed = generateSeed();
+    const commitment = hashSeed(serverSeed);        // commits to serverSeed only
+    // Effective RNG seed folds in the client seed so neither party controls it.
+    const seed = deriveSeed(serverSeed, clientSeed);
     const timestamp = Date.now();
-    
+
     return {
         gameId,
-        seed,           // Keep secret until game ends
+        serverSeed,     // Keep secret until game ends
+        clientSeed,     // Client contribution (may be '')
+        seed,           // Derived effective seed used to generate the dungeon
         commitment,     // Show to player before game starts
         timestamp,
         verified: false
@@ -160,9 +184,15 @@ function getPreGameCommitment(proof) {
  * @returns {object} Full verification data for client
  */
 function getPostGameReveal(proof, gameResult = {}) {
+    const serverSeed = proof.serverSeed ?? proof.seed;
+    const clientSeed = proof.clientSeed ?? '';
+    // Effective seed a verifier regenerates the dungeon from.
+    const effectiveSeed = proof.seed ?? deriveSeed(serverSeed, clientSeed);
     return {
         gameId: proof.gameId,
-        seed: proof.seed,
+        serverSeed,
+        clientSeed,
+        seed: effectiveSeed,
         commitment: proof.commitment,
         timestamp: proof.timestamp,
         gameResult: {
@@ -171,12 +201,13 @@ function getPostGameReveal(proof, gameResult = {}) {
             moves: gameResult.moves ?? 0,
             duration: gameResult.duration ?? 0
         },
-        verificationUrl: `/verify/${proof.seed}`,
+        verificationUrl: `/verify/${effectiveSeed}`,
         instructions: [
             "To verify this game was fair:",
-            `1. Compute SHA-256 of the seed and confirm it equals the commitment: ${proof.commitment}`,
-            "2. The seed deterministically generates the dungeon layout, treasure, and monster behaviour",
-            `3. Open ${`/verify/${proof.seed}`} to regenerate the dungeon from the seed and compare its layout fingerprint`
+            `1. Compute SHA-256 of the serverSeed and confirm it equals the commitment: ${proof.commitment}`,
+            "2. Compute HMAC-SHA256(key=serverSeed, msg=clientSeed) to derive the effective seed",
+            "3. The effective seed deterministically generates the dungeon layout, treasure, and monster behaviour",
+            `4. Open ${`/verify/${effectiveSeed}`} to regenerate the dungeon from the effective seed and compare its layout fingerprint`
         ]
     };
 }
@@ -207,6 +238,7 @@ module.exports = {
     generateSeed,
     hashSeed,
     verifySeed,
+    deriveSeed,
     createSeededRNG,
     seedToInt,
     seededRandomInt,

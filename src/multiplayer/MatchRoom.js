@@ -530,6 +530,11 @@ class MatchRoom extends Room {
         if (this.status !== 'finished') return this.playerStates;
 
         const exit = this.dungeon.exit;
+        // A winner already designated by first-to-escape (_checkResolution) must remain the
+        // winner: the first player out wins the race regardless of treasure/speed tiebreakers
+        // among later finishers. When no one escaped (timeout / all-dead) preWinner is null and
+        // ranking alone decides.
+        const preWinner = this.winnerId;
         const ranked = Array.from(this.playerStates.entries()).map(([id, state]) => {
             const occ = this.occupants.get(id);
             const dist = exit && occ && state.alive ? Math.abs(occ.x - exit[0]) + Math.abs(occ.y - exit[1]) : Infinity;
@@ -537,6 +542,12 @@ class MatchRoom extends Room {
         });
 
         ranked.sort((a, b) => {
+            // Designated escape-winner always ranks first (placement #1 == crypto payout target).
+            if (preWinner) {
+                const aw = a.id === preWinner ? 1 : 0;
+                const bw = b.id === preWinner ? 1 : 0;
+                if (aw !== bw) return bw - aw;
+            }
             const finishedA = a.state.finished ? 1 : 0;
             const finishedB = b.state.finished ? 1 : 0;
             if (finishedA !== finishedB) return finishedB - finishedA;
@@ -556,6 +567,12 @@ class MatchRoom extends Room {
             r.state.placement = i + 1;
             r.state.score = this._calculateScore(r.state, i + 1, r.dist);
         }
+
+        // Winner consistency across ALL end paths (escape / timeout / all-dead): the crypto
+        // payout target (winnerId) and the leaderboard's placement #1 always name the SAME
+        // player. finalize() is the single source of truth — it runs after expire() in every
+        // path, so it reconciles any provisional winner expire() may have set.
+        if (ranked.length > 0) this.winnerId = ranked[0].id;
 
         return this.playerStates;
     }

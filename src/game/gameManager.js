@@ -319,9 +319,28 @@ class GameManager {
                 const result = await db.query(`
                     INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
                     VALUES ((SELECT id FROM users WHERE socket_id = $1), $2, $3, 'active', $4, $5, NOW())
-                    RETURNING id
+                    RETURNING id, user_id
                 `, [socketId, socketId, gameMode, blockHeight, game.id]);
                 game.dbId = result.rows[0]?.id || null;
+
+                // Stamp the stable DB users.id onto the in-memory game object so
+                // suspend/restore and completeGame can key on it WITHOUT any socket_id
+                // lookup (socket ids are volatile across reconnects). game.userId is the
+                // canonical field; game.dbUserId is kept as an alias for the disconnect/
+                // suspend path that already reads it.
+                const stableUserId = result.rows[0]?.user_id ?? null;
+                if (stableUserId != null) {
+                    game.userId = stableUserId;
+                    if (game.dbUserId == null) game.dbUserId = stableUserId;
+                }
+
+                // Entry block height captured at creation so the suspend path can persist
+                // it (blockRec) and the reconnect timeout logic stays consistent.
+                game.blockRec = blockHeight;
+
+                // Reference to the DB pool so restoreGame can keep games.socket_id aligned
+                // to the reconnecting socket without needing its own DB handle.
+                game.db = db;
             } catch (err) {
                 console.error('Game insert failed:', err.message);
                 game.dbId = null;

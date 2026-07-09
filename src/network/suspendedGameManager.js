@@ -57,6 +57,13 @@ class SuspendedGameManager {
             hasTreasure: game.player?.hasTreasure || false,
             moveCount: game.moveCount || 0,
             blockHeight: game.blockHeight || null,
+            // Entry block height (blockRec) for reconnect timeout continuity (C3).
+            // Prefer an explicit value from the caller, then the value captured on the
+            // game object at creation. Never invent one — a missing value stays null so
+            // the timeout logic treats it as "not yet observed" rather than instant-death.
+            blockRec: (additionalState.blockRec !== undefined && additionalState.blockRec !== null)
+                ? additionalState.blockRec
+                : (game.blockRec ?? game.blockHeight ?? null),
             ...additionalState
         };
 
@@ -114,7 +121,33 @@ class SuspendedGameManager {
 
         // Update game with new socket ID
         game.socketId = newSocketId;
-        
+
+        // Keep a stable DB user id on the game object so completeGame can key on it
+        // without any socket_id lookup. It is normally stamped at creation; backfill
+        // from the alias just in case an older game object only carries one of them.
+        if (game.userId == null && game.dbUserId != null) game.userId = game.dbUserId;
+        if (game.dbUserId == null && game.userId != null) game.dbUserId = game.userId;
+
+        // Align the persisted game row's socket_id to the reconnecting socket so
+        // downstream row-matching (game-over UPDATE, completion) stays consistent.
+        // Fire-and-forget so restoreGame remains synchronous for its callers.
+        try {
+            const db = game.db || suspended.db || null;
+            if (db && game.id) {
+                Promise.resolve(
+                    db.query('UPDATE games SET socket_id = $1 WHERE dungeon_seed = $2', [newSocketId, game.id])
+                ).catch((err) => {
+                    if (this.debugManager?.CONSOLE_LOGGING) {
+                        console.warn(`[SuspendedGameManager] socket_id realign failed for game ${game.id}: ${err.message}`);
+                    }
+                });
+            }
+        } catch (err) {
+            if (this.debugManager?.CONSOLE_LOGGING) {
+                console.warn(`[SuspendedGameManager] socket_id realign threw for game ${game.id}: ${normalizeError(err).message}`);
+            }
+        }
+
         // Update the user reference if provided
         if (newUser) {
             game.user = newUser;
@@ -136,7 +169,10 @@ class SuspendedGameManager {
 
         return {
             game,
-            suspendedState: suspended
+            suspendedState: suspended,
+            // Expose the entry block height so the reconnect path can restore
+            // memUser.blockRec and keep the block-timeout logic continuous (C3).
+            blockRec: suspended.blockRec ?? null
         };
     }
 

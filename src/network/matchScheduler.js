@@ -5,19 +5,21 @@
  * each enabled economy's queue into a MatchRoom (if ≥2 players are queued). Single players
  * carry over to the next block and can leave at any time.
  *
- * MatchScheduler creates MatchRooms but does not own Socket.IO broadcasting; it delegates
- * the started room to MatchManager for transport, persistence, and spectator wiring.
+ * MatchScheduler creates MatchRooms but does not own Socket.IO broadcasting; it delegates the
+ * started room to MatchManager for transport, the real countdown, persistence, and finish
+ * handling. It does NOT start the engine directly — the manager's countdown does — so honest
+ * and modified clients always start together.
  */
 
 const MatchRoom = require('../multiplayer/MatchRoom');
 const MatchEngine = require('../multiplayer/MatchEngine');
 const MatchState = require('../multiplayer/MatchState');
-const MatchPayoutService = require('./matchPayoutService');
 
 const DEFAULT_MAX_PLAYERS = 4;
 const DEFAULT_TICK_MS = 250;
 const DEFAULT_MIN_DURATION_MS = 20000;
 const DEFAULT_HARD_CEILING_MS = 240000;
+const DEFAULT_COUNTDOWN_MS = 3000;
 
 class MatchScheduler {
     constructor({
@@ -27,7 +29,8 @@ class MatchScheduler {
         maxPlayers = null,
         tickMs = null,
         minDurationMs = null,
-        hardCeilingMs = null
+        hardCeilingMs = null,
+        countdownMs = null
     } = {}) {
         this.matchQueue = matchQueue;
         this.matchManager = matchManager;
@@ -38,7 +41,10 @@ class MatchScheduler {
         this.tickMs = tickMs || parseInt(process.env.MATCH_TICK_MS, 10) || DEFAULT_TICK_MS;
         this.minDurationMs = minDurationMs || parseInt(process.env.MATCH_MIN_DURATION_MS, 10) || DEFAULT_MIN_DURATION_MS;
         this.hardCeilingMs = hardCeilingMs || parseInt(process.env.MATCH_HARD_CEILING_MS, 10) || DEFAULT_HARD_CEILING_MS;
+        this.countdownMs = countdownMs || parseInt(process.env.MATCH_COUNTDOWN_MS, 10) || DEFAULT_COUNTDOWN_MS;
 
+        // Retained for interface stability; the scheduler no longer owns any long-lived timers
+        // (the hard-ceiling watchdog is owned solely by MatchManager, cleared on finalize).
         this._timeoutIds = [];
     }
 
@@ -54,7 +60,12 @@ class MatchScheduler {
         if (!this.enabled || !this.matchQueue || !this.matchManager) return;
 
         for (const economy of ['free', 'credits_prestige', 'crypto_race']) {
-            await this._drainEconomy(economy, blockHeight);
+            try {
+                await this._drainEconomy(economy, blockHeight);
+            } catch (err) {
+                // One economy failing must never block the others (or single-player blocks).
+                this._log(`[MatchScheduler] drain ${economy} error`, err.message);
+            }
         }
     }
 
@@ -63,9 +74,12 @@ class MatchScheduler {
         if (!drain) return;
 
         const { entries } = drain;
-        if (entries.length < 2) {
-            // Defensive: should not happen because drain() requires ≥2, but refund just in case.
-            for (const e of entries) await this.matchQueue.leave(e.userId, economy).catch(() => {});
+        if (!entries || entries.length < 2) {
+            // Defensive: drain() already marked these 'matched'; refund them so a race that did
+            // not start never consumes credits/tickets.
+            if (entries && entries.length) {
+                await this._refund(entries, economy, 'match_cancel');
+            }
             return;
         }
 
@@ -76,7 +90,7 @@ class MatchScheduler {
         for (const e of entries) {
             entrants[e.socketId] = {
                 userId: e.userId,
-                name: null, // name is resolved later by MatchManager
+                name: null, // resolved later by MatchManager
                 socketId: e.socketId,
                 sessionToken: e.sessionToken
             };
@@ -91,29 +105,38 @@ class MatchScheduler {
             startBlockHeight: blockHeight,
             cryptoType: process.env.CRYPTO_TYPE || 'WOW'
         });
-
-        // Configure race-specific durations.
         room.minDurationMs = this.minDurationMs;
         room.hardCeilingMs = this.hardCeilingMs;
 
-        // Persist match and entrants synchronously before starting, so a crash mid-race can
-        // be recovered from the DB on next boot.
-        await this._persistMatch(room, entries, economy);
-
-        // Hand off to MatchManager for transport, reconnect mapping, and finish handling.
-        this.matchManager.attach(room, entries, {
-            db: this.matchManager.db,
-            gameModeManager: this.matchManager.gameModeManager,
-            tickMs: this.tickMs,
-            minDurationMs: this.minDurationMs,
-            hardCeilingMs: this.hardCeilingMs
-        });
-
-        if (room.economy === 'crypto_race') {
-            await this.matchPayoutService.collectEntryTickets(room, entries);
+        // Persist match + entrants BEFORE any money movement or notification so a crash mid-race
+        // is recoverable from the DB on next boot.
+        try {
+            await this._persistMatch(room, entries, economy);
+        } catch (err) {
+            this._log('[MatchScheduler] persist failed; refunding entrants', err.message);
+            await this._refund(entries, economy, 'match_cancel');
+            return;
         }
 
-        // Start the engine.
+        // MP-C4: collect the crypto pot / commit entry tickets BEFORE notifying players or
+        // starting the engine. If collection fails, ABORT and REFUND every entrant — never
+        // consume tickets for a race that did not start.
+        if (economy === 'crypto_race') {
+            const payoutService = this.matchManager?.matchPayoutService;
+            try {
+                if (!payoutService || typeof payoutService.collectEntryTickets !== 'function') {
+                    throw new Error('matchPayoutService unavailable');
+                }
+                await payoutService.collectEntryTickets(room, entries);
+            } catch (err) {
+                this._log('[MatchScheduler] pot collection failed; aborting + refunding', err.message);
+                await this._abortMatch(room, entries, economy);
+                return;
+            }
+        }
+
+        // Create the engine and hand it to the manager, but DO NOT start it here — the manager's
+        // countdown starts it once the pre-race timer elapses (server-authoritative start).
         const engine = new MatchEngine({
             room,
             tickMs: this.tickMs,
@@ -121,11 +144,54 @@ class MatchScheduler {
             onFinish: (finishedRoom) => this.matchManager.onFinish(finishedRoom)
         });
         this.matchManager.setEngine(room.id, engine);
-        engine.start();
 
-        // Hard-ceiling watchdog.
-        const ceilingId = setTimeout(() => this._expireMatch(room.id, 'hard_ceiling'), this.hardCeilingMs);
-        this._timeoutIds.push(ceilingId);
+        // Hand off to MatchManager for transport, the real countdown, reconnect mapping, all
+        // watchdog timers, and finish handling.
+        this.matchManager.attach(room, entries, {
+            db: this.matchManager.db,
+            gameModeManager: this.matchManager.gameModeManager,
+            tickMs: this.tickMs,
+            minDurationMs: this.minDurationMs,
+            hardCeilingMs: this.hardCeilingMs,
+            countdownMs: this.countdownMs
+        });
+    }
+
+    /**
+     * Refund a set of drained entrants (credits/tickets) and cancel their queue rows. Delegates
+     * to MatchQueue which owns the money ledger; falls back to per-user leave if the batch
+     * method is unavailable (older queue implementations).
+     */
+    async _refund(entries, economy, reason) {
+        if (!this.matchQueue) return;
+        try {
+            if (typeof this.matchQueue.refundEntries === 'function') {
+                await this.matchQueue.refundEntries(entries, economy, reason);
+                return;
+            }
+            for (const e of entries) {
+                await this.matchQueue.leave(e.userId, economy).catch(() => {});
+            }
+        } catch (err) {
+            this._log('[MatchScheduler] refund error', err.message);
+        }
+    }
+
+    /**
+     * Abort a match whose pot could not be collected: mark it cancelled and refund everyone.
+     */
+    async _abortMatch(room, entries, economy) {
+        if (this.matchManager?.db) {
+            try {
+                await this.matchManager.db.query(
+                    `UPDATE matches SET status = 'cancelled', ended_at = NOW() WHERE id = $1`,
+                    [room.id]
+                );
+            } catch (err) {
+                this._log('[MatchScheduler] abort mark-cancelled error', err.message);
+            }
+        }
+        await this._refund(entries, economy, 'match_cancel');
     }
 
     async _persistMatch(room, entries, economy) {
@@ -170,10 +236,6 @@ class MatchScheduler {
                 `, [room.id, entrant.userId, entrant.socketId]);
             }
         });
-    }
-
-    _expireMatch(roomId, reason) {
-        this.matchManager?.expire(roomId, reason);
     }
 
     shutdown() {

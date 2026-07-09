@@ -43,11 +43,13 @@ class MatchLeaderboard {
 
     async _postFreeToPleb(room) {
         // Insert synthetic solo-style records so free races show up on the Pleb board.
+        // Columns are the REAL games columns (treasure_found, moves_made); dungeon_seed is the
+        // match UUID (36 chars, fits VARCHAR(50)) — never the 64-char seedHash which overflows.
         await this.db.withTransaction(async (client) => {
             for (const [socketId, state] of room.playerStates.entries()) {
                 if (!state.userId || state.score <= 0) continue;
                 await client.query(`
-                    INSERT INTO games (user_id, socket_id, game_mode, status, outcome, has_treasure, moves, duration_seconds, score, dungeon_seed, created_at, completed_at)
+                    INSERT INTO games (user_id, socket_id, game_mode, status, outcome, treasure_found, moves_made, duration_seconds, score, dungeon_seed, created_at, completed_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
                 `, [
                     state.userId,
@@ -59,7 +61,7 @@ class MatchLeaderboard {
                     state.moves,
                     Math.max(1, Math.round(((room.endedAt || Date.now()) - (room.startedAt || room.createdAt)) / 1000)),
                     state.score,
-                    room.seedHash
+                    room.id
                 ]);
 
                 await client.query(`
@@ -78,12 +80,13 @@ class MatchLeaderboard {
     }
 
     async _postCryptoRace(room) {
-        // Insert synthetic paid records for the Hall of Champions board.
+        // Insert synthetic paid records for the Hall of Champions board. Real columns
+        // (treasure_found, moves_made); dungeon_seed is the match UUID, not the 64-char seedHash.
         await this.db.withTransaction(async (client) => {
             for (const [socketId, state] of room.playerStates.entries()) {
                 if (!state.userId || state.score <= 0) continue;
                 await client.query(`
-                    INSERT INTO games (user_id, socket_id, game_mode, status, outcome, has_treasure, moves, duration_seconds, score, dungeon_seed, created_at, completed_at)
+                    INSERT INTO games (user_id, socket_id, game_mode, status, outcome, treasure_found, moves_made, duration_seconds, score, dungeon_seed, created_at, completed_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
                 `, [
                     state.userId,
@@ -95,7 +98,7 @@ class MatchLeaderboard {
                     state.moves,
                     Math.max(1, Math.round(((room.endedAt || Date.now()) - (room.startedAt || room.createdAt)) / 1000)),
                     state.score,
-                    room.seedHash
+                    room.id
                 ]);
 
                 await client.query(`

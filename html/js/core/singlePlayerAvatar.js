@@ -177,12 +177,32 @@
             this.clearOverlay();
             var player = gameState.player;
             var facing = this._updateFacing(player);
-            return root.RK.avatarVisuals.drawTopdownWorld(ctx, visual, {
+            var drew = root.RK.avatarVisuals.drawTopdownWorld(ctx, visual, {
                 id: 'single-player',
                 x: player.x,
                 y: player.y,
                 facing: facing
             }, viewport, { onReady: requestRedraw });
+            // After the avatar is drawn, sync the overlay FX layer to the same base
+            // canvas and let its warm torch light track the player cell. Fully guarded:
+            // no-op when the FX module is absent.
+            this._syncFX(viewport);
+            return drew;
+        },
+
+        // Attach/sync the FX overlay to the same base canvas used by the avatar overlay
+        // (mirrors _syncOverlay's sizing) and drive the torch light at the player cell.
+        _syncFX: function (viewport) {
+            if (!root.FX || !viewport) return;
+            var base = this._baseCanvas();
+            if (!base) return;
+            try {
+                root.FX.attach(base);
+                var cell = viewport.cell || (root.options && root.options.tileWidth) || 32;
+                var px = viewport.screenX * cell + cell / 2;
+                var py = viewport.screenY * cell + cell / 2;
+                root.FX.renderLighting(px, py, cell);
+            } catch (_) { /* FX is purely additive — never let it break the avatar */ }
         },
 
         drawLegendIcon: function (tileX, tileY, opts) {

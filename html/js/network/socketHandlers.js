@@ -347,10 +347,14 @@ const SocketHandlers = {
 
     onChatBroadcast: function(data) {
         const msgElement = $('<li style="color: #aaa;">');
-        if (data.socketId) {
+        // Prefer non-sensitive attribution fields; the server no longer sends the raw full
+        // socket.id (S1). Fall back to a short slice only for legacy payloads.
+        const sender = data.username || data.playerId || data.publicId ||
+            (data.socketId ? String(data.socketId).substring(0, 6) : null);
+        if (sender) {
             // Escape both fields — chat content is attacker-controlled. Defense in depth:
             // the server also escapes, but the client must never trust that.
-            msgElement.html('<strong>' + escapeHtml(String(data.socketId).substring(0, 6)) + ':</strong> ' + escapeHtml(data.message));
+            msgElement.html('<strong>' + escapeHtml(String(sender)) + ':</strong> ' + escapeHtml(data.message));
         } else {
             msgElement.text(data.message);
         }
@@ -372,7 +376,7 @@ const SocketHandlers = {
             if (msg.id) {
                 msgElement.attr('data-msg-id', msg.id);
             }
-            const username = msg.playerId || msg.username || (msg.socketId ? msg.socketId.substring(0, 6) : 'anon');
+            const username = msg.playerId || msg.username || msg.publicId || (msg.socketId ? msg.socketId.substring(0, 6) : 'anon');
             const isSystem = msg.type === 'system' || msg.socketId === 'system';
             if (isSystem) {
                 msgElement.addClass('status');

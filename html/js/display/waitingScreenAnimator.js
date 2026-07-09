@@ -3,6 +3,9 @@ var WaitingScreenAnimator = {
     _animationEnabled: true,
     _waitingAnimationInterval: null,
     _animating: false,
+    // GFX3: FX overlay ambient state (additive; no-op unless window.FX exists)
+    _fxAmbientOn: false,
+    _fxTick: 0,
     _waitingAnimation: {
         frame: 0,
         playerX: 8,
@@ -82,13 +85,74 @@ var WaitingScreenAnimator = {
         display.draw(startX + roomWidth - 1, roomY, GameTiles.getFloorTile(true), "white", "transparent"); // Floor variation
     },
 
+    // ===== GFX3: FX overlay helpers (additive, always guarded) =====
+    _fxBaseCanvas: function() {
+        try {
+            var d = (typeof DisplayManager !== 'undefined' && DisplayManager.getDisplay)
+                ? DisplayManager.getDisplay() : null;
+            return (d && d.getContainer) ? d.getContainer() : null;
+        } catch (e) { return null; }
+    },
+
+    // Turn on the torchlight gradient + drifting embers overlay behind the
+    // scripted char-cell waiting animation. No-op unless window.FX is present.
+    _startAmbientFX: function() {
+        if (!window.FX) return;
+        if (this._fxAmbientOn) return;
+        var canvas = this._fxBaseCanvas();
+        if (!canvas) return;
+        try {
+            if (window.FX.attach) window.FX.attach(canvas);
+            if (window.FX.syncTo) window.FX.syncTo(canvas);
+            if (window.FX.setAmbient) window.FX.setAmbient(true);
+            if (window.FX.start) window.FX.start();
+            this._fxAmbientOn = true;
+        } catch (e) { /* additive: never break the waiting screen */ }
+    },
+
+    _stopAmbientFX: function() {
+        this._fxAmbientOn = false;
+        if (!window.FX) return;
+        try {
+            if (window.FX.setAmbient) window.FX.setAmbient(false);
+            if (window.FX.stop) window.FX.stop();
+            if (window.FX.clear) window.FX.clear();
+        } catch (e) { /* ignore */ }
+    },
+
+    // Emit gentle amber embers rising from the scripted torch positions.
+    // Throttled so we don't flood the FX particle system.
+    _emitTorchEmbers: function(torchPositions, screenWidth, screenHeight) {
+        if (!window.FX || !window.FX.sparkle) return;
+        if (!torchPositions || !torchPositions.length) return;
+        var canvas = this._fxBaseCanvas();
+        if (!canvas || !screenWidth || !screenHeight) return;
+        this._fxTick = (this._fxTick + 1) % 1000000;
+        // Only emit on every 3rd frame to keep the embers subtle.
+        if (this._fxTick % 3 !== 0) return;
+        var cellW = canvas.width / screenWidth;
+        var cellH = canvas.height / screenHeight;
+        // One torch per emit, cycling through the scripted positions.
+        var t = torchPositions[this._fxTick % torchPositions.length];
+        if (!t) return;
+        if (t.x < 0 || t.x >= screenWidth || t.y < 0 || t.y >= screenHeight) return;
+        var px = (t.x + 0.5) * cellW;
+        var py = (t.y + 0.5) * cellH;
+        try {
+            window.FX.sparkle(px, py, 'rgba(255, 170, 60, 0.9)');
+        } catch (e) { /* ignore */ }
+    },
+
     drawAnimatedWaitingScreen: function(screenWidth, screenHeight, drawBorderFn, drawCenteredTextFn) {
         if (!DisplayManager.ensureDisplay()) return;
         const display = DisplayManager.getDisplay();
-        
+
         // Draw border
         drawBorderFn();
-        
+
+        // GFX3: layer the torchlight + ember FX overlay on top of the ROT scene
+        this._startAmbientFX();
+
         // Check if we're in "Awaiting payment" mode - use treasure hunt animation
         const isAwaitingPayment = typeof Game !== 'undefined' && Game._awaitingPayment;
         
@@ -184,7 +248,10 @@ var WaitingScreenAnimator = {
                 }
             }
         }
-        
+
+        // GFX3: drifting embers from the scripted torch positions
+        this._emitTorchEmbers(torchPositions, screenWidth, screenHeight);
+
         // Update character positions
         this.updateAnimation();
         const anim = this._waitingAnimation;
@@ -395,7 +462,10 @@ var WaitingScreenAnimator = {
                 display.draw(torch.x, torch.y, ["#", "torch"], [wallColor, flameColor], ["transparent", "transparent"]);
             }
         }
-        
+
+        // GFX3: drifting embers from the scripted torch positions
+        this._emitTorchEmbers(torchPositions, screenWidth, screenHeight);
+
         // Update animation state
         this.updatePaymentAnimation();
         
@@ -855,8 +925,10 @@ var WaitingScreenAnimator = {
         
         if (!this._animationEnabled) {
             this.resetAnimation();
+            // GFX3: tear down the FX overlay when animation is switched off
+            this._stopAmbientFX();
         }
-        
+
         return this._animationEnabled;
     },
 
@@ -887,6 +959,8 @@ var WaitingScreenAnimator = {
         this._animating = false;
         this.resetAnimation();
         this.resetPaymentAnimation();
+        // GFX3: tear down the FX overlay when the waiting screen ends
+        this._stopAmbientFX();
     },
 
     isAnimationEnabled: function() {

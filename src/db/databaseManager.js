@@ -11,13 +11,6 @@ const path = require('path');
  * Query validator to detect potential SQL injection
  */
 class QueryValidator {
-    constructor() {
-        this.dangerousKeywords = [
-            'DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'REPLACE',
-            'EXEC', 'EXECUTE', 'SCRIPT', '--', '/*', '*/', 'XP_', 'SP_'
-        ];
-    }
-
     isSafe(text, params) {
         // Check if using parameterized query properly
         // Count unique placeholders ($1, $2, etc.) — PostgreSQL allows reusing $1 multiple times
@@ -27,29 +20,6 @@ class QueryValidator {
         if (placeholderCount !== params.length) {
             console.warn('⚠️ Parameter count mismatch in query');
             return false;
-        }
-
-        // Check for dangerous patterns in the query text itself
-        for (const keyword of this.dangerousKeywords) {
-            // Use regex to avoid false positives (e.g., "DESCRIPTION" containing "SCRIPT")
-            // Alphanumeric keywords use word boundaries; others use literal match
-            let regex;
-            if (/^[A-Z0-9_]+$/i.test(keyword)) {
-                regex = new RegExp(`\\b${keyword}\\b`, 'i');
-            } else {
-                // Escape special characters for literal match
-                const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                regex = new RegExp(escaped, 'i');
-            }
-
-            if (regex.test(text)) {
-                // Allow legitimate DDL in migrations only
-                const stack = new Error().stack;
-                if (!stack.includes('migrations')) {
-                    console.warn(`⚠️ Potentially dangerous keyword "${keyword}" in query`);
-                    // Log but don't block - some keywords might be legitimate
-                }
-            }
         }
 
         return true;

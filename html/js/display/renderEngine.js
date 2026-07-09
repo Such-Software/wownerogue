@@ -272,6 +272,18 @@ var RenderEngine = {
             }
         }
 
+        // Drive the overlay FX torch light on the player, who is always camera-centered
+        // at (centerX, centerY). Coordinates are in base-canvas pixel space (tile * cell),
+        // matching the avatar overlay convention. Fully guarded + additive only; the ROT
+        // display draw above is untouched. Works whether or not the fancy avatar rendered.
+        if (window.FX && window.FX.renderLighting) {
+            try {
+                var _cellW = (window.options && window.options.tileWidth) || 32;
+                var _cellH = (window.options && window.options.tileHeight) || _cellW;
+                window.FX.renderLighting(centerX * _cellW + _cellW / 2, centerY * _cellH + _cellH / 2, _cellW);
+            } catch (_) { /* FX is purely cosmetic — never block the dungeon render */ }
+        }
+
         // Render message at bottom if present
         if (message) {
             ScreenManager.drawCenteredText(this._screenHeight - 1, message);

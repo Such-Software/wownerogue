@@ -7,6 +7,7 @@ var ScreenManager = {
     _waitingForBlock: false,
     _isShowingWaitingScreen: false,  // Track if waiting screen is active
     _cryptoType: 'WOW',  // Default to WOW, updated on game mode info
+    _ambientFXOn: false,  // GFX3: FX overlay ambient state (guarded, no-op unless window.FX)
 
     // Get the game title based on crypto type
     getGameTitle: function() {
@@ -31,11 +32,59 @@ var ScreenManager = {
         this._isShowingWaitingScreen = false;
         this._updateInterval = null;  // Initialize update interval tracker
         this._cryptoType = 'WOW';
+        this._ambientFXOn = false;  // GFX3: reset FX overlay ambient state
         
         // Initialize the waiting screen animator
         if (typeof WaitingScreenAnimator !== 'undefined') {
             WaitingScreenAnimator.init();
         }
+    },
+
+    // ===== GFX3: FX overlay helpers (additive, always guarded) =====
+    _fxBaseCanvas: function() {
+        try {
+            var d = (typeof DisplayManager !== 'undefined' && DisplayManager.getDisplay)
+                ? DisplayManager.getDisplay() : null;
+            return (d && d.getContainer) ? d.getContainer() : null;
+        } catch (e) { return null; }
+    },
+
+    // Subtle vignette + slow ambient embers behind the teletype title.
+    _startAmbientFX: function() {
+        if (!window.FX) return;
+        if (this._ambientFXOn) return;
+        var canvas = this._fxBaseCanvas();
+        if (!canvas) return;
+        try {
+            if (window.FX.attach) window.FX.attach(canvas);
+            if (window.FX.syncTo) window.FX.syncTo(canvas);
+            if (window.FX.setAmbient) window.FX.setAmbient(true);
+            if (window.FX.start) window.FX.start();
+            this._ambientFXOn = true;
+        } catch (e) { /* additive: never break the screen */ }
+    },
+
+    _stopAmbientFX: function() {
+        this._ambientFXOn = false;
+        if (!window.FX) return;
+        try {
+            if (window.FX.setAmbient) window.FX.setAmbient(false);
+            if (window.FX.stop) window.FX.stop();
+            if (window.FX.clear) window.FX.clear();
+        } catch (e) { /* ignore */ }
+    },
+
+    // One-shot celebratory/somber flash as an end screen appears.
+    _screenFlash: function(color, alpha, ms) {
+        if (!window.FX) return;
+        var canvas = this._fxBaseCanvas();
+        if (!canvas) return;
+        try {
+            if (window.FX.attach) window.FX.attach(canvas);
+            if (window.FX.syncTo) window.FX.syncTo(canvas);
+            if (window.FX.start) window.FX.start();
+            if (window.FX.flash) window.FX.flash(color, alpha, ms);
+        } catch (e) { /* ignore */ }
     },
 
     drawText: function(x, y, text) {
@@ -87,7 +136,10 @@ var ScreenManager = {
         
         // Draw the border
         this.drawBorder();
-        
+
+        // GFX3: subtle vignette + slow ambient embers behind the teletype title
+        this._startAmbientFX();
+
         // Draw content - use dynamic title based on crypto type
         let y = 3;
         this.drawCenteredText(y, this.getGameTitle());
@@ -242,6 +294,18 @@ var ScreenManager = {
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();
 
+        // GFX3: brief celebratory gold flash + burst as the win screen appears
+        if (window.FX) {
+            this._stopAmbientFX();
+            this._screenFlash('#ffd700', 0.45, 700);
+            var winCanvas = this._fxBaseCanvas();
+            if (winCanvas && window.FX.burst) {
+                try {
+                    window.FX.burst(winCanvas.width / 2, winCanvas.height / 2, '#ffd700', 24);
+                } catch (e) { /* ignore */ }
+            }
+        }
+
         let y = Math.floor(this._screenHeight / 3);
         this.drawCenteredText(y, "CONGRATULATIONS!");
         
@@ -256,6 +320,12 @@ var ScreenManager = {
     drawLoseScreen: function(reason) {
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();
+
+        // GFX3: brief somber red flash as the lose screen appears
+        if (window.FX) {
+            this._stopAmbientFX();
+            this._screenFlash('#ff2a2a', 0.4, 700);
+        }
 
         let y = Math.floor(this._screenHeight / 3);
         this.drawCenteredText(y, "YOU HAVE PERISHED");
@@ -364,6 +434,9 @@ var ScreenManager = {
         if (typeof WaitingScreenAnimator !== 'undefined') {
             WaitingScreenAnimator.stopAnimation();
         }
+        // GFX3: waiting animator tears down the shared FX overlay; clear our flag
+        // so ambient FX can restart when the welcome screen is shown again.
+        this._ambientFXOn = false;
         this.hideAnimationButton();
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();

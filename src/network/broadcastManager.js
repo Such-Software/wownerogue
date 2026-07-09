@@ -59,18 +59,19 @@ class BroadcastManager {
      * @param {string} username - Username of the sender
      * @param {string} message - Chat message content
      * @param {number} timestamp - Message timestamp
-     * @param {string} socketId - Socket ID of the sender
+     * @param {string} publicId - Short, non-sensitive public id of the sender (NOT the raw
+     *   full socket.id — S1 defense in depth; the full socket.id must never leave the server)
      */
-    broadcastChatMessage(username, message, timestamp, socketId) {
+    broadcastChatMessage(username, message, timestamp, publicId) {
         if (this.debugManager?.CONSOLE_LOGGING) {
-            console.log(`💬 Broadcasting chat message from ${socketId}: "${message}"`);
+            console.log(`💬 Broadcasting chat message from ${publicId}: "${message}"`);
         }
 
         this.io.emit('chat_broadcast', {
             username: username,
             message: message,
             timestamp: timestamp,
-            socketId: socketId
+            publicId: publicId
         });
     }
 

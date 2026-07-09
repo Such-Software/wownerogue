@@ -18,7 +18,8 @@ describe('SocketChatProvider', () => {
         const broadcast = [];
         const history = { saveMessage: (m) => { saved.push(m); return Promise.resolve(); } };
         const broadcastManager = {
-            broadcastChatMessage: (username, text, ts, socketId) => broadcast.push({ username, text, ts, socketId })
+            // The 4th arg is the sanitized public id (never the raw socket.id — S1 defense in depth).
+            broadcastChatMessage: (username, text, ts, publicId) => broadcast.push({ username, text, ts, publicId })
         };
         const provider = new SocketChatProvider({ io, broadcastManager, historyManager: history });
 
@@ -27,7 +28,8 @@ describe('SocketChatProvider', () => {
         expect(saved).toHaveLength(1);
         expect(saved[0]).toMatchObject({ socketId: 'sock', username: 'abc123', message: 'hi', userId: 7 });
         expect(broadcast).toHaveLength(1);
-        expect(broadcast[0]).toEqual({ username: 'abc123', text: 'hi', ts: 42, socketId: 'sock' });
+        // userId is present, so the broadcast is attributed by the public user id ('7'), not the socket id.
+        expect(broadcast[0]).toEqual({ username: 'abc123', text: 'hi', ts: 42, publicId: '7' });
     });
 
     test('global publish falls back to io.emit when no broadcastManager is given', async () => {

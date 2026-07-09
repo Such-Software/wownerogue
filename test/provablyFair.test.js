@@ -9,7 +9,7 @@
 
 const DungeonGenerator = require('../src/game/dungeon');
 const Monster = require('../src/game/monster');
-const { createSeededRNG, hashSeed, verifyGame } = require('../src/game/provablyFair');
+const { createSeededRNG, hashSeed, verifyGame, deriveSeed } = require('../src/game/provablyFair');
 
 const SEED_A = 'a'.repeat(64);
 const SEED_B = 'b'.repeat(64);
@@ -45,6 +45,57 @@ describe('Provably fair: deterministic dungeon generation', () => {
     const commitment = hashSeed(SEED_A);
     expect(verifyGame(SEED_A, commitment).valid).toBe(true);
     expect(verifyGame(SEED_B, commitment).valid).toBe(false);
+  });
+});
+
+describe('Provably fair: seed derivation (server + client seed)', () => {
+  test('deriveSeed is HMAC-SHA256(key=serverSeed, msg=clientSeed) hex', () => {
+    const crypto = require('crypto');
+    const expected = crypto.createHmac('sha256', SEED_A).update('my-client-seed').digest('hex');
+    expect(deriveSeed(SEED_A, 'my-client-seed')).toBe(expected);
+    // 64-char hex output
+    expect(deriveSeed(SEED_A, 'my-client-seed')).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('clientSeed defaults to empty string (non-breaking) and is deterministic', () => {
+    const crypto = require('crypto');
+    const expected = crypto.createHmac('sha256', SEED_A).update('').digest('hex');
+    expect(deriveSeed(SEED_A)).toBe(expected);
+    expect(deriveSeed(SEED_A)).toBe(deriveSeed(SEED_A, ''));
+  });
+
+  test('different client seeds yield different derived seeds (client perturbs outcome)', () => {
+    expect(deriveSeed(SEED_A, 'x')).not.toBe(deriveSeed(SEED_A, 'y'));
+    // and a different server seed changes the result too
+    expect(deriveSeed(SEED_A, 'x')).not.toBe(deriveSeed(SEED_B, 'x'));
+  });
+
+  test('a verifier can reproduce the dungeon from serverSeed + clientSeed', () => {
+    const serverSeed = SEED_A;
+    const clientSeed = 'player-chosen';
+    // Commitment is over the serverSeed only (locked before clientSeed is known).
+    const commitment = hashSeed(serverSeed);
+    expect(verifyGame(serverSeed, commitment).valid).toBe(true);
+    // The effective seed drives generation; the verifier re-derives it and regenerates.
+    const effective = deriveSeed(serverSeed, clientSeed);
+    const fp1 = DungeonGenerator.layoutFingerprint(DungeonGenerator.regenerateFromSeed(effective, 'WOW'));
+    const fp2 = DungeonGenerator.layoutFingerprint(
+      DungeonGenerator.regenerateFromSeed(deriveSeed(serverSeed, clientSeed), 'WOW')
+    );
+    expect(fp1).toBe(fp2);
+  });
+});
+
+describe('Provably fair: seeded RNG is bounded to [0, 1)', () => {
+  test('every value stays within [0, 1) across many draws and seeds', () => {
+    for (let s = 0; s < 8; s++) {
+      const rng = createSeededRNG((s.toString(16)).repeat(64).slice(0, 64));
+      for (let i = 0; i < 500; i++) {
+        const v = rng();
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThan(1);
+      }
+    }
   });
 });
 

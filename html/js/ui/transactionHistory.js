@@ -83,14 +83,22 @@ const TransactionHistory = {
         });
     },
     
+    // These reads are now session-ownership gated (contract C2), so send the session token
+    // (users.anon_token, persisted as localStorage['wownerogue_token']) as 'X-Session-Token'.
+    _sessionHeaders: function() {
+        var token = null;
+        try { token = localStorage.getItem('wownerogue_token'); } catch (e) {}
+        return token ? { 'X-Session-Token': token } : {};
+    },
+
     _fetchPayments: function(socketId) {
-        return fetch(`/api/user/${encodeURIComponent(socketId)}/payments?limit=50`)
+        return fetch(`/api/user/${encodeURIComponent(socketId)}/payments?limit=50`, { headers: this._sessionHeaders() })
             .then(res => res.json())
             .catch(() => ({ payments: [], total: 0 }));
     },
-    
+
     _fetchPayouts: function(socketId) {
-        return fetch(`/api/user/${encodeURIComponent(socketId)}/payouts?limit=50`)
+        return fetch(`/api/user/${encodeURIComponent(socketId)}/payouts?limit=50`, { headers: this._sessionHeaders() })
             .then(res => res.json())
             .catch(() => ({ payouts: [], total: 0, totalReceived: 0 }));
     },

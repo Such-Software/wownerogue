@@ -379,12 +379,18 @@ class SessionManager {
 
   async cleanupExpiredSessions() {
     try {
-      // SECURE: Parameterized query for cleanup
+      // Only delete truly disposable anonymous users: long-idle, zero credits, no payout
+      // address, and — critically — NO history in any table that references users via a
+      // RESTRICT/NO ACTION foreign key. Guarding with NOT EXISTS means the DELETE can never
+      // abort on an FK violation, and we never remove a user who has payments, payouts, or
+      // games on record (chat_messages / credit_transactions are optional extra guards).
       const result = await this.db.query(
-        `DELETE FROM users 
-         WHERE last_seen < NOW() - INTERVAL '90 days' 
-         AND credits = 0 
-         RETURNING id`,
+        `DELETE FROM users u
+         WHERE u.last_seen < NOW() - INTERVAL '90 days' AND u.credits = 0 AND u.payout_address IS NULL
+           AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM payouts po WHERE po.user_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM games g WHERE g.user_id = u.id)
+         RETURNING u.id`,
         []  // No parameters needed
       );
 
@@ -395,6 +401,111 @@ class SessionManager {
       const normalized = normalizeError(error, 'Failed to cleanup expired sessions');
       console.error('[SessionManager] Error cleaning up sessions:', normalized.message);
     }
+  }
+
+  /**
+   * C6/G6: Recover games left stuck at status='active' when the server was killed
+   * mid-run. On a fresh boot no game can legitimately still be running, so every such row
+   * is an orphan: idempotently refund the player what they paid (the linked confirmed
+   * single_game payment, or the credits spent for a PAID_CREDITS game) and then finalize
+   * the game's status. Safe to run repeatedly — each game is locked FOR UPDATE and skipped
+   * unless still 'active', and each refund is deduped by a per-game credit_transactions
+   * reason key, so re-runs neither double-refund nor double-finalize. index.js calls this
+   * at startup right after recoverPendingPayments.
+   */
+  async recoverOrphanedGames() {
+    const summary = { finalized: 0, refunded: 0, creditsRefunded: 0 };
+    try {
+      const creditsPerGame = (this.gameModeManager && this.gameModeManager.creditsPerGameCost) || 1;
+
+      const orphans = await this.db.query(
+        `SELECT id FROM games WHERE status = 'active' ORDER BY id ASC`,
+        []
+      );
+
+      for (const orphan of orphans.rows) {
+        try {
+          const outcome = await this.db.withTransaction(async (client) => {
+            // Lock the game row and re-check under the lock: another instance (or a prior
+            // run) may already have finalized it.
+            const lock = await client.query(
+              `SELECT id, user_id, game_mode, payment_id, status
+               FROM games WHERE id = $1 FOR UPDATE`,
+              [orphan.id]
+            );
+            const game = lock.rows[0];
+            if (!game || game.status !== 'active') return null; // already handled
+
+            const reason = `orphan_game_refunded:${game.id}`;
+            let refunded = false;
+
+            if (game.user_id) {
+              // Dedup: never refund the same orphaned game twice.
+              const dup = await client.query(
+                `SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reason = $2 LIMIT 1`,
+                [game.user_id, reason]
+              );
+
+              if (dup.rows.length === 0) {
+                // A refund is warranted when the player actually paid: a PAID_CREDITS game
+                // consumed credits, or a PAID_SINGLE game had a confirmed payment.
+                let doRefund = false;
+                if (game.game_mode === 'PAID_CREDITS') {
+                  doRefund = true;
+                } else if (game.payment_id != null) {
+                  const pay = await client.query(
+                    `SELECT status FROM payments WHERE id = $1`,
+                    [game.payment_id]
+                  );
+                  doRefund = !!pay.rows[0] && pay.rows[0].status === 'confirmed';
+                }
+
+                if (doRefund) {
+                  const upd = await client.query(
+                    `UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING credits`,
+                    [creditsPerGame, game.user_id]
+                  );
+                  const newBalance = upd.rows[0]?.credits ?? 0;
+                  await client.query(
+                    `INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                     VALUES ($1, $2, $3, $4, 'refund')`,
+                    [game.user_id, creditsPerGame, reason, newBalance]
+                  );
+                  refunded = true;
+                }
+              }
+            }
+
+            // Finalize the game: refunded games are marked 'refunded', the rest 'expired'.
+            const newStatus = refunded ? 'refunded' : 'expired';
+            await client.query(
+              `UPDATE games SET status = $1, completed_at = COALESCE(completed_at, NOW()) WHERE id = $2`,
+              [newStatus, game.id]
+            );
+
+            return { refunded };
+          });
+
+          if (outcome) {
+            summary.finalized++;
+            if (outcome.refunded) {
+              summary.refunded++;
+              summary.creditsRefunded += creditsPerGame;
+            }
+          }
+        } catch (e) {
+          console.error(`[OrphanRecovery] Failed to recover game ${orphan.id}:`, e.message);
+        }
+      }
+
+      if (summary.finalized > 0) {
+        console.log(`[OrphanRecovery] Finalized ${summary.finalized} orphaned game(s); refunded ${summary.refunded} (${summary.creditsRefunded} credits).`);
+      }
+    } catch (error) {
+      const normalized = normalizeError(error, 'Failed to recover orphaned games');
+      console.error('[OrphanRecovery] Error recovering orphaned games:', normalized.message);
+    }
+    return summary;
   }
 
   generateSecureToken() {

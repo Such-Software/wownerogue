@@ -300,7 +300,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
         test('processes winning game with payout correctly', async () => {
             // Game record lookup
             mockDb.query.mockResolvedValueOnce({
-                rows: [{ id: 1, payment_mode: 'direct' }]
+                rows: [{ id: 1, user_id: 1, payment_mode: 'direct' }]
             });
             // Game update
             mockDb.query.mockResolvedValueOnce({ rows: [] });
@@ -329,7 +329,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
         test('treasure bonus applied correctly to payout', async () => {
             mockDb.query.mockResolvedValueOnce({
-                rows: [{ id: 1, payment_mode: 'direct' }]
+                rows: [{ id: 1, user_id: 1, payment_mode: 'direct' }]
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
@@ -351,7 +351,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
         test('no payout for losing game', async () => {
             mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payment_mode: 'direct' }] 
+                rows: [{ id: 1, user_id: 1, payment_mode: 'direct' }] 
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
 
@@ -364,7 +364,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
         test('no payout when user has no payout address', async () => {
             mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payment_mode: 'direct' }] 
+                rows: [{ id: 1, user_id: 1, payment_mode: 'direct' }] 
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
@@ -382,7 +382,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
         test('prevents duplicate payout for same game', async () => {
             mockDb.query.mockResolvedValueOnce({ 
-                rows: [{ id: 1, payment_mode: 'direct' }] 
+                rows: [{ id: 1, user_id: 1, payment_mode: 'direct' }] 
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
             // Existing payout found
@@ -407,7 +407,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
             gmm.creditPayoutMultipliers = { escape: 1.5, escapeWithTreasure: 2 };
 
             mockDb.query.mockResolvedValueOnce({
-                rows: [{ id: 1, game_mode: 'PAID_CREDITS' }] // Game was started with credits
+                rows: [{ id: 1, user_id: 1, game_mode: 'PAID_CREDITS' }] // Game was started with credits
             });
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
             mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
@@ -657,7 +657,7 @@ describe('Edge Cases and Error Handling', () => {
     test('handles payout insert failure gracefully', async () => {
         gmm.gameMode = 'PAID_SINGLE';
 
-        mockDb.query.mockResolvedValueOnce({ rows: [{ id: 1, payment_mode: 'direct' }] });
+        mockDb.query.mockResolvedValueOnce({ rows: [{ id: 1, user_id: 1, payment_mode: 'direct' }] });
         mockDb.query.mockResolvedValueOnce({ rows: [] }); // game update
         mockDb.query.mockResolvedValueOnce({ rows: [] }); // no existing payout
         mockDb.query.mockResolvedValueOnce({

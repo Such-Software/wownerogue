@@ -511,7 +511,9 @@ class PaymentHandlers {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment request expired. Type \'enter\' again to create a new payment request.');
             }
         }, 30 * 60 * 1000);
-        // Store & unref so tests / process can exit
+        // Store & unref so tests / process can exit (the 30-min timer must never keep the
+        // event loop alive on its own — in production the server keeps the process running).
+        if (expiryTimeout && expiryTimeout.unref) expiryTimeout.unref();
         this._expiryTimeouts.set(socket.id, expiryTimeout);
     }
 

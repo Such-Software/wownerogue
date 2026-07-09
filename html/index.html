@@ -69,6 +69,11 @@
     <script src="js/display/waitingScreenAnimator.js"></script>
     <script src="js/display/screenManager.js"></script>
     <script src="js/display/renderEngine.js"></script>
+    <!-- Additive FX overlay (dependency-free window.FX; created by the fx-core track).
+         Loaded BEFORE gameState.js / game.js / singlePlayerAvatar.js so their guarded
+         `if (window.FX)` hooks can fire. All methods are no-ops when no overlay canvas
+         is present, so match.html / tavern.html are unaffected. -->
+    <script src="js/display/fxOverlay.js"></script>
     <script src="js/core/gameState.js"></script>
     <script src="js/core/game.js"></script>
     <script src="js/render/atlas.js"></script>
@@ -110,41 +115,41 @@
             <div id="publicStats" style="display:none; margin-top:4px; font-size:11px; color:#9cf; font-family:monospace; line-height:1.4;"></div>
             <div id="liveCta" style="display:none; margin-top:6px; cursor:pointer; background:rgba(80,0,0,0.55); border:1px solid #f33; border-radius:4px; padding:5px 10px; font-size:12px; font-family:monospace; color:#ff8a8a; font-weight:bold;" title="Watch a live game"></div>
             <div id="creditsDisplay" style="display:none; margin-top:4px; font-size:13px; font-family:monospace; color:#0f0; background:#001a00; padding:4px 8px; border:1px solid #0a0; border-radius:4px; font-weight:bold;"></div>
-            <button id="startButton" style="background: #0a5c0a; color: #ff0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; display: none;">
+            <button id="startButton" class="ctrl-btn ctrl-btn--start" style="display: none;">
                 🎮 <span class="lbl-full">START GAME</span><span class="lbl-short">START</span>
             </button>
-            <button id="watchGamesButton" style="background: #053655; color: #0af; border: 2px solid #0af; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px;">
+            <button id="watchGamesButton" class="ctrl-btn ctrl-btn--watch">
                 👁️ <span class="lbl-full">WATCH GAMES</span><span class="lbl-short">WATCH</span>
             </button>
-            <button id="tavernButton" style="background: #2a0a3a; color: #d8b4fe; border: 2px solid #a855f7; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;" onclick="window.location.href='/tavern'">
+            <button id="tavernButton" class="ctrl-btn ctrl-btn--tavern" style="display: none;" onclick="window.location.href='/tavern'">
                 🍺 <span class="lbl-full">TAVERN</span><span class="lbl-short">TAVERN</span>
             </button>
-            <button id="characterButton" style="background: #163044; color: #a7d8ff; border: 2px solid #5aa7d8; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px;">
+            <button id="characterButton" class="ctrl-btn ctrl-btn--character">
                 🧍 <span id="characterButtonLabel" class="lbl-full">CHARACTER</span><span class="lbl-short">CHAR</span>
             </button>
-            <button id="shopButton" style="background: #004400; color: #0f0; border: 2px solid #0f0; padding: 8px 16px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
+            <button id="shopButton" class="ctrl-btn ctrl-btn--shop" style="display: none;">
                 🛒 SHOP
             </button>
-            <button id="animationToggleButton" style="background: #5c5c0a; color: #ff0; border: 2px solid #aa0; padding: 6px 12px; font-weight: bold; cursor: pointer; margin-top: 5px; margin-left: 10px; display: none;">
+            <button id="animationToggleButton" class="ctrl-btn ctrl-btn--anim" style="display: none;">
                 🎬 DISABLE ANIMATION
             </button>
-            <div style="margin-top:6px; font-size:11px; color:#ccc; display:flex; align-items:center; gap:4px;">
-                <label style="cursor:pointer; display:flex; align-items:center; gap:4px;">
-                    <input type="checkbox" id="audioAlertsToggle" style="cursor:pointer;"> Audio Alerts
+            <div class="hud-toolbar">
+                <label>
+                    <input type="checkbox" id="audioAlertsToggle"> Audio Alerts
                 </label>
-                <button id="helpButton" style="margin-left:auto; background:#2d2d00; color:#ffd700; border:1px solid #ffd700; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;" title="How to play and payment information">❓ Help</button>
-                <button id="historyButton" style="background:#1a1a4d; color:#c4b5fd; border:1px solid #8b5cf6; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;" title="View your payment and payout history">📜 History</button>
-                <button id="leaderboardButton" style="background:#4a2800; color:#fbbf24; border:1px solid #f59e0b; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;" title="View high scores">🏆 Scores</button>
-                <button id="manageAddressButton" style="background:#053655; color:#0ff; border:1px solid #0ff; padding:4px 10px; font-size:11px; cursor:pointer; border-radius:3px;" title="Your payout address and credits are tied to a browser session token. Clearing cookies/localStorage or using incognito mode will lose your session.">⚙️ Manage Payout Address</button>
-                <span id="sessionWarning" style="display:none; color:#f59e0b; font-size:10px; margin-left:6px;" title="Private browsing or localStorage blocked - your session won't persist">⚠️ Session not saved</span>
+                <button id="helpButton" class="hud-chip hud-chip--help hud-chip--push" title="How to play and payment information">❓ Help</button>
+                <button id="historyButton" class="hud-chip hud-chip--history" title="View your payment and payout history">📜 History</button>
+                <button id="leaderboardButton" class="hud-chip hud-chip--scores" title="View high scores">🏆 Scores</button>
+                <button id="manageAddressButton" class="hud-chip hud-chip--address" title="Your payout address and credits are tied to a browser session token. Clearing cookies/localStorage or using incognito mode will lose your session.">⚙️ Manage Payout Address</button>
+                <span id="sessionWarning" style="display:none;" title="Private browsing or localStorage blocked - your session won't persist">⚠️ Session not saved</span>
             </div>
         </div>
         
         <!-- Payment System UI -->
-        <div id="payment-ui" class="payment-section" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2000; background: rgba(0,20,0,0.95); border: 2px solid #0f0; padding: 20px; color: #0f0; min-width: 400px; max-width: 500px; box-shadow: 0 0 20px rgba(0,255,0,0.2);">
-            <div class="payment-header">
+        <div id="payment-ui" class="payment-section dungeon-modal" style="display: none;">
+            <div class="payment-header dm-head">
                 <strong>🎮 Choose How to Play</strong>
-                <button id="close-payment" style="float: right; background: #500; color: #f00; border: 1px solid #f00; padding: 2px 6px; cursor: pointer;">✕</button>
+                <button id="close-payment" class="dm-close">✕</button>
             </div>
             
             <!-- Dynamic game mode options populated by PaymentUI.js -->
@@ -173,10 +178,10 @@
         </div>
         
         <!-- Transaction History Panel -->
-        <div id="history-panel" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2000; background: rgba(10,10,30,0.98); border: 2px solid #8b5cf6; padding: 20px; color: #e0e0e0; min-width: 500px; max-width: 600px; max-height: 80vh; overflow-y: auto; box-shadow: 0 0 20px rgba(139,92,246,0.3); border-radius: 8px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #444; padding-bottom:10px;">
-                <strong style="font-size:1.2em; color:#c4b5fd;">📜 Transaction History</strong>
-                <button id="close-history" style="background: #500; color: #f00; border: 1px solid #f00; padding: 4px 8px; cursor: pointer; border-radius:3px;">✕</button>
+        <div id="history-panel" class="dungeon-modal" style="display: none; max-width: 600px;">
+            <div class="dm-head">
+                <strong style="color:#c4b5fd;">📜 Transaction History</strong>
+                <button id="close-history" class="dm-close">✕</button>
             </div>
             
             <!-- Summary Section -->

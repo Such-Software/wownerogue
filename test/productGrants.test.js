@@ -36,6 +36,7 @@ describe('product grants', () => {
 
     expect(summary).toEqual({
       credits: 0,
+      raceEntries: 0,
       packs: ['iso-dungeon'],
       premiumLevel: null
     });

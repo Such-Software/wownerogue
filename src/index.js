@@ -153,7 +153,69 @@ app.get('/api/payment/status/:paymentId', asyncHandler(async (req, res) => {
   throw restNotImplemented();
 }));
 
-app.get('/api/user/:socketId/credits', asyncHandler(async (req, res) => {
+// =============================================================================
+// /api/user/* protection (S1 / S2 / S3, contract C2)
+// =============================================================================
+
+// S3: simple in-memory IP rate limiter for the /api/user/* REST surface. Each of these
+// endpoints hits the DB, so cap requests per IP over a short window. Best-effort only (the
+// socket layer has its own limiter and nginx can add another); the map is pruned lazily so
+// it can't grow unbounded.
+const _userApiHits = new Map(); // ip -> { count, windowStart }
+const USER_API_WINDOW_MS = 60 * 1000;
+const USER_API_MAX = Number(process.env.USER_API_RATE_MAX) || 120;
+function userApiRateLimit(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  let rec = _userApiHits.get(ip);
+  if (!rec || (now - rec.windowStart) > USER_API_WINDOW_MS) {
+    rec = { count: 0, windowStart: now };
+    _userApiHits.set(ip, rec);
+  }
+  rec.count += 1;
+  if (_userApiHits.size > 5000) {
+    for (const [k, v] of _userApiHits) {
+      if ((now - v.windowStart) > USER_API_WINDOW_MS) _userApiHits.delete(k);
+    }
+  }
+  if (rec.count > USER_API_MAX) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  next();
+}
+app.use('/api/user', userApiRateLimit);
+
+// C2: session-ownership guard for /api/user/:socketId/*. The caller must present the session
+// token (users.anon_token — emitted to the client as the 'session_token'/'session_resumed'
+// event and stored as localStorage['wownerogue_token']) via the 'X-Session-Token' header
+// (fallback ?t=). We only proceed for the row whose socket_id AND anon_token both match, so
+// one client can't read or mutate another player's payments/payouts/address. failStatus is
+// 403 for mutations, 401 for reads.
+function requireSessionOwnership(failStatus) {
+  return async (req, res, next) => {
+    try {
+      const { socketId } = req.params;
+      const token = req.get('X-Session-Token') || req.query.t;
+      if (!socketId || !token) {
+        return res.status(failStatus).json({ error: 'Session token required' });
+      }
+      const result = await databaseManager.query(
+        'SELECT id FROM users WHERE socket_id = $1 AND anon_token = $2',
+        [socketId, token]
+      );
+      if (result.rows.length === 0) {
+        return res.status(failStatus).json({ error: 'Session ownership verification failed' });
+      }
+      req.sessionUserId = result.rows[0].id;
+      next();
+    } catch (err) {
+      console.error('[requireSessionOwnership] verification error:', err.message);
+      return res.status(failStatus).json({ error: 'Session verification failed' });
+    }
+  };
+}
+
+app.get('/api/user/:socketId/credits', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   if (!socketId) {
     throw new ValidationError('Missing socketId', {
@@ -162,7 +224,11 @@ app.get('/api/user/:socketId/credits', asyncHandler(async (req, res) => {
   }
 
   try {
-    const user = await gameModeManager.getOrCreateUser(socketId);
+    // C1: read-only route — never mint a user row for a stranger's socketId.
+    const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
+    if (!user) {
+      return res.json({});
+    }
     res.json({
       socketId,
       credits: user.credits || 0,
@@ -177,7 +243,7 @@ app.get('/api/user/:socketId/credits', asyncHandler(async (req, res) => {
   }
 }));
 
-app.get('/api/user/:socketId/mode', asyncHandler(async (req, res) => {
+app.get('/api/user/:socketId/mode', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   if (!socketId) {
     throw new ValidationError('Missing socketId', {
@@ -186,7 +252,11 @@ app.get('/api/user/:socketId/mode', asyncHandler(async (req, res) => {
   }
 
   try {
-    const user = await gameModeManager.getOrCreateUser(socketId);
+    // C1: read-only route — do not create a user row here.
+    const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
+    if (!user) {
+      return res.json({});
+    }
     res.json({
       socketId,
       preferredPaymentMode: user.preferred_payment_mode || 'direct',
@@ -204,7 +274,7 @@ app.get('/api/user/:socketId/mode', asyncHandler(async (req, res) => {
   }
 }));
 
-app.post('/api/user/:socketId/address', asyncHandler(async (req, res) => {
+app.post('/api/user/:socketId/address', requireSessionOwnership(403), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   const { address } = req.body || {};
 
@@ -336,7 +406,7 @@ app.get('/health', async (req, res) => {
 });
 
 // Get payment options for a user (mixed mode support)
-app.get('/api/user/:socketId/payment-options', asyncHandler(async (req, res) => {
+app.get('/api/user/:socketId/payment-options', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   if (!socketId) {
     throw new ValidationError('Missing socketId', {
@@ -357,11 +427,11 @@ app.get('/api/user/:socketId/payment-options', asyncHandler(async (req, res) => 
 }));
 
 // Get payment history for a user
-app.get('/api/user/:socketId/payments', asyncHandler(async (req, res) => {
+app.get('/api/user/:socketId/payments', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
   const offset = parseInt(req.query.offset, 10) || 0;
-  
+
   if (!socketId) {
     throw new ValidationError('Missing socketId', {
       safeMessage: 'socketId parameter is required.'
@@ -369,7 +439,11 @@ app.get('/api/user/:socketId/payments', asyncHandler(async (req, res) => {
   }
 
   try {
-    const user = await gameModeManager.getOrCreateUser(socketId);
+    // C1: read-only route — do not create a user row here.
+    const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
+    if (!user) {
+      return res.json({ payments: [], total: 0, totalPaid: 0, limit, offset });
+    }
     const result = await db.query(`
       SELECT 
         id, 
@@ -424,11 +498,11 @@ app.get('/api/user/:socketId/payments', asyncHandler(async (req, res) => {
 }));
 
 // Get payout history for a user
-app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
+app.get('/api/user/:socketId/payouts', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
   const offset = parseInt(req.query.offset, 10) || 0;
-  
+
   if (!socketId) {
     throw new ValidationError('Missing socketId', {
       safeMessage: 'socketId parameter is required.'
@@ -436,7 +510,11 @@ app.get('/api/user/:socketId/payouts', asyncHandler(async (req, res) => {
   }
 
   try {
-    const user = await gameModeManager.getOrCreateUser(socketId);
+    // C1: read-only route — do not create a user row here.
+    const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
+    if (!user) {
+      return res.json({ payouts: [], total: 0, totalReceived: 0, limit, offset });
+    }
     const result = await db.query(`
       SELECT 
         p.id,
@@ -824,16 +902,32 @@ async function startServer() {
     try {
         // Initialize payment system first
         const paymentSystemReady = await initializePaymentSystem();
-        
+
+        // C6: right after payment/recovery init at startup, finalize/refund any games left
+        // status='active' by a previous crash or restart. recoverOrphanedGames() is idempotent
+        // so it is safe to run on every boot; failures here must not block server startup.
+        try {
+            const sm = socketHandlers.sessionManager;
+            if (sm && typeof sm.recoverOrphanedGames === 'function') {
+                await sm.recoverOrphanedGames();
+            }
+        } catch (recoverErr) {
+            console.error('❌ recoverOrphanedGames failed at startup:', recoverErr.message);
+        }
+
         // Socket.io connection handler - ONLY after payment system is ready
         io.on('connection', function(socket) {
             socketHandlers.handleConnection(socket);
         });
         
-        // Start HTTP server
+        // Start HTTP server.
+        // C8: bind to loopback by default (nginx terminates TLS and reverse-proxies to us),
+        // so the Node process is not directly reachable on a public interface. Override with
+        // HOST=0.0.0.0 only for a deployment that intentionally exposes the port directly.
         const PORT = process.env.PORT || 3000;
-        http.listen(PORT, function() {
-            console.log(`🚀 Wownerogue server listening on *:${PORT}`);
+        const HOST = process.env.HOST || '127.0.0.1';
+        http.listen(PORT, HOST, function() {
+            console.log(`🚀 Wownerogue server listening on ${HOST}:${PORT}`);
             console.log(`🐛 Debug mode: ${debugManager.getDebugStatus().debugMode ? 'ENABLED' : 'DISABLED'}`);
             console.log(`💰 Payment system: ${paymentSystemReady ? 'ENABLED' : 'FREE MODE ONLY'}`);
             const summary = paymentConfigManager.summarize();
@@ -968,6 +1062,33 @@ async function gracefulShutdown(signal) {
     console.log('Shutdown complete.');
     process.exit(0);
 }
+
+// Last-resort process guards. A single bad socket event or an unhandled promise rejection
+// must NOT crash this process, because it holds the live wallet RPC session and in-flight
+// payout/batch state — being killed mid-payout is a far worse failure than leaking one
+// broken request. TRADEOFF: standard Node guidance is to exit on 'uncaughtException' (process
+// state may be corrupt); here we deliberately stay up so payouts can settle and sockets stay
+// alive, and we log (and alert, if the alert service is up) so nothing fails silently.
+process.on('uncaughtException', (err) => {
+    console.error('❌ uncaughtException (kept alive):', err && err.stack ? err.stack : err);
+    try {
+        alertService?.sendAlert?.('process_uncaught_exception', {
+            subject: 'uncaughtException (server kept alive)',
+            body: String(err && err.stack ? err.stack : err),
+            level: 'error'
+        })?.catch?.(() => {});
+    } catch (_) {}
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ unhandledRejection (kept alive):', reason && reason.stack ? reason.stack : reason);
+    try {
+        alertService?.sendAlert?.('process_unhandled_rejection', {
+            subject: 'unhandledRejection (server kept alive)',
+            body: String(reason && reason.stack ? reason.stack : reason),
+            level: 'error'
+        })?.catch?.(() => {});
+    } catch (_) {}
+});
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
