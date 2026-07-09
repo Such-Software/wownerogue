@@ -114,6 +114,16 @@ class MatchManager {
             const engine = this.engines.get(room.id);
             if (engine && typeof engine.start === 'function') engine.start(); // activates room + ticks
             else r.start();
+            // Reflect the now-live race in the DB (was left 'starting' during the countdown). This
+            // lets boot recovery distinguish a genuinely-running race from an abandoned one, and it
+            // stamps started_at so the age-guarded (multi-instance) recovery path won't reclaim a
+            // race that is legitimately in flight.
+            if (this.db) {
+                this.db.query(
+                    `UPDATE matches SET status = 'active', started_at = COALESCE(started_at, NOW()) WHERE id = $1 AND status = 'starting'`,
+                    [room.id]
+                ).catch(err => this._log('[MatchManager] mark-active error', err.message));
+            }
             this._broadcast(room.id, 'match_start', { matchId: room.id, tickMs, seedHash: r.seedHash });
         }, countdownMs);
 

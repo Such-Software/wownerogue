@@ -1285,17 +1285,46 @@ class GameModeManager {
     async setUserPayoutAddress(socketId, payoutAddress) {
         try {
             const user = await this.getOrCreateUser(socketId);
-            
+
             await this.db.query(`
-                UPDATE users 
+                UPDATE users
                 SET payout_address = $1,
                     updated_at = NOW()
                 WHERE id = $2
             `, [payoutAddress, user.id]);
-            
+
             console.log(`💰 Set payout address for user ${user.id}: ${payoutAddress}`);
+
+            // Reconcile any claimable match winnings this user earned with no address on file.
+            // A match winner without a payout address is recorded as a durable 'needs_review'
+            // liability (reason 'match_winner_no_address', sentinel address 'PENDING_NO_ADDRESS');
+            // now that a real address exists, convert those to sendable 'pending' payouts and kick
+            // the batcher. The reason filter is deliberately narrow so this NEVER touches the
+            // ambiguous-broadcast 'needs_review' rows from the single-payout path (which have a real
+            // address and a different reason) — converting those could double-pay.
+            if (typeof payoutAddress === 'string' && payoutAddress.trim().length > 0) {
+                try {
+                    const reconciled = await this.db.query(`
+                        UPDATE payouts
+                        SET payout_address = $1, status = 'pending', last_error = NULL
+                        WHERE user_id = $2
+                          AND status = 'needs_review'
+                          AND reason = 'match_winner_no_address'
+                          AND payout_address = 'PENDING_NO_ADDRESS'
+                        RETURNING id
+                    `, [payoutAddress.trim(), user.id]);
+                    if (reconciled.rowCount > 0) {
+                        console.log(`💰 Reconciled ${reconciled.rowCount} claimable match payout(s) for user ${user.id} now that an address is set`);
+                        if (typeof this._scheduleBatchPayout === 'function') this._scheduleBatchPayout();
+                    }
+                } catch (reconErr) {
+                    // Never let reconciliation failure break address-setting.
+                    const n = normalizeError(reconErr, 'Failed to reconcile claimable match payouts');
+                    console.error('⚠️ Payout reconciliation error (address still saved):', n.message);
+                }
+            }
             return true;
-            
+
         } catch (error) {
             const normalized = normalizeError(error, 'Failed to update payout address');
             console.error('❌ Error setting payout address:', normalized.message);

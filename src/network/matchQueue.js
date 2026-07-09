@@ -111,9 +111,24 @@ class MatchQueue {
      * cancel the match and refund every entrant so escrow is never stranded.
      */
     async _recoverAbandonedMatches() {
+        // Single-instance (default, this deployment's model): a boot means all in-memory match
+        // state is gone, so every in-flight row is abandoned — reclaim them all immediately.
+        // Multi-instance (MATCH_SINGLE_INSTANCE=false): a sibling instance may be actively running
+        // a recent race, so only reclaim rows older than the maximum possible match duration
+        // (hard ceiling + buffer). Anything younger is left for its owner (its own ceiling watchdog
+        // finalizes it) or a later boot. This is a lock-free age guard; true cross-instance
+        // ownership would use a heartbeat/lease column.
+        const singleInstance = String(process.env.MATCH_SINGLE_INSTANCE || 'true').toLowerCase() !== 'false';
+        const ceilingMs = parseInt(process.env.MATCH_HARD_CEILING_MS, 10) || 240000;
+        const minAgeSec = singleInstance ? 0 : Math.ceil((ceilingMs + 60000) / 1000);
         let rows = [];
         try {
-            const res = await this.db.query(`SELECT id, economy FROM matches WHERE status IN ('starting', 'active')`);
+            const res = await this.db.query(
+                `SELECT id, economy FROM matches
+                 WHERE status IN ('starting', 'active')
+                   AND COALESCE(started_at, created_at) <= NOW() - ($1::int * INTERVAL '1 second')`,
+                [minAgeSec]
+            );
             rows = res.rows || [];
         } catch (err) {
             // matches table may not exist in a minimal test DB — non-fatal.
