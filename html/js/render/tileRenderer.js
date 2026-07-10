@@ -86,6 +86,16 @@
         var tmap = (window.RK && RK.tileMap) ? RK.tileMap() : {};
         var useAtlas = !!(atlas && atlas.ready);
 
+        // The atlas image loads async. If you switch INTO this renderer (e.g. entering the tavern
+        // in Tiled mode) before it's ready, the first paint uses the flat-colour fallback — which
+        // looks like plain blocks. Without a re-render it stays stuck there until the next scene
+        // update. Hook the atlas so we repaint the moment it's ready.
+        if (atlas && !atlas.ready && !this._atlasHooked && typeof atlas.onReady === 'function') {
+            this._atlasHooked = true;
+            var self = this;
+            atlas.onReady(function () { if (self.ctx && self._lastScene) self.render(self._lastScene); });
+        }
+
         if (!scene.isDungeon && window.RK && RK.roomReady && RK.roomReady()) {
             // A designed room (imported .tmx) is loaded — draw its layered tiles.
             RK.drawRoomCanvas(ctx, cell);
@@ -278,6 +288,9 @@
     };
 
     TileRenderer.prototype._ensureEmbers = function (scene) {
+        // Embers belong to the dungeon torch the player carries — never in the tavern (or any
+        // non-dungeon scene), where they'd make the "you" avatar look like a flaming dot.
+        if (!scene || !scene.isDungeon) { this._embers = []; return; }
         var p = findPlayer(scene);
         if (!p) { this._embers = []; return; }
         if (this._embers.length) return;
@@ -320,7 +333,9 @@
         var ctx = this.ctx;
         if (!ctx) return;
         var w = this.canvas.width, h = this.canvas.height, cell = this.cell;
-        var p = findPlayer(scene);
+        // The warm torch light + embers are a DUNGEON effect (the player carries the torch). In the
+        // tavern there's no torch, so skip it — otherwise the "you" cell glows like a flaming dot.
+        var p = (scene && scene.isDungeon) ? findPlayer(scene) : null;
         if (p) {
             var cx = p.x * cell + cell / 2, cy = p.y * cell + cell / 2;
             var flick = 1 + Math.sin(this._t * 0.18) * 0.08 + Math.sin(this._t * 0.5 + 1.3) * 0.04;
