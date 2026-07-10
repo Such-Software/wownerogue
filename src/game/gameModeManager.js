@@ -18,6 +18,7 @@ const paymentConfig = require('../config/paymentConfig');
 const money = require('../money/atomic');
 const Entitlements = require('../multiplayer/entitlements');
 const ProductGrants = require('../payments/productGrants');
+const { buildProviderRegistry } = require('../payments/providers');
 
 // A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it
 // is SAFE to retry (no double-pay risk) — unlike an ambiguous post-broadcast failure. Monero
@@ -31,11 +32,17 @@ const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW dependi
 const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
 
 class GameModeManager {
-    constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null) {
+    constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null, paymentProviders = null) {
         this.db = databaseManager;
         this.walletService = walletRPCService;
         this.debugManager = debugManager;
         this.paymentConfigManager = paymentConfigManager || null;
+
+        // Modular payment providers (Pillar 3). Defaults to a registry whose only member is the
+        // native Monero/Wownero provider wrapping this walletService — so with no gateway env set
+        // every chain routes to the existing wallet-RPC path and behavior is unchanged. Injectable
+        // for tests. See src/payments/providers/index.js + the btcpay-infra-topology memo.
+        this.paymentProviders = paymentProviders || buildProviderRegistry({ walletService: walletRPCService });
 
         this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
         this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
@@ -1214,13 +1221,31 @@ class GameModeManager {
             `, [user.id]);
             const expiredAddresses = expiredResult.rows.map(r => r.subaddress);
 
-            // Create payment request using wallet RPC with correct parameters
-            const paymentResult = await this.walletService.createPaymentRequest(
-                amount,
-                description,
-                user.id,
-                socketId
-            );
+            // Create the payment request through the routed provider. The native provider (default
+            // for every chain when no gateway env is set) delegates to walletService.createPaymentRequest,
+            // so this is byte-for-byte the legacy path for the shipped single-chain config — same
+            // subaddress, same walletService monitoring maps. A BTCPay/xmrcheckout/wowcheckout gateway
+            // takes over only when the operator routes this.cryptoType to it.
+            const provider = this.paymentProviders && this.paymentProviders.getProvider(this.cryptoType);
+            let paymentResult;
+            if (provider) {
+                const invoice = await provider.createInvoice({
+                    chain: this.cryptoType,
+                    amountAtomic: amount,
+                    description,
+                    userId: user.id,
+                    orderId: socketId
+                });
+                paymentResult = {
+                    address: invoice.address,
+                    addressIndex: invoice.addressIndex ?? (invoice.raw && invoice.raw.addressIndex) ?? null,
+                    expiresAt: invoice.expiresAt,
+                    invoiceId: invoice.invoiceId || invoice.address
+                };
+            } else {
+                // Defensive fallback: registry somehow empty -> exact legacy call.
+                paymentResult = await this.walletService.createPaymentRequest(amount, description, user.id, socketId);
+            }
 
             const expiresAt = paymentResult.expiresAt || new Date(Date.now() + 30 * 60 * 1000);
 
@@ -1247,6 +1272,7 @@ class GameModeManager {
             return {
                 id: insertedRow?.id,
                 address: paymentResult.address,
+                invoiceId: paymentResult.invoiceId || paymentResult.address,
                 amount: amount,
                 amountFormatted: this.formatAtomicHuman(amount, 4),
                 currency: this.cryptoType,

@@ -3,16 +3,20 @@ const ChainProfile = require('../../chain/chainProfile');
 const Atomic = require('../../money/atomic');
 
 /**
- * BTCPay Server provider — the first payment plugin. Talks to the BTCPay Greenfield API, so it
- * covers every chain the operator's BTCPay handles: BTC/LTC natively, XMR via xmrcheckout, WOW via
- * wowcheckout, and Grin via the in-house plugin. Config (env): BTCPAY_URL, BTCPAY_STORE_ID,
- * BTCPAY_API_KEY. The invoice is denominated in the chain's own crypto (currency = ticker).
+ * BTCPay Greenfield provider — the first payment plugin. One client class serves every endpoint
+ * that speaks the BTCPay Greenfield API. On the operator's LAN that is THREE endpoints (see the
+ * btcpay-infra-topology memo): real BTCPay Server for BTC/LTC, plus the `xmrcheckout` and
+ * `wowcheckout` shims which expose Greenfield-compatible `/api/v1/stores/{id}/invoices` routes for
+ * XMR and WOW. So the same class is registered up to three times with different `id`/baseUrl/store/
+ * key/chains (id defaults to 'btcpay'). Grin is not deployed yet. The invoice is denominated by
+ * `currency` — pass the chain ticker (e.g. 'XMR') for a native-crypto amount. Auth is
+ * `Authorization: token <apiKey>` on all three.
  *
  * fetchImpl is injectable for tests; defaults to the global fetch (Node >= 18).
  */
 class BTCPayProvider extends PaymentProvider {
-    constructor({ baseUrl, storeId, apiKey, chains = ['BTC', 'LTC', 'XMR', 'WOW', 'GRIN'], fetchImpl = null } = {}) {
-        super('btcpay');
+    constructor({ id = 'btcpay', baseUrl, storeId, apiKey, chains = ['BTC', 'LTC', 'XMR', 'WOW', 'GRIN'], fetchImpl = null } = {}) {
+        super(id);
         this.baseUrl = String(baseUrl || '').replace(/\/+$/, '');
         this.storeId = storeId;
         this.apiKey = apiKey;

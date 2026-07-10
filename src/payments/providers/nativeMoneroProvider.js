@@ -34,6 +34,7 @@ class NativeMoneroProvider extends PaymentProvider {
         return {
             invoiceId: address, // native invoices are keyed by their subaddress
             address,
+            addressIndex: (req && req.addressIndex != null) ? req.addressIndex : null, // Monero-specific; enables monitoring restore after restart
             uri: (req && req.uri) || null,
             amountAtomic: String(amountAtomic),
             expiresAt: (req && req.expiresAt) || null,
