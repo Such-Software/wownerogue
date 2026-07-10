@@ -51,64 +51,70 @@ const HelpModal = {
         const config = this._config || {};
         const currency = config.cryptoType || 'WOW';
         
-        // Check if payments are disabled (free mode)
+        // Fully free deployment (no payments configured).
         if (!config.paymentsEnabled) {
             $container.html(`
-                <div style="padding:8px; background:#0d3320; border:1px solid #4ade80; border-radius:4px; margin-bottom:8px;">
-                    <strong style="color:#4ade80;">🆓 Free Mode</strong><br>
-                    <span>Play for free! No payment required. Payouts may or may not be enabled.</span>
+                <div style="padding:8px 10px; background:#0d3320; border:1px solid #4ade80; border-radius:6px;">
+                    <strong style="color:#4ade80;">🆓 Free to play</strong><br>
+                    <span>No payment needed — just escape the dungeon.</span>
                 </div>
             `);
             return;
         }
-        
-        // Direct payment mode
-        if (config.directModeEnabled) {
-            const price = config.singleGamePriceFormatted || '1';
-            const multipliers = config.payoutMultipliers?.direct || {};
-            const escapeMulti = multipliers.escape || 2;
-            const treasureMulti = multipliers.treasure || 3;
-            
-            $container.append(`
-                <div style="padding:8px; background:#1a1a2e; border:1px solid #3730a3; border-radius:4px; margin-bottom:8px;">
-                    <strong style="color:#818cf8;">⚡ Direct Payment</strong><br>
-                    <span>Pay <strong>${price} ${currency}</strong> per game.</span><br>
-                    <span style="font-size:0.85em; color:#aaa;">Escape: ${escapeMulti}× payout | With treasure: ${treasureMulti}× payout</span>
+
+        const directOn = config.directModeEnabled;
+        const creditsOn = config.creditsModeEnabled;
+        if (!directOn && !creditsOn) {
+            $container.html('<p style="color:#888;">Loading…</p>');
+            return;
+        }
+
+        // Unified model: everything is CREDITS. Buy one at the base price, or a bundle at a
+        // discount; 1 credit = 1 run either way.
+        const price = config.singleGamePriceFormatted || '1';
+        const packages = config.creditPackages || [];
+        const payoutsOn = !!(config.payoutsEnabled || config.directPayoutsEnabled || config.creditsPayoutsEnabled);
+
+        const buy = [];
+        if (directOn) buy.push(`<strong>1 credit</strong> — ${price} ${currency}`);
+        if (creditsOn && packages.length > 0) {
+            const bundles = packages.map(pkg => {
+                const bonus = pkg.bonus > 0 ? ` +${pkg.bonus}` : '';
+                return `${pkg.credits}${bonus} for ${pkg.priceFormatted}`;
+            }).join(' · ');
+            buy.push(`<strong>Bundles</strong> — ${bundles} ${currency} <span style="color:#888;">(cheaper per run)</span>`);
+        }
+
+        // Reward line is config-driven so it stays honest on prestige (no-payout) deployments.
+        let reward;
+        if (payoutsOn) {
+            const m = (config.payoutMultipliers && (config.payoutMultipliers.direct || config.payoutMultipliers.credits)) || {};
+            const esc = m.escape || 2;
+            const tre = m.escapeWithTreasure || m.treasure || 3;
+            reward = `<span style="color:#4ade80;">💰 Escape pays <strong>${esc}×</strong> · with treasure <strong>${tre}×</strong>.</span>`;
+        } else {
+            reward = `<span style="color:#fbbf24;">🏅 No crypto payout — escape for the win; top scores enter the <strong>Hall of Champions</strong>.</span>`;
+        }
+
+        const freeLine = config.freePlayEnabled
+            ? `<div style="font-size:0.82em; color:#888; margin-top:6px;">Prefer no stakes? Free runs are available too (Pleb leaderboard).</div>`
+            : '';
+
+        $container.html(`
+            <div style="padding:10px 12px; background:#17172a; border:1px solid #7c3aed; border-radius:6px;">
+                <div style="color:#a78bfa; font-weight:700; margin-bottom:6px;">🎫 1 credit = 1 run</div>
+                <div style="font-size:0.9em; margin-bottom:6px;">
+                    Buy credits with ${currency}:<br>
+                    ${buy.map(b => '&nbsp;&nbsp;• ' + b).join('<br>')}
                 </div>
-            `);
-        }
-        
-        // Credits mode
-        if (config.creditsModeEnabled) {
-            const packages = config.creditPackages || [];
-            const creditsPayoutEnabled = config.creditsPayoutsEnabled;
-            
-            let packagesInfo = '';
-            if (packages.length > 0) {
-                packagesInfo = packages.map(pkg => {
-                    const bonus = pkg.bonus > 0 ? ` +${pkg.bonus} bonus` : '';
-                    return `${pkg.credits}${bonus} credits for ${pkg.priceFormatted} ${currency}`;
-                }).join(', ');
-            }
-            
-            $container.append(`
-                <div style="padding:8px; background:#1a1a2e; border:1px solid #7c3aed; border-radius:4px; margin-bottom:8px;">
-                    <strong style="color:#a78bfa;">🎫 Credits Mode</strong><br>
-                    <span>Buy credits in bulk and use them to play.</span><br>
-                    ${packagesInfo ? `<span style="font-size:0.85em; color:#aaa;">Packages: ${packagesInfo}</span><br>` : ''}
-                    ${creditsPayoutEnabled 
-                        ? '<span style="font-size:0.85em; color:#4ade80;">✓ Payouts enabled for credit games</span>' 
-                        : '<span style="font-size:0.85em; color:#888;">Payouts not available for credit games</span>'}
+                <div style="font-size:0.82em; color:#9aa4b2; margin-bottom:6px;">
+                    Spend a credit to enter — jump in immediately, or on the next block. Block timing
+                    is random, so your average wait is the same either way.
                 </div>
-            `);
-        }
-        
-        // If no paid modes are shown but payments enabled
-        if (!config.directModeEnabled && !config.creditsModeEnabled && config.paymentsEnabled) {
-            $container.html(`
-                <p style="color:#888;">Payment configuration is loading...</p>
-            `);
-        }
+                <div style="font-size:0.85em;">${reward}</div>
+                ${freeLine}
+            </div>
+        `);
     }
 };
 
