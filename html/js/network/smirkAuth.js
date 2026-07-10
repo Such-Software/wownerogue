@@ -141,11 +141,6 @@ const SmirkAuth = {
      * @returns {Promise<{verifyData: object, pubkey: string|null}>}
      */
     async _verifyNip98(socketId, challenge) {
-        // Grant this origin the Nostr scope first. Per the Smirk dapp API, getNostrPublicKey()
-        // IS the connection for a Nostr origin (it prompts on first use); signNostrEvent() throws
-        // "Origin lacks the Nostr scope — call getNostrPublicKey() first" without it.
-        await window.smirk.getNostrPublicKey();
-
         // Build the NIP-98 HTTP auth event. The wallet fills in pubkey/id/sig.
         const evt = {
             kind: 27235,
@@ -158,7 +153,20 @@ const SmirkAuth = {
             ]
         };
 
-        const signed = await window.smirk.signNostrEvent(evt);
+        // Sign directly. If this origin doesn't yet hold the Nostr scope, the wallet throws
+        // NOT_AUTHORIZED (no popup); grant it once via getNostrPublicKey() and retry. Signing
+        // first means a RETURNING user (scope already granted) gets a SINGLE approval instead of
+        // two. The wallet still asks per-signature for kind 27235 — that can't be silenced.
+        let signed;
+        try {
+            signed = await window.smirk.signNostrEvent(evt);
+        } catch (scopeErr) {
+            const needsScope = (scopeErr && scopeErr.code === 'NOT_AUTHORIZED')
+                || /nostr scope|getNostrPublicKey/i.test((scopeErr && scopeErr.message) || '');
+            if (!needsScope) throw scopeErr;
+            await window.smirk.getNostrPublicKey(); // grant the Nostr scope (one-time per origin)
+            signed = await window.smirk.signNostrEvent(evt);
+        }
         if (!signed || typeof signed !== 'object') {
             throw new Error('Smirk wallet did not return a signed nostr event');
         }
