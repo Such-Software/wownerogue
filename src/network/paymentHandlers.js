@@ -459,6 +459,25 @@ class PaymentHandlers {
 
                     socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
 
+                    // Unify to credits: a direct/single_game entry counts as buying + spending 1
+                    // credit, so it advances total_credits_purchased and unlocks the same tier/
+                    // threshold cosmetics as a credit purchase. (Runs once — guarded by wasUpdated.)
+                    if (this.gameModeManager && typeof this.gameModeManager.recordDirectEntryPurchase === 'function') {
+                        try {
+                            const rec = await this.gameModeManager.recordDirectEntryPurchase(socket.id);
+                            if (rec) {
+                                socket.emit('credits_update', {
+                                    balance: rec.balance,
+                                    totalCreditsPurchased: rec.totalCreditsPurchased,
+                                    ...(rec.entitlements || {})
+                                });
+                                if (rec.entitlements) socket.emit('identity_update', { entitlements: rec.entitlements });
+                            }
+                        } catch (e) {
+                            console.error('[PaymentHandlers] direct-entry credit record failed:', e.message);
+                        }
+                    }
+
                     // IMPORTANT: If payment confirmed before mempool detection (fast blocks),
                     // the player may not be in the queue yet. Add them now with confirmed=true.
                     const existingIdx = this.queueManager.getPlayerIndex(socket.id);

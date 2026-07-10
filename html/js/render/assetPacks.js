@@ -44,6 +44,30 @@
     RK.setEntitlementSnapshot = function (data) {
         data = data || {};
         var prev = RK.entitlements || {};
+
+        // Consume the server-authoritative catalog (migration 024). This retires the hardcoded
+        // client pack list as the source of truth: operator-added packs appear, and existing packs
+        // pick up server definitions (label/projection/tier). Merged (not replaced) so any client
+        // fallback a render mode relies on is preserved if the operator's catalog omits it.
+        if (Array.isArray(data.catalog) && data.catalog.length) {
+            var merged = {};
+            for (var k in RK.PACKS) merged[k] = RK.PACKS[k];
+            for (var ci = 0; ci < data.catalog.length; ci++) {
+                var c = data.catalog[ci];
+                if (!c || !c.id) continue;
+                var ex = merged[c.id] || {};
+                merged[c.id] = {
+                    id: c.id,
+                    label: c.label || ex.label || c.id,
+                    premium: c.premium != null ? !!c.premium : !!ex.premium,
+                    projection: c.projection || ex.projection || null,
+                    tier: c.tier != null ? c.tier : ex.tier,
+                    unlockMinCredits: c.unlockMinCredits != null ? c.unlockMinCredits : ex.unlockMinCredits,
+                    unlock: ex.unlock
+                };
+            }
+            RK.PACKS = merged;
+        }
         var hasTotal = data.totalCreditsPurchased != null || data.total_credits_purchased != null;
         var hasPremium = data.premium != null;
         var hasPacks = !!data.packs;

@@ -490,6 +490,67 @@ class GameModeManager {
         return this.processProductPaymentConfirmation(socketId, paymentId, packageInfo, receivedAmount);
     }
 
+    /**
+     * Record a direct/single_game entry as "buy 1 credit and immediately spend it on this game":
+     * the balance nets to zero but total_credits_purchased advances, so a direct payment unlocks the
+     * SAME tier/threshold cosmetics as buying credits (the first step of unifying everything to
+     * credits). Idempotent by the caller — the single_game confirmation runs once per payment via
+     * its status='pending' -> 'confirmed' guard. Returns { totalCreditsPurchased, balance,
+     * entitlements } or null.
+     */
+    async recordDirectEntryPurchase(socketId) {
+        try {
+            const user = await this.getOrCreateUser(socketId, { create: false });
+            if (!user || user.id == null) return null;
+            let totalCreditsPurchased = 0;
+            let balance = 0;
+            let premiumLevel = null;
+            await this.db.withTransaction(async (client) => {
+                const upd = await client.query(
+                    `UPDATE users
+                     SET total_credits_purchased = COALESCE(total_credits_purchased, 0) + 1
+                     WHERE id = $1
+                     RETURNING total_credits_purchased, credits, premium_level`,
+                    [user.id]
+                );
+                if (!upd.rows.length) return;
+                totalCreditsPurchased = Number(upd.rows[0].total_credits_purchased || 0);
+                balance = Number(upd.rows[0].credits || 0);
+                premiumLevel = upd.rows[0].premium_level || null;
+                // Audit trail: bought 1 credit + spent it on this game (net 0 balance).
+                await client.query(
+                    `INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                     VALUES ($1, 1, 'direct_entry', $2, 'purchase'),
+                            ($1, -1, 'game_entry', $2, 'spend')`,
+                    [user.id, balance]
+                );
+            });
+
+            let packGrants = [];
+            try {
+                const g = await this.db.query(
+                    `SELECT pack_id, source, granted_at, expires_at FROM user_pack_entitlements
+                     WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
+                    [user.id]
+                );
+                packGrants = g.rows || [];
+            } catch (_) { packGrants = []; }
+
+            const entitlements = Entitlements.snapshotForUser({
+                id: user.id,
+                credits: balance,
+                total_credits_purchased: totalCreditsPurchased,
+                premium_level: premiumLevel
+            }, packGrants);
+
+            return { totalCreditsPurchased, balance, entitlements };
+        } catch (err) {
+            const normalized = normalizeError(err, 'Failed to record direct entry purchase');
+            console.error('❌ recordDirectEntryPurchase error:', normalized.message);
+            return null;
+        }
+    }
+
     async _findReusablePayment(userId, paymentType, productId = null) {
         if (!userId) return null;
         const result = await this.db.query(`
