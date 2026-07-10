@@ -921,11 +921,14 @@ async function startServer() {
         });
         
         // Start HTTP server.
-        // C8: bind to loopback by default (nginx terminates TLS and reverse-proxies to us),
-        // so the Node process is not directly reachable on a public interface. Override with
-        // HOST=0.0.0.0 only for a deployment that intentionally exposes the port directly.
+        // Bind all interfaces by default: the reverse proxy (Nginx Proxy Manager) is off-host /
+        // containerized and reaches this app over a non-loopback address, so a loopback-only bind
+        // makes the public site 502. Operators whose proxy runs on THIS host can set HOST=127.0.0.1.
+        // The real "don't expose :3000" hardening is a firewall rule limiting the port to the
+        // proxy's source, not the bind address; and X-Forwarded-For is already validated (rightmost
+        // hop) so a direct hit can't spoof the client IP.
         const PORT = process.env.PORT || 3000;
-        const HOST = process.env.HOST || '127.0.0.1';
+        const HOST = process.env.HOST || '0.0.0.0';
         http.listen(PORT, HOST, function() {
             console.log(`🚀 Wownerogue server listening on ${HOST}:${PORT}`);
             console.log(`🐛 Debug mode: ${debugManager.getDebugStatus().debugMode ? 'ENABLED' : 'DISABLED'}`);
