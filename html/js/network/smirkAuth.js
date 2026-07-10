@@ -141,6 +141,11 @@ const SmirkAuth = {
      * @returns {Promise<{verifyData: object, pubkey: string|null}>}
      */
     async _verifyNip98(socketId, challenge) {
+        // Grant this origin the Nostr scope first. Per the Smirk dapp API, getNostrPublicKey()
+        // IS the connection for a Nostr origin (it prompts on first use); signNostrEvent() throws
+        // "Origin lacks the Nostr scope — call getNostrPublicKey() first" without it.
+        await window.smirk.getNostrPublicKey();
+
         // Build the NIP-98 HTTP auth event. The wallet fills in pubkey/id/sig.
         const evt = {
             kind: 27235,
