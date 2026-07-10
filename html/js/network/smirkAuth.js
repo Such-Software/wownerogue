@@ -77,16 +77,15 @@ const SmirkAuth = {
                 verifyData = result.verifyData;
                 provenPublicKey = result.pubkey;
             } catch (nip98Err) {
-                // Only fall back to the legacy path when the wallet genuinely can't do NIP-98
-                // (method missing / unsupported). For LOCKED (unlock the extension), USER_REJECTED
-                // (user closed the popup), or a real signing failure, SURFACE it — re-invoking
-                // connect() would just pop a second prompt. On a current Smirk build a locked
-                // signNostrEvent auto-opens the unlock popup and never reaches here.
+                // Fall back to the legacy connect() path UNLESS the user explicitly cancelled the
+                // popup. This gives connect() a chance to open the unlock prompt when a locked
+                // signNostrEvent threw LOCKED instead of prompting (partial/stale builds), and
+                // covers wallets that lack NIP-98 entirely. Only an explicit cancel is not retried.
                 const code = nip98Err && nip98Err.code;
-                const methodMissing = code === 'UNSUPPORTED' || code === 'METHOD_NOT_FOUND'
-                    || /not a function|is not supported|no such method|unsupported/i.test((nip98Err && nip98Err.message) || '');
-                if (!methodMissing) throw nip98Err;
-                console.warn('Smirk NIP-98 unsupported, falling back to legacy:', nip98Err && nip98Err.message);
+                const userCancelled = code === 'USER_REJECTED'
+                    || /reject|cancel|denied|declined/i.test((nip98Err && nip98Err.message) || '');
+                if (userCancelled) throw nip98Err;
+                console.warn('Smirk NIP-98 failed, trying legacy connect():', nip98Err && nip98Err.message);
                 const result = await this._verifyLegacy(socketId, challenge);
                 verifyData = result.verifyData;
                 provenPublicKey = result.pubkey;
