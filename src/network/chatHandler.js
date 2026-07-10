@@ -5,6 +5,7 @@
 
 const ChatHistoryManager = require('./chatHistoryManager');
 const SocketChatProvider = require('./chat/SocketChatProvider');
+const { buildChatProvider } = require('./chat');
 const { clientIp, stableId } = require('./rateLimitContext');
 
 class ChatHandler {
@@ -25,16 +26,18 @@ class ChatHandler {
             maxHistoryMessages: 50
         });
 
-        // Chat delivery + history go through a ChatProvider seam so the backend is swappable
-        // (e.g. a Nostr channel later). The default provider shares the ChatHistoryManager
-        // instance above, so ban checks / stats that read this.chatHistory keep working and
-        // lifecycle (initialize/shutdown) stays owned here.
-        this.chatProvider = new SocketChatProvider({
+        // Chat delivery + history go through a ChatProvider seam so the backend is swappable.
+        // The local provider shares the ChatHistoryManager instance above, so ban checks / stats
+        // that read this.chatHistory keep working and lifecycle stays owned here. buildChatProvider
+        // optionally wraps it with a NostrChatProvider for global cross-server chat (Pillar 5) when
+        // NOSTR_CHAT_ENABLED is set; otherwise it returns this local provider unchanged.
+        const localChatProvider = new SocketChatProvider({
             io: this.io,
             broadcastManager: this.broadcastManager,
             debugManager: this.debugManager,
             historyManager: this.chatHistory
         });
+        this.chatProvider = buildChatProvider({ local: localChatProvider, debugManager: this.debugManager });
 
         // Memory leak prevention - cleanup old timestamps
         this._chatLastSent = new Map();
@@ -48,6 +51,11 @@ class ChatHandler {
      */
     async initialize() {
         await this.chatHistory.initialize();
+        // Lets a NostrChatProvider connect + subscribe to the relay. No-op for the plain local
+        // provider (history is already initialized above and injected, not owned by the provider).
+        if (this.chatProvider && typeof this.chatProvider.initialize === 'function') {
+            await this.chatProvider.initialize();
+        }
     }
 
     /**
