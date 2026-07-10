@@ -72,6 +72,51 @@ describe('BTCPayProvider (Greenfield)', () => {
         const p = new BTCPayProvider({ fetchImpl: async () => ({}) });
         await expect(p.getInvoiceStatus('x')).rejects.toThrow(/not configured/);
     });
+
+    describe('getWalletStatus (raw shape the confirmation callback consumes)', () => {
+        const mk = (invStatus, methods, chains) => new BTCPayProvider({
+            baseUrl: 'x', storeId: 's', apiKey: 'k', chains,
+            fetchImpl: recordingFetch([
+                { method: 'GET', match: /\/invoices\/inv1$/, body: { id: 'inv1', status: invStatus } },
+                { method: 'GET', match: /\/invoices\/inv1\/payment-methods$/, body: methods }
+            ])
+        });
+
+        test('Settled -> confirmed+complete with paid/required in atomic units (XMR, 12 decimals)', async () => {
+            const st = await mk('Settled', [{ cryptoCode: 'XMR', destination: 'a', totalPaid: '1.5', amount: '1.5' }], ['XMR']).getWalletStatus('inv1');
+            expect(st.confirmed).toBe(true);
+            expect(st.complete).toBe(true);
+            expect(st.in_mempool).toBe(false);
+            expect(st.amount).toBe(1500000000000);   // 1.5 * 1e12
+            expect(st.required).toBe(1500000000000);
+        });
+
+        test('WOW uses 11 decimals', async () => {
+            const st = await mk('Settled', [{ cryptoCode: 'WOW', totalPaid: '1.5', amount: '1.5' }], ['WOW']).getWalletStatus('inv1');
+            expect(st.amount).toBe(150000000000); // 1.5 * 1e11
+        });
+
+        test('Processing -> in_mempool, not confirmed', async () => {
+            const st = await mk('Processing', [{ cryptoCode: 'XMR', totalPaid: '0.5', amount: '1.5' }], ['XMR']).getWalletStatus('inv1');
+            expect(st.in_mempool).toBe(true);
+            expect(st.confirmed).toBe(false);
+            expect(st.complete).toBe(false);
+            expect(st.amount).toBe(500000000000);
+        });
+
+        test('New -> pending, no amount', async () => {
+            const st = await mk('New', [], ['XMR']).getWalletStatus('inv1');
+            expect(st.confirmed).toBe(false);
+            expect(st.in_mempool).toBe(false);
+            expect(st.amount).toBe(0);
+        });
+
+        test('Expired -> terminal flag so the watcher stops', async () => {
+            const st = await mk('Expired', [], ['XMR']).getWalletStatus('inv1');
+            expect(st._terminal).toBe(true);
+            expect(st.complete).toBe(false);
+        });
+    });
 });
 
 describe('NativeMoneroProvider wraps walletRPCService', () => {
@@ -96,5 +141,17 @@ describe('NativeMoneroProvider wraps walletRPCService', () => {
         const po = await np.sendPayout({ chain: 'WOW', address: 'Wo3ydest', amountAtomic: '50000000000' });
         expect(po.txids).toEqual(['tx1']);
         expect(wallet.processBatchPayout).toHaveBeenCalledWith([{ address: 'Wo3ydest', amount: '50000000000' }]);
+    });
+
+    test('startWatch passes the RAW wallet status through untouched (native path preserved)', () => {
+        let captured;
+        const w = { startPaymentMonitoring: jest.fn((addr, cb) => { captured = cb; }) };
+        const np = new NativeMoneroProvider({ walletService: w });
+        const seen = [];
+        np.startWatch('Wo3xaddr', (s) => seen.push(s), 2000);
+        expect(w.startPaymentMonitoring).toHaveBeenCalledWith('Wo3xaddr', expect.any(Function), 2000);
+        const raw = { in_mempool: true, confirmed: false, complete: false, amount: 42, required: 100, confirmations: 0 };
+        captured(raw);
+        expect(seen[0]).toBe(raw); // same object, not normalized — callback sees exactly what the wallet emitted
     });
 });

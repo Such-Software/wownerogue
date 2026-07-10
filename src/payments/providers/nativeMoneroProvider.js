@@ -46,10 +46,14 @@ class NativeMoneroProvider extends PaymentProvider {
         return this._normalize(await this.wallet.checkPaymentStatus(this._addr(invoiceRef)));
     }
 
+    // The monitoring contract passes the RAW wallet status through untouched — the shape
+    // checkPaymentStatus produces ({ in_mempool, confirmed, complete, amount, required,
+    // confirmations }) — so the confirmation callback in paymentHandlers is byte-for-byte
+    // the legacy path for native. (getInvoiceStatus above still returns the normalized shape.)
     startWatch(invoiceRef, onUpdate, intervalMs = 2000) {
         const address = this._addr(invoiceRef);
         if (typeof this.wallet.startPaymentMonitoring === 'function') {
-            this.wallet.startPaymentMonitoring(address, (st) => onUpdate(this._normalize(st)), intervalMs);
+            this.wallet.startPaymentMonitoring(address, (st) => onUpdate(st), intervalMs);
         }
     }
     stopWatch(invoiceRef) {

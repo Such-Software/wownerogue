@@ -2,6 +2,18 @@ const { PaymentProvider } = require('./paymentProvider');
 const ChainProfile = require('../../chain/chainProfile');
 const Atomic = require('../../money/atomic');
 
+// Convert a decimal crypto string (e.g. "1.5") to an integer atomic amount for `decimals` places.
+// Truncates any digits beyond `decimals` (the gateway already quantizes to chain precision).
+function decimalToAtomic(dec, decimals) {
+    const s = String(dec == null ? '' : dec).trim();
+    if (!s || s === '-') return 0;
+    const neg = s[0] === '-';
+    const [ip, fpRaw = ''] = s.replace('-', '').split('.');
+    const fp = (fpRaw + '0'.repeat(decimals)).slice(0, decimals);
+    const atomic = BigInt(ip || '0') * (10n ** BigInt(decimals)) + BigInt(fp || '0');
+    return Number(neg ? -atomic : atomic);
+}
+
 /**
  * BTCPay Greenfield provider — the first payment plugin. One client class serves every endpoint
  * that speaks the BTCPay Greenfield API. On the operator's LAN that is THREE endpoints (see the
@@ -102,16 +114,47 @@ class BTCPayProvider extends PaymentProvider {
         };
     }
 
+    // Read the invoice as a RAW wallet-style status (the shape the confirmation callback consumes),
+    // so a gateway payment flows through the exact same paymentHandlers path as a native one.
+    // Settled -> confirmed+complete; Processing -> in_mempool. Paid/required amounts (atomic) come
+    // from the invoice payment-methods (totalPaid / amount), converted via the chain's decimals.
+    async getWalletStatus(invoiceRef) {
+        const id = typeof invoiceRef === 'object' ? invoiceRef.invoiceId : invoiceRef;
+        const inv = await this._req('GET', `/api/v1/stores/${this.storeId}/invoices/${id}`);
+        const mapped = BTCPayProvider._mapStatus(inv.status);
+        let amount = 0, required = 0;
+        if (mapped.status === 'processing' || mapped.status === 'paid') {
+            try {
+                const methods = await this._req('GET', `/api/v1/stores/${this.storeId}/invoices/${id}/payment-methods`);
+                const list = Array.isArray(methods) ? methods : [];
+                const m = list[0] || {};
+                const dec = ChainProfile.decimalsFor(m.cryptoCode || m.paymentMethod || '');
+                amount = decimalToAtomic(m.totalPaid != null ? m.totalPaid : m.paymentMethodPaid, dec);
+                required = decimalToAtomic(m.amount, dec);
+            } catch (_) { /* amount stays 0; a Settled invoice still confirms via `complete` */ }
+        }
+        return {
+            in_mempool: mapped.status === 'processing',
+            confirmed: mapped.status === 'paid',
+            complete: mapped.complete,
+            amount,
+            required,
+            confirmations: null,
+            _terminal: mapped.status === 'expired' || mapped.status === 'invalid'
+        };
+    }
+
     // Poll-based watch (BTCPay also supports webhooks; a webhook bridge can call onUpdate directly).
+    // onUpdate receives the raw wallet-style status from getWalletStatus.
     startWatch(invoiceRef, onUpdate, intervalMs = 4000) {
         const id = typeof invoiceRef === 'object' ? invoiceRef.invoiceId : invoiceRef;
         if (this._watchers && this._watchers.has(id)) return;
         this._watchers = this._watchers || new Map();
         const timer = setInterval(async () => {
             try {
-                const st = await this.getInvoiceStatus(id);
+                const st = await this.getWalletStatus(id);
                 onUpdate(st);
-                if (st.complete || st.status === 'expired' || st.status === 'invalid') this.stopWatch(id);
+                if (st.complete || st._terminal) this.stopWatch(id);
             } catch (_) { /* keep polling */ }
         }, intervalMs);
         if (timer.unref) timer.unref();

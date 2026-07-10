@@ -55,6 +55,19 @@ describe('PaymentHandlers basic', () => {
     await ph.createAndShowPaymentRequest({ id: 'sock1' });
     expect(emitted.payment_created).toBeDefined();
     expect(emitted.payment_created.paymentId).toBe('pid123');
+    // No paymentProviders registry on the mock -> legacy fallback to direct wallet monitoring.
     expect(mocks.walletService.startPaymentMonitoring).toHaveBeenCalled();
+  });
+
+  test('monitoring routes through a routed gateway provider instead of the wallet', async () => {
+    const mocks = makeMocks();
+    const gateway = { id: 'wowcheckout', startWatch: jest.fn(), stopWatch: jest.fn() };
+    mocks.gameModeManager.paymentProviders = { getProvider: jest.fn(() => gateway) };
+    mocks.io.to = () => ({ emit: () => {} });
+    ph = new PaymentHandlers(mocks);
+    await ph.createAndShowPaymentRequest({ id: 'sock2' });
+    expect(mocks.gameModeManager.paymentProviders.getProvider).toHaveBeenCalledWith('WOW');
+    expect(gateway.startWatch).toHaveBeenCalled();
+    expect(mocks.walletService.startPaymentMonitoring).not.toHaveBeenCalled(); // routed away from native
   });
 });
