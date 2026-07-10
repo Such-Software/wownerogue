@@ -22,6 +22,7 @@ const DungeonGenerator = require('../game/dungeon');
 const Monster = require('../game/monster');
 const { createGameProof, createSeededRNG, seedToInt } = require('../game/provablyFair');
 const { getDifficultyConfig, getMonsterSpawnRoomIndex, getTreasureRoomIndex } = require('../game/difficultyConfig');
+const { defineRuleset, getRuleset, rulesetFromMatchOpts, resolveWinCondition } = require('../game/rulesets');
 
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
 
@@ -46,10 +47,19 @@ class MatchRoom extends Room {
         // so pass a minimal placeholder and then overwrite the map state.
         super({ id, type: 'match', layout: ['.'], solidOccupants: true, maxOccupants: opts.maxPlayers || 4 });
 
-        this.economy = opts.economy || 'free';
-        this.variant = opts.variant || 'race';
-        this.difficultyPreset = opts.difficultyPreset || DEFAULT_MATCH_PRESET;
-        this.maxPlayers = Math.max(2, Math.min(32, opts.maxPlayers || 4));
+        // Resolve the ruleset (Pillar 4). Precedence: an explicit ruleset object, then a rulesetId
+        // from the registry, else one synthesized from the legacy opts — which preserves the classic
+        // race behavior exactly, so nothing changes until a caller asks for a different ruleset.
+        this.ruleset = opts.ruleset ? defineRuleset(opts.ruleset)
+            : (opts.rulesetId ? getRuleset(opts.rulesetId, opts.rulesetOverrides) : rulesetFromMatchOpts(opts));
+        this.winCondition = resolveWinCondition(this.ruleset.winCondition.type);
+        this.pvpCombat = this.ruleset.entities.pvpCombat;
+        this._deathCounter = 0; // increments per death → last-alive tiebreak (died later ranks higher)
+
+        this.economy = opts.economy || this.ruleset.economy.model;
+        this.variant = opts.variant || (this.pvpCombat ? 'pvp' : 'race');
+        this.difficultyPreset = opts.difficultyPreset || this.ruleset.world.difficultyPreset || DEFAULT_MATCH_PRESET;
+        this.maxPlayers = Math.max(2, Math.min(32, opts.maxPlayers || this.ruleset.players.max || 4));
         this.cryptoType = opts.cryptoType || process.env.CRYPTO_TYPE || 'WOW';
         this.startBlockHeight = opts.startBlockHeight || null;
         this.createdAt = Date.now();
@@ -69,8 +79,9 @@ class MatchRoom extends Room {
         // Generate the shared dungeon
         this._generateDungeon();
 
-        // Spawn players at entrance, monster in configured room
-        this._spawnMonster();
+        // Spawn players at entrance, and the shared monster when the ruleset includes one.
+        this.monster = null;
+        if (this.ruleset.entities.monster) this._spawnMonster();
         this._resetEntrants(opts.entrants || {});
 
         // Shared treasure state
@@ -79,9 +90,9 @@ class MatchRoom extends Room {
         // Movement queue for current tick: occupantId -> { dx, dy }
         this.moveQueue = new Map();
 
-        // Timer / deadline bookkeeping
-        this.minDurationMs = 20000; // 20s floor before next-block expiry can fire
-        this.hardCeilingMs = 240000; // 4m absolute max
+        // Timer / deadline bookkeeping (from the ruleset; defaults reproduce the classic values).
+        this.minDurationMs = this.ruleset.timing.minDurationMs;  // floor before next-block expiry can fire (20s)
+        this.hardCeilingMs = this.ruleset.timing.hardCeilingMs;  // absolute max (4m)
         this.startedAt = null;
         this.endedAt = null;
         this.endReason = null;
@@ -309,7 +320,19 @@ class MatchRoom extends Room {
             } else if (!this.isWalkable(p.to.x, p.to.y)) {
                 reason = 'blocked';
             } else if (this.solidOccupants && this.isOccupied(p.to.x, p.to.y, p.id)) {
-                reason = 'occupied';
+                // PvP: stepping onto a living rival strikes them down; the attacker holds position.
+                if (this.pvpCombat) {
+                    const victimId = this._livingOccupantIdAt(p.to.x, p.to.y, p.id);
+                    if (victimId) {
+                        this._killPlayer(victimId, p.id);
+                        events.push({ type: 'player_death', id: victimId, killedBy: p.id, tick: this.tickCount });
+                        reason = 'attack';
+                    } else {
+                        reason = 'occupied'; // only a corpse / non-target is here
+                    }
+                } else {
+                    reason = 'occupied';
+                }
             } else if (destCount.get(`${p.to.x},${p.to.y}`) > 1) {
                 reason = 'collision_pileup';
             }
@@ -399,6 +422,19 @@ class MatchRoom extends Room {
         return tile === "'1" || tile === "'2" || tile === 0 || tile === '>' || tile === '$M';
     }
 
+    // The id of a living, in-play occupant standing on (x,y), excluding `excludeId`. Used for PvP
+    // strikes (a corpse or a finished/escaped player is not a valid target).
+    _livingOccupantIdAt(x, y, excludeId) {
+        for (const occ of this.occupants.values()) {
+            if (occ.id === excludeId) continue;
+            if (occ.x === x && occ.y === y) {
+                const s = this.playerStates.get(occ.id);
+                if (s && s.alive && !s.finished) return occ.id;
+            }
+        }
+        return null;
+    }
+
     _checkResolution() {
         const events = [];
         const exit = this.dungeon.exit;
@@ -422,15 +458,12 @@ class MatchRoom extends Room {
                 events.push({ type: 'treasure_pickup', id: occ.id, x: occ.x, y: occ.y, tick: this.tickCount });
             }
 
-            // Exit reached.
+            // Exit reached. The ruleset's win condition decides what that means (race: first out
+            // wins & ends; last-alive: you survived but the match continues; score: just finished).
             if (exit && occ.x === exit[0] && occ.y === exit[1]) {
                 this._finishPlayer(occ.id, true);
                 events.push({ type: 'player_exit', id: occ.id, hasTreasure: state.hasTreasure, tick: this.tickCount });
-                if (!this.winnerId) {
-                    this.winnerId = occ.id;
-                    this.endReason = 'escaped';
-                    this.status = 'finished';
-                }
+                this.winCondition.onExit(this, occ.id);
             }
         }
 
@@ -443,6 +476,7 @@ class MatchRoom extends Room {
         if (!state || !state.alive) return;
         state.alive = false;
         state.killedBy = killedBy;
+        state.deathOrder = ++this._deathCounter; // later deaths rank higher in last-alive
 
         // Drop treasure at corpse if carrying.
         if (state.hasTreasure && this.treasure) {
@@ -452,11 +486,8 @@ class MatchRoom extends Room {
             state.hasTreasure = false;
         }
 
-        if (this.activePlayerCount === 0 && this.finishCount === 0 && this.status === 'active') {
-            // Everyone died without anyone escaping.
-            this.endReason = 'all_dead';
-            this.status = 'finished';
-        }
+        // The ruleset decides whether this death ends the match (race: all-dead; last-alive: one left).
+        this.winCondition.onDeath(this);
     }
 
     _finishPlayer(id, escaped) {
@@ -529,38 +560,10 @@ class MatchRoom extends Room {
     finalize() {
         if (this.status !== 'finished') return this.playerStates;
 
-        const exit = this.dungeon.exit;
-        // A winner already designated by first-to-escape (_checkResolution) must remain the
-        // winner: the first player out wins the race regardless of treasure/speed tiebreakers
-        // among later finishers. When no one escaped (timeout / all-dead) preWinner is null and
-        // ranking alone decides.
-        const preWinner = this.winnerId;
-        const ranked = Array.from(this.playerStates.entries()).map(([id, state]) => {
-            const occ = this.occupants.get(id);
-            const dist = exit && occ && state.alive ? Math.abs(occ.x - exit[0]) + Math.abs(occ.y - exit[1]) : Infinity;
-            return { id, state, occ, dist };
-        });
-
-        ranked.sort((a, b) => {
-            // Designated escape-winner always ranks first (placement #1 == crypto payout target).
-            if (preWinner) {
-                const aw = a.id === preWinner ? 1 : 0;
-                const bw = b.id === preWinner ? 1 : 0;
-                if (aw !== bw) return bw - aw;
-            }
-            const finishedA = a.state.finished ? 1 : 0;
-            const finishedB = b.state.finished ? 1 : 0;
-            if (finishedA !== finishedB) return finishedB - finishedA;
-            const aliveA = a.state.alive ? 1 : 0;
-            const aliveB = b.state.alive ? 1 : 0;
-            if (aliveA !== aliveB) return aliveB - aliveA;
-            if (a.dist !== b.dist) return a.dist - b.dist;
-            const tA = a.state.hasTreasure ? 1 : 0;
-            const tB = b.state.hasTreasure ? 1 : 0;
-            if (tA !== tB) return tB - tA;
-            if (a.state.moves !== b.state.moves) return a.state.moves - b.state.moves;
-            return a.id.localeCompare(b.id);
-        });
+        // The ruleset's win condition provides the final ordering (best-first). FIRST_TO_EXIT
+        // reproduces the classic ranking (escape-winner first, then finished > alive > closer-to-
+        // exit > treasure > fewer-moves); last-alive/high-score order by their own rules.
+        const ranked = this.winCondition.rank(this);
 
         for (let i = 0; i < ranked.length; i++) {
             const r = ranked[i];
@@ -568,10 +571,9 @@ class MatchRoom extends Room {
             r.state.score = this._calculateScore(r.state, i + 1, r.dist);
         }
 
-        // Winner consistency across ALL end paths (escape / timeout / all-dead): the crypto
-        // payout target (winnerId) and the leaderboard's placement #1 always name the SAME
-        // player. finalize() is the single source of truth — it runs after expire() in every
-        // path, so it reconciles any provisional winner expire() may have set.
+        // Winner consistency across ALL end paths: the payout target (winnerId) and the
+        // leaderboard's placement #1 always name the SAME player. finalize() is the single source
+        // of truth — it runs after expire() in every path, reconciling any provisional winner.
         if (ranked.length > 0) this.winnerId = ranked[0].id;
 
         return this.playerStates;
