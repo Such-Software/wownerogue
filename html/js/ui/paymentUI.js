@@ -200,7 +200,10 @@ const PaymentUI = {
         if (this.config.directModeEnabled) {
             const price = this.config.singleGamePriceFormatted || this.formatPrice(this.config.singleGamePrice);
             const multipliers = this.config.payoutMultipliers?.direct || { escape: 2, escapeWithTreasure: 3 };
-            const directPayoutsEnabled = this.config.directPayoutsEnabled !== false;
+            // Payout-honest: only show multipliers when payouts are actually on (default off, not on).
+            const directPayoutsEnabled = this.config.directPayoutsEnabled != null
+                ? !!this.config.directPayoutsEnabled
+                : !!this.config.payoutsEnabled;
             
             let payoutInfo = '';
             if (directPayoutsEnabled) {
@@ -214,12 +217,13 @@ const PaymentUI = {
             $container.append(`
                 <div class="payment-section" style="margin-bottom:15px;padding:12px;background:#1a1a2e;border:1px solid #444;border-radius:6px;">
                     <div style="margin-bottom:8px;">
-                        <strong style="color:#f0f0f0;">⚡ Single Game</strong>
+                        <strong style="color:#f0f0f0;">⚡ Single game <span style="color:#a78bfa;font-size:0.8em;">· 1 credit</span></strong>
                         <span style="float:right;color:#fbbf24;font-weight:bold;">${price} ${currency}</span>
                     </div>
-                    <div style="font-size:0.85em;color:#aaa;margin-bottom:10px;">
+                    <div style="font-size:0.85em;color:#aaa;margin-bottom:6px;">
                         ${payoutInfo}
                     </div>
+                    <div style="font-size:0.78em;color:#888;margin-bottom:10px;">Counts as 1 credit toward cosmetic unlocks.</div>
                     <button class="mode-option" data-mode="PAID_SINGLE" data-action="pay_direct"
                             style="width:100%;padding:8px;background:#3730a3;border:none;color:#fff;cursor:pointer;border-radius:4px;">
                         💰 Pay ${price} ${currency} to Play

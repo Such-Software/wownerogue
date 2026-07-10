@@ -18,6 +18,7 @@ const paymentConfig = require('../config/paymentConfig');
 const money = require('../money/atomic');
 const Entitlements = require('../multiplayer/entitlements');
 const ProductGrants = require('../payments/productGrants');
+const { buildProviderRegistry } = require('../payments/providers');
 
 // A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it
 // is SAFE to retry (no double-pay risk) — unlike an ambiguous post-broadcast failure. Monero
@@ -31,11 +32,17 @@ const DEFAULT_SINGLE_GAME_PRICE = 5000000000;   // 0.005 XMR or 0.05 WOW dependi
 const DEFAULT_CREDITS_PACKAGE_PRICE = 50000000000;
 
 class GameModeManager {
-    constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null) {
+    constructor(databaseManager, walletRPCService, debugManager, paymentConfigManager = null, paymentProviders = null) {
         this.db = databaseManager;
         this.walletService = walletRPCService;
         this.debugManager = debugManager;
         this.paymentConfigManager = paymentConfigManager || null;
+
+        // Modular payment providers (Pillar 3). Defaults to a registry whose only member is the
+        // native Monero/Wownero provider wrapping this walletService — so with no gateway env set
+        // every chain routes to the existing wallet-RPC path and behavior is unchanged. Injectable
+        // for tests. See src/payments/providers/index.js + the btcpay-infra-topology memo.
+        this.paymentProviders = paymentProviders || buildProviderRegistry({ walletService: walletRPCService });
 
         this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
         this.currencyDecimals = this.inferCurrencyDecimals(this.cryptoType);
@@ -488,6 +495,67 @@ class GameModeManager {
 
     async processCreditsPackageConfirmation(socketId, paymentId, packageInfo = null, receivedAmount = null) {
         return this.processProductPaymentConfirmation(socketId, paymentId, packageInfo, receivedAmount);
+    }
+
+    /**
+     * Record a direct/single_game entry as "buy 1 credit and immediately spend it on this game":
+     * the balance nets to zero but total_credits_purchased advances, so a direct payment unlocks the
+     * SAME tier/threshold cosmetics as buying credits (the first step of unifying everything to
+     * credits). Idempotent by the caller — the single_game confirmation runs once per payment via
+     * its status='pending' -> 'confirmed' guard. Returns { totalCreditsPurchased, balance,
+     * entitlements } or null.
+     */
+    async recordDirectEntryPurchase(socketId) {
+        try {
+            const user = await this.getOrCreateUser(socketId, { create: false });
+            if (!user || user.id == null) return null;
+            let totalCreditsPurchased = 0;
+            let balance = 0;
+            let premiumLevel = null;
+            await this.db.withTransaction(async (client) => {
+                const upd = await client.query(
+                    `UPDATE users
+                     SET total_credits_purchased = COALESCE(total_credits_purchased, 0) + 1
+                     WHERE id = $1
+                     RETURNING total_credits_purchased, credits, premium_level`,
+                    [user.id]
+                );
+                if (!upd.rows.length) return;
+                totalCreditsPurchased = Number(upd.rows[0].total_credits_purchased || 0);
+                balance = Number(upd.rows[0].credits || 0);
+                premiumLevel = upd.rows[0].premium_level || null;
+                // Audit trail: bought 1 credit + spent it on this game (net 0 balance).
+                await client.query(
+                    `INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
+                     VALUES ($1, 1, 'direct_entry', $2, 'purchase'),
+                            ($1, -1, 'game_entry', $2, 'spend')`,
+                    [user.id, balance]
+                );
+            });
+
+            let packGrants = [];
+            try {
+                const g = await this.db.query(
+                    `SELECT pack_id, source, granted_at, expires_at FROM user_pack_entitlements
+                     WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
+                    [user.id]
+                );
+                packGrants = g.rows || [];
+            } catch (_) { packGrants = []; }
+
+            const entitlements = Entitlements.snapshotForUser({
+                id: user.id,
+                credits: balance,
+                total_credits_purchased: totalCreditsPurchased,
+                premium_level: premiumLevel
+            }, packGrants);
+
+            return { totalCreditsPurchased, balance, entitlements };
+        } catch (err) {
+            const normalized = normalizeError(err, 'Failed to record direct entry purchase');
+            console.error('❌ recordDirectEntryPurchase error:', normalized.message);
+            return null;
+        }
     }
 
     async _findReusablePayment(userId, paymentType, productId = null) {
@@ -1153,13 +1221,31 @@ class GameModeManager {
             `, [user.id]);
             const expiredAddresses = expiredResult.rows.map(r => r.subaddress);
 
-            // Create payment request using wallet RPC with correct parameters
-            const paymentResult = await this.walletService.createPaymentRequest(
-                amount,
-                description,
-                user.id,
-                socketId
-            );
+            // Create the payment request through the routed provider. The native provider (default
+            // for every chain when no gateway env is set) delegates to walletService.createPaymentRequest,
+            // so this is byte-for-byte the legacy path for the shipped single-chain config — same
+            // subaddress, same walletService monitoring maps. A BTCPay/xmrcheckout/wowcheckout gateway
+            // takes over only when the operator routes this.cryptoType to it.
+            const provider = this.paymentProviders && this.paymentProviders.getProvider(this.cryptoType);
+            let paymentResult;
+            if (provider) {
+                const invoice = await provider.createInvoice({
+                    chain: this.cryptoType,
+                    amountAtomic: amount,
+                    description,
+                    userId: user.id,
+                    orderId: socketId
+                });
+                paymentResult = {
+                    address: invoice.address,
+                    addressIndex: invoice.addressIndex ?? (invoice.raw && invoice.raw.addressIndex) ?? null,
+                    expiresAt: invoice.expiresAt,
+                    invoiceId: invoice.invoiceId || invoice.address
+                };
+            } else {
+                // Defensive fallback: registry somehow empty -> exact legacy call.
+                paymentResult = await this.walletService.createPaymentRequest(amount, description, user.id, socketId);
+            }
 
             const expiresAt = paymentResult.expiresAt || new Date(Date.now() + 30 * 60 * 1000);
 
@@ -1186,6 +1272,7 @@ class GameModeManager {
             return {
                 id: insertedRow?.id,
                 address: paymentResult.address,
+                invoiceId: paymentResult.invoiceId || paymentResult.address,
                 amount: amount,
                 amountFormatted: this.formatAtomicHuman(amount, 4),
                 currency: this.cryptoType,

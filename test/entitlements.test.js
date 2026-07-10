@@ -15,7 +15,7 @@ describe('cosmetic entitlements', () => {
     const entitlements = Entitlements.snapshotForUser({ credits: 7, total_credits_purchased: 10 });
 
     expect(entitlements.premium).toBe(true);
-    expect(entitlements.level).toBe('credits');
+    expect(entitlements.level).toBe('free'); // spend unlocks packs by threshold, but isn't a premium tier
     expect(entitlements.packs['generated-skins']).toBe(true);
     expect(entitlements.packs['iso-dungeon']).toBe(true);
     expect(entitlements.packs['kenney-3d-characters']).toBe(true);

@@ -293,6 +293,14 @@ class PaymentHandlers {
     }
 
     _monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser, paymentType = 'single_game') {
+        // Select the provider that owns this chain: native wallet-RPC by default, or a BTCPay/
+        // checkout gateway when this.cryptoType is routed to one. Native watches by subaddress;
+        // a gateway watches by invoice id. The confirmation handler is identical either way.
+        const registry = this.gameModeManager && this.gameModeManager.paymentProviders;
+        const provider = registry ? registry.getProvider(cryptoType) : null;
+        const isGateway = !!(provider && provider.id !== 'native-monero');
+        const watchRef = isGateway ? (paymentRequest.invoiceId || paymentRequest.address) : paymentRequest.address;
+
         // Record mapping so we can stop later (replace existing entry)
         this.socketPaymentMap.set(socket.id, {
             address: paymentRequest.address,
@@ -301,10 +309,39 @@ class PaymentHandlers {
             cryptoType,
             paymentType,
             package: paymentRequest.package,
+            provider: provider || null,
+            watchRef,
             createdAt: Date.now()
         });
 
-        this.walletService.startPaymentMonitoring(paymentRequest.address, async (status) => {
+        // Expire request after 30 minutes if not confirmed
+        const expiryTimeout = setTimeout(() => {
+            const mapping = this.socketPaymentMap.get(socket.id);
+            if (mapping && mapping.address === paymentRequest.address) { // still active and not replaced
+                this.stopMonitoringForSocket(socket.id);
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment request expired. Type \'enter\' again to create a new payment request.');
+            }
+        }, 30 * 60 * 1000);
+        // Store & unref so tests / process can exit (the 30-min timer must never keep the
+        // event loop alive on its own — in production the server keeps the process running).
+        if (expiryTimeout && expiryTimeout.unref) expiryTimeout.unref();
+        this._expiryTimeouts.set(socket.id, expiryTimeout);
+
+        // Start watching. onUpdate delivers a raw wallet-style status; for native that IS the
+        // walletService status (unchanged legacy path), for a gateway it's mapped from the
+        // Greenfield invoice. Fall back to direct wallet monitoring when no provider is registered.
+        const onStatus = (status) => this._handlePaymentStatus(socket, paymentRequest, currentUser, status);
+        if (provider && typeof provider.startWatch === 'function') {
+            provider.startWatch(watchRef, onStatus, 2000);
+        } else {
+            this.walletService.startPaymentMonitoring(paymentRequest.address, onStatus, 2000);
+        }
+    }
+
+    // Handle one payment status update (raw wallet-style shape: in_mempool/confirmed/complete/
+    // amount/required/confirmations). Extracted verbatim from the monitor callback so native and
+    // gateway providers share the exact same confirmation logic.
+    async _handlePaymentStatus(socket, paymentRequest, currentUser, status) {
             if (status.in_mempool && !status.confirmed) {
                 if (this.mempoolNotified.has(paymentRequest.address)) return;
                 this.mempoolNotified.set(paymentRequest.address, Date.now());
@@ -459,6 +496,25 @@ class PaymentHandlers {
 
                     socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
 
+                    // Unify to credits: a direct/single_game entry counts as buying + spending 1
+                    // credit, so it advances total_credits_purchased and unlocks the same tier/
+                    // threshold cosmetics as a credit purchase. (Runs once — guarded by wasUpdated.)
+                    if (this.gameModeManager && typeof this.gameModeManager.recordDirectEntryPurchase === 'function') {
+                        try {
+                            const rec = await this.gameModeManager.recordDirectEntryPurchase(socket.id);
+                            if (rec) {
+                                socket.emit('credits_update', {
+                                    balance: rec.balance,
+                                    totalCreditsPurchased: rec.totalCreditsPurchased,
+                                    ...(rec.entitlements || {})
+                                });
+                                if (rec.entitlements) socket.emit('identity_update', { entitlements: rec.entitlements });
+                            }
+                        } catch (e) {
+                            console.error('[PaymentHandlers] direct-entry credit record failed:', e.message);
+                        }
+                    }
+
                     // IMPORTANT: If payment confirmed before mempool detection (fast blocks),
                     // the player may not be in the queue yet. Add them now with confirmed=true.
                     const existingIdx = this.queueManager.getPlayerIndex(socket.id);
@@ -501,20 +557,6 @@ class PaymentHandlers {
                 // Clean up monitoring for this socket (even if duplicate)
                 this.stopMonitoringForSocket(socket.id);
             }
-        }, 2000);
-
-        // Expire request after 30 minutes if not confirmed
-        const expiryTimeout = setTimeout(() => {
-            const mapping = this.socketPaymentMap.get(socket.id);
-            if (mapping && mapping.address === paymentRequest.address) { // still active and not replaced
-                this.stopMonitoringForSocket(socket.id);
-                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment request expired. Type \'enter\' again to create a new payment request.');
-            }
-        }, 30 * 60 * 1000);
-        // Store & unref so tests / process can exit (the 30-min timer must never keep the
-        // event loop alive on its own — in production the server keeps the process running).
-        if (expiryTimeout && expiryTimeout.unref) expiryTimeout.unref();
-        this._expiryTimeouts.set(socket.id, expiryTimeout);
     }
 
     /**
@@ -532,7 +574,11 @@ class PaymentHandlers {
     stopMonitoringForSocket(socketId) {
         const mapping = this.socketPaymentMap.get(socketId);
         if (mapping) {
-            this.walletService.stopPaymentMonitoring(mapping.address);
+            if (mapping.provider && typeof mapping.provider.stopWatch === 'function') {
+                mapping.provider.stopWatch(mapping.watchRef || mapping.address); // native delegates to stopPaymentMonitoring
+            } else {
+                this.walletService.stopPaymentMonitoring(mapping.address);
+            }
             this.socketPaymentMap.delete(socketId);
             this.mempoolNotified.delete(mapping.address);
             if (mapping.paymentId != null) {
