@@ -500,6 +500,7 @@ li.debug {
 
 #addressModalInput {
     width: 100%;
+    box-sizing: border-box; /* keep padding+border INSIDE the 100% so it doesn't overflow the modal */
     background: #020205;
     border: 1px solid var(--cyan);
     border-radius: 4px;
