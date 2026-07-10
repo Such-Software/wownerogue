@@ -46,14 +46,28 @@ module.exports = function createAuthRoutes(ctx) {
 
     const userId = userResult.rows[0].id;
 
-    // Reject linking a wallet already bound to a different account.
+    // Sign-in-with-wallet: if this proven wallet already owns a DIFFERENT account, that is a
+    // LOGIN to that account, not a hijack (ownership is cryptographically proven). Adopt it —
+    // re-point that user to the current socket and hand the client its session token so the
+    // browser re-establishes as that account. (Previously this threw "already linked to another
+    // account", which blocked a returning user from signing in on a fresh browser session.)
     const existingLink = await db.query(`
-      SELECT id FROM users WHERE smirk_public_key = $1 AND id != $2
+      SELECT id, anon_token, payout_address FROM users WHERE smirk_public_key = $1 AND id != $2 LIMIT 1
     `, [provenKey, userId]);
 
     if (existingLink.rows.length > 0) {
-      throw new ValidationError('Wallet already linked', {
-        safeMessage: 'This wallet is already linked to another account.'
+      const owner = existingLink.rows[0];
+      await db.query(
+        `UPDATE users SET socket_id = $1, last_seen = NOW() WHERE id = $2`,
+        [socketId, owner.id]
+      );
+      return res.json({
+        success: true,
+        linked: true,
+        adopted: true,
+        sessionToken: owner.anon_token || null,
+        address: owner.payout_address || null,
+        message: 'Signed in to your wallet-linked account.'
       });
     }
 

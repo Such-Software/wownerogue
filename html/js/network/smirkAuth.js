@@ -97,6 +97,16 @@ const SmirkAuth = {
             provenPublicKey = result.pubkey;
         }
 
+        // Sign-in-with-wallet adoption: if this wallet already owned an account, the server signed
+        // us into it and returned that account's session token. Persist it and reload so the whole
+        // session re-establishes as that account (credits, address, history).
+        if (verifyData && verifyData.adopted && verifyData.sessionToken) {
+            try { localStorage.setItem('wownerogue_token', verifyData.sessionToken); } catch (_) { /* ignore */ }
+            $('#messages').append($('<li class="status">').text('🔑 Signed in to your wallet-linked account. Reloading…'));
+            setTimeout(function () { window.location.reload(); }, 700);
+            return { success: true, linked: true, adopted: true, address: verifyData.address || null };
+        }
+
         // Step 3: Get wallet addresses and auto-set payout address
         // Note: the proven public key is a pubkey (hex), NOT an address.
         // We need to call getAddresses() to get the actual WOW address.
