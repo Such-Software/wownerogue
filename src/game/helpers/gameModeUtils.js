@@ -1,3 +1,5 @@
+const ChainProfile = require('../../chain/chainProfile');
+
 const DEFAULT_DECIMALS = 12;
 
 const parseAtomicEnvValue = (val, fallback) => {
@@ -17,13 +19,9 @@ const parseAtomicEnvValue = (val, fallback) => {
     return Math.trunc(num);
 };
 
-const inferCurrencyDecimals = (symbol) => {
-    if (!symbol) return DEFAULT_DECIMALS;
-    const normalized = symbol.toUpperCase();
-    if (normalized === 'WOW') return 11;
-    if (normalized === 'XMR') return 12;
-    return DEFAULT_DECIMALS;
-};
+// Delegates to the ChainProfile registry — one source for all chains (WOW 11, XMR 12, BTC/LTC 8,
+// GRIN 9; unknown -> 12). Previously WOW/XMR were hardcoded and everything else silently got 12.
+const inferCurrencyDecimals = (symbol) => ChainProfile.decimalsFor(symbol);
 
 const getDecimalDivisor = (decimals = DEFAULT_DECIMALS) => {
     const normalized = Number.isFinite(decimals) ? decimals : DEFAULT_DECIMALS;
