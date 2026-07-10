@@ -1,5 +1,6 @@
 const Appearance = require('../multiplayer/appearance');
 const Entitlements = require('../multiplayer/entitlements');
+const CatalogService = require('../services/catalogService');
 
 function parseAppearance(value) {
     if (!value) return Appearance.normalizeAppearance('default');
@@ -14,11 +15,26 @@ function parseAppearance(value) {
 }
 
 class IdentityService {
-    constructor({ db = null, gameModeManager = null, sessionManager = null, debugManager = null } = {}) {
+    constructor({ db = null, gameModeManager = null, sessionManager = null, debugManager = null, catalogService = null } = {}) {
         this.db = db || gameModeManager?.db || null;
         this.gameModeManager = gameModeManager;
         this.sessionManager = sessionManager;
         this.debugManager = debugManager;
+        // Operator-owned cosmetic catalog (DB-backed, cached). Falls back to the built-in default
+        // when the table is absent, so this never breaks a fresh/partly-migrated DB.
+        this.catalogService = catalogService || (this.db ? new CatalogService({ db: this.db }) : null);
+    }
+
+    async _catalog() {
+        if (!this.catalogService) return undefined; // snapshotForUser falls back to DEFAULT_CATALOG
+        try {
+            return await this.catalogService.getCatalog();
+        } catch (err) {
+            if (this.debugManager?.CONSOLE_LOGGING) {
+                console.warn('[IdentityService] catalog load failed; using default:', err.message);
+            }
+            return undefined;
+        }
     }
 
     async userForSocket(socket) {
@@ -56,9 +72,10 @@ class IdentityService {
     }
 
     async entitlementsForUser(user) {
-        if (!user) return Entitlements.snapshotForUser({});
+        const catalog = await this._catalog();
+        if (!user) return Entitlements.snapshotForUser({}, [], catalog);
         const grants = await this.packGrantsForUser(user.id);
-        return Entitlements.snapshotForUser(user, grants);
+        return Entitlements.snapshotForUser(user, grants, catalog);
     }
 
     async entitlementsForSocket(socket) {

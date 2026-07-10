@@ -1,35 +1,41 @@
 const Appearance = require('./appearance');
 
-const PACKS = Object.freeze({
+// Built-in default catalog. This is the FALLBACK used when the DB `cosmetic_catalog` table
+// (migration 024) isn't available (fresh/partly-migrated dev DBs, unit tests). In production the
+// operator-owned DB catalog is loaded by CatalogService and passed into snapshotForUser(); this
+// object just mirrors the four seed packs so nothing regresses without the table.
+//
+// Each entry: { id, label, kind, projection, tier, unlockMinCredits, grantOnly, premium }.
+//   tier            — 0 = free tier; ordered ladder (1,2,3) for premium subscriptions.
+//   unlockMinCredits — lifetime-spend threshold to unlock, or null (not credit-unlockable).
+//   grantOnly       — only obtainable via an explicit grant/purchase.
+//   premium         — derived convenience flag: true unless the pack is free (no gate at all).
+const DEFAULT_CATALOG = Object.freeze({
     'roguelike-interior': Object.freeze({
-        id: 'roguelike-interior',
-        label: 'Kenney Roguelike Interior',
-        premium: false,
-        projection: 'topdown'
+        id: 'roguelike-interior', label: 'Kenney Roguelike Interior', kind: 'render-pack',
+        projection: 'topdown', tier: 0, unlockMinCredits: null, grantOnly: false, premium: false
     }),
     'generated-skins': Object.freeze({
-        id: 'generated-skins',
-        label: 'Premium Generated Skins',
-        premium: true,
-        projection: 'topdown',
-        unlock: { kind: 'credits_purchase', minTotalCreditsPurchased: 1 }
+        id: 'generated-skins', label: 'Premium Generated Skins', kind: 'render-pack',
+        projection: 'topdown', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
     }),
     'iso-dungeon': Object.freeze({
-        id: 'iso-dungeon',
-        label: 'Kenney Isometric Dungeon',
-        premium: true,
-        projection: 'iso',
-        unlock: { kind: 'credits_purchase', minTotalCreditsPurchased: 1 }
+        id: 'iso-dungeon', label: 'Kenney Isometric Dungeon', kind: 'render-pack',
+        projection: 'iso', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
     }),
     'kenney-3d-characters': Object.freeze({
-        id: 'kenney-3d-characters',
-        label: 'Kenney Animated 3D Characters',
-        premium: true,
-        projection: '3d',
-        unlock: { kind: 'credits_purchase', minTotalCreditsPurchased: 1 }
+        id: 'kenney-3d-characters', label: 'Kenney Animated 3D Characters', kind: 'render-pack',
+        projection: '3d', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
     })
 });
 
+// Ordered premium-tier ladder. Buying credits does NOT put you on this ladder (that was the old
+// bug — any purchase → level 'credits' → every premium pack unlocked). 'credits' maps to tier 0.
+const TIER_OF = Object.freeze({ free: 0, credits: 0, supporter: 1, premium: 2, operator: 3 });
+
+// Backwards-compatible alias: productGrants.js and older callers validate pack ids against PACKS.
+const PACKS = DEFAULT_CATALOG;
+// Legacy: the set of premium level names (still referenced by a couple of callers).
 const PREMIUM_LEVELS = new Set(['credits', 'supporter', 'premium', 'operator']);
 
 function asNumber(v) {
@@ -37,68 +43,107 @@ function asNumber(v) {
     return Number.isFinite(n) ? n : 0;
 }
 
-function normalizePackGrants(grants = []) {
+function tierForLevel(level) {
+    const t = TIER_OF[String(level || '').toLowerCase()];
+    return t == null ? 0 : t;
+}
+
+function isFreePack(pack) {
+    return asNumber(pack.tier) === 0 && (pack.unlockMinCredits == null) && !pack.grantOnly;
+}
+
+function normalizePackGrants(grants = [], catalog = DEFAULT_CATALOG) {
     const out = {};
     if (Array.isArray(grants)) {
         for (const g of grants) {
             const id = g && (g.pack_id || g.packId || g.id);
-            if (id && PACKS[id]) out[id] = true;
+            if (id && catalog[id]) out[id] = true;
         }
         return out;
     }
     if (grants && typeof grants === 'object') {
         for (const id of Object.keys(grants)) {
-            if (PACKS[id] && grants[id]) out[id] = true;
+            if (catalog[id] && grants[id]) out[id] = true;
         }
     }
     return out;
 }
 
+// Only a REAL premium tier (supporter/premium/operator) counts as a level; buying credits does not.
 function levelForUser(user = {}) {
     const raw = String(user.premium_level || user.premiumLevel || '').trim().toLowerCase();
-    if (raw) return raw;
-    return asNumber(user.total_credits_purchased || user.totalCreditsPurchased) > 0 ? 'credits' : 'free';
+    if (raw && tierForLevel(raw) > 0) return raw;
+    return 'free';
 }
 
-function snapshotForUser(user = {}, packGrants = []) {
+// A pack is unlocked for a user if ANY of: it's free, an explicit grant, the user's lifetime
+// spend crosses the pack's threshold, or the user's premium tier is >= the pack's tier.
+function snapshotForUser(user = {}, packGrants = [], catalog = DEFAULT_CATALOG) {
+    catalog = catalog && typeof catalog === 'object' ? catalog : DEFAULT_CATALOG;
     const totalCreditsPurchased = asNumber(user.total_credits_purchased || user.totalCreditsPurchased);
     const credits = asNumber(user.credits);
     const level = levelForUser(user);
-    const explicit = normalizePackGrants(packGrants);
-    const hasCreditUnlock = totalCreditsPurchased > 0;
-    const hasPremiumLevel = PREMIUM_LEVELS.has(level);
-    const packs = {};
+    const userTier = tierForLevel(level);
+    const explicit = normalizePackGrants(packGrants, catalog);
 
-    for (const id of Object.keys(PACKS)) {
-        const pack = PACKS[id];
-        if (!pack.premium) {
-            packs[id] = true;
-            continue;
-        }
-        const unlock = pack.unlock || {};
-        const unlockedByCredits = unlock.kind === 'credits_purchase'
-            && hasCreditUnlock
-            && totalCreditsPurchased >= (unlock.minTotalCreditsPurchased || 1);
-        packs[id] = !!explicit[id] || unlockedByCredits || hasPremiumLevel;
+    const packs = {};
+    let anyPremiumUnlocked = false;
+    for (const id of Object.keys(catalog)) {
+        const pack = catalog[id];
+        const tier = asNumber(pack.tier);
+        const minCredits = pack.unlockMinCredits;
+        const free = isFreePack(pack);
+        const unlocked = free
+            || !!explicit[id]
+            || (minCredits != null && totalCreditsPurchased >= asNumber(minCredits))
+            || (tier > 0 && userTier >= tier);
+        packs[id] = unlocked;
+        if (!free && unlocked) anyPremiumUnlocked = true;
     }
 
-    const premiumPackUnlocked = Object.keys(packs).some(id => PACKS[id].premium && packs[id]);
     return {
-        premium: hasCreditUnlock || hasPremiumLevel || premiumPackUnlocked,
-        level: level === 'free' && hasCreditUnlock ? 'credits' : level,
+        premium: userTier > 0 || anyPremiumUnlocked,
+        level,
+        tier: userTier,
         credits,
         totalCreditsPurchased,
-        packs
+        packs,
+        catalog: catalogSummary(catalog)
     };
 }
 
+// Display-facing catalog the client renders (labels/projection/gating) — replaces the hardcoded
+// client RK.PACKS so the operator owns the catalog from one place (the DB).
+function catalogSummary(catalog = DEFAULT_CATALOG) {
+    const out = [];
+    for (const id of Object.keys(catalog)) {
+        const p = catalog[id];
+        out.push({
+            id: p.id || id,
+            label: p.label || id,
+            kind: p.kind || 'render-pack',
+            projection: p.projection || null,
+            tier: asNumber(p.tier),
+            premium: !isFreePack(p),
+            unlockMinCredits: p.unlockMinCredits == null ? null : asNumber(p.unlockMinCredits)
+        });
+    }
+    return out;
+}
+
+// Gating reads the user's computed snapshot (which already contains every catalog pack). Unknown
+// packs default to the built-in catalog's free-check (deny premium, allow free).
 function canUsePack(entitlements = {}, packId) {
-    const pack = PACKS[packId];
-    if (!pack) return false;
-    if (!pack.premium) return true;
+    if (!packId) return true;
+    // A full snapshot's packs map is authoritative (the three-way rule already ran).
     if (entitlements.packs && Object.prototype.hasOwnProperty.call(entitlements.packs, packId)) {
         return !!entitlements.packs[packId];
     }
+    // No granular packs map (a coarse/legacy entitlement): free packs are always allowed; else
+    // fall back to the coarse premium flag. Production entitlements always carry the packs map,
+    // so this branch never weakens real gating.
+    const def = DEFAULT_CATALOG[packId];
+    if (def && isFreePack(def)) return true;
     return !!entitlements.premium;
 }
 
@@ -117,9 +162,13 @@ function normalizeAppearance(input = {}, entitlements = {}) {
 }
 
 module.exports = {
+    DEFAULT_CATALOG,
     PACKS,
     PREMIUM_LEVELS,
+    TIER_OF,
+    tierForLevel,
     snapshotForUser,
+    catalogSummary,
     canUsePack,
     canUseAppearance,
     normalizeAppearance,
