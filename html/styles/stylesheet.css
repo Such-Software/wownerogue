@@ -73,6 +73,10 @@ body {
     height: 100vh;
     width: 100%;
     max-width: 100vw;
+    box-sizing: border-box;
+    /* A few px of right gutter so the play area isn't flush to the viewport edge — otherwise
+       overflow:hidden clips the yellow focus outline on the right side. */
+    padding-right: 6px;
     overflow: hidden;
     gap: 1px;
     background-color: var(--bg-panel);

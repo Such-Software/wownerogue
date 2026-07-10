@@ -19,10 +19,9 @@ const UI = {
         var chatInput = $('#chatInput');
 
         if (document.activeElement === gameDisplay[0]) {
-            // Inset the outline (offset -2px) so it is drawn INSIDE the box — the play area is
-            // flush to the viewport's right edge and the container clips an outward outline there,
-            // which hid the border on the right side.
-            gameDisplay.css({ 'outline': '2px solid yellow', 'outline-offset': '-2px' });
+            // Outward outline; the .container now has a right gutter (padding-right) so the right
+            // segment isn't clipped by overflow:hidden. (Inset offset gets clipped in Chromium.)
+            gameDisplay.css({ 'outline': '2px solid yellow', 'outline-offset': '0' });
             chatInput.css('outline', 'none');
         } else if (document.activeElement === chatInput[0]) {
             chatInput.css('outline', '2px solid cyan');

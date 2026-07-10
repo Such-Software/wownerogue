@@ -77,10 +77,16 @@ const SmirkAuth = {
                 verifyData = result.verifyData;
                 provenPublicKey = result.pubkey;
             } catch (nip98Err) {
-                // Graceful fallback: if NIP-98 signing/verification fails
-                // (wallet threw, lacks the method mid-flow, etc.) fall back to
-                // the legacy path so login still works.
-                console.warn('Smirk NIP-98 auth failed, falling back to legacy:', nip98Err && nip98Err.message);
+                // Only fall back to the legacy path when the wallet genuinely can't do NIP-98
+                // (method missing / unsupported). For LOCKED (unlock the extension), USER_REJECTED
+                // (user closed the popup), or a real signing failure, SURFACE it — re-invoking
+                // connect() would just pop a second prompt. On a current Smirk build a locked
+                // signNostrEvent auto-opens the unlock popup and never reaches here.
+                const code = nip98Err && nip98Err.code;
+                const methodMissing = code === 'UNSUPPORTED' || code === 'METHOD_NOT_FOUND'
+                    || /not a function|is not supported|no such method|unsupported/i.test((nip98Err && nip98Err.message) || '');
+                if (!methodMissing) throw nip98Err;
+                console.warn('Smirk NIP-98 unsupported, falling back to legacy:', nip98Err && nip98Err.message);
                 const result = await this._verifyLegacy(socketId, challenge);
                 verifyData = result.verifyData;
                 provenPublicKey = result.pubkey;
