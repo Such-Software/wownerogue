@@ -27,7 +27,20 @@ const SmirkAuth = {
     _walletAddress: null,
 
     /**
-     * Main login flow
+     * Detect whether the connected Smirk wallet supports NIP-98 (nostr) signing.
+     */
+    _supportsNip98() {
+        return typeof window.smirk?.signNostrEvent === 'function' &&
+               typeof window.smirk?.getNostrPublicKey === 'function';
+    },
+
+    /**
+     * Main login flow.
+     *
+     * Prefers NIP-98 (nostr kind:27235 HTTP auth event) when the wallet
+     * advertises the capability, and gracefully falls back to the legacy
+     * Ed25519 challenge-signing path otherwise (or if NIP-98 signing fails
+     * mid-flow).
      */
     async login() {
         if (!this.isAvailable()) {
@@ -54,7 +67,105 @@ const SmirkAuth = {
 
         const { challenge } = await challengeRes.json();
 
-        // Step 2: Connect to Smirk extension
+        // Step 2: Feature-detect NIP-98 capability and verify with the backend.
+        let verifyData;
+        let provenPublicKey = null;
+
+        if (this._supportsNip98()) {
+            try {
+                const result = await this._verifyNip98(socketId, challenge);
+                verifyData = result.verifyData;
+                provenPublicKey = result.pubkey;
+            } catch (nip98Err) {
+                // Graceful fallback: if NIP-98 signing/verification fails
+                // (wallet threw, lacks the method mid-flow, etc.) fall back to
+                // the legacy path so login still works.
+                console.warn('Smirk NIP-98 auth failed, falling back to legacy:', nip98Err && nip98Err.message);
+                const result = await this._verifyLegacy(socketId, challenge);
+                verifyData = result.verifyData;
+                provenPublicKey = result.pubkey;
+            }
+        } else {
+            const result = await this._verifyLegacy(socketId, challenge);
+            verifyData = result.verifyData;
+            provenPublicKey = result.pubkey;
+        }
+
+        // Step 3: Get wallet addresses and auto-set payout address
+        // Note: the proven public key is a pubkey (hex), NOT an address.
+        // We need to call getAddresses() to get the actual WOW address.
+        let walletAddress = null;
+        try {
+            const addresses = await window.smirk.getAddresses();
+            if (addresses && addresses.wow && window.socket) {
+                window.socket.emit('address:update', { address: addresses.wow });
+                walletAddress = addresses.wow;
+                console.log('Smirk WOW address set:', addresses.wow.substring(0, 20) + '...');
+            }
+        } catch (addrErr) {
+            console.warn('Could not get Smirk addresses:', addrErr.message);
+            // Fall back - user will need to manually enter address
+        }
+
+        // Update internal state
+        this._isLinked = true;
+        this._walletAddress = walletAddress;
+        this._publicKey = provenPublicKey;
+
+        return {
+            success: true,
+            linked: verifyData.linked,
+            address: walletAddress
+        };
+    },
+
+    /**
+     * NIP-98 auth path: build a kind:27235 nostr event, sign it with the
+     * Smirk wallet, and POST { socketId, event } to /verify.
+     *
+     * @returns {Promise<{verifyData: object, pubkey: string|null}>}
+     */
+    async _verifyNip98(socketId, challenge) {
+        // Build the NIP-98 HTTP auth event. The wallet fills in pubkey/id/sig.
+        const evt = {
+            kind: 27235,
+            created_at: Math.floor(Date.now() / 1000),
+            content: '',
+            tags: [
+                ['u', new URL('/api/auth/smirk/verify', window.location.origin).href],
+                ['method', 'POST'],
+                ['challenge', challenge]
+            ]
+        };
+
+        const signed = await window.smirk.signNostrEvent(evt);
+        if (!signed || typeof signed !== 'object') {
+            throw new Error('Smirk wallet did not return a signed nostr event');
+        }
+
+        const verifyRes = await fetch('/api/auth/smirk/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ socketId, event: signed })
+        });
+
+        if (!verifyRes.ok) {
+            const error = await verifyRes.json().catch(() => ({}));
+            throw new Error(error.message || 'NIP-98 verification failed');
+        }
+
+        const verifyData = await verifyRes.json();
+        return { verifyData, pubkey: signed.pubkey || null };
+    },
+
+    /**
+     * Legacy Ed25519 auth path: connect, sign the challenge string, and POST
+     * { socketId, challenge, publicKey, signature } to /verify.
+     *
+     * @returns {Promise<{verifyData: object, pubkey: string|null}>}
+     */
+    async _verifyLegacy(socketId, challenge) {
+        // Connect to Smirk extension
         let keys;
         try {
             keys = await window.smirk.connect();
@@ -66,7 +177,7 @@ const SmirkAuth = {
             throw new Error('Smirk wallet did not return WOW public key');
         }
 
-        // Step 3: Sign the challenge
+        // Sign the challenge
         let signResult;
         try {
             signResult = await window.smirk.signMessage(challenge);
@@ -80,7 +191,7 @@ const SmirkAuth = {
             throw new Error('WOW signature not found in Smirk response');
         }
 
-        // Step 4: Verify signature with backend
+        // Verify signature with backend
         const verifyRes = await fetch('/api/auth/smirk/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -98,33 +209,7 @@ const SmirkAuth = {
         }
 
         const verifyData = await verifyRes.json();
-
-        // Step 5: Get wallet addresses and auto-set payout address
-        // Note: keys.wow is a public key (hex), NOT an address
-        // We need to call getAddresses() to get the actual WOW address
-        let walletAddress = null;
-        try {
-            const addresses = await window.smirk.getAddresses();
-            if (addresses && addresses.wow && window.socket) {
-                window.socket.emit('address:update', { address: addresses.wow });
-                walletAddress = addresses.wow;
-                console.log('Smirk WOW address set:', addresses.wow.substring(0, 20) + '...');
-            }
-        } catch (addrErr) {
-            console.warn('Could not get Smirk addresses:', addrErr.message);
-            // Fall back - user will need to manually enter address
-        }
-
-        // Update internal state
-        this._isLinked = true;
-        this._walletAddress = walletAddress;
-        this._publicKey = wowSig.publicKey;
-
-        return {
-            success: true,
-            linked: verifyData.linked,
-            address: walletAddress
-        };
+        return { verifyData, pubkey: wowSig.publicKey };
     },
 
     /**
@@ -136,7 +221,13 @@ const SmirkAuth = {
         }
 
         try {
-            const res = await fetch(`/api/auth/smirk/status?socketId=${encodeURIComponent(window.socket.id)}`);
+            // /status is session-gated (BOLA fix) — send the session token so a linked user
+            // is recognised; without it the endpoint returns 401 and we fall through to unlinked.
+            var token = '';
+            try { token = localStorage.getItem('wownerogue_token') || ''; } catch (_) { token = ''; }
+            const res = await fetch(`/api/auth/smirk/status?socketId=${encodeURIComponent(window.socket.id)}`, {
+                headers: token ? { 'X-Session-Token': token } : {}
+            });
             if (res.ok) {
                 const data = await res.json();
                 this._isLinked = data.linked;
