@@ -170,7 +170,9 @@ const SmirkAuth = {
         try {
             keys = await window.smirk.connect();
         } catch (smirkError) {
-            throw new Error('Failed to connect to Smirk wallet: ' + (smirkError.message || 'Unknown error'));
+            const e = new Error('Failed to connect to Smirk wallet: ' + (smirkError.message || 'Unknown error'));
+            e.code = smirkError && smirkError.code; // preserve SmirkRpcError code ('LOCKED', 'USER_REJECTED', …)
+            throw e;
         }
 
         if (!keys || !keys.wow) {
@@ -182,7 +184,9 @@ const SmirkAuth = {
         try {
             signResult = await window.smirk.signMessage(challenge);
         } catch (signError) {
-            throw new Error('Failed to sign challenge: ' + (signError.message || 'Unknown error'));
+            const e = new Error('Failed to sign challenge: ' + (signError.message || 'Unknown error'));
+            e.code = signError && signError.code; // preserve 'LOCKED' etc.
+            throw e;
         }
 
         // Find WOW signature
@@ -317,11 +321,20 @@ const SmirkAuth = {
 
         } catch (err) {
             console.error('Smirk login failed:', err);
-            this._updateButton(btn, 'error');
+            this._updateButton(btn, 'error'); // button label becomes "Retry Smirk Connect"
 
-            // Show error message
-            const errorMsg = 'Smirk login failed: ' + err.message;
-            $('#messages').append($('<li class="error">').text(errorMsg));
+            // A locked wallet is an action, not a red error. Current Smirk builds auto-open the
+            // unlock popup on connect()/signNostrEvent(); older builds throw LOCKED — so guide the
+            // user to unlock and retry (the Retry button re-invokes connect(), which pops the
+            // unlock screen on the updated build).
+            const locked = (err && err.code === 'LOCKED') || /is locked/i.test((err && err.message) || '');
+            if (locked) {
+                $('#messages').append($('<li class="status">').text(
+                    '🔒 Your Smirk wallet is locked. Open the Smirk extension, unlock it, then click "Retry Smirk Connect".'
+                ));
+            } else {
+                $('#messages').append($('<li class="error">').text('Smirk login failed: ' + err.message));
+            }
 
             throw err;
         }

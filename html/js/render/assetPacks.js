@@ -112,16 +112,15 @@
             tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
             // Default tile picks from the sheet metadata ( roguelikeSheet_meta.json).
             // The tile-picker overlay can override these per-user via localStorage.
-            // floor/wall are ARRAYS of [col,row] variants (sheet cols = 57): TileRenderer
-            // picks one deterministically per cell so a wall of stone doesn't read as a
-            // single flat texture. Single-pair kinds (bar/table/features) draw as-is.
+            // Each kind maps to a single [col,row] on the sheet (cols = 57). Per-cell "variant"
+            // arrays were tried but mixing wood/stone/plank tiles per cell read as noise, so we
+            // keep one coherent tile per kind. (TileRenderer still accepts an array here if a
+            // future theme wants subtle, same-material variation.)
             tiles: {
-                // floor: sheet 119/120 (wood/stone) + 982-984 (planks)
-                floor: [[5, 2], [6, 2], [13, 17], [14, 17], [15, 17]],
-                floor2: [[6, 2], [13, 17], [15, 17]],
-                // wall: sheet 697-701 + 868/869/871-874 (stone masonry)
-                wall: [[13, 12], [14, 12], [15, 12], [16, 12], [17, 12],
-                       [13, 15], [14, 15], [16, 15], [17, 15], [18, 15], [19, 15]],
+                floor: [5, 2],      // tile 119 — wood floor (uniform)
+                floor2: [6, 2],     // tile 120 — stone floor (accent)
+                wall: [13, 12],     // tile 697 — stone masonry
+
                 bar: [28, 0],       // tile 28  — counter
                 table: [20, 3],     // tile 191 — table
                 // Dungeon features drawn as real tiles instead of monospace glyphs.
