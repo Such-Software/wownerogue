@@ -209,7 +209,10 @@ class SocketHandlers {
             debugManager: this.debugManager,
             roomData: tavernRoomData,
             roomUrl: tavernRoomData ? tavernRoomUrl : null,
-            entitlementProvider: async (socket) => this._entitlementsForSocket(socket)
+            entitlementProvider: async (socket) => this._entitlementsForSocket(socket),
+            // Share the lobby's global chat provider so the tavern joins one global chat with
+            // persistent history (and nostr fan-out when enabled), instead of ephemeral room chat.
+            globalChatProvider: this.chatHandler.chatProvider
         });
         this.tavernManager.initialize();
         // Initialize match mode queue, scheduler, and manager. Inert unless MATCH_ENABLED=true.

@@ -23,7 +23,7 @@ function escapeHtml(s) {
  * is broadcast to occupants once per server tick (clients render from these snapshots).
  */
 class TavernManager {
-    constructor({ io, debugManager, roomId = 'main', tickMs = null, roomData = null, roomUrl = null, entitlementProvider = null } = {}) {
+    constructor({ io, debugManager, roomId = 'main', tickMs = null, roomData = null, roomUrl = null, entitlementProvider = null, globalChatProvider = null } = {}) {
         this.io = io;
         this.debugManager = debugManager;
         this.enabled = process.env.TAVERN_ENABLED === 'true';
@@ -42,8 +42,10 @@ class TavernManager {
 
         this.room = new Room({ id: this.roomId, type: 'tavern', roomData: roomData, roomUrl: roomUrl });
 
-        // Tavern chat is ephemeral (no history) and delivered only to the tavern room, via the
-        // same ChatProvider seam the global chat uses.
+        // Chat: prefer the shared GLOBAL chat provider (persistent history + cross-page/relay
+        // fan-out) so the tavern participates in one global chat with backlog. When it isn't
+        // injected, fall back to an ephemeral tavern-scoped provider (previous behavior).
+        this.globalChatProvider = globalChatProvider;
         this.chatProvider = new SocketChatProvider({ io: this.io, debugManager: this.debugManager });
     }
 
@@ -125,6 +127,13 @@ class TavernManager {
         socket.join(this.channel);
         // Full state (map + occupants) to the joiner; the next tick shows the arrival to others.
         socket.emit('tavern_joined', { you: socket.id, state: this.room.fullState() });
+
+        // Send recent GLOBAL chat backlog so the tavern shows history on arrival (unified chat).
+        if (this.globalChatProvider && typeof this.globalChatProvider.getHistory === 'function') {
+            this.globalChatProvider.getHistory({ scope: 'global', limit: 50 })
+                .then(messages => { if (messages && messages.length) socket.emit('chat_history', { messages }); })
+                .catch(err => { if (this.debugManager?.CONSOLE_LOGGING) console.error('[Tavern] history load failed:', err.message); });
+        }
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`[Tavern] +${String(socket.id).slice(0, 6)} (${this.room.size} present)`);
         }
@@ -165,9 +174,13 @@ class TavernManager {
         this._lastChatAt.set(socket.id, now);
 
         const username = occ.name || String(socket.id).slice(0, 6);
-        // Escape here (delivery is trusted-escaped, rendered as HTML on the client).
-        this.chatProvider.publish({
-            scope: this.channel,
+        // Escape here (delivery is trusted-escaped, rendered as HTML on the client). Route to the
+        // global chat (persisted + broadcast to everyone + relayed over nostr when enabled) so the
+        // tavern shares one global conversation; fall back to tavern-scoped if no global provider.
+        const provider = this.globalChatProvider || this.chatProvider;
+        const scope = this.globalChatProvider ? 'global' : this.channel;
+        provider.publish({
+            scope,
             username,
             text: escapeHtml(text),
             ts: now,

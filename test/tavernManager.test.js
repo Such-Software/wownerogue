@@ -227,5 +227,51 @@ describe('TavernManager', () => {
             mgr.shutdown();
             expect(mgr._tickInterval).toBeNull();
         });
+
+        describe('global chat wiring', () => {
+            function makeGlobalProvider() {
+                return {
+                    published: [],
+                    publish(msg) { this.published.push(msg); return Promise.resolve(); },
+                    getHistory() { return Promise.resolve([{ username: 'bob', message: 'gm all' }]); }
+                };
+            }
+
+            test('join sends the global chat backlog to the joiner', async () => {
+                const io = makeFakeIo();
+                const gcp = makeGlobalProvider();
+                const mgr = new TavernManager({ io, globalChatProvider: gcp });
+                const s = makeFakeSocket('a', io);
+                await mgr.join(s, { name: 'Alice' });
+                await new Promise(r => setImmediate(r)); // let the history promise resolve
+                const hist = s.emitted.find(e => e.event === 'chat_history');
+                expect(hist).toBeDefined();
+                expect(hist.payload.messages[0].message).toBe('gm all');
+            });
+
+            test('chat routes to the GLOBAL scope through the shared provider', async () => {
+                const io = makeFakeIo();
+                const gcp = makeGlobalProvider();
+                const mgr = new TavernManager({ io, globalChatProvider: gcp });
+                const s = makeFakeSocket('a', io);
+                await mgr.join(s, { name: 'Alice' });
+                mgr.chat(s, { text: 'hello world' });
+                const sent = gcp.published.find(m => m.text && m.text.indexOf('hello') !== -1);
+                expect(sent).toBeDefined();
+                expect(sent.scope).toBe('global');
+            });
+
+            test('without a global provider, chat stays tavern-scoped (legacy behavior)', async () => {
+                const io = makeFakeIo();
+                const mgr = new TavernManager({ io }); // no globalChatProvider
+                const s = makeFakeSocket('a', io);
+                await mgr.join(s, { name: 'Alice' });
+                io.emitted.length = 0;
+                mgr.chat(s, { text: 'local only' });
+                const bc = io.emitted.find(e => e.event === 'chat_broadcast');
+                expect(bc).toBeDefined();
+                expect(bc.channel).toBe('tavern:main'); // room-scoped, not global
+            });
+        });
     });
 });

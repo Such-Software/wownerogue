@@ -323,7 +323,10 @@
 
         // ---- Chat --------------------------------------------------------------------
         socket.on('chat_broadcast', function (m) {
-            if (!m || !state.channel || m.scope !== state.channel) return;
+            if (!m) return;
+            // Accept the unified GLOBAL chat (no scope / 'global') as well as this tavern's room.
+            var isGlobal = !m.scope || m.scope === 'global';
+            if (!isGlobal && m.scope !== state.channel) return;
             addChatLine(m.username, m.message);
             // Show a speech bubble above the speaker's avatar.
             if (tavernLife && m.socketId) {
@@ -334,6 +337,16 @@
         });
         socket.on('tavern_notice', function (n) {
             if (n && n.message) addSystemLine(n.message);
+        });
+        // Global chat backlog sent on join — render it so the tavern shows history, not a blank log.
+        socket.on('chat_history', function (payload) {
+            var msgs = payload && payload.messages;
+            if (!msgs || !msgs.length) return;
+            for (var i = 0; i < msgs.length; i++) {
+                var mm = msgs[i] || {};
+                var uname = mm.username || mm.playerId || (mm.socketId ? String(mm.socketId).slice(0, 6) : '???');
+                addChatLine(uname, mm.message || '');
+            }
         });
         function addSystemLine(text) {
             var line = document.createElement('div');
