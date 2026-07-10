@@ -720,19 +720,14 @@
                 return;
             }
 
-            var bodyItem = draft.equipment && draft.equipment.body;
-            var headItem = draft.equipment && draft.equipment.head;
-
-            sectionTitle('Color', editSection);
-            if (!bodyItem || bodyItem === 'none') renderColorRow('Cloth', 'base', 'tint', editSection);
-            renderColorRow('Skin', 'skin', 'skin', editSection);
-            if (!headItem || headItem === 'none') renderColorRow('Hair', 'hair', 'hair', editSection);
-
+            // Sprite tinting (cloth / skin / hair / gear colour) is disabled for the top-down
+            // Tiles view — characters render in native Kenney art. Only equipment PIECE selection
+            // remains here; the '@' colour for ASCII mode is still pickable in the ascii/colour
+            // branch above.
             sectionTitle('Equipment', editSection);
             (RK.CHAR_EQUIPMENT_SLOTS || []).forEach(function (slot) {
                 var catalog = RK.CHAR_EQUIPMENT[slot] || {};
                 var opts = row(slot.charAt(0).toUpperCase() + slot.slice(1), editSection);
-                var selectedItem = catalog[draft.equipment[slot]];
                 for (var id in catalog) {
                     (function (item) {
                         opts.appendChild(optionButton(item.label, draft.equipment[slot] === item.id, function () {
@@ -741,9 +736,6 @@
                             redrawAll();
                         }, optionTileCanvas(slot, item, draft, equipRedrawers)));
                     })(catalog[id]);
-                }
-                if (equipmentColorable(selectedItem)) {
-                    renderColorRow(slot.charAt(0).toUpperCase() + slot.slice(1) + ' color', slot, 'tint', editSection);
                 }
             });
         }
