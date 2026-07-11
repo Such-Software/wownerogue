@@ -15,17 +15,19 @@ const DEFAULT_CATALOG = Object.freeze({
         id: 'roguelike-interior', label: 'Kenney Roguelike Interior', kind: 'render-pack',
         projection: 'topdown', tier: 0, unlockMinCredits: null, grantOnly: false, premium: false
     }),
+    // Graduated ladder — unlock by lifetime credit spend OR by subscription tier, whichever comes
+    // first: Fancy(skins) at 1 credit / supporter, Iso at 10 / premium, 3D at 25 / operator.
     'generated-skins': Object.freeze({
         id: 'generated-skins', label: 'Premium Generated Skins', kind: 'render-pack',
         projection: 'topdown', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
     }),
     'iso-dungeon': Object.freeze({
         id: 'iso-dungeon', label: 'Kenney Isometric Dungeon', kind: 'render-pack',
-        projection: 'iso', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
+        projection: 'iso', tier: 2, unlockMinCredits: 10, grantOnly: false, premium: true
     }),
     'kenney-3d-characters': Object.freeze({
         id: 'kenney-3d-characters', label: 'Kenney Animated 3D Characters', kind: 'render-pack',
-        projection: '3d', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
+        projection: '3d', tier: 3, unlockMinCredits: 25, grantOnly: false, premium: true
     })
 });
 

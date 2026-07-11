@@ -16,9 +16,16 @@
     ];
 
     RK.entitlements = RK.entitlements || { premium: false, level: 'free', packs: {} };
-    // Production QA switch: set to true to temporarily bypass premium render-mode gating for
-    // testing. Default false — premium modes (Fancy/Iso/3D) gate behind pack entitlements.
+    // Per-session QA bypass for premium render-mode gating (Fancy/Iso/3D). Default OFF. A tester
+    // opts IN for their own browser only via ?unlock=1 (persisted) — nobody else is affected:
+    //   ?unlock=1  -> on (sticky)     ?unlock=0  -> off
     RK.RENDER_MODE_TEST_UNLOCKS = false;
+    try {
+        var q = (root.location && root.location.search) || '';
+        var m = /[?&]unlock=([01])/.exec(q);
+        if (m) { try { root.localStorage.setItem('rk_unlock_all', m[1]); } catch (_) {} }
+        RK.RENDER_MODE_TEST_UNLOCKS = (root.localStorage && root.localStorage.getItem('rk_unlock_all') === '1');
+    } catch (_) { /* no location/localStorage */ }
     RK.renderModeTestUnlocks = function () { return RK.RENDER_MODE_TEST_UNLOCKS === true; };
 
     RK.modeMeta = function (id) {

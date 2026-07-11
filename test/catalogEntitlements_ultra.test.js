@@ -22,12 +22,19 @@ describe('three-way unlock — default (seed) catalog', () => {
         expect(s.tier).toBe(0);
     });
 
-    test('backward-compat: buying any credit unlocks the seed packs (all threshold 1)', () => {
+    test('graduated ladder: 1 credit unlocks Fancy (skins) only, not Iso or 3D', () => {
         const s = snapshotForUser({ credits: 5, total_credits_purchased: 1 });
+        expect(s.packs['generated-skins']).toBe(true);           // threshold 1
+        expect(s.packs['iso-dungeon']).toBe(false);              // threshold 10
+        expect(s.packs['kenney-3d-characters']).toBe(false);     // threshold 25
+        expect(s.premium).toBe(true);                            // a premium pack IS unlocked
+    });
+
+    test('graduated ladder: 25 credits unlocks the whole ladder', () => {
+        const s = snapshotForUser({ credits: 0, total_credits_purchased: 25 });
         expect(s.packs['generated-skins']).toBe(true);
         expect(s.packs['iso-dungeon']).toBe(true);
         expect(s.packs['kenney-3d-characters']).toBe(true);
-        expect(s.premium).toBe(true);
     });
 
     test('a credit buyer is NOT auto-promoted to a premium tier', () => {
@@ -91,7 +98,7 @@ describe('canUsePack reads the snapshot', () => {
         const locked = snapshotForUser({ total_credits_purchased: 0 });
         expect(Entitlements.canUsePack(locked, 'roguelike-interior')).toBe(true);  // free
         expect(Entitlements.canUsePack(locked, 'iso-dungeon')).toBe(false);        // locked
-        const unlocked = snapshotForUser({ total_credits_purchased: 1 });
+        const unlocked = snapshotForUser({ total_credits_purchased: 10 }); // iso threshold is 10
         expect(Entitlements.canUsePack(unlocked, 'iso-dungeon')).toBe(true);
     });
 });

@@ -11,14 +11,14 @@ describe('cosmetic entitlements', () => {
     expect(Entitlements.normalizeAppearance({ avatar: 'kenney-survivor-male' }, entitlements).avatar).toBe('default');
   });
 
-  test('any credits purchase unlocks the preview premium packs', () => {
+  test('graduated ladder: credit spend unlocks packs by threshold', () => {
     const entitlements = Entitlements.snapshotForUser({ credits: 7, total_credits_purchased: 10 });
 
     expect(entitlements.premium).toBe(true);
     expect(entitlements.level).toBe('free'); // spend unlocks packs by threshold, but isn't a premium tier
-    expect(entitlements.packs['generated-skins']).toBe(true);
-    expect(entitlements.packs['iso-dungeon']).toBe(true);
-    expect(entitlements.packs['kenney-3d-characters']).toBe(true);
+    expect(entitlements.packs['generated-skins']).toBe(true);         // threshold 1
+    expect(entitlements.packs['iso-dungeon']).toBe(true);            // threshold 10 — just reached
+    expect(entitlements.packs['kenney-3d-characters']).toBe(false);  // threshold 25 — not yet
     expect(Entitlements.normalizeAppearance({ avatar: 'monero-knight' }, entitlements).avatar).toBe('monero-knight');
   });
 

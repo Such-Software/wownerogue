@@ -47,7 +47,8 @@ describe('IdentityService', () => {
 
     expect(snapshot.appearance).toEqual(db.state.user.appearance);
     expect(snapshot.entitlements.premium).toBe(true);
-    expect(snapshot.entitlements.packs['iso-dungeon']).toBe(true);
+    expect(snapshot.entitlements.packs['generated-skins']).toBe(true);   // 5 credits >= threshold 1
+    expect(snapshot.entitlements.packs['iso-dungeon']).toBe(false);      // < threshold 10
   });
 
   test('saves normalized appearance and refreshes the session cache', async () => {
