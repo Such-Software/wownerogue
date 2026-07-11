@@ -250,14 +250,21 @@
         // Furniture kinds draw a floor tile as the base + the prop sprite on top (same idea as the
         // tiled renderer's `over` compositing). Everything else is a plain ground/wall tile.
         var PROP = { bar: 1, table: 1, chair: 1, keg: 1, shelf: 1, barrel: 1, crate: 1, chest: 1 };
-        var items = [], x, y, kind, p;
+        var legend = scene.legend || {};
+        var items = [], x, y, kind, p, def;
         for (y = 0; y < scene.rows; y++) {
             for (x = 0; x < scene.cols; x++) {
                 kind = scene.grid[y][x];
+                def = legend[kind];
                 p = this._project(x, y, originX, originY);
                 items.push({ type: 'tile', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y });
                 if (PROP[kind]) {
                     items.push({ type: 'prop', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y + 0.25 });
+                }
+                // Fire fixtures (torch/hearth) & hazard tiles (lava/poison/spikes): a floor tile is
+                // the base (drawn above via fallback); RK.fx paints the animated flame / pulse.
+                if (def && (def.fx === 'fire' || def.hazard)) {
+                    items.push({ type: 'fx', def: def, x: x, y: y, sx: p.x, sy: p.y, depth: x + y + 0.3 });
                 }
             }
         }
@@ -281,6 +288,20 @@
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.4, 22, 9);
                 rec = this._load(this._tileUrl(it.kind));
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
+            } else if (it.type === 'fx' && root.RK && RK.fx) {
+                this._animating = true; // keep the RAF alive so the flame/pulse animates
+                var fcx = it.sx, fgy = it.sy + this.tileH * 1.15;
+                if (it.def.hazard) {
+                    var hw = this.tileW / 2, hh = this.tileH / 2, hy = it.sy + this.tileH;
+                    RK.fx.hazard(ctx, it.def.hazard, fcx, hy, this.tileW * 0.5, now, function (c) {
+                        c.beginPath();
+                        c.moveTo(fcx, hy - hh); c.lineTo(fcx + hw, hy);
+                        c.lineTo(fcx, hy + hh); c.lineTo(fcx - hw, hy); c.closePath();
+                    });
+                } else {
+                    var fscale = this.tileW * (it.def.fxScale || 0.34) * 0.7;
+                    RK.fx.fire(ctx, fcx, fgy, fscale, now, (it.x * 7 + it.y * 13) % 97);
+                }
             } else if (it.type === 'entity') {
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.15, 18, 7);
                 var frame = this._charFrame(it.e, now);

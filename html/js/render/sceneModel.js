@@ -22,14 +22,17 @@
         chair:  { char: 'c', color: '#5a4028', solid: false, over: 'floor' },  // walkable — stand on it to "sit"
         barrel: { char: 'B', color: '#5a4028', solid: true,  over: 'floor' },
         crate:  { char: 'C', color: '#7a5a38', solid: true,  over: 'floor' },
-        door:   { char: 'D', color: '#3fb950', solid: false, over: 'floor' }
+        door:   { char: 'D', color: '#3fb950', solid: false, over: 'floor' },
+        // Fire fixtures — the base tile is floor; RK.fx paints the animated flame + glow on top.
+        torch:  { char: 'i', color: '#d29922', solid: true,  over: 'floor', fx: 'fire', fxScale: 0.34 },
+        hearth: { char: 'F', color: '#e0742a', solid: true,  over: 'floor', fx: 'fire', fxScale: 0.7 }
     };
 
     // Layout character -> tile kind.
     var TAVERN_TILE_OF = {
         '#': 'wall', 'W': 'window', '.': 'floor', '@': 'floor', 'r': 'rug',
         '=': 'bar', 'k': 'keg', 'h': 'shelf', 'T': 'table', 'c': 'chair',
-        'B': 'barrel', 'C': 'crate', 'D': 'door'
+        'B': 'barrel', 'C': 'crate', 'D': 'door', 'i': 'torch', 'F': 'hearth'
     };
 
     var AVATAR_COLORS = { 'default': '#9aa4b2', green: '#3fb950', amber: '#d29922', red: '#f85149' };
@@ -101,14 +104,22 @@
     entrance: { char: '<',  color: '#3fb950', solid: false },
     exit:     { char: '>',  color: '#d29922', solid: false },
     treasure: { char: '$',  color: '#fbbf24', solid: false },
-    torch:    { char: '#',  color: '#3a3028', solid: true },
+    torch:    { char: 'i',  color: '#d29922', solid: false, fx: 'fire', fxScale: 0.34 },
+    // Hazard zones. The base tile stays walkable/ground; RK.fx paints the pulsing overlay. These
+    // render as soon as the dungeon generator emits their chars (L/P/^) in the tile stream.
+    lava:     { char: '≈',  color: '#7a2a0e', solid: false, hazard: 'lava' },
+    poison:   { char: '≈',  color: '#1c4a24', solid: false, hazard: 'poison' },
+    spikes:   { char: '^',  color: '#3a3f48', solid: false, hazard: 'spikes' },
     dark:     { char: ' ',  color: '#0a0c0f', solid: true }
 };
 
 // Map dungeon tile characters to scene tile kinds.
 function dungeonTileKind(ch) {
     if (ch === '#') return 'wall';
-    if (ch === 'torch') return 'torch';
+    if (ch === 'torch' || ch === 'i') return 'torch';
+    if (ch === 'L') return 'lava';
+    if (ch === 'P') return 'poison';
+    if (ch === '^') return 'spikes';
     if (ch === "'1" || ch === 0) return 'floor';
     if (ch === "'2") return 'floor2';
     if (ch === '<') return 'entrance';

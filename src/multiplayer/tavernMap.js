@@ -51,13 +51,18 @@ function buildDefaultTavern(cols = 28, rows = 15) {
     // Corner decor — barrels and crates.
     put(1, 1, 'B'); put(cols - 2, 1, 'C'); put(1, rows - 2, 'C'); put(cols - 2, rows - 2, 'B');
 
-    // Barrels & crates lining the side walls (one in from the wall, clear of the windows/spawn) so
-    // the room reads lived-in instead of a big empty floor. Alternating B/C for material variety.
+    // Fixtures lining the room so it reads lived-in instead of a big empty floor: barrels/crates
+    // (material variety) plus fire fixtures — braziers ('i') throwing flickering light in the
+    // corners and a hearth ('F') anchoring the left wall. All solid, all clear of windows/spawn/
+    // tables/aisles. The renderers paint the animated flame + glow on the fire tiles.
     const wallDecor = [
-        [1, 5, 'B'], [1, 9, 'C'], [1, 12, 'B'],
-        [cols - 2, 5, 'C'], [cols - 2, 9, 'B'], [cols - 2, 12, 'C'],
+        [1, 6, 'B'], [1, 10, 'C'],
+        [cols - 2, 6, 'C'], [cols - 2, 10, 'B'],
         [2, rows - 2, 'B'], [cols - 3, rows - 2, 'C'],
-        [barX0 - 1, barY + 1, 'B'], [barX1 + 1, barY + 1, 'C'] // a barrel/crate tucked beside each keg
+        [barX0 - 1, barY + 1, 'B'], [barX1 + 1, barY + 1, 'C'], // a barrel/crate tucked beside each keg
+        [1, 4, 'i'], [cols - 2, 4, 'i'],                        // braziers flanking the bar
+        [1, rows - 3, 'i'], [cols - 2, rows - 3, 'i'],          // braziers in the lower corners
+        [1, 8, 'F']                                             // hearth on the left wall
     ];
     for (const [dx, dy, dch] of wallDecor) put(dx, dy, dch);
 

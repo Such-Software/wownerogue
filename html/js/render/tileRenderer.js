@@ -105,6 +105,21 @@
                     var kind = scene.grid[y][x];
                     var px = x * cell, py = y * cell;
                     var def = scene.legend[kind] || { color: '#333' };
+                    // Fire fixtures (torch/hearth) & hazard tiles (lava/poison/spikes) draw only
+                    // their ground base here; RK.fx paints the animated flame / pulse over the
+                    // snapshot in the flicker loop so they actually move. Skip the solid colour block.
+                    if (def.fx === 'fire' || def.hazard) {
+                        var baseKind = def.over || 'floor';
+                        var bco = useAtlas ? pickVariant(tmap[baseKind], x, y) : null;
+                        if (bco) atlas.draw(ctx, bco[0], bco[1], px, py, cell);
+                        else {
+                            var bdef = scene.legend[baseKind] || def;
+                            ctx.fillStyle = bdef.color || def.color;
+                            ctx.fillRect(px, py, cell, cell);
+                        }
+                        applyCellLight(ctx, scene, x, y, px, py, cell);
+                        continue;
+                    }
                     var coord = useAtlas ? pickVariant(tmap[kind], x, y) : null;
                     if (coord) {
                         // Object tiles (furniture, windows, torches, treasure…) are transparent
@@ -253,10 +268,32 @@
         // Snapshot the base scene, then composite the torch light + vignette on top, and keep
         // an animation loop running so the light flickers and embers drift between renders.
         this._lastScene = scene;
+        this._collectEmitters(scene);
         this._snapshot();
         this._ensureEmbers(scene);
         this._composite(scene);
         this._startLoop();
+    };
+
+    // Cache the fire/hazard tile positions once per scene so the flicker loop can animate them
+    // without rescanning the grid every frame.
+    TileRenderer.prototype._collectEmitters = function (scene) {
+        var em = [], cell = this.cell, legend = scene.legend || {};
+        for (var y = 0; y < scene.rows; y++) {
+            for (var x = 0; x < scene.cols; x++) {
+                var def = legend[scene.grid[y][x]];
+                if (!def) continue;
+                if (def.fx === 'fire') {
+                    em.push({ fire: true, px: x * cell, py: y * cell, cx: x * cell + cell / 2,
+                              fy: y * cell + cell * 0.82, scale: cell * (def.fxScale || 0.34),
+                              seed: (x * 7 + y * 13) % 97 });
+                } else if (def.hazard) {
+                    em.push({ hazard: def.hazard, px: x * cell, py: y * cell,
+                              cx: x * cell + cell / 2, cy: y * cell + cell / 2 });
+                }
+            }
+        }
+        this._emitters = em;
     };
 
     // Soft drop shadow (an ellipse) under an entity's feet.
@@ -393,7 +430,27 @@
         ctx.fillStyle = vig;
         ctx.fillRect(0, 0, w, h);
         ctx.restore();
+
+        // Animated fire fixtures + hazard tiles — drawn over the vignette so their light punches
+        // through the dark edges rather than being dimmed by it.
+        var em = this._emitters;
+        if (em && em.length && root.RK && RK.fx) {
+            var nowMs = Date.now();
+            for (var k = 0; k < em.length; k++) {
+                var it = em[k];
+                if (it.hazard) {
+                    RK.fx.hazard(ctx, it.hazard, it.cx, it.cy, cell * 0.9, nowMs, makeRect(it.px, it.py, cell));
+                } else {
+                    RK.fx.fire(ctx, it.cx, it.fy, it.scale, nowMs, it.seed);
+                }
+            }
+        }
     };
+
+    // Footprint tracer for a square cell (RK.fx.hazard clips its base tint to this).
+    function makeRect(px, py, cell) {
+        return function (c) { c.beginPath(); c.rect(px, py, cell, cell); };
+    }
 
     TileRenderer.prototype._startLoop = function () {
         if (this._raf != null) return;
