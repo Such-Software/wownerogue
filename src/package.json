@@ -10,7 +10,8 @@
     "test": "jest --runInBand",
     "db:create": "node scripts/setup_db.js",
     "db:drop": "node scripts/setup_db.js drop",
-    "db:reset": "npm run db:drop && npm run db:create"
+    "db:reset": "npm run db:drop && npm run db:create",
+    "docs:api": "jsdoc2md --files game/**/*.js network/**/*.js payments/**/*.js multiplayer/*.js chain/*.js utils/*.js money/*.js services/*.js config/*.js > ../docs/API.md"
   },
   "config": {
     "debug": {
@@ -44,6 +45,7 @@
   },
   "devDependencies": {
     "jest": "^29.7.0",
+    "jsdoc-to-markdown": "^9.1.1",
     "playwright-core": "^1.61.1"
   }
 }
