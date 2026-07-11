@@ -7,6 +7,8 @@ const ChatHistoryManager = require('./chatHistoryManager');
 const SocketChatProvider = require('./chat/SocketChatProvider');
 const { buildChatProvider } = require('./chat');
 const { clientIp, stableId } = require('./rateLimitContext');
+const { verifyChatEvent } = require('../utils/verifyChatEvent');
+const { escapeChatText } = require('../utils/escapeChat');
 
 class ChatHandler {
     constructor({ io, broadcastManager, debugManager, addressManager, paymentHandlers, queueManager, gameModeManager, rateLimiter, db }) {
@@ -121,6 +123,66 @@ class ChatHandler {
         } catch (error) {
             console.error('Chat handler error:', error);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Message processing failed. Please try again.');
+        }
+    }
+
+    /**
+     * Handle a CLIENT-signed global chat event (Phase 2 per-player nostr identity). The client signs
+     * with the player's OWN Smirk npub (window.smirk.signNostrEvent) and sends the finished event;
+     * the server verifies it's authentic AND signed by THIS session's authenticated npub
+     * (users.smirk_public_key from NIP-98 login), moderates, then relays it — the provider publishes
+     * the pre-signed event to nostr under the player's npub (not the bridge). Serves lobby + tavern:
+     * it delivers to global, which both render.
+     */
+    async handleSignedChatMessage(socket, payload) {
+        try {
+            const rlId = stableId(socket, this.gameModeManager?.sessionManager);
+            const rlIp = clientIp(socket);
+            const rl = await this.rateLimiter.checkLimit(rlId, 'chat:message', rlIp);
+            if (!rl.allowed) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Please slow down before your next message.');
+                return;
+            }
+            await this.rateLimiter.recordAttempt(rlId, 'chat:message', rlIp);
+
+            const event = payload && payload.event;
+            if (!event || typeof event !== 'object') return;
+
+            // The session's authenticated npub is the ONLY key this player may post under.
+            const db = this.gameModeManager?.db;
+            const session = this.gameModeManager?.sessionManager?.sessions?.get(socket.id);
+            const userId = session ? session.id : null;
+            if (!db || !userId) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Sign in with Smirk to post as yourself.');
+                return;
+            }
+            const row = (await db.query('SELECT smirk_public_key, display_name, username FROM users WHERE id = $1', [userId])).rows[0];
+            const npub = row && row.smirk_public_key;
+            if (!npub) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'Sign in with Smirk to post as yourself.');
+                return;
+            }
+
+            const verdict = verifyChatEvent(event, {
+                expectedPubkey: npub,
+                channelTag: process.env.NOSTR_CHAT_TAG || 'wowngeon-global',
+                maxLen: 280
+            });
+            if (!verdict.ok) {
+                if (this.debugManager.CONSOLE_LOGGING) console.warn('[chat] signed event rejected:', verdict.reason);
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Your signed message could not be verified.');
+                return;
+            }
+
+            const username = row.display_name || row.username || String(npub).slice(0, 8);
+            const text = escapeChatText(verdict.content, 200);
+
+            // Delivers in-game (escaped) + relays the client-signed event to nostr under the player's npub.
+            await this.chatProvider.relaySignedEvent({
+                event, scope: 'global', username, text, ts: Date.now(), socketId: socket.id, userId
+            });
+        } catch (err) {
+            console.error('Signed chat handler error:', err.message);
         }
     }
 

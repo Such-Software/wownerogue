@@ -38,6 +38,16 @@ class ChatProvider {
         return [];
     }
 
+    /**
+     * Deliver a message whose nostr event was signed by the CLIENT (per-player identity, Phase 2).
+     * The base/local provider has no relay, so it just delivers the message in-game — the signed
+     * `event` is ignored. NostrChatProvider overrides this to ALSO publish the pre-signed event.
+     * @param {object} req  { event, scope, username, text, ts, socketId, userId }
+     */
+    async relaySignedEvent({ event, ...msg } = {}) { // eslint-disable-line no-unused-vars
+        return this.publish({ scope: 'global', ...msg });
+    }
+
     // eslint-disable-next-line no-empty-function
     async shutdown() {}
 }

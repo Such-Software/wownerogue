@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Tavern - Wownerogue</title>
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="js/smirkChatSign.js"></script>
     <!-- PixiJS (+ @pixi/unsafe-eval for the CSP) is lazy-loaded by renderModes.js only when the
          Fancy mode is first selected, so ASCII/Tiled users never download the WebGL library. -->
     <script src="js/render/sceneModel.js"></script>
@@ -369,7 +370,17 @@
         chatForm.addEventListener('submit', function (e) {
             e.preventDefault();
             var text = chatInput.value;
-            if (text && text.trim()) socket.emit('tavern_chat', { text: text });
+            if (text && text.trim()) {
+                // Try to post under the player's OWN Smirk npub (per-player identity); fall back to
+                // the normal unsigned send if Smirk signing isn't available/declined.
+                if (window.smirkChatSign) {
+                    window.smirkChatSign(socket, text.trim(), 'wowngeon-global').then(function (signed) {
+                        if (!signed) socket.emit('tavern_chat', { text: text });
+                    });
+                } else {
+                    socket.emit('tavern_chat', { text: text });
+                }
+            }
             chatInput.value = '';
         });
 

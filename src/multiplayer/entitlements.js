@@ -70,10 +70,17 @@ function normalizePackGrants(grants = [], catalog = DEFAULT_CATALOG) {
 }
 
 // Only a REAL premium tier (supporter/premium/operator) counts as a level; buying credits does not.
+// The tier is the HIGHEST of the stored premium_level and any active-subscription tier: a live
+// wowne.ro premium sub sets subscription_tier (e.g. 'premium') and thereby unlocks the cosmetic
+// packs at/below that tier — one subscription drives both chat perks and tile/customization unlocks.
+// (The subscription_tier field is populated by the user loader from a subscription check; absent =
+// unchanged legacy behavior.)
 function levelForUser(user = {}) {
-    const raw = String(user.premium_level || user.premiumLevel || '').trim().toLowerCase();
-    if (raw && tierForLevel(raw) > 0) return raw;
-    return 'free';
+    const candidates = [user.premium_level, user.premiumLevel, user.subscription_tier, user.subscriptionTier]
+        .map(v => String(v || '').trim().toLowerCase())
+        .filter(l => tierForLevel(l) > 0);
+    if (!candidates.length) return 'free';
+    return candidates.reduce((a, b) => (tierForLevel(b) > tierForLevel(a) ? b : a));
 }
 
 // A pack is unlocked for a user if ANY of: it's free, an explicit grant, the user's lifetime

@@ -438,6 +438,8 @@ class SocketHandlers {
             handleCancelEntry: (socket) => this.queueHandler.handleCancelEntry(socket),
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
+        // Phase 2: a client-signed global chat event (posts under the player's own Smirk npub).
+        socket.on('chat_signed', (payload) => this.chatHandler.handleSignedChatMessage(socket, payload));
     socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         socket.on('disconnect', () => this.handleDisconnect(socket));
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
