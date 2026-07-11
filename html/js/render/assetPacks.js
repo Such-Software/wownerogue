@@ -294,6 +294,28 @@
         }
     };
 
+    // Second iso pack — Kenney Isometric Medieval Town (a coherent, DIFFERENT environment). Strong on
+    // architecture (floor/walls/door/window/banner); no medieval furniture at this scale, so furniture
+    // kinds fall back to floor for now. Reuses the dungeon-pack characters. Its tiles are shorter
+    // (210x244) than the dungeon set, so its own tile geometry.
+    RK.isoMedievalAssets = {
+        pack: 'iso-medieval',
+        avatar: 'char-villager',
+        tile: { w: 84, h: 42, imageW: 84, imageH: 98 },
+        tiles: {
+            floor:  'assets/kenney/iso-medieval/floor.png',
+            floor2: 'assets/kenney/iso-medieval/floor2.png',
+            wall:   'assets/kenney/iso-medieval/wall.png',
+            window: 'assets/kenney/iso-medieval/window.png',
+            door:   'assets/kenney/iso-medieval/door.png',
+            banner: 'assets/kenney/iso-medieval/banner.png',
+            fallback: 'assets/kenney/iso-medieval/floor.png'
+        },
+        character: RK.isoAssets.character,
+        directions: RK.isoAssets.directions,
+        characters: RK.isoAssets.characters
+    };
+
     RK.threeAssets = {
         pack: 'kenney-3d-characters',
         models: {
@@ -319,6 +341,7 @@
     if (RK.registerPack) {
         RK.registerPack({ id: 'roguelike-interior', label: 'Roguelike Interior', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-interior'] });
         RK.registerPack({ id: 'iso-dungeon', label: 'Isometric Dungeon', projection: 'iso', kind: 'tiles', assets: RK.isoAssets });
+        RK.registerPack({ id: 'iso-medieval', label: 'Medieval Town', projection: 'iso', kind: 'tiles', assets: RK.isoMedievalAssets });
         RK.registerPack({ id: 'kenney-3d-characters', label: 'Animated 3D', projection: '3d', kind: 'skin', assets: RK.threeAssets });
     }
     // Active-pack resolvers the renderers read (fall back to the single default if the registry is absent).

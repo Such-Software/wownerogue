@@ -49,6 +49,10 @@
         .modebtn { background: #0a0c0f; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
         .modebtn.active { background: var(--accent); color: #08130a; border-color: var(--accent); }
         .modebtn.locked { opacity: 0.55; }
+        #packbar { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; }
+        #packbar .packlabel { color: var(--muted); font-size: 12px; margin-right: 2px; }
+        .packbtn { background: #0a0c0f; color: var(--text); border: 1px solid var(--line); font-size: 12px; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
+        .packbtn.active { background: var(--accent); color: #08130a; border-color: var(--accent); }
         #chatPanel { margin-top: 12px; }
         #chatLog { height: 160px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px;
                    padding: 8px; background: #0a0c0f; font-size: 13px; line-height: 1.45; }
@@ -72,6 +76,7 @@
         </div>
 
         <div id="modebar" class="hidden"></div>
+        <div id="packbar" class="hidden"></div>
         <div id="stage" class="hidden"></div>
         <p id="status" class="muted"></p>
         <p class="muted">Move with arrow keys or WASD. ★ modes are premium (credit unlock).</p>
@@ -131,6 +136,7 @@
         var joinBtn = document.getElementById('joinBtn');
         var stageEl = document.getElementById('stage');
         var modebar = document.getElementById('modebar');
+        var packbar = document.getElementById('packbar');
         var chatLog = document.getElementById('chatLog');
         var chatForm = document.getElementById('chatForm');
         var chatInput = document.getElementById('chatInput');
@@ -219,6 +225,7 @@
                 currentRenderer = r;
                 draw();
                 if (RK.attachZoom) { RK.attachZoom(stageEl); RK.applyZoom(stageEl); } // wheel/pinch zoom, all modes
+                buildPackbar(); // show pack choices for this mode's projection
                 var active = r.name || mode;
                 setStatus(active === mode
                     ? 'Render mode: ' + active
@@ -237,6 +244,39 @@
                 modebar.appendChild(b);
             });
             updateModeButtons();
+            buildPackbar();
+        }
+
+        // The render projection a mode belongs to (topdown themes / iso packs / 3d skins).
+        function projForMode(mode) {
+            if (mode === 'iso') return 'iso';
+            if (mode === '3d') return '3d';
+            return 'topdown';
+        }
+
+        // Pack picker: when the current projection has more than one UNLOCKED pack, show a selector
+        // to switch between them. This is the "packs are products" engine made visible.
+        function buildPackbar() {
+            if (!packbar || !RK.unlockedPacks) return;
+            packbar.innerHTML = '';
+            var proj = projForMode(currentMode || 'tiles');
+            var packs = RK.unlockedPacks(proj);
+            if (packs.length < 2) { packbar.classList.add('hidden'); return; }
+            packbar.classList.remove('hidden');
+            var activeId = RK.activePackId(proj);
+            var lbl = document.createElement('span');
+            lbl.className = 'packlabel';
+            lbl.textContent = 'Pack:';
+            packbar.appendChild(lbl);
+            packs.forEach(function (p) {
+                var b = document.createElement('button');
+                b.className = 'packbtn' + (p.id === activeId ? ' active' : '');
+                b.textContent = p.label;
+                b.addEventListener('click', function () {
+                    if (RK.setActivePack(p.id)) { buildPackbar(); setMode(currentMode); }
+                });
+                packbar.appendChild(b);
+            });
         }
         function updateModeButtons() {
             Array.prototype.forEach.call(modebar.children, function (b) {

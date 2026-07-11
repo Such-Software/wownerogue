@@ -25,6 +25,10 @@ const DEFAULT_CATALOG = Object.freeze({
         id: 'iso-dungeon', label: 'Kenney Isometric Dungeon', kind: 'render-pack',
         projection: 'iso', tier: 2, unlockMinCredits: 10, grantOnly: false, premium: true
     }),
+    'iso-medieval': Object.freeze({
+        id: 'iso-medieval', label: 'Medieval Town (Isometric)', kind: 'render-pack',
+        projection: 'iso', tier: 2, unlockMinCredits: 15, grantOnly: false, premium: true
+    }),
     'kenney-3d-characters': Object.freeze({
         id: 'kenney-3d-characters', label: 'Kenney Animated 3D Characters', kind: 'render-pack',
         projection: '3d', tier: 3, unlockMinCredits: 25, grantOnly: false, premium: true
