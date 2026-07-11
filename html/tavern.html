@@ -14,6 +14,7 @@
     <script src="js/render/atlas.js"></script>
     <script src="js/render/charSprites.js"></script>
     <script src="js/render/catSprites.js"></script>
+    <script src="js/render/zoomControl.js"></script>
     <script src="js/render/assetPacks.js"></script>
     <script src="js/render/avatarVisuals.js"></script>
     <script src="js/render/designedRoom.js"></script>
@@ -216,6 +217,7 @@
                 if (currentMode !== mode) { r.destroy(); return; } // switched again while loading
                 currentRenderer = r;
                 draw();
+                if (RK.attachZoom) { RK.attachZoom(stageEl); RK.applyZoom(stageEl); } // wheel/pinch zoom, all modes
                 var active = r.name || mode;
                 setStatus(active === mode
                     ? 'Render mode: ' + active
