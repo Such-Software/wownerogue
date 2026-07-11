@@ -9,7 +9,7 @@ describe('sceneFromTavern (render kit adapter)', () => {
         };
         const state = {
             cols: 3, rows: 2,
-            layout: ['#=@', 'o..'],
+            layout: ['#=@', 'T..'],
             occupants: [{ id: 'a', x: 2, y: 0, avatar: 'green', appearance, facing: 'left', name: 'Al' }]
         };
         const s = scene.sceneFromTavern(state, 'a');

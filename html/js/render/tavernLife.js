@@ -69,8 +69,9 @@
     }
 
     function bartendersArea(cols, rows) {
-        // Bartender roams along the top interior (bar counter row ~ y=2).
-        return { minY: 1, maxY: 3, minX: 2, maxX: Math.max(5, cols - 3) };
+        // Behind the bar: the row between the top wall and the counter (y=1). Sealed off by the
+        // counter, so the bartender stays back there and never wanders onto the customer floor.
+        return { minY: 1, maxY: 1, minX: 3, maxX: Math.max(5, cols - 5) };
     }
     function patronsArea(cols, rows) {
         // Patrons roam the middle/lower floor.
@@ -195,8 +196,8 @@
             return { x: 1, y: 1 };
         }
 
-        // Bartender near the bar (top area).
-        var barSpot = findFloor(Math.floor(cols / 2), 3);
+        // Bartender BEHIND the bar (row 1, between the top wall and the counter).
+        var barSpot = findFloor(Math.floor(cols / 2), 1);
         var bartender = makeNPC('bartender', 'bartender', 'char-merchant', barSpot.x, barSpot.y, {
             label: 'Bartender', color: '#c9a25e', role: 'bartender',
             roamArea: bartendersArea(cols, rows)

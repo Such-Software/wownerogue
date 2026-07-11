@@ -141,17 +141,25 @@
             // keep one coherent tile per kind. (TileRenderer still accepts an array here if a
             // future theme wants subtle, same-material variation.)
             tiles: {
-                floor: [5, 2],      // tile 119 — wood floor (uniform)
-                floor2: [6, 2],     // tile 120 — stone floor (accent)
-                wall: [13, 12],     // tile 697 — stone masonry
-
-                bar: [28, 0],       // tile 28  — counter
-                table: [20, 3],     // tile 191 — table
+                floor: [5, 2],      // 119 — wood floor
+                floor2: [6, 2],     // 120 — stone floor (accent)
+                wall: [13, 12],     // 697 — stone masonry
+                // Tavern furnishings (coords from roguelikeSheet_meta.json labels: index -> [i%57, i/57]).
+                window: [42, 2],    // 156 — window (in the wall)
+                bar: [29, 0],       // 29  — bar counter
+                keg: [23, 0],       // 23  — barrel / beer keg (behind the bar)
+                shelf: [30, 1],     // 87  — shelf of bottles (behind the bar)
+                table: [27, 5],     // 312 — table
+                chair: [19, 3],     // 190 — chair
+                barrel: [23, 0],    // 23  — barrel (decor)
+                crate: [25, 0],     // 25  — crate (decor)
+                rug: [11, 16],      // 923 — rug
+                door: [37, 9],      // 550 — door
                 // Dungeon features drawn as real tiles instead of monospace glyphs.
-                entrance: [37, 9],  // tile 550 — door
-                exit: [37, 9],      // tile 550 — door
-                treasure: [42, 15], // tile 897 — item
-                torch: [50, 10]     // tile 620 — rubble / prop
+                entrance: [37, 9],  // 550 — door
+                exit: [37, 9],      // 550 — door
+                treasure: [42, 15], // 897 — item
+                torch: [50, 10]     // 620 — rubble / prop
             }
         }
     };

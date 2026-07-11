@@ -8,14 +8,26 @@
 
     // Tile kinds and how each renderer treats them (glyph for ASCII, colour for tiled/fancy).
     var TAVERN_LEGEND = {
-        wall:  { char: '#', color: '#20262e', solid: true },
-        floor: { char: '·', color: '#0c1410', solid: false },
-        bar:   { char: '=', color: '#5a4632', solid: true },
-        table: { char: 'o', color: '#4a3a28', solid: true }
+        wall:   { char: '#', color: '#3a3f4b', solid: true },
+        window: { char: 'W', color: '#4a6a8a', solid: true },
+        floor:  { char: '·', color: '#6b4d33', solid: false },  // warm wood, not the old dark green
+        rug:    { char: '=', color: '#7a3b39', solid: false },
+        bar:    { char: '=', color: '#6a4a2a', solid: true },
+        keg:    { char: 'k', color: '#5a4028', solid: true },
+        shelf:  { char: 'h', color: '#4a3a28', solid: true },
+        table:  { char: 'T', color: '#6a4a2a', solid: true },
+        chair:  { char: 'c', color: '#5a4028', solid: false },  // walkable — stand on it to "sit"
+        barrel: { char: 'B', color: '#5a4028', solid: true },
+        crate:  { char: 'C', color: '#7a5a38', solid: true },
+        door:   { char: 'D', color: '#3fb950', solid: false }
     };
 
     // Layout character -> tile kind.
-    var TAVERN_TILE_OF = { '#': 'wall', '.': 'floor', '@': 'floor', '=': 'bar', 'o': 'table' };
+    var TAVERN_TILE_OF = {
+        '#': 'wall', 'W': 'window', '.': 'floor', '@': 'floor', 'r': 'rug',
+        '=': 'bar', 'k': 'keg', 'h': 'shelf', 'T': 'table', 'c': 'chair',
+        'B': 'barrel', 'C': 'crate', 'D': 'door'
+    };
 
     var AVATAR_COLORS = { 'default': '#9aa4b2', green: '#3fb950', amber: '#d29922', red: '#f85149' };
 
