@@ -46,7 +46,7 @@ The server signs every global message with one allowlisted bridge npub; the play
 everyone. `createBridgeSigner(NOSTR_BRIDGE_SK)` builds it; the npub must be write-allowlisted on the relay
 (see *Relay policy*).
 
-### Phase 2 — per-player signing (built, needs browser verification)
+### Phase 2 — per-player signing (built; one real-wallet click to confirm)
 The **client** signs with the player's own Smirk npub and sends the finished event; the server verifies +
 relays it. On nostr it's genuinely *them*.
 
@@ -70,8 +70,12 @@ client                         server (chatHandler)                  relay
 - **`chatHandler.handleSignedChatMessage`** — rate-limit → resolve session npub → verify → escape → relay.
 - **`NostrChatProvider.relaySignedEvent`** — local delivery + `transport.publish(signedEvent)` (no
   re-signing) + echo-dedupe on the event id.
-- **`html/js/smirkChatSign.js`** — feature-detected client helper. Signs via `window.smirk.signNostrEvent`,
-  falls back to the unsigned send when Smirk isn't connected, so wiring it into a send site is always safe.
+- **`html/js/smirkChatSign.js`** — feature-detected client helper. Signs via `window.smirk.signNostrEvent`
+  with the Nostr-scope-grant retry (sign first; on `NOT_AUTHORIZED`, `getNostrPublicKey()` once and
+  retry — same pattern as `SmirkAuth`), so a returning user gets a single approval. Falls back to the
+  unsigned send when Smirk isn't connected, so wiring it into a send site is always safe. Loaded on
+  `tavern.html`; the tavern send tries it first. (A real Smirk wallet click is the only step left to
+  confirm end to end.)
 
 ## The tier model (two relays)
 

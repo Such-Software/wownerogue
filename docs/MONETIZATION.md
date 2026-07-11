@@ -42,15 +42,27 @@ any purchase unlocked every premium pack.
 tile/customization packs at/below it — **one subscription drives both chat perks and cosmetics** (see
 [CHAT_AND_NOSTR.md](CHAT_AND_NOSTR.md)).
 
-Everything downstream — pack gating, the served catalog, the client unlock UI — already consumes `tier`, so
-"premium buys cosmetics" is a **data-source** change: populate `user.subscription_tier` from a subscription
-check (against the premium backend / npub) when the user is loaded. Absent ⇒ unchanged legacy behavior.
+Everything downstream — pack gating, the served catalog, the client unlock UI — already consumes `tier`.
+The data source is `src/services/subscriptionService.js` (`SubscriptionService.tierForNpub`), which
+`identityService.entitlementsForUser` calls to populate `user.subscription_tier` before the snapshot:
 
 ```
-active premium sub ──► user.subscription_tier ──► levelForUser ──► entitlement tier
-                                                                     ├─ relay: chat perks (badge, no-PoW, VIP)
-                                                                     └─ catalog: tile / skin / customization unlocks
+active premium sub ──► SubscriptionService.tierForNpub(npub) ──► user.subscription_tier ──► levelForUser ──► tier
+                                                                                              ├─ relay: chat perks (badge, no-PoW, VIP)
+                                                                                              └─ catalog: tile / skin / customization unlocks
 ```
+
+Two sources, checked in order (both optional — absent ⇒ tier null ⇒ unchanged legacy behavior):
+
+| Env | Meaning |
+|-----|---------|
+| `PREMIUM_NPUBS` | operator allowlist `npub1…\|hex[:tier],…` — works **today**, zero backend dependency |
+| `PREMIUM_DEFAULT_TIER` | tier for allowlist entries without an explicit `:tier` (default `premium`) |
+| `SMIRK_PREMIUM_STATUS_URL` / `_KEY` | optional HTTP endpoint answering premium-by-npub `{active, tier?}`, for full automation |
+
+> The Smirk backend's `/premium/status` is **self-only** (user-token auth), so the game can't look up
+> an arbitrary npub through it. Full automation needs a small backend addition — a service/by-npub
+> premium endpoint (or a webhook that sets the tier). Until then, `PREMIUM_NPUBS` is the working source.
 
 ## Files
 
@@ -58,7 +70,8 @@ active premium sub ──► user.subscription_tier ──► levelForUser ─�
 src/migrations/024_cosmetic_catalog.sql   operator-owned catalog table
 src/services/catalogService.js            load/cache + DEFAULT_CATALOG fallback
 src/multiplayer/entitlements.js           snapshotForUser · levelForUser · TIER_OF · unlock rule
-src/network/identityService.js            entitlementsForUser (loads catalog + grants)
+src/services/subscriptionService.js       premium tier by npub (PREMIUM_NPUBS allowlist + HTTP seam)
+src/network/identityService.js            entitlementsForUser (loads catalog + grants + sub tier)
 src/game/gameModeManager.js               recordDirectEntryPurchase (direct entry = 1 credit)
 html/js/render/assetPacks.js              client consumes the served catalog
 ```
@@ -67,5 +80,5 @@ html/js/render/assetPacks.js              client consumes the served catalog
 
 - Premium tiers: one flat "premium," or a ladder (supporter/premium/operator) where each rung unlocks
   progressively more cosmetics *and* chat perks? (`TIER_OF` already has the rungs.)
-- Where `subscription_tier` is sourced (sync a `users` column vs. live oracle query against the premium
-  backend by npub).
+- Full-automation source: add a service/by-npub premium endpoint to the Smirk backend (then set
+  `SMIRK_PREMIUM_STATUS_URL`) vs. a webhook that stamps the tier. `PREMIUM_NPUBS` covers it manually today.

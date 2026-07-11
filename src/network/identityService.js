@@ -1,6 +1,7 @@
 const Appearance = require('../multiplayer/appearance');
 const Entitlements = require('../multiplayer/entitlements');
 const CatalogService = require('../services/catalogService');
+const SubscriptionService = require('../services/subscriptionService');
 
 function parseAppearance(value) {
     if (!value) return Appearance.normalizeAppearance('default');
@@ -15,7 +16,7 @@ function parseAppearance(value) {
 }
 
 class IdentityService {
-    constructor({ db = null, gameModeManager = null, sessionManager = null, debugManager = null, catalogService = null } = {}) {
+    constructor({ db = null, gameModeManager = null, sessionManager = null, debugManager = null, catalogService = null, subscriptionService = null } = {}) {
         this.db = db || gameModeManager?.db || null;
         this.gameModeManager = gameModeManager;
         this.sessionManager = sessionManager;
@@ -23,6 +24,9 @@ class IdentityService {
         // Operator-owned cosmetic catalog (DB-backed, cached). Falls back to the built-in default
         // when the table is absent, so this never breaks a fresh/partly-migrated DB.
         this.catalogService = catalogService || (this.db ? new CatalogService({ db: this.db }) : null);
+        // Resolves a premium-subscription tier by npub so a sub unlocks cosmetics. No source
+        // configured (PREMIUM_NPUBS / SMIRK_PREMIUM_STATUS_URL) => inert (returns null).
+        this.subscriptionService = subscriptionService || new SubscriptionService();
     }
 
     async _catalog() {
@@ -75,6 +79,14 @@ class IdentityService {
         const catalog = await this._catalog();
         if (!user) return Entitlements.snapshotForUser({}, [], catalog);
         const grants = await this.packGrantsForUser(user.id);
+        // An active premium subscription (resolved by npub) sets subscription_tier, which unlocks
+        // the cosmetic packs at/below that tier. Best-effort: any resolver failure leaves it unset.
+        if (this.subscriptionService && user.smirk_public_key && user.subscription_tier == null) {
+            try {
+                const tier = await this.subscriptionService.tierForNpub(user.smirk_public_key);
+                if (tier) user = { ...user, subscription_tier: tier };
+            } catch (_) { /* leave unset */ }
+        }
         return Entitlements.snapshotForUser(user, grants, catalog);
     }
 
