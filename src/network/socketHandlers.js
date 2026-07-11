@@ -198,11 +198,16 @@ class SocketHandlers {
         // Load the designed tavern room (imported .tmx); fall back to the procedural map if absent.
         let tavernRoomData = null;
         const tavernRoomUrl = 'assets/kenney/tavern_room.json';
-        try {
-            const roomPath = require('path').join(__dirname, '../../html', tavernRoomUrl);
-            tavernRoomData = JSON.parse(require('fs').readFileSync(roomPath, 'utf8'));
-        } catch (e) {
-            if (this.debugManager.CONSOLE_LOGGING) console.log('Tavern room JSON not found; using default map:', e.message);
+        // The imported .tmx room renders as a block-scatter in the browser (the client falls back to
+        // the walkable grid), so use the hand-built procedural tavern (tavernMap.js) — which renders
+        // reliably through the theme atlas — by default. Opt back into the .tmx with TAVERN_DESIGNED_ROOM=true.
+        if (process.env.TAVERN_DESIGNED_ROOM === 'true') {
+            try {
+                const roomPath = require('path').join(__dirname, '../../html', tavernRoomUrl);
+                tavernRoomData = JSON.parse(require('fs').readFileSync(roomPath, 'utf8'));
+            } catch (e) {
+                if (this.debugManager.CONSOLE_LOGGING) console.log('Tavern room JSON not found; using default map:', e.message);
+            }
         }
         this.tavernManager = new TavernManager({
             io: this.io,

@@ -219,12 +219,8 @@
                 }));
         }
 
-        // Cat — a small wandering creature.
-        var catSpot = findFloor(3, rows - 3);
-        this.npcs.push(makeNPC('cat', 'cat', 'char-goblin', catSpot.x, catSpot.y, {
-            label: null, color: '#e8a060', role: 'cat',
-            roamArea: catArea(cols, rows)
-        }));
+        // (No "cat": it used the char-goblin sprite, which read as a green monster stuck in the
+        // wall. Left out until there's an actual pet/critter sprite.)
     };
 
     TavernLife.prototype._pickTarget = function (npc, scene) {
