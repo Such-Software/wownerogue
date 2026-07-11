@@ -73,6 +73,34 @@
         this.ctx.drawImage(img, cx - w / 2, baseY - h, w, h);
     };
 
+    // Soft contact shadow grounds props/characters so they don't float on the floor.
+    IsoRenderer.prototype._contactShadow = function (cx, cy, rx, ry) {
+        var ctx = this.ctx;
+        ctx.save();
+        ctx.globalAlpha = 0.28;
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    };
+
+    // Warm radial vignette — an ambient tavern glow that darkens the edges and lifts the centre,
+    // the "juice" that makes the flat canvas feel lit rather than pasted.
+    IsoRenderer.prototype._vignette = function () {
+        var ctx = this.ctx, w = this.canvas.width, h = this.canvas.height;
+        var g = ctx.createRadialGradient(w / 2, h * 0.46, Math.min(w, h) * 0.18,
+                                         w / 2, h * 0.46, Math.max(w, h) * 0.62);
+        g.addColorStop(0, 'rgba(255, 214, 150, 0.10)');
+        g.addColorStop(0.55, 'rgba(0, 0, 0, 0)');
+        g.addColorStop(1, 'rgba(0, 0, 0, 0.42)');
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+    };
+
     IsoRenderer.prototype._imageBounds = function (img) {
         if (!img) return null;
         var key = img.src || img._rkBoundsKey || null;
@@ -141,6 +169,44 @@
         return tiles[kind] || tiles.fallback || tiles.floor;
     };
 
+    // Deterministic per-cell hash (no RNG — stable across frames/reloads).
+    function cellHash(x, y) {
+        var h = (x * 73856093) ^ (y * 19349663);
+        h = (h ^ (h >>> 13)) >>> 0;
+        return h / 4294967295;
+    }
+
+    // Wall-family kinds share edge-run detection so a window/door in a wall counts as wall.
+    var WALLISH = { wall: 1, window: 1, door: 1, archway: 1 };
+
+    IsoRenderer.prototype._isWall = function (scene, x, y) {
+        if (x < 0 || y < 0 || y >= scene.rows || x >= scene.cols) return false;
+        return !!WALLISH[scene.grid[y][x]];
+    };
+
+    // Iso walls have a facing. A segment running along grid-x uses the base (_S) rotation; one
+    // running along grid-y uses the perpendicular (`<kind>Y`, _W) rotation; a true corner (both
+    // axes present) uses the corner tile. This is what makes enclosing walls read as continuous
+    // faces instead of thin disconnected slabs on the y-running edges.
+    IsoRenderer.prototype._wallVariant = function (scene, x, y, kind) {
+        var tiles = this.assets.tiles || {};
+        var xRun = this._isWall(scene, x - 1, y) || this._isWall(scene, x + 1, y);
+        var yRun = this._isWall(scene, x, y - 1) || this._isWall(scene, x, y + 1);
+        if (xRun && yRun && kind === 'wall' && tiles.wallCorner) return 'wallCorner';
+        if (yRun && !xRun && tiles[kind + 'Y']) return kind + 'Y';
+        return kind;
+    };
+
+    // Sprinkle floor variants deterministically so the ground isn't a flat identical sea.
+    IsoRenderer.prototype._floorVariant = function (kind, x, y) {
+        var tiles = this.assets.tiles || {};
+        var r = cellHash(x, y);
+        if (kind === 'floor' && tiles.floorAlt && r > 0.86) return 'floorAlt';
+        if (kind === 'floor2' && tiles.stoneTile && r > 0.6) return 'stoneTile';
+        if (kind === 'floor2' && tiles.floor2Alt && r > 0.82) return 'floor2Alt';
+        return kind;
+    };
+
     IsoRenderer.prototype._visualFor = function (e) {
         var appearance = (e && e.appearance) || { avatar: (e && e.avatar) || 'default' };
         if (root.RK && RK.avatarVisuals && RK.avatarVisuals.resolve) {
@@ -207,12 +273,16 @@
             var it = items[i];
             if (it.type === 'tile') {
                 var tileKind = PROP[it.kind] ? 'floor' : it.kind;
+                if (WALLISH[tileKind]) tileKind = this._wallVariant(scene, it.x, it.y, tileKind);
+                else tileKind = this._floorVariant(tileKind, it.x, it.y);
                 var rec = this._load(this._tileUrl(tileKind));
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
             } else if (it.type === 'prop') {
+                this._contactShadow(it.sx, it.sy + this.tileH * 1.4, 22, 9);
                 rec = this._load(this._tileUrl(it.kind));
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
             } else if (it.type === 'entity') {
+                this._contactShadow(it.sx, it.sy + this.tileH * 1.15, 18, 7);
                 var frame = this._charFrame(it.e, now);
                 rec = this._load(frame && frame.url);
                 if (rec && rec.ready) {
@@ -240,6 +310,7 @@
                 }
             }
         }
+        this._vignette();
         if (this._animating) this._invalidate();
     };
 

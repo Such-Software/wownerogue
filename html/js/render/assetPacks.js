@@ -293,11 +293,24 @@
             floor2: 'assets/kenney/iso-dungeon/tiles/stone_S.png',      // stone — dungeon
             dirt:   'assets/kenney/iso-dungeon/tiles/dirt_S.png',
             rug:    'assets/kenney/iso-dungeon/tiles/planks_S.png',
-            // Architecture (full-height tiles). The rich set has real windows/doors/archways.
-            wall:   'assets/kenney/iso-dungeon/tiles/stoneWall_S.png',
-            window: 'assets/kenney/iso-dungeon/tiles/stoneWallWindow_S.png',
-            door:   'assets/kenney/iso-dungeon/tiles/stoneWallDoorOpen_S.png',
-            archway:'assets/kenney/iso-dungeon/tiles/stoneWallArchway_S.png',
+            // Architecture (full-height tiles). Iso walls have a facing: a wall running along the
+            // grid-x axis needs the _S rotation, one running along grid-y needs the perpendicular
+            // _W rotation, and true corners get the corner tile. The renderer picks per-cell from
+            // neighbours, choosing `<kind>Y` for y-running segments (that's what fixes the "thin
+            // slabs" look on the top-left / bottom-right edges).
+            wall:    'assets/kenney/iso-dungeon/tiles/stoneWall_S.png',
+            wallY:   'assets/kenney/iso-dungeon/tiles/stoneWall_W.png',
+            wallCorner: 'assets/kenney/iso-dungeon/tiles/stoneWallCorner_S.png',
+            window:  'assets/kenney/iso-dungeon/tiles/stoneWallWindow_S.png',
+            windowY: 'assets/kenney/iso-dungeon/tiles/stoneWallWindow_W.png',
+            door:    'assets/kenney/iso-dungeon/tiles/stoneWallDoorOpen_S.png',
+            doorY:   'assets/kenney/iso-dungeon/tiles/stoneWallDoorOpen_W.png',
+            archway: 'assets/kenney/iso-dungeon/tiles/stoneWallArchway_S.png',
+            // Floor variety — the renderer sprinkles these deterministically so the ground isn't a
+            // flat sea of identical planks.
+            floorAlt:  'assets/kenney/iso-dungeon/tiles/planksBroken_S.png',
+            floor2Alt: 'assets/kenney/iso-dungeon/tiles/stoneUneven_S.png',
+            stoneTile: 'assets/kenney/iso-dungeon/tiles/stoneTile_S.png',
             column: 'assets/kenney/iso-dungeon/tiles/stoneColumnWood_S.png',
             stairs: 'assets/kenney/iso-dungeon/tiles/stairs_S.png',
             // Furniture props (drawn over a floor base) — each kind now has distinct art.
