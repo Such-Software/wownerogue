@@ -281,12 +281,14 @@
         },
         // The Kenney files named Male_0..Male_7 are directional renders of the same body,
         // not different character classes. The customizer exposes one honest Iso body for now.
-        character: isoMale(3),
+        // Kenney Male_0..7 are 45° renders (0=NW, 2=SW, 4=SE, 6=NE). In this iso projection a grid
+        // step moves visually: up->NE, down->SW, left->NW, right->SE — so face the way you move.
+        character: isoMale(2),
         directions: {
-            down: isoMale(3),
-            up: isoMale(7),
-            left: isoMale(0),
-            right: isoMale(5)
+            down: isoMale(2),   // SW (down-left)
+            up: isoMale(6),     // NE (up-right)
+            left: isoMale(0),   // NW (up-left)
+            right: isoMale(4)   // SE (down-right)
         },
         characters: {
             fallback: isoMale(3),
