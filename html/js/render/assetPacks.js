@@ -149,7 +149,7 @@
                 bar: [29, 0],       // 29  — bar counter
                 keg: [23, 0],       // 23  — barrel / beer keg (behind the bar)
                 shelf: [30, 1],     // 87  — shelf of bottles (behind the bar)
-                table: [27, 5],     // 312 — table
+                table: [20, 3],     // 191 — table (191 reads wooden; 312 rendered green)
                 chair: [19, 3],     // 190 — chair
                 barrel: [23, 0],    // 23  — barrel (decor)
                 crate: [25, 0],     // 25  — crate (decor)
