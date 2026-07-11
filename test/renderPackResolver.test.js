@@ -95,7 +95,9 @@ describe('render pack visual resolver', () => {
     const RK = loadRenderKit();
     expect(RK.isoAssets.tiles.floor).toContain('planks_S.png');
     expect(RK.isoAssets.tiles.floor).not.toContain('stone_S.png');
-    expect(RK.isoAssets.tiles.wall).toContain('stoneWallHalf_S.png');
+    expect(RK.isoAssets.tiles.wall).toContain('stoneWall_S.png');   // full wall from the rich set
+    expect(RK.isoAssets.tiles.window).toContain('stoneWallWindow_S.png'); // real iso window now
+    expect(RK.isoAssets.tiles.table).toContain('tableShortChairs_S.png'); // distinct furniture art
   });
 
   test('iso pack treats imported Male files as directions, not class variants', () => {
@@ -105,11 +107,12 @@ describe('render pack visual resolver', () => {
     expect(RK.isoAssets.characters['char-merchant']).toBeUndefined();
     expect(RK.isoAssets.characters['char-wizard']).toBeUndefined();
     expect(RK.isoAssets.characters['char-goblin']).toBeUndefined();
-    // 45° renders: 0=NW,2=SW,4=SE,6=NE. Facing follows visual movement (up->NE, down->SW, etc.).
-    expect(RK.isoAssets.directions.down.idle).toContain('Male_2_Idle0.png');
-    expect(RK.isoAssets.directions.up.idle).toContain('Male_6_Idle0.png');
-    expect(RK.isoAssets.directions.left.idle).toContain('Male_0_Idle0.png');
-    expect(RK.isoAssets.directions.right.idle).toContain('Male_4_Idle0.png');
+    // Sprites are angled clockwise from NE: 0=NE,2=SE,4=SW,6=NW (verified against live movement).
+    // Facing follows visual movement (up->NE, down->SW, left->NW, right->SE).
+    expect(RK.isoAssets.directions.up.idle).toContain('Male_0_Idle0.png');
+    expect(RK.isoAssets.directions.right.idle).toContain('Male_2_Idle0.png');
+    expect(RK.isoAssets.directions.down.idle).toContain('Male_4_Idle0.png');
+    expect(RK.isoAssets.directions.left.idle).toContain('Male_6_Idle0.png');
   });
 
   test('projection visuals expose the saved base tint as a render color', () => {

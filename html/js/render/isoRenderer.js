@@ -183,7 +183,7 @@
 
         // Furniture kinds draw a floor tile as the base + the prop sprite on top (same idea as the
         // tiled renderer's `over` compositing). Everything else is a plain ground/wall tile.
-        var PROP = { bar: 1, table: 1, chair: 1, keg: 1, shelf: 1, barrel: 1, crate: 1 };
+        var PROP = { bar: 1, table: 1, chair: 1, keg: 1, shelf: 1, barrel: 1, crate: 1, chest: 1 };
         var items = [], x, y, kind, p;
         for (y = 0; y < scene.rows; y++) {
             for (x = 0; x < scene.cols; x++) {

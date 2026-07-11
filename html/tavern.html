@@ -251,6 +251,7 @@
         function projForMode(mode) {
             if (mode === 'iso') return 'iso';
             if (mode === '3d') return '3d';
+            if (mode === 'ascii') return null; // ASCII draws glyphs — it consumes no tile pack
             return 'topdown';
         }
 
@@ -260,7 +261,7 @@
             if (!packbar || !RK.unlockedPacks) return;
             packbar.innerHTML = '';
             var proj = projForMode(currentMode || 'tiles');
-            var packs = RK.unlockedPacks(proj);
+            var packs = proj ? RK.unlockedPacks(proj) : [];
             if (packs.length < 2) { packbar.classList.add('hidden'); return; }
             packbar.classList.remove('hidden');
             var activeId = RK.activePackId(proj);

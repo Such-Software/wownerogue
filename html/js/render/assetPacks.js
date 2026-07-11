@@ -288,32 +288,40 @@
         avatar: 'char-villager',
         tile: { w: 84, h: 42, imageW: 92, imageH: 184 },
         tiles: {
-            floor:  'assets/kenney/iso-dungeon/tiles/planks_S.png',
-            floor2: 'assets/kenney/iso-dungeon/tiles/stone_S.png',
-            wall:   'assets/kenney/iso-dungeon/tiles/stoneWallHalf_S.png',   // half walls keep the interior visible
-            window: 'assets/kenney/iso-dungeon/tiles/stoneWallHalf_S.png',   // no iso window art — reuse the half wall
+            // Floors / ground
+            floor:  'assets/kenney/iso-dungeon/tiles/planks_S.png',     // wood — tavern interior
+            floor2: 'assets/kenney/iso-dungeon/tiles/stone_S.png',      // stone — dungeon
+            dirt:   'assets/kenney/iso-dungeon/tiles/dirt_S.png',
             rug:    'assets/kenney/iso-dungeon/tiles/planks_S.png',
-            door:   'assets/kenney/iso-dungeon/tiles/planks_S.png',
-            // Furniture props (drawn over a floor base):
-            bar:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',  // stacked kegs = the bar
-            keg:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
-            barrel: 'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
-            shelf:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
-            table:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
-            crate:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
+            // Architecture (full-height tiles). The rich set has real windows/doors/archways.
+            wall:   'assets/kenney/iso-dungeon/tiles/stoneWall_S.png',
+            window: 'assets/kenney/iso-dungeon/tiles/stoneWallWindow_S.png',
+            door:   'assets/kenney/iso-dungeon/tiles/stoneWallDoorOpen_S.png',
+            archway:'assets/kenney/iso-dungeon/tiles/stoneWallArchway_S.png',
+            column: 'assets/kenney/iso-dungeon/tiles/stoneColumnWood_S.png',
+            stairs: 'assets/kenney/iso-dungeon/tiles/stairs_S.png',
+            // Furniture props (drawn over a floor base) — each kind now has distinct art.
+            bar:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',   // stacked barrels = the bar counter
+            keg:    'assets/kenney/iso-dungeon/tiles/barrel_S.png',
+            barrel: 'assets/kenney/iso-dungeon/tiles/barrel_S.png',
+            table:  'assets/kenney/iso-dungeon/tiles/tableShortChairs_S.png', // real table + chairs
+            shelf:  'assets/kenney/iso-dungeon/tiles/woodenCrates_S.png',
+            crate:  'assets/kenney/iso-dungeon/tiles/woodenCrate_S.png',
             chair:  'assets/kenney/iso-dungeon/tiles/chair_S.png',
+            chest:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
             fallback: 'assets/kenney/iso-dungeon/tiles/planks_S.png'
         },
         // The Kenney files named Male_0..Male_7 are directional renders of the same body,
         // not different character classes. The customizer exposes one honest Iso body for now.
-        // Kenney Male_0..7 are 45° renders (0=NW, 2=SW, 4=SE, 6=NE). In this iso projection a grid
-        // step moves visually: up->NE, down->SW, left->NW, right->SE — so face the way you move.
-        character: isoMale(2),
+        // These sprites are angled CLOCKWISE from NE: 0=NE, 2=SE, 4=SW, 6=NW (verified against live
+        // movement). In this iso projection a grid step moves visually up->NE, down->SW, left->NW,
+        // right->SE, so each facing uses the sprite pointing that way — face the way you move.
+        character: isoMale(3),          // idle faces roughly toward the camera (S)
         directions: {
-            down: isoMale(2),   // SW (down-left)
-            up: isoMale(6),     // NE (up-right)
-            left: isoMale(0),   // NW (up-left)
-            right: isoMale(4)   // SE (down-right)
+            up:    isoMale(0),   // NE (up-right)
+            down:  isoMale(4),   // SW (down-left)
+            left:  isoMale(6),   // NW (up-left)
+            right: isoMale(2)    // SE (down-right)
         },
         characters: {
             fallback: isoMale(3),
