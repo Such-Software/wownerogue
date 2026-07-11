@@ -165,7 +165,14 @@
     };
     RK.activeThemeId = 'roguelike-interior';
 
-    RK.theme = function (id) { return RK.THEMES[id || RK.activeThemeId] || null; };
+    RK.theme = function (id) {
+        // With no explicit id, use the active topdown pack (registry-selected + entitlement-gated).
+        if (!id && RK.activePackId) {
+            var ap = RK.activePackId('topdown');
+            if (ap && RK.THEMES[ap]) return RK.THEMES[ap];
+        }
+        return RK.THEMES[id || RK.activeThemeId] || null;
+    };
 
     // Effective tile map = theme defaults merged with localStorage overrides from the picker.
     RK.tileMap = function (id) {
@@ -304,6 +311,19 @@
             }
         }
     };
+
+    // Register the built-in RENDER packs in the pack registry (packRegistry.js) so iso/3D become
+    // multi-pack like topdown themes already are. Each maps to its catalog id; the active pack per
+    // projection is entitlement-gated + user-selectable. Adding a pack later = registerPack(...) +
+    // assets + a catalog row. Backward-compatible: one pack per projection resolves to these.
+    if (RK.registerPack) {
+        RK.registerPack({ id: 'roguelike-interior', label: 'Roguelike Interior', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-interior'] });
+        RK.registerPack({ id: 'iso-dungeon', label: 'Isometric Dungeon', projection: 'iso', kind: 'tiles', assets: RK.isoAssets });
+        RK.registerPack({ id: 'kenney-3d-characters', label: 'Animated 3D', projection: '3d', kind: 'skin', assets: RK.threeAssets });
+    }
+    // Active-pack resolvers the renderers read (fall back to the single default if the registry is absent).
+    RK.activeIsoAssets = function () { return (RK.activePackAssets && RK.activePackAssets('iso')) || RK.isoAssets; };
+    RK.activeThreeAssets = function () { return (RK.activePackAssets && RK.activePackAssets('3d')) || RK.threeAssets; };
 
     RK.packForProjection = function (projection) {
         for (var id in RK.PACKS) {

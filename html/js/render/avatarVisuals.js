@@ -73,13 +73,13 @@
     }
 
     function isoCharacterFor(appearance) {
-        var assets = RK.isoAssets || {};
+        var assets = (RK.activeIsoAssets && RK.activeIsoAssets()) || RK.isoAssets || {};
         var chars = assets.characters || {};
         return chars[appearance.avatar] || chars.fallback || assets.character || null;
     }
 
     function modelFor(appearance) {
-        var assets = RK.threeAssets || {};
+        var assets = (RK.activeThreeAssets && RK.activeThreeAssets()) || RK.threeAssets || {};
         var models = assets.models || {};
         return models[appearance.avatar] || models.fallback || null;
     }

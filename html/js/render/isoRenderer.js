@@ -7,7 +7,7 @@
         opts = opts || {};
         this.name = 'iso';
         this.host = host;
-        this.assets = (root.RK && RK.isoAssets) || {};
+        this.assets = (root.RK && ((RK.activeIsoAssets && RK.activeIsoAssets()) || RK.isoAssets)) || {};
         this.tileW = opts.tileW || (this.assets.tile && this.assets.tile.w) || 84;
         this.tileH = opts.tileH || (this.assets.tile && this.assets.tile.h) || 42;
         this.imageW = opts.imageW || (this.assets.tile && this.assets.tile.imageW) || 92;
