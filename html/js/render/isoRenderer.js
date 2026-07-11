@@ -181,13 +181,16 @@
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         ctx.imageSmoothingEnabled = true;
 
+        // Furniture kinds draw a floor tile as the base + the prop sprite on top (same idea as the
+        // tiled renderer's `over` compositing). Everything else is a plain ground/wall tile.
+        var PROP = { bar: 1, table: 1, chair: 1, keg: 1, shelf: 1, barrel: 1, crate: 1 };
         var items = [], x, y, kind, p;
         for (y = 0; y < scene.rows; y++) {
             for (x = 0; x < scene.cols; x++) {
                 kind = scene.grid[y][x];
                 p = this._project(x, y, originX, originY);
                 items.push({ type: 'tile', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y });
-                if (kind === 'bar' || kind === 'table') {
+                if (PROP[kind]) {
                     items.push({ type: 'prop', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y + 0.25 });
                 }
             }
@@ -203,7 +206,7 @@
         for (i = 0; i < items.length; i++) {
             var it = items[i];
             if (it.type === 'tile') {
-                var tileKind = (it.kind === 'bar' || it.kind === 'table') ? 'floor' : it.kind;
+                var tileKind = PROP[it.kind] ? 'floor' : it.kind;
                 var rec = this._load(this._tileUrl(tileKind));
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
             } else if (it.type === 'prop') {

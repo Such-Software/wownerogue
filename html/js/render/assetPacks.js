@@ -256,10 +256,20 @@
         avatar: 'char-villager',
         tile: { w: 84, h: 42, imageW: 92, imageH: 184 },
         tiles: {
-            floor: 'assets/kenney/iso-dungeon/tiles/planks_S.png',
-            wall: 'assets/kenney/iso-dungeon/tiles/stoneWallHalf_S.png',
-            bar: 'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
-            table: 'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
+            floor:  'assets/kenney/iso-dungeon/tiles/planks_S.png',
+            floor2: 'assets/kenney/iso-dungeon/tiles/stone_S.png',
+            wall:   'assets/kenney/iso-dungeon/tiles/stoneWallHalf_S.png',   // half walls keep the interior visible
+            window: 'assets/kenney/iso-dungeon/tiles/stoneWallHalf_S.png',   // no iso window art — reuse the half wall
+            rug:    'assets/kenney/iso-dungeon/tiles/planks_S.png',
+            door:   'assets/kenney/iso-dungeon/tiles/planks_S.png',
+            // Furniture props (drawn over a floor base):
+            bar:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',  // stacked kegs = the bar
+            keg:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
+            barrel: 'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',
+            shelf:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
+            table:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
+            crate:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
+            chair:  'assets/kenney/iso-dungeon/tiles/chair_S.png',
             fallback: 'assets/kenney/iso-dungeon/tiles/planks_S.png'
         },
         // The Kenney files named Male_0..Male_7 are directional renders of the same body,
