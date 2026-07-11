@@ -78,7 +78,8 @@
         return { minY: 3, maxY: rows - 2, minX: 1, maxX: cols - 2 };
     }
     function catArea(cols, rows) {
-        return { minY: 1, maxY: rows - 1, minX: 1, maxX: cols - 2 };
+        // The customer floor (in front of the bar) — not behind the counter, not the walls.
+        return { minY: 4, maxY: rows - 2, minX: 1, maxX: cols - 2 };
     }
 
     // ---- Speech bubbles ---------------------------------------------------------
@@ -220,8 +221,13 @@
                 }));
         }
 
-        // (No "cat": it used the char-goblin sprite, which read as a green monster stuck in the
-        // wall. Left out until there's an actual pet/critter sprite.)
+        // A tavern cat — a random pixel cat from the Pet Cats Pack that wanders the floor.
+        var catSpot = findFloor(4, rows - 4);
+        var cat = makeNPC('cat', 'cat', null, catSpot.x, catSpot.y, {
+            label: null, color: '#e8a060', role: 'cat', roamArea: catArea(cols, rows)
+        });
+        cat.catSprite = (RK.randomCatId ? RK.randomCatId() : 'cat3');
+        this.npcs.push(cat);
     };
 
     TavernLife.prototype._pickTarget = function (npc, scene) {
@@ -303,9 +309,10 @@
                 scene.entities.push({
                     id: npc.id,
                     x: npc.x, y: npc.y,
-                    kind: 'avatar',
+                    kind: npc.role === 'cat' ? 'cat' : 'avatar',
                     avatar: npc.avatar,
                     appearance: npc.appearance,
+                    catSprite: npc.catSprite || null,
                     color: npc.color,
                     char: npc.role === 'cat' ? 'c' : '@',
                     facing: npc.facing,

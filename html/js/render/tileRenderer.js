@@ -188,6 +188,11 @@
                 ctx.stroke();
                 continue;
             }
+            // Tavern cat — a standalone animated sprite (Pet Cats Pack), not a char-atlas avatar.
+            if (e.kind === 'cat') {
+                drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.9, cell * 0.28, cell * 0.11);
+                if (window.RK && RK.drawCatCanvas && RK.drawCatCanvas(ctx, e, cell, now)) continue;
+            }
             // Character-like entity: soft ground shadow, then the sprite (or fallback circle).
             drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.92, cell * 0.34, cell * 0.14);
             // Roguelike character sprite, or premium animated skin; else the fallback circle.
