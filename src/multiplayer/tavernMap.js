@@ -46,8 +46,7 @@ function buildDefaultTavern(cols = 28, rows = 15) {
     const tables = [[5, 6], [12, 6], [19, 6], [5, 10], [12, 10], [19, 10]];
     for (const [tx, ty] of tables) { put(tx, ty, 'T'); put(tx, ty + 1, 'c'); }
 
-    // A rug in the centre of the room.
-    for (let y = 8; y <= 9; y++) for (let x = 11; x <= 15; x++) put(x, y, 'r');
+    // (No rug for now — the rug tile renders green, which reads wrong on the wood floor.)
 
     // Corner decor — barrels and crates.
     put(1, 1, 'B'); put(cols - 2, 1, 'C'); put(1, rows - 2, 'C'); put(cols - 2, rows - 2, 'B');
