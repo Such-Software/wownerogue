@@ -6,13 +6,14 @@
     // Render tiers. `premium` marks modes intended to be unlocked with credits — a cosmetic
     // entitlement gated by Operator Policy, the same pattern as avatar unlocks. NOTE: rendering
     // is client-side, so this is a soft/honour gate for cosmetics, not a hard security boundary.
+    // Modes are TECHNIQUES (how a scene is drawn). Packs are the SETS/styles within a projection
+    // (chosen via the pack picker) — so "Fancy" (tiles + FX) is a topdown PACK, not a mode. A
+    // premium mode unlocks once the user has ANY unlocked pack for its projection.
     RK.RENDER_MODES = [
-        { id: 'tiles', label: 'Tiled', premium: false },
-        { id: 'ascii', label: 'ASCII', premium: false },
-        { id: 'fancy', label: 'Fancy', premium: true, pack: 'generated-skins' },
-        { id: 'iso', label: 'Iso', premium: true, pack: 'iso-dungeon' },
-        { id: '3d', label: '3D', premium: true, pack: 'kenney-3d-characters' }
-        // Planned: 'fancy-ascii' — shader-lit, animated glyphs.
+        { id: 'tiles', label: 'Tiled', premium: false, projection: 'topdown' },
+        { id: 'ascii', label: 'ASCII', premium: false, projection: 'topdown' },
+        { id: 'iso', label: 'Iso', premium: true, projection: 'iso' },
+        { id: '3d', label: '3D', premium: true, projection: '3d' }
     ];
 
     RK.entitlements = RK.entitlements || { premium: false, level: 'free', packs: {} };
@@ -39,8 +40,11 @@
         var m = RK.modeMeta(id);
         if (!m) return false;
         if (RK.renderModeTestUnlocks && RK.renderModeTestUnlocks()) return true;
+        if (!m.premium) return true;
+        // A premium mode is available once the user has ANY unlocked pack for its projection.
+        if (m.projection && RK.unlockedPacks) return RK.unlockedPacks(m.projection).length > 0;
         if (m.pack && RK.canUsePack) return RK.canUsePack(m.pack);
-        return !m.premium || !!RK.entitlements.premium;
+        return !!RK.entitlements.premium;
     };
 
     RK.createRenderer = function (mode, host, opts) {

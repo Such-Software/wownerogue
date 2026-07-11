@@ -105,10 +105,11 @@ describe('render pack visual resolver', () => {
     expect(RK.isoAssets.characters['char-merchant']).toBeUndefined();
     expect(RK.isoAssets.characters['char-wizard']).toBeUndefined();
     expect(RK.isoAssets.characters['char-goblin']).toBeUndefined();
-    expect(RK.isoAssets.directions.down.idle).toContain('Male_3_Idle0.png');
-    expect(RK.isoAssets.directions.up.idle).toContain('Male_7_Idle0.png');
+    // 45° renders: 0=NW,2=SW,4=SE,6=NE. Facing follows visual movement (up->NE, down->SW, etc.).
+    expect(RK.isoAssets.directions.down.idle).toContain('Male_2_Idle0.png');
+    expect(RK.isoAssets.directions.up.idle).toContain('Male_6_Idle0.png');
     expect(RK.isoAssets.directions.left.idle).toContain('Male_0_Idle0.png');
-    expect(RK.isoAssets.directions.right.idle).toContain('Male_5_Idle0.png');
+    expect(RK.isoAssets.directions.right.idle).toContain('Male_4_Idle0.png');
   });
 
   test('projection visuals expose the saved base tint as a render color', () => {
@@ -142,8 +143,7 @@ describe('render pack visual resolver', () => {
 
     // With test unlocks on, ALL premium modes and packs are available for QA
     RK.RENDER_MODE_TEST_UNLOCKS = true;
-    expect(RK.canUseMode('fancy')).toBe(true);
-    expect(RK.canUseMode('iso')).toBe(true);
+    expect(RK.canUseMode('iso')).toBe(true);   // 'fancy' is no longer a mode — it's a topdown pack
     expect(RK.canUseMode('3d')).toBe(true);
     expect(RK.canUsePack('iso-dungeon')).toBe(true);
     expect(RK.canUsePack('kenney-3d-characters')).toBe(true);

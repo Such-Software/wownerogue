@@ -21,6 +21,10 @@ const DEFAULT_CATALOG = Object.freeze({
         id: 'generated-skins', label: 'Premium Generated Skins', kind: 'render-pack',
         projection: 'topdown', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
     }),
+    'roguelike-dungeon': Object.freeze({
+        id: 'roguelike-dungeon', label: 'Roguelike Dungeon (Tiles)', kind: 'render-pack',
+        projection: 'topdown', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
+    }),
     'iso-dungeon': Object.freeze({
         id: 'iso-dungeon', label: 'Kenney Isometric Dungeon', kind: 'render-pack',
         projection: 'iso', tier: 2, unlockMinCredits: 10, grantOnly: false, premium: true

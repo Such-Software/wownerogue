@@ -161,6 +161,31 @@
                 treasure: [42, 15], // 897 — item
                 torch: [50, 10]     // 620 — rubble / prop
             }
+        },
+        // Second topdown pack — same sheet, a DUNGEON palette (stone floors, barrels/crates instead
+        // of the wood-interior furniture). A distinct look with zero new assets, and it's the
+        // "interchangeable dungeon" style (the tiled renderer's lighting/shadows are the built-in FX).
+        'roguelike-dungeon': {
+            id: 'roguelike-dungeon',
+            label: 'Roguelike Dungeon',
+            tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
+            fx: true,
+            tiles: {
+                floor: [6, 2],      // 120 — stone floor
+                floor2: [13, 17],   // 982 — plank accent
+                wall: [13, 12],     // 697 — masonry
+                window: [42, 2],    // 156 — window
+                bar: [23, 0],       // barrels (a dungeon has no bar)
+                keg: [23, 0],
+                shelf: [25, 0],     // crate
+                table: [25, 0],     // crate as a table
+                chair: [23, 0],     // barrel as a stool
+                barrel: [23, 0],
+                crate: [25, 0],
+                rug: [6, 2],        // stone (no rug)
+                door: [37, 9],
+                entrance: [37, 9], exit: [37, 9], treasure: [42, 15], torch: [50, 10]
+            }
         }
     };
     RK.activeThemeId = 'roguelike-interior';
@@ -342,6 +367,7 @@
     // assets + a catalog row. Backward-compatible: one pack per projection resolves to these.
     if (RK.registerPack) {
         RK.registerPack({ id: 'roguelike-interior', label: 'Roguelike Interior', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-interior'] });
+        RK.registerPack({ id: 'roguelike-dungeon', label: 'Roguelike Dungeon', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-dungeon'] });
         RK.registerPack({ id: 'iso-dungeon', label: 'Isometric Dungeon', projection: 'iso', kind: 'tiles', assets: RK.isoAssets });
         RK.registerPack({ id: 'iso-medieval', label: 'Medieval Town', projection: 'iso', kind: 'tiles', assets: RK.isoMedievalAssets });
         RK.registerPack({ id: 'kenney-3d-characters', label: 'Animated 3D', projection: '3d', kind: 'skin', assets: RK.threeAssets });
