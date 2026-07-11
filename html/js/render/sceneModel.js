@@ -7,19 +7,22 @@
     'use strict';
 
     // Tile kinds and how each renderer treats them (glyph for ASCII, colour for tiled/fancy).
+    // `over` names the ground tile an object sits on, so the renderer composites the object over it
+    // (its transparent areas show the floor/wall, not the dark canvas). Ground tiles (wall/floor/rug)
+    // have no `over` — they fill the cell.
     var TAVERN_LEGEND = {
         wall:   { char: '#', color: '#3a3f4b', solid: true },
-        window: { char: 'W', color: '#4a6a8a', solid: true },
+        window: { char: 'W', color: '#4a6a8a', solid: true,  over: 'wall' },
         floor:  { char: '·', color: '#6b4d33', solid: false },  // warm wood, not the old dark green
-        rug:    { char: '=', color: '#7a3b39', solid: false },
-        bar:    { char: '=', color: '#6a4a2a', solid: true },
-        keg:    { char: 'k', color: '#5a4028', solid: true },
-        shelf:  { char: 'h', color: '#4a3a28', solid: true },
-        table:  { char: 'T', color: '#6a4a2a', solid: true },
-        chair:  { char: 'c', color: '#5a4028', solid: false },  // walkable — stand on it to "sit"
-        barrel: { char: 'B', color: '#5a4028', solid: true },
-        crate:  { char: 'C', color: '#7a5a38', solid: true },
-        door:   { char: 'D', color: '#3fb950', solid: false }
+        rug:    { char: 'r', color: '#7a3b39', solid: false, over: 'floor' },
+        bar:    { char: '=', color: '#6a4a2a', solid: true,  over: 'floor' },
+        keg:    { char: 'k', color: '#5a4028', solid: true,  over: 'floor' },
+        shelf:  { char: 'h', color: '#4a3a28', solid: true,  over: 'floor' },
+        table:  { char: 'T', color: '#6a4a2a', solid: true,  over: 'floor' },
+        chair:  { char: 'c', color: '#5a4028', solid: false, over: 'floor' },  // walkable — stand on it to "sit"
+        barrel: { char: 'B', color: '#5a4028', solid: true,  over: 'floor' },
+        crate:  { char: 'C', color: '#7a5a38', solid: true,  over: 'floor' },
+        door:   { char: 'D', color: '#3fb950', solid: false, over: 'floor' }
     };
 
     // Layout character -> tile kind.

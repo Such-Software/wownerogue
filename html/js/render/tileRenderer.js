@@ -107,9 +107,18 @@
                     var def = scene.legend[kind] || { color: '#333' };
                     var coord = useAtlas ? pickVariant(tmap[kind], x, y) : null;
                     if (coord) {
+                        // Object tiles (furniture, windows, torches, treasure…) are transparent
+                        // around the object. Legend `over` names the ground they sit on (floor/wall);
+                        // draw that first so the transparency shows the room, not the dark canvas.
+                        // Pipeline-level: any scene can declare it, not a tavern one-off.
+                        if (def.over && tmap[def.over]) {
+                            var base = pickVariant(tmap[def.over], x, y);
+                            if (base) atlas.draw(ctx, base[0], base[1], px, py, cell);
+                        }
                         atlas.draw(ctx, coord[0], coord[1], px, py, cell);
-                        // Dark bottom-edge strip grounds a solid wall against the floor below.
-                        if (def.solid) {
+                        // Dark bottom-edge strip grounds a solid WALL against the floor below (not
+                        // objects, which already sit on their own base tile).
+                        if (def.solid && !def.over) {
                             var strip = Math.max(2, cell * 0.16);
                             var sg = ctx.createLinearGradient(0, py + cell - strip, 0, py + cell);
                             sg.addColorStop(0, 'rgba(0,0,0,0)');
@@ -121,6 +130,10 @@
                         continue;
                     }
                     // Flat-colour fallback for any unmapped kind (or atlas not yet loaded).
+                    if (def.over && scene.legend[def.over]) {
+                        ctx.fillStyle = scene.legend[def.over].color;   // base colour under the object
+                        ctx.fillRect(px, py, cell, cell);
+                    }
                     ctx.fillStyle = def.color;
                     ctx.fillRect(px, py, cell, cell);
                     ctx.strokeStyle = 'rgba(0,0,0,0.25)';

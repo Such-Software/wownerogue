@@ -27,9 +27,11 @@
         if (!im.complete || !im.naturalWidth) return false;
         var frame = Math.floor((now || 0) / FRAME_MS) % FRAMES;
         var sx = frame * FW;
-        var size = cell * 1.25;                       // a touch bigger than a tile
+        // The cat occupies only ~40% of its 50x50 frame (lots of transparent padding), so scale
+        // the frame to ~2x the cell and centre it — the visible cat then reads about tile-sized.
+        var size = cell * 2.0;
         var dx = e.x * cell + (cell - size) / 2;
-        var dy = e.y * cell + cell - size + cell * 0.12;
+        var dy = e.y * cell + (cell - size) / 2 + cell * 0.2;   // centred, nudged down onto the tile
         ctx.save();
         ctx.imageSmoothingEnabled = false;
         if (e.facing === 'left') {
