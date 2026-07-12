@@ -487,7 +487,9 @@ const SocketHandlers = {
         
         // Hide any lingering QR code
         SocketHandlers.hidePaymentQR();
-        
+
+        // Clear the transient entry line ("dropping in…/queued…"); the game is starting now.
+        $('#messages').find('.entry-progress').remove();
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
         
         // Display provably fair commitment if present
@@ -522,6 +524,9 @@ const SocketHandlers = {
                 $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
                 if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
             } else {
+                // Game is live and rendering — drop the "Starting game…" transient; the server's
+                // "Game started! Escape before the next block!" success line is the standing status.
+                $('#messages').find('.game-start').remove();
                 setTimeout(function() {
                     $('#game-display').focus();
                 }, 100);
@@ -1752,7 +1757,10 @@ const SocketHandlers = {
         function begin(msg, emit) {
             $('#entryChoiceOverlay').remove();
             emit();
-            $('#messages').append($('<li style="color:#f0a828;">').text(msg));
+            // Transient "dropping in…/queued…" line — cleared in onGameStart once the game is live so
+            // it doesn't linger next to a running game reading as "still starting". The queued variant
+            // stays visible during the (real) block wait; only a started game removes it.
+            $('#messages').append($('<li class="entry-progress" style="color:#f0a828;">').text(msg));
             if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
             if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) ScreenManager.drawWaitingScreen();
         }
@@ -1783,7 +1791,7 @@ const SocketHandlers = {
             $('#ecNow').on('click', function () { timing = 'now'; render(); });
             $('#ecX').on('click', function () { $('#entryChoiceOverlay').remove(); });
             $('#ecFree').on('click', function () {
-                if (timing === 'now') begin('⚡ Free game — dropping in now...', function () { socket.emit('auto_start', { free: true }); });
+                if (timing === 'now') begin('⚡ Free game — dropping in...', function () { socket.emit('auto_start', { free: true }); });
                 else begin('🛡️ Free game — queued for the next block...', function () { socket.emit('join_queue'); });
             });
             $('#ecRank').on('click', function () {
