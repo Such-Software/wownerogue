@@ -193,6 +193,13 @@ body {
 .ctrl-btn--start { animation: torch-glow 3.4s ease-in-out infinite; }
 .ctrl-btn--start:hover { animation: none; }
 
+/* Sidebar group headers (Loadout / Explore / Progress) — the redesigned menu grouping. */
+.menu-grp-h {
+    font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    color: #7a8a5f; font-weight: 700; margin: 12px 0 5px; padding: 9px 0 0 2px;
+    border-top: 1px solid rgba(255,255,255,0.055);
+}
+
 /* =========================================================================
    HUD TOOLBAR — secondary "chip" controls (audio toggle + help / history /
    scores / manage-address). Small, bordered, glow-on-hover.

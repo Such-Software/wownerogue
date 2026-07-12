@@ -128,20 +128,30 @@
             <div id="publicStats" style="display:none; margin-top:4px; font-size:11px; color:#9cf; font-family:monospace; line-height:1.4;"></div>
             <div id="liveCta" style="display:none; margin-top:6px; cursor:pointer; background:rgba(80,0,0,0.55); border:1px solid #f33; border-radius:4px; padding:5px 10px; font-size:12px; font-family:monospace; color:#ff8a8a; font-weight:bold;" title="Watch a live game"></div>
             <div id="creditsDisplay" style="display:none; margin-top:4px; font-size:13px; font-family:monospace; color:#0f0; background:#001a00; padding:4px 8px; border:1px solid #0a0; border-radius:4px; font-weight:bold;"></div>
+            <!-- PLAY -->
             <button id="startButton" class="ctrl-btn ctrl-btn--start" style="display: none;">
                 🎮 <span class="lbl-full">START GAME</span><span class="lbl-short">START</span>
             </button>
+
+            <!-- LOADOUT · set once, remembered -->
+            <div class="menu-grp-h">Loadout</div>
+            <button id="characterButton" class="ctrl-btn ctrl-btn--character" title="Create / customize your character">
+                🎭 <span id="characterButtonLabel" class="lbl-full">CHARACTER</span><span class="lbl-short">CHAR</span>
+            </button>
+            <!-- Render mode + tile-pack picker (Style) — populated by spRenderPicker.js from entitlements. -->
+            <div id="renderPicker" class="hidden"></div>
+
+            <!-- EXPLORE -->
+            <div class="menu-grp-h">Explore</div>
             <button id="watchGamesButton" class="ctrl-btn ctrl-btn--watch">
                 👁️ <span class="lbl-full">WATCH GAMES</span><span class="lbl-short">WATCH</span>
             </button>
             <button id="tavernButton" class="ctrl-btn ctrl-btn--tavern" style="display: none;" onclick="window.location.href='/tavern'">
                 🍺 <span class="lbl-full">TAVERN</span><span class="lbl-short">TAVERN</span>
             </button>
-            <button id="characterButton" class="ctrl-btn ctrl-btn--character" title="Create / customize your character">
-                🎭 <span id="characterButtonLabel" class="lbl-full">CHARACTER</span><span class="lbl-short">CHAR</span>
-            </button>
-            <!-- Render mode + tile-pack picker (populated by spRenderPicker.js from entitlements). -->
-            <div id="renderPicker" class="hidden"></div>
+
+            <!-- PROGRESS & ACCOUNT -->
+            <div class="menu-grp-h">Progress &amp; account</div>
             <button id="shopButton" class="ctrl-btn ctrl-btn--shop" style="display: none;">
                 🛒 SHOP
             </button>
