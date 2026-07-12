@@ -147,39 +147,30 @@ function getDifficultyPreset(cryptoType = 'WOW', overridePreset = null) {
     return { ...DIFFICULTY_PRESETS.casino, presetName: 'casino' };
 }
 
-// Per-network SIZE tuning so cryptoType shapes difficulty (it used to be a dead parameter).
-//   sizeScale ∝ √(blockTime/ref) — PACING: a run's length as a consistent fraction of the block
-//     interval, applied to EVERY preset. Reference = XMR (2-min blocks) = 1.0. Clamped [0.7, 1.6]
-//     so single maps stay playable.
-//
-// DELIBERATELY NO monster-speed lever. The sim proved a supernaturally fast monster (a) feels like
-// cheating and (b) doesn't even WORK on slow chains — WOW (5-min blocks) caps ~64% house-win even
-// at a 2.2× monster on a 111×55 map, because a single dungeon clears in ~1 min << the block, so the
-// timer (the fair, on-theme "race the block" edge) barely bites. The real edge lever for slow chains
-// is MULTI-LEVEL DEPTH (cumulative run length across levels), which is the next build. Until then,
-// slow chains (WOW/BTC) run honest-but-under-target on the timer; the monster stays at its fair
-// preset speed. Operator env overrides (DUNGEON_*, MONSTER_*) still win. Kill: NETWORK_TUNING_DISABLED=true.
+// Per-network tuning so cryptoType shapes difficulty (it used to be a dead parameter). The pacing
+// lever is LEVELS (multi-level depth ∝ block time): a run descends `levels` normal-sized dungeons,
+// so cumulative run length makes the block-timer bite on slow chains WITHOUT a giant single map or
+// a cheating-fast monster (the sim proved both fail — size self-cancels, and a 2.2× monster still
+// caps WOW ~64%). Each level is base-sized with a FAIR monster; the edge comes from racing the block
+// across the whole descent. Levels ≈ blockTime / ~75s (one normal level), clamped [1, 10].
+//   GRIN 1m → 1   XMR 2m → 2   LTC 2.5m → 2   WOW 5m → 4   BTC 10m → 8
+// NOTE: the exact per-network level counts are sim starting points (calibration re-run is pending
+// the sim's multi-level support). Operator env overrides (DUNGEON_LEVELS, DUNGEON_*, MONSTER_*) win.
+// Kill: NETWORK_TUNING_DISABLED=true.
 const NETWORK_TUNING = {
-    GRIN: { sizeScale: 0.71 }, // ~1 min blocks
-    XMR:  { sizeScale: 1.00 }, // ~2 min (reference)
-    LTC:  { sizeScale: 1.12 }, // ~2.5 min
-    WOW:  { sizeScale: 1.60 }, // ~5 min (measured) — wants multi-level, not one giant map
-    BTC:  { sizeScale: 1.60 }  // ~10 min — wants multi-level
+    GRIN: { levels: 1 }, // ~1 min blocks
+    XMR:  { levels: 2 }, // ~2 min
+    LTC:  { levels: 2 }, // ~2.5 min
+    WOW:  { levels: 4 }, // ~5 min (measured)
+    BTC:  { levels: 8 }  // ~10 min
 };
 
-// Fold the per-network SIZE scale into a resolved preset (pacing; monster left at the fair preset speed).
+// Fold the per-network level count onto the resolved preset (size + monster stay at the preset).
 function applyNetworkTuning(preset, cryptoType) {
     if (process.env.NETWORK_TUNING_DISABLED === 'true') return preset;
     const t = NETWORK_TUNING[String(cryptoType || '').trim().toUpperCase()];
     if (!t) return preset;
-    return {
-        ...preset,
-        dungeon: {
-            ...preset.dungeon,
-            width: Math.max(20, Math.round(preset.dungeon.width * t.sizeScale)),
-            height: Math.max(12, Math.round(preset.dungeon.height * t.sizeScale))
-        }
-    };
+    return { ...preset, levels: t.levels };
 }
 
 /**
@@ -212,8 +203,14 @@ function getDifficultyConfig(cryptoType = 'WOW', customOverrides = {}) {
     if (env.TREASURE_ROOM_POSITION) envOverrides.treasure.roomPositionRatio = parseFloat(env.TREASURE_ROOM_POSITION);
     if (env.TREASURE_EXIT_DISTANCE) envOverrides.treasure.distanceFromExitRatio = parseFloat(env.TREASURE_EXIT_DISTANCE);
 
+    // Level count: operator env DUNGEON_LEVELS wins, else custom, else the network tuning, else 1.
+    const levels = env.DUNGEON_LEVELS
+        ? Math.max(1, parseInt(env.DUNGEON_LEVELS, 10) || 1)
+        : (customOverrides.levels || preset.levels || 1);
+
     return {
         ...preset,
+        levels,
         dungeon: { ...preset.dungeon, ...envOverrides.dungeon, ...customOverrides.dungeon },
         monster: { ...preset.monster, ...envOverrides.monster, ...customOverrides.monster },
         treasure: { ...preset.treasure, ...envOverrides.treasure, ...customOverrides.treasure }

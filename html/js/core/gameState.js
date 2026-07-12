@@ -34,6 +34,8 @@ var GameState = {
         this._message = null;
         this._lighting = {};
         this._torches = [];
+        this._depth = 1;
+        this._maxDepth = 1;
         
         if (this._scheduler) this._scheduler.clear();
         if (!this._scheduler) this._scheduler = new ROT.Scheduler.Simple();
@@ -208,6 +210,18 @@ var GameState = {
         
         try {
             let needsRedraw = false;
+
+            // Multi-level descent: a new depth means a brand-new level. The accumulated map /
+            // explored / visible tiles belong to the level we just left, so clear them — otherwise
+            // the old level's walls ghost through the fresh one.
+            if (typeof data.depth === 'number' && data.depth !== this._depth) {
+                this._depth = data.depth;
+                if (typeof data.maxDepth === 'number') this._maxDepth = data.maxDepth;
+                this._map = {};
+                this._visibleTiles = {};
+                this._exploredTiles = {};
+                needsRedraw = true;
+            }
 
             // Update player state
             if (data.player) {

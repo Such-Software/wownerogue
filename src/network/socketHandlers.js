@@ -308,6 +308,13 @@ class SocketHandlers {
             return;
         }
 
+        // Player took the stairs down to a deeper level — the fresh level was already generated in
+        // movePlayer and rides out in the normal game_update. Don't end the game, and don't advance
+        // the new level's monster on the arrival turn.
+        if (moveResult && moveResult.event === 'descend') {
+            return;
+        }
+
         let monsterResult = null;
 
         // Move monster one step toward player each player action

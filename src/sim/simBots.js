@@ -75,6 +75,7 @@ function explorerBot(opts = {}) {
     const known = new Set();        // "x,y" of every cell ever seen (floor or wall)
     const seenExit = { at: null };
     const seenTreasure = { at: null };
+    let lastDepth = 1;              // reset fog-of-war on a multi-level descent (fresh level)
 
     function reveal(game) {
         const px = game.player.x, py = game.player.y;
@@ -110,6 +111,10 @@ function explorerBot(opts = {}) {
         id: wantTreasure ? 'explorer-greedy' : 'explorer-escape',
         vision,
         move(game) {
+            // On a descent, the old level's knowledge is stale — start the new level unexplored.
+            if (game.depth && game.depth !== lastDepth) {
+                known.clear(); seenExit.at = null; seenTreasure.at = null; lastDepth = game.depth;
+            }
             reveal(game);
             const cols = game.width, rows = game.height;
             const hazard = monsterHazard(game);

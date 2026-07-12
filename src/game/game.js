@@ -5,7 +5,7 @@ const Monster = require('./monster.js');
 const DungeonGenerator = require('./dungeon.js');
 const LightingAndFov = require('./lightingAndFov.js');
 const { getDifficultyConfig, getMonsterSpawnRoomIndex, getTreasureRoomIndex } = require('./difficultyConfig');
-const { createGameProof, getPreGameCommitment, getPostGameReveal, createSeededRNG, seedToInt, seededShuffle } = require('./provablyFair');
+const { createGameProof, getPreGameCommitment, getPostGameReveal, createSeededRNG, seedToInt, levelSeed, seededShuffle } = require('./provablyFair');
 
 // Environment-based console logging control
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
@@ -102,59 +102,80 @@ class Game {
     // Get difficulty settings
     const difficultyConfig = getDifficultyConfig(process.env.CRYPTO_TYPE || 'WOW');
     this.difficultyConfig = difficultyConfig;
-    
+
+    // Multi-level descent: a run spans `maxDepth` levels (a pacing knob ∝ block time, from the
+    // per-network tuning). Reaching a non-final exit descends to a fresh level; only the final
+    // level's exit escapes. Defaults to 1 (single level) when no tuning is present.
+    this.depth = 1;
+    this.maxDepth = Math.max(1, parseInt(difficultyConfig.levels, 10) || 1);
+
     if (CONSOLE_LOGGING) {
       console.log(`[Game.initializeGame] Using difficulty preset: ${difficultyConfig.presetName}`);
       console.log(`[Game.initializeGame] Target house win rate: ${difficultyConfig.targetHouseWinRate * 100}%`);
+      console.log(`[Game.initializeGame] Levels this run: ${this.maxDepth}`);
     }
-    
+
     // Initialize game state
     this.gameState = 'waiting';
     this.startBlock = null;
     this.player = new Player();
-    this.monster = new Monster(0, 0, { 
-      visionRange: difficultyConfig.monster.visionRange || 12 
-    });
     this.monsterMoveAccumulator = 0; // For fractional monster moves
     this.fee = 0;
 
-    // Generate dungeon with the provided dimensions and config.
-    // Pass the per-game seeded RNG + numeric seed so the layout is deterministic
-    // and verifiable from the committed seed (provably fair).
-    this.dungeon = DungeonGenerator.generate(this.gameConfig.width, this.gameConfig.height, {
-      ...this.gameConfig,
-      rng: this.seededRNG,
-      seedInt: this.seedInt
-    });
-    
-    // Place player at entrance
-    if (this.dungeon.entrance) {
-      this.player.moveTo(this.dungeon.entrance[0], this.dungeon.entrance[1]);
-    }
-    
-    // Place monster based on difficulty config (closer = harder)
-    if (this.dungeon.rooms && this.dungeon.rooms.length > 2) {
-      const monsterRoomIndex = getMonsterSpawnRoomIndex(
-        this.dungeon.rooms, 
-        difficultyConfig.monster.startDistanceFromPlayer
-      );
-      const monsterRoom = this.dungeon.rooms[monsterRoomIndex];
-      const center = monsterRoom.getCenter();
-      this.monster.moveTo(center[0], center[1]);
-      
-      if (CONSOLE_LOGGING) {
-        console.log(`[Game.initializeGame] Monster spawned in room ${monsterRoomIndex}/${this.dungeon.rooms.length - 1} (distance ratio: ${difficultyConfig.monster.startDistanceFromPlayer})`);
-      }
-    }
+    // Generate the first level (also creates the monster + FOV for it).
+    this._generateLevel(1);
 
-    // Initialize lighting and FOV
-    this.lightingAndFov = new LightingAndFov(this.dungeon.map, this.dungeon.torches);
-    this._fovInstance = LightingAndFov.initializeFOV(this.dungeon.map, this.gameConfig);
-    const fovRadius = this.gameConfig.fovRadius || 10; 
-    this.visibleTiles = LightingAndFov.updateFOV(this._fovInstance, this.player, this.dungeon.map, fovRadius);
-    
     // Set game state to active
     this.gameState = 'active';
+  }
+
+  /**
+   * Generate the dungeon for a given level and place the player + a fresh monster on it. The layout
+   * is deterministic from the committed seed via a per-level seed (level 1 = master seed, so
+   * single-level games are unchanged; deeper levels salt it), keeping the whole descent verifiable.
+   * Treasure lives only in the vault (the final level) — intermediate levels are a race to the stairs.
+   * @param {number} depth - 1-based level index
+   */
+  _generateLevel(depth) {
+    const isFirst = depth === 1;
+    const seed = levelSeed(this.gameProof.seed, depth);
+    const dungeon = DungeonGenerator.generate(this.gameConfig.width, this.gameConfig.height, {
+      ...this.gameConfig,
+      rng: isFirst ? this.seededRNG : createSeededRNG(seed),
+      seedInt: isFirst ? this.seedInt : seedToInt(seed)
+    });
+
+    // Only the final level holds the treasure — descend all the way for the reward.
+    if (depth < this.maxDepth) {
+      dungeon.treasure = null;
+    }
+    this.dungeon = dungeon;
+
+    // Place player at the entrance.
+    if (dungeon.entrance) {
+      this.player.moveTo(dungeon.entrance[0], dungeon.entrance[1]);
+    }
+
+    // Fresh monster per level, placed by difficulty config (closer = harder).
+    this.monster = new Monster(0, 0, { visionRange: this.difficultyConfig.monster.visionRange || 12 });
+    this.monsterMoveAccumulator = 0;
+    if (dungeon.rooms && dungeon.rooms.length > 2) {
+      const idx = getMonsterSpawnRoomIndex(dungeon.rooms, this.difficultyConfig.monster.startDistanceFromPlayer);
+      const center = dungeon.rooms[idx].getCenter();
+      this.monster.moveTo(center[0], center[1]);
+    }
+
+    // Reset lighting + FOV for the new level (a fresh descent is unexplored).
+    this.lightingAndFov = new LightingAndFov(dungeon.map, dungeon.torches);
+    this._fovInstance = LightingAndFov.initializeFOV(dungeon.map, this.gameConfig);
+    const fovRadius = this.gameConfig.fovRadius || 10;
+    this.visibleTiles = LightingAndFov.updateFOV(this._fovInstance, this.player, dungeon.map, fovRadius);
+  }
+
+  /** Take the stairs down to the next level (regenerates the dungeon, keeps player identity/treasure). */
+  _descend() {
+    this.depth += 1;
+    this._generateLevel(this.depth);
   }
   
   updateFOV() {
@@ -205,6 +226,15 @@ class Game {
       
       // Check for game events like finding treasure or exit
       if (this.dungeon.exit && this.player.isAt(this.dungeon.exit[0], this.dungeon.exit[1])) {
+        // Not at the bottom yet → take the stairs down to a fresh level (NOT a win). The new level
+        // is generated here, so the returned state (and the next getState) already reflects it.
+        if (this.depth < this.maxDepth) {
+          this._descend();
+          return {
+            status: 'moved', event: 'descend', depth: this.depth, maxDepth: this.maxDepth,
+            player: this.player.getState(), visibleTiles: this.visibleTiles, moves: this.moveCount
+          };
+        }
         this.gameState = 'won';
   return { status: 'moved', event: 'escaped', player: this.player.getState(), visibleTiles: this.visibleTiles, moves: this.moveCount };
       }
@@ -298,6 +328,8 @@ class Game {
       entrance: this.dungeon ? this.dungeon.entrance : null,
       exit: this.dungeon ? this.dungeon.exit : null,
       treasure: this.dungeon ? this.dungeon.treasure : null,
+      depth: this.depth,
+      maxDepth: this.maxDepth,
       moves: this.moveCount,
       startedAt: this.startedAt
     };

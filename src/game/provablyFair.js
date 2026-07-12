@@ -112,6 +112,19 @@ function seedToInt(seed) {
 }
 
 /**
+ * Derive a per-level seed for a multi-level run. Level 1 uses the master seed verbatim (so
+ * single-level games stay byte-identical to pre-multi-level behaviour); deeper levels salt the
+ * master seed with the depth. The whole descent is therefore reproducible from the one committed
+ * seed — feed (masterSeed, depth) to `createSeededRNG`/`seedToInt` to regenerate any level.
+ * @param {string} masterSeed - The game's committed seed
+ * @param {number} depth - 1-based level index
+ * @returns {string} The seed string for that level
+ */
+function levelSeed(masterSeed, depth) {
+    return depth > 1 ? String(masterSeed) + ':L' + depth : String(masterSeed);
+}
+
+/**
  * Generate a random integer in range [min, max] using seeded RNG
  * @param {function} rng - Seeded RNG function
  * @param {number} min - Minimum value (inclusive)
@@ -241,6 +254,7 @@ module.exports = {
     deriveSeed,
     createSeededRNG,
     seedToInt,
+    levelSeed,
     seededRandomInt,
     seededShuffle,
     createGameProof,
