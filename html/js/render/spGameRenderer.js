@@ -26,9 +26,10 @@
         if (!host) {
             host = doc().createElement('div');
             host.id = 'rk-game-host';
-            host.style.cssText = 'display:none; position:relative; width:100%; max-width:900px;' +
-                ' aspect-ratio:16/10; margin:0 auto; overflow:hidden; background:#0a0c0f;' +
-                ' border:1px solid #2a313a; border-radius:6px; touch-action:none; cursor:grab;';
+            // Absolutely FILL #game-display (which is position:relative) so the flex centering + the
+            // hidden ROT/FX sibling canvases can't shrink or shove us into a corner.
+            host.style.cssText = 'display:none; position:absolute; top:0; left:0; right:0; bottom:0;' +
+                ' overflow:hidden; background:#0a0c0f; z-index:6; touch-action:none; cursor:grab;';
             gd.appendChild(host);
         }
         return host;
@@ -76,7 +77,9 @@
         if (SP._renderer && SP._renderer.canvas) {
             var c = SP._renderer.canvas;
             c.style.position = 'absolute'; c.style.top = '0'; c.style.left = '0';
-            c.style.maxWidth = 'none'; c.style.imageRendering = 'pixelated';
+            // Beat `.rotdis canvas { max-width:100% !important }` so the camera controls the size.
+            c.style.setProperty('max-width', 'none', 'important');
+            c.style.setProperty('image-rendering', 'pixelated', 'important');
         }
         if (!host._rkZoomBound) {
             host._rkZoomBound = true;
