@@ -201,20 +201,22 @@ const InputHandler = {
     setupClickHandlers: function() {
         // Add click handling for the HTML START button
         $('#startButton').click(function(e) {
-            // If early entry is available and user has credits, show choice modal
+            // Show the wait-vs-drop-in TIMING choice whenever the game would start instantly (no
+            // upfront payment): free play (this instance allows it), a FREE instance, or paid-credits
+            // with credits in hand. The chosen payment method flows through auto_start / join_queue
+            // unchanged — this modal only picks WHEN you enter.
             if (typeof SocketHandlers !== 'undefined') {
-                var isPaidCredits = SocketHandlers._gameMode === 'PAID_CREDITS';
+                var mode = SocketHandlers._gameMode;
+                var freeAvailable = SocketHandlers._freePlayEnabled || mode === 'FREE';
                 var hasCredits = SocketHandlers._creditsBalance >= (SocketHandlers._creditsPerGame || 1);
-                var earlyAllowed = SocketHandlers._earlyEntryConfig &&
-                    SocketHandlers._earlyEntryConfig.enabled &&
-                    SocketHandlers._earlyEntryConfig.allowInCreditsMode;
-                if (isPaidCredits && hasCredits && earlyAllowed) {
-                    SocketHandlers.showEntryChoiceModal();
+                var instantStart = freeAvailable || (mode === 'PAID_CREDITS' && hasCredits);
+                if (instantStart) {
+                    SocketHandlers.showEntryChoiceModal({ freeAvailable: freeAvailable, hasCredits: hasCredits });
                     return;
                 }
             }
 
-            // Default: attempt immediate start
+            // Default: attempt immediate start (payment-required modes go through their own flow)
             socket.emit('auto_start');
 
             // Check if we should show waiting screen

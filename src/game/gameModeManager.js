@@ -1492,6 +1492,7 @@ class GameModeManager {
         
         return {
             mode: this.gameMode,
+            freePlayEnabled: !!this.freePlayEnabled, // players may choose free play even on a paid instance
             cryptoType: this.cryptoType,
             currencyLabel: this.currencyLabel, // sXMR on stagenet, XMR on mainnet, WOW for Wownero
             gameName: this.gameName,           // Monerogue / Wownerogue

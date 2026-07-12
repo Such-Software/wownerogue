@@ -708,6 +708,7 @@ const SocketHandlers = {
         
         // Store game mode and early entry config
         SocketHandlers._gameMode = data.mode;
+        SocketHandlers._freePlayEnabled = !!data.freePlayEnabled;
         SocketHandlers._earlyEntryConfig = data.earlyEntry || { enabled: false };
         SocketHandlers._creditsPayoutsEnabled = !!data.creditsPayoutsEnabled;
         SocketHandlers._directPayoutsEnabled = !!data.directPayoutsEnabled;
@@ -1693,11 +1694,15 @@ const SocketHandlers = {
     // Entry Choice Modal
     // =====================
 
-    showEntryChoiceModal: function() {
+    showEntryChoiceModal: function(opts) {
+        opts = opts || {};
         // Remove any existing modal
         $('#entryChoiceOverlay').remove();
 
         var cost = this._creditsPerGame || 1;
+        var costText = opts.freeAvailable
+            ? 'Free play — no credits needed'
+            : ('Cost: ' + cost + ' credit per game');
         var $overlay = $('<div id="entryChoiceOverlay">').css({
             position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
             background: 'rgba(0,0,0,0.7)', zIndex: 3000,
@@ -1712,7 +1717,7 @@ const SocketHandlers = {
 
         $modal.html(
             '<div style="font-size:18px; font-weight:bold; margin-bottom:16px;">How do you want to enter?</div>' +
-            '<div style="font-size:12px; color:#888; margin-bottom:20px;">Cost: ' + cost + ' credit per game</div>' +
+            '<div style="font-size:12px; color:#888; margin-bottom:20px;">' + costText + '</div>' +
             '<button id="entryChoiceNow" style="' +
                 'display:block; width:100%; padding:12px; margin-bottom:10px; cursor:pointer; ' +
                 'background:linear-gradient(180deg,#662200,#441100); border:2px solid #ff6600; ' +
