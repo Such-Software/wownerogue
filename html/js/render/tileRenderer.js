@@ -284,9 +284,11 @@
 
         // Snapshot the base scene, then composite the torch light + vignette on top, and keep
         // an animation loop running so the light flickers and embers drift between renders.
-        // Where the player is on this canvas — the SP camera centers the view on it.
+        // Where the player is on this canvas — the SP camera centers on it. Sticky: keep the last
+        // point if the player is momentarily absent (level transition), so the view never snaps to
+        // the corner.
         var _fp = findPlayer(scene);
-        this.focusPoint = _fp ? { x: (_fp.x + 0.5) * cell, y: (_fp.y + 0.5) * cell } : null;
+        if (_fp) this.focusPoint = { x: (_fp.x + 0.5) * cell, y: (_fp.y + 0.5) * cell };
 
         this._lastScene = scene;
         this._collectEmitters(scene);

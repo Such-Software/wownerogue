@@ -128,7 +128,20 @@
         host.style.display = 'block';
         toggleLegacy(true);
         SP._live = true;
+        SP._startCameraLoop();
         return true;
+    };
+
+    // Re-apply the camera every frame while live — robust against the renderer resizing its canvas
+    // or a transient focusPoint, which was making the view snap to the corner mid-run.
+    SP._startCameraLoop = function () {
+        if (SP._camRaf != null) return;
+        function tick() {
+            if (!SP._live) { SP._camRaf = null; return; }
+            SP._applyCamera();
+            SP._camRaf = root.requestAnimationFrame(tick);
+        }
+        SP._camRaf = root.requestAnimationFrame(tick);
     };
 
     // Back to the ROT view (splash / win / lose). Call on game end.

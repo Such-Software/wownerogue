@@ -268,12 +268,12 @@
                 }
             }
         }
-        this.focusPoint = null;
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
             p = this._project(e.x, e.y, originX, originY);
             items.push({ type: 'entity', e: e, sx: p.x, sy: p.y, depth: e.x + e.y + 0.55 });
-            if (e.you || e.kind === 'player') this.focusPoint = { x: p.x, y: p.y + this.tileH }; // SP camera target
+            // Sticky camera target (keep last if the player is momentarily absent).
+            if (e.you || e.kind === 'player') this.focusPoint = { x: p.x, y: p.y + this.tileH };
         }
         items.sort(function (a, b) { return a.depth === b.depth ? (a.y || 0) - (b.y || 0) : a.depth - b.depth; });
 
