@@ -51,16 +51,43 @@ crypto block as long as at least two players are queued. Supported economies:
 
 See `docs/MATCH_MODE.md` for full architecture, configuration, and API details.
 
-## Difficulty Presets
+## Difficulty & Pacing
 
-| Preset | Dungeon Size | Monster Aggression | House Win Rate |
-|--------|--------------|--------------------|----|
-| `easy` | 30×15 | Low | ~30% |
-| `normal` | 45×22 | Medium | ~55% |
-| `hard` | 55×28 | High | ~65% |
-| `casino` | 60×30 | Very High | ~70% |
+Difficulty has two levers, both keyed to the crypto network so `cryptoType` actually shapes the
+game (it used to be a dead parameter).
 
-Set via `DIFFICULTY_PRESET` in `.env`. Defaults to `casino` for paid modes.
+**Presets** (`DIFFICULTY_PRESET`) — the per-level shape:
+
+| Preset | Dungeon Size | Monster | Target House Win |
+|--------|--------------|---------|------------------|
+| `easy`   | 30×15 | low       | ~30% |
+| `normal` | 45×22 | medium    | ~55% |
+| `hard`   | 55×28 | high      | ~65% |
+| `casino` | 70×35 | very high | ~70% |
+
+Defaults to `normal` for free play, `casino` for paid. Every knob is `env`-overridable
+(`DUNGEON_WIDTH`, `MONSTER_SPEED`, …).
+
+**Multi-level depth (`levels`) — the pacing lever, ∝ block time.** A run *descends* N levels (each a
+preset-sized dungeon with a fair monster). Reaching a non-final exit takes the stairs down; only the
+final exit escapes; the treasure sits in the vault (final level). Because total run length scales
+with the chain's block time, the "race the block" **timer** provides the house edge — no giant map,
+no cheating-fast monster.
+
+| Chain | Block time | Levels |
+|-------|-----------|--------|
+| GRIN | ~1 min | 1 |
+| XMR  | ~2 min | 2 |
+| LTC  | ~2.5 min | 2 |
+| WOW  | ~5 min (measured) | 4 |
+| BTC  | ~10 min | 8 |
+
+Levels live in `NETWORK_TUNING` (`src/game/difficultyConfig.js`); override with `DUNGEON_LEVELS`,
+disable with `NETWORK_TUNING_DISABLED=true`. The counts are sim-derived starting points — see
+[`docs/BALANCE_SIM.md`](docs/BALANCE_SIM.md) for how the balance is measured and calibrated.
+
+> **Note:** Wownero's block time is **~5 min** (measured on the live daemon), not 2 min as older
+> docs/comments claimed.
 
 ---
 
@@ -149,7 +176,8 @@ curl -X POST http://localhost:3000/api/admin/credits/adjust \
 | Event | Description |
 |-------|-------------|
 | `game_start` | Game initialized with dungeon state |
-| `game_update` | State after movement |
+| `game_update` | State after movement (incl. `depth`/`maxDepth` for multi-level descent) |
+| `game_event` | Discrete event: `treasure_found`, `descend` (took the stairs down), `escaped` |
 | `game_over` | Game ended |
 | `payment_created` | Payment address ready |
 | `credits_update` | Credit balance changed |

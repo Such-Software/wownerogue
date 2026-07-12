@@ -16,6 +16,23 @@ All milestones implemented. See `docs/MATCH_MODE.md` for architecture and config
 
 # Wownerogue Development Todo
 
+## Rendering, Balance & Multi-level (2026-07)
+
+Done:
+- [x] **Render packs**: modes (technique) vs packs (style) split; "Fancy" retired to a topdown pack; multi-pack registry; Kenney iso dungeon set + orientation-aware walls; per-projection pack picker. See `RENDER_PACKS.md`.
+- [x] **FX layer (`RK.fx`)**: shared canvas fire/hazard/glow; tavern braziers + hearth; dungeon hazard tiles wired. Zoom (`zoomControl.js`); animated cat.
+- [x] **Balance sim** (`src/sim/`): headless harness over the real engine; measured house-win per network. See `BALANCE_SIM.md`.
+- [x] **Per-network tuning**: `cryptoType` now shapes difficulty via `NETWORK_TUNING` (was a dead param).
+- [x] **WOW block-time fix**: 2 min → **5 min** (measured on the live daemon); `chainProfile.js`.
+- [x] **Multi-level dungeons**: descend N levels ∝ block time; provably-fair per level; treasure in the vault. See `MULTI_LEVEL.md`.
+
+Pending:
+- [ ] **Multi-level calibration run**: lock per-network level counts against a target house-win (sim multi-level support is in; counts are currently starting points).
+- [ ] **Block-bounded pot race** (flagship): consume `Ruleset.timing.blockDeadline`; add pot+rake economy (house = zero-risk rake-taker). Decisions pending: empty-pot rule, prize split.
+- [ ] **PvP wiring**: connect the already-built `last-alive`/`score-attack` rulesets to a real queue.
+- [ ] **Hazard gameplay**: generator places lava/poison/spikes (FX already renders them) + damage stakes; escalate per level.
+- [ ] **Client polish**: "Level N/M" indicator + "descended" toast (server sends `depth`/`maxDepth` + `game_event: descend`).
+
 ## High Priority
 - [x] **Verify Server Startup**: Server starts cleanly with `npm run dev` ✅
 - [x] **Test Payment Flow**: Fixed critical bug where payment confirmation wasn't updating DB status ✅

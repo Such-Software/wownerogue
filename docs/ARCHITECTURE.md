@@ -44,9 +44,23 @@ XMR, WOW, GRIN: `decimalsFor`, `meanBlockTimeMsFor`, `familyFor` (monero / utxo 
 `uriSchemeFor`, `atomicDivisor` (BigInt). Unknown chains fall back to a WOW-shaped default. Money math
 stays exact via `src/money/atomic.js` (BigInt, decimals-parameterized) — never floats.
 
-> **Gotcha (open):** `difficultyConfig` threads `cryptoType` everywhere but doesn't yet key difficulty
-> off mean block time — it keys off payment mode. Wiring block-time → dungeon size is a pending
-> game-balance change (see RULESETS.md), and it bites when Grin (~1 min) / BTC (~10 min) ship.
+> **Resolved (2026-07):** `cryptoType` now keys difficulty off block time via `NETWORK_TUNING` in
+> `difficultyConfig.js` — the pacing lever is **multi-level depth** (levels ∝ block time), measured
+> and calibrated with a headless balance simulator. Also corrected: **WOW is ~5 min/block**, not 2
+> (measured on the live daemon). See [BALANCE_SIM.md](BALANCE_SIM.md) and [MULTI_LEVEL.md](MULTI_LEVEL.md).
+
+## Client render kit
+
+`html/js/render/` (`RK`) draws the shared `Scene` in multiple techniques (Tiled / ASCII / Iso / 3D)
+and interchangeable art **packs**, with a shared pure-canvas FX layer (torch/hearth fire, hazard
+tiles), zoom, and an operator-gated cosmetic catalog. See [RENDER_PACKS.md](RENDER_PACKS.md).
+
+## Game balance & pacing
+
+Difficulty is **measured, not guessed**: single-player runs are bounded by a random (exponential)
+block deadline, so the house edge is a simulation problem. `src/sim/` drives the real engine with
+headless bots; `NETWORK_TUNING` + multi-level depth are the calibrated levers. See
+[BALANCE_SIM.md](BALANCE_SIM.md) and [MULTI_LEVEL.md](MULTI_LEVEL.md).
 
 ## Regenerating the API reference (autodocs)
 
