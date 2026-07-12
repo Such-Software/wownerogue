@@ -23,13 +23,14 @@ describe('per-network difficulty tuning (multi-level)', () => {
     expect(w.monster.movesPerPlayerMove).toBe(DIFFICULTY_PRESETS.casino.monster.movesPerPlayerMove);
   });
 
-  test('levels scale with block time: GRIN < XMR < WOW < BTC', () => {
+  test('levels are non-decreasing with block time, BTC the deepest', () => {
     const lv = (n) => applyNetworkTuning(casino(), n).levels;
-    expect(lv('GRIN')).toBeLessThan(lv('XMR'));
+    expect(lv('GRIN')).toBeLessThanOrEqual(lv('XMR'));
     expect(lv('XMR')).toBeLessThanOrEqual(lv('LTC'));
-    expect(lv('LTC')).toBeLessThan(lv('WOW'));
+    expect(lv('LTC')).toBeLessThanOrEqual(lv('WOW'));
     expect(lv('WOW')).toBeLessThan(lv('BTC'));
-    expect(lv('GRIN')).toBe(1); // fast chain = single level
+    expect(lv('GRIN')).toBe(1);          // fast chain = single level
+    expect(lv('BTC')).toBeGreaterThan(1); // slow chain descends
   });
 
   test('applies to every preset (levels is preset-agnostic pacing)', () => {

@@ -157,12 +157,15 @@ function getDifficultyPreset(cryptoType = 'WOW', overridePreset = null) {
 // NOTE: the exact per-network level counts are sim starting points (calibration re-run is pending
 // the sim's multi-level support). Operator env overrides (DUNGEON_LEVELS, DUNGEON_*, MONSTER_*) win.
 // Kill: NETWORK_TUNING_DISABLED=true.
+// Level counts trimmed from the first sim estimate — 4-8 levels in a single block deadline is too
+// punishing (you rarely clear them all before the block). Kept modest until a real multi-level
+// calibration run + the descent UX are in. Reach-exit-to-win stays intuitive with fewer levels.
 const NETWORK_TUNING = {
     GRIN: { levels: 1 }, // ~1 min blocks
-    XMR:  { levels: 2 }, // ~2 min
+    XMR:  { levels: 1 }, // ~2 min
     LTC:  { levels: 2 }, // ~2.5 min
-    WOW:  { levels: 4 }, // ~5 min (measured)
-    BTC:  { levels: 8 }  // ~10 min
+    WOW:  { levels: 2 }, // ~5 min (measured)
+    BTC:  { levels: 3 }  // ~10 min
 };
 
 // Fold the per-network level count onto the resolved preset (size + monster stay at the preset).

@@ -194,32 +194,38 @@ function sceneFromGameState(state, opts) {
 
     var entities = [];
 
-    // Entrance / exit / treasure as entities (so they layer above tiles).
-    if (state.entrance) {
+    // Fog of war: a cell is `seen` once explored (grid isn't 'dark'); `inView` only while currently
+    // visible. Features (exit/treasure/entrance) show once discovered; the monster only shows while
+    // in view — otherwise the exit stairs leak through the fog before you've found them.
+    function seen(x, y) { return !!(grid[y] && grid[y][x] && grid[y][x] !== 'dark'); }
+    function inView(x, y) { return !!(visible[y] && visible[y][x] !== undefined); }
+
+    // Entrance / exit / treasure as entities (so they layer above tiles) — only once explored.
+    if (state.entrance && seen(state.entrance[0], state.entrance[1])) {
         entities.push({ id: 'entrance', x: state.entrance[0], y: state.entrance[1], kind: 'feature', char: '<', color: '#3fb950', label: null });
     }
-    if (state.exit) {
+    if (state.exit && seen(state.exit[0], state.exit[1])) {
         entities.push({ id: 'exit', x: state.exit[0], y: state.exit[1], kind: 'feature', char: '>', color: '#d29922', label: null });
     }
-    if (state.treasure) {
+    if (state.treasure && seen(state.treasure[0], state.treasure[1])) {
         var tChar = opts.cryptoType === 'XMR' ? '$M' : '$W';
         entities.push({ id: 'treasure', x: state.treasure[0], y: state.treasure[1], kind: 'feature', char: tChar, color: '#fbbf24', label: null });
     }
 
-    // Items.
+    // Items — only once explored.
     if (state.items) {
         for (var key in state.items) {
             if (state.items.hasOwnProperty(key)) {
                 var item = state.items[key];
-                if (item && typeof item.x === 'number') {
+                if (item && typeof item.x === 'number' && seen(item.x, item.y)) {
                     entities.push({ id: 'item:' + key, x: item.x, y: item.y, kind: 'item', char: '$', color: '#fbbf24', label: null });
                 }
             }
         }
     }
 
-    // Monster.
-    if (state.monster) {
+    // Monster — only while it's actually in view.
+    if (state.monster && inView(state.monster.x, state.monster.y)) {
         entities.push({
             id: 'monster', x: state.monster.x, y: state.monster.y,
             kind: 'monster', char: '~', color: '#f85149', label: null

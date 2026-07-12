@@ -26,9 +26,12 @@
         if (!host) {
             host = doc().createElement('div');
             host.id = 'rk-game-host';
-            // Absolutely FILL #game-display (which is position:relative) so the flex centering + the
-            // hidden ROT/FX sibling canvases can't shrink or shove us into a corner.
-            host.style.cssText = 'display:none; position:absolute; top:0; left:0; right:0; bottom:0;' +
+            // A bounded viewport CENTERED in #game-display (which is position:relative). Absolute
+            // positioning dodges the flex centering + sibling ROT/FX canvases; capping the height
+            // (vs filling the very-tall #game-display) keeps the player-centered camera on-screen
+            // instead of low.
+            host.style.cssText = 'display:none; position:absolute; top:50%; left:50%;' +
+                ' width:min(100%, 1000px); height:min(100%, 78vh); transform:translate(-50%,-50%);' +
                 ' overflow:hidden; background:#0a0c0f; z-index:6; touch-action:none; cursor:grab;';
             gd.appendChild(host);
         }

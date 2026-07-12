@@ -65,9 +65,12 @@ class MovementManager {
       this.spectatorManager.broadcastToSpectators(game.id, state);
     }
 
-    // Handle special events from moveResult (escape / treasure)
+    // Handle special events from moveResult (escape / treasure / descend). Include depth for the
+    // multi-level descend so the client can tell the player they took the stairs down (not a bug).
     if (moveResult && moveResult.event) {
-      this.io.to(socketId).emit('game_event', { event: moveResult.event });
+      this.io.to(socketId).emit('game_event', {
+        event: moveResult.event, depth: moveResult.depth, maxDepth: moveResult.maxDepth
+      });
     }
   }
 

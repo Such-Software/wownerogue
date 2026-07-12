@@ -130,6 +130,20 @@ const SocketHandlers = {
         socket.on('game_start', this.onGameStart);
         socket.on('game_update', this.onGameUpdate);
         socket.on('game_over', this.onGameOver);
+        // Discrete in-run events. Multi-level DESCEND is the big one — without this, taking the
+        // stairs down silently dumped the player at a new entrance and read as a bug.
+        socket.on('game_event', function (data) {
+            if (!data || !data.event) return;
+            var $m = $('#messages');
+            if (data.event === 'descend') {
+                var lvl = (data.depth && data.maxDepth) ? ('Level ' + data.depth + ' of ' + data.maxDepth + ' — ') : '';
+                $m.append($('<li class="status" style="color:#ffcc00; font-weight:bold;">')
+                    .text('⬇️ Stairs down! ' + lvl + 'keep going — escape before the block!'));
+            } else if (data.event === 'treasure_found') {
+                $m.append($('<li class="status" style="color:#fbbf24; font-weight:bold;">').text('💰 Treasure secured!'));
+            } else return;
+            if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
+        });
         socket.on('queue_cancelled', this.onQueueCancelled);
         
         // Payment/Address handlers
