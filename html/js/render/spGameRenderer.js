@@ -16,7 +16,9 @@
     function doc() { return root.document; }
     function gameDisplay() { return doc() && doc().getElementById('game-display'); }
 
-    // A dedicated child host so the RK canvas doesn't collide with the ROT canvas / overlays.
+    // A dedicated, SELF-SIZING child host so the RK canvas doesn't collide with the ROT canvas and
+    // doesn't depend on the ROT canvas for its dimensions (it's an aspect-ratio viewport the camera
+    // transform is clipped to).
     function rkHost() {
         var gd = gameDisplay();
         if (!gd) return null;
@@ -24,7 +26,9 @@
         if (!host) {
             host = doc().createElement('div');
             host.id = 'rk-game-host';
-            host.style.display = 'none';
+            host.style.cssText = 'display:none; position:relative; width:100%; max-width:900px;' +
+                ' aspect-ratio:16/10; margin:0 auto; overflow:hidden; background:#0a0c0f;' +
+                ' border:1px solid #2a313a; border-radius:6px; touch-action:none; cursor:grab;';
             gd.appendChild(host);
         }
         return host;
@@ -67,8 +71,37 @@
         var host = rkHost();
         if (!host || !RK.createRenderer) return null;
         SP._renderer = RK.createRenderer(SP.mode(), host, { cell: 24 });
-        if (RK.attachZoom) { try { RK.attachZoom(host); } catch (_) {} }
+        // The camera owns the canvas transform (centre on the player), so position it absolutely
+        // and let it overflow — do NOT use RK.attachZoom (it fights this transform).
+        if (SP._renderer && SP._renderer.canvas) {
+            var c = SP._renderer.canvas;
+            c.style.position = 'absolute'; c.style.top = '0'; c.style.left = '0';
+            c.style.maxWidth = 'none'; c.style.imageRendering = 'pixelated';
+        }
+        if (!host._rkZoomBound) {
+            host._rkZoomBound = true;
+            host.addEventListener('wheel', function (ev) {
+                ev.preventDefault();
+                SP._zoom = Math.max(0.6, Math.min(4, (SP._zoom || 1.7) * Math.exp(-ev.deltaY * 0.0015)));
+                SP._applyCamera();
+            }, { passive: false });
+        }
         return SP._renderer;
+    };
+
+    // Centre the (whole-scene) canvas on the player via a CSS transform, clipped to the host —
+    // renderer-agnostic (works for tiled / iso / 3d, each of which reports its own focusPoint).
+    SP._applyCamera = function () {
+        var r = SP._renderer;
+        var host = doc() && doc().getElementById('rk-game-host');
+        if (!r || !r.canvas || !host) return;
+        var scale = SP._zoom || 1.7;
+        var fp = r.focusPoint;
+        r.canvas.style.transformOrigin = '0 0';
+        if (!fp) { r.canvas.style.transform = 'scale(' + scale + ')'; return; }
+        var w = host.clientWidth || 640, h = host.clientHeight || 400;
+        var tx = w / 2 - fp.x * scale, ty = h / 2 - fp.y * scale;
+        r.canvas.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
     };
 
     function toggleLegacy(hide) {
@@ -117,6 +150,7 @@
                 isSpectating: opts.isSpectating
             });
             r.render(scene);
+            SP._applyCamera();
             return true;
         } catch (e) {
             if (root.console) console.warn('SPGame render failed; falling back to legacy:', e && e.message);

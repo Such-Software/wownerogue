@@ -203,10 +203,17 @@
                 }
                 continue;
             }
-            // Dungeon monster.
+            // Dungeon monster — draw the Goblin character sprite (same path the tavern draws
+            // characters through), falling back to a red orb only if the sprite is unavailable.
             if (e.kind === 'monster') {
+                drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.9, cell * 0.32, cell * 0.13);
+                var mAvatar = e.avatar || 'char-goblin';
+                if (window.RK && RK.avatarVisuals && RK.avatarVisuals.drawTopdownWorld) {
+                    var mv = RK.avatarVisuals.resolve({ avatar: mAvatar }, { projection: 'topdown', context: 'dungeon', entity: e });
+                    if (RK.avatarVisuals.drawTopdownWorld(ctx, mv, e, { screenX: e.x, screenY: e.y, cell: cell }, { now: now })) continue;
+                }
+                if (window.RK && RK.drawCharCanvas && RK.drawCharCanvas(ctx, { x: e.x, y: e.y, avatar: mAvatar }, cell, now)) continue;
                 var mx = e.x * cell + cell / 2, my = e.y * cell + cell / 2, mr = cell * 0.34;
-                drawEntityShadow(ctx, mx, e.y * cell + cell * 0.9, cell * 0.32, cell * 0.13);
                 ctx.beginPath();
                 ctx.arc(mx, my, mr, 0, Math.PI * 2);
                 ctx.fillStyle = e.color || '#f85149';
@@ -267,6 +274,10 @@
 
         // Snapshot the base scene, then composite the torch light + vignette on top, and keep
         // an animation loop running so the light flickers and embers drift between renders.
+        // Where the player is on this canvas — the SP camera centers the view on it.
+        var _fp = findPlayer(scene);
+        this.focusPoint = _fp ? { x: (_fp.x + 0.5) * cell, y: (_fp.y + 0.5) * cell } : null;
+
         this._lastScene = scene;
         this._collectEmitters(scene);
         this._snapshot();

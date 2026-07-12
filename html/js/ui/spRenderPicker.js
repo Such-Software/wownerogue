@@ -30,9 +30,8 @@
         doc().head.appendChild(s);
     }
 
-    // Disabled until the single-player render-kit path (RK.SPGame) has a camera + entity sprites.
-    // Keeping the module wired so re-enabling is a one-line flip.
-    var ENABLED = false;
+    // Re-enabled now that the SP render kit has a player-centered camera + goblin sprite.
+    var ENABLED = true;
 
     function build() {
         var h = host();
