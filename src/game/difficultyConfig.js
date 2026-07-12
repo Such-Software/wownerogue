@@ -144,12 +144,51 @@ function getDifficultyPreset(cryptoType = 'WOW', overridePreset = null) {
     return { ...DIFFICULTY_PRESETS.casino, presetName: 'casino' };
 }
 
+// Per-network difficulty tuning, SOLVED by the balance sim (src/sim/calibrate.js) so cryptoType
+// finally shapes difficulty instead of being a dead parameter. Two independent levers:
+//   sizeScale ∝ √(blockTime/ref) — PACING: keeps a run's length a consistent fraction of the block
+//     interval (GRIN sprint … BTC epic), applied to EVERY preset; the timer then contributes a
+//     stable baseline. Reference network = WOW/XMR (2-min blocks) = 1.0.
+//   monsterSpeed (movesPerPlayerMove) — the house EDGE lever; calibrated for the CASINO preset
+//     (70% target) only, so it's applied ONLY to casino. On slow chains (BTC) the timer barely bites
+//     a ~30s run, so the monster carries the edge (and caps ~64% even maxed — a real property of
+//     block-timed play, not a bug).
+// CAVEAT: the sim bots don't actively evade the monster, so monsterSpeed is a STARTING POINT that
+// under-provisions vs skilled humans — validate/retune with live telemetry. The sizeScale half is
+// bot-robust. Operator env overrides (DUNGEON_*, MONSTER_*) still win. Kill-switch: NETWORK_TUNING_DISABLED=true.
+const NETWORK_TUNING = {
+    WOW:  { sizeScale: 1.00, monsterSpeed: 1.08 },
+    XMR:  { sizeScale: 1.00, monsterSpeed: 1.08 },
+    LTC:  { sizeScale: 1.12, monsterSpeed: 1.11 },
+    BTC:  { sizeScale: 1.60, monsterSpeed: 2.20 },
+    GRIN: { sizeScale: 0.71, monsterSpeed: 0.94 }
+};
+
+// Fold the per-network tuning into a resolved preset (size for all presets, monster for casino).
+function applyNetworkTuning(preset, cryptoType) {
+    if (process.env.NETWORK_TUNING_DISABLED === 'true') return preset;
+    const t = NETWORK_TUNING[String(cryptoType || '').trim().toUpperCase()];
+    if (!t) return preset;
+    const out = {
+        ...preset,
+        dungeon: {
+            ...preset.dungeon,
+            width: Math.max(20, Math.round(preset.dungeon.width * t.sizeScale)),
+            height: Math.max(12, Math.round(preset.dungeon.height * t.sizeScale))
+        }
+    };
+    if (preset.presetName === 'casino' && t.monsterSpeed) {
+        out.monster = { ...preset.monster, movesPerPlayerMove: t.monsterSpeed };
+    }
+    return out;
+}
+
 /**
  * Merge difficulty config with custom overrides.
- * Environment variables override preset values when set.
+ * Precedence (low→high): preset → per-network tuning → env vars → explicit customOverrides.
  */
 function getDifficultyConfig(cryptoType = 'WOW', customOverrides = {}) {
-    const preset = getDifficultyPreset(cryptoType, customOverrides.preset);
+    const preset = applyNetworkTuning(getDifficultyPreset(cryptoType, customOverrides.preset), cryptoType);
 
     // Apply env var overrides (only when explicitly set)
     const envOverrides = {
@@ -217,6 +256,8 @@ function getTreasureRoomIndex(rooms, positionRatio = 0.5) {
 
 module.exports = {
     DIFFICULTY_PRESETS,
+    NETWORK_TUNING,
+    applyNetworkTuning,
     getDifficultyPreset,
     getDifficultyConfig,
     getMonsterSpawnRoomIndex,

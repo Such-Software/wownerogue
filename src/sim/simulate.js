@@ -47,7 +47,7 @@ function parseArgs(argv) {
 // outcome: 'escaped' (reached exit) | 'caught' (monster) | 'stuck' (bot gave up / hit move cap —
 // treated as a timeout, i.e. a house win, since the player never got out).
 function runOneGame(botFactory, opts) {
-    const game = new Game('sim', { id: 0, username: 'sim' }, {});
+    const game = new Game('sim', { id: 0, username: 'sim' }, opts.gameOptions || {});
     const bot = botFactory({ vision: opts.vision });
     let lastX = -1, lastY = -1, stallTicks = 0, invalidStreak = 0;
     while (game.gameState === 'active' && game.moveCount < opts.moveCap) {
