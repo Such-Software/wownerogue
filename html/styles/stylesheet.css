@@ -62,14 +62,16 @@ body {
 /* Updated layout with 5-row structure */
 .container {
     display: grid;
+    /* Roguelike layout: sidebar on the left, the play area filling the top, and a bottom
+       CONSOLE (chat log + command input) spanning the full width beneath it. */
     grid-template-areas:
         "header header header"
         "status game game"
-        "chat game game"
+        "chat chat chat"
         "input input input"
         "footer footer footer";
-    grid-template-columns: 350px 1fr 1fr;
-    grid-template-rows: auto auto 1fr auto auto;
+    grid-template-columns: 300px 1fr 1fr;
+    grid-template-rows: auto 1fr 132px auto auto;
     height: 100vh;
     width: 100%;
     max-width: 100vw;
@@ -112,6 +114,8 @@ body {
     justify-content: flex-start;
     border-right: 1px solid var(--rule);
     box-shadow: inset 0 0 32px rgba(0, 0, 0, 0.45);
+    overflow-y: auto; /* it now only spans the game row — scroll if the controls are tall */
+    min-height: 0;
 }
 
 /* Torch-lit accent bar running down the console's leading edge. */
@@ -332,7 +336,7 @@ body {
     background-color: var(--bg-panel);
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--rule);
+    border-top: 1px solid var(--rule); /* bottom console bar, not a left column */
     overflow: hidden; /* Prevents chat from causing scrolling */
 }
 
