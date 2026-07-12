@@ -1770,8 +1770,8 @@ const SocketHandlers = {
                 '<div style="padding:15px 18px;">' +
                     '<div style="font-size:10px;letter-spacing:2px;color:#5d6a4c;text-transform:uppercase;font-weight:bold;margin-bottom:7px;">1 &middot; When do you drop in?</div>' +
                     '<div style="display:flex;gap:8px;margin-bottom:15px;">' +
-                        seg('ecWait', timing === 'wait', '&#128737; Next block', 'Safe &mdash; full block window', false) +
-                        seg('ecNow', timing === 'now', '&#9889; Right now', 'Risky &mdash; die on next block', true) +
+                        seg('ecWait', timing === 'wait', '&#128737; Next block', 'Start fresh &middot; blocks land at random', false) +
+                        seg('ecNow', timing === 'now', '&#9889; Right now', 'Jump in &middot; race the time left', true) +
                     '</div>' +
                     '<div style="font-size:10px;letter-spacing:2px;color:#5d6a4c;text-transform:uppercase;font-weight:bold;margin-bottom:7px;">2 &middot; Choose your stakes</div>' +
                     (freeAvailable ? stake('ecFree', '&#127379;', 'Free Play', 'No cost &middot; Pleb leaderboard', '#123a17') : '') +

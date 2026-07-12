@@ -107,7 +107,15 @@
         if (!fp) { r.canvas.style.transform = 'scale(' + scale + ')'; return; }
         var w = host.clientWidth || 640, h = host.clientHeight || 400;
         var tx = w / 2 - fp.x * scale, ty = h / 2 - fp.y * scale;
-        r.canvas.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+        // Smooth follow: glide toward the target so single steps aren't jerky; SNAP on a big jump
+        // (level-change teleport / a stale-then-updated focus) rather than slowly panning the map.
+        if (SP._camX == null || Math.abs(tx - SP._camX) > w || Math.abs(ty - SP._camY) > h) {
+            SP._camX = tx; SP._camY = ty;
+        } else {
+            SP._camX += (tx - SP._camX) * 0.3;
+            SP._camY += (ty - SP._camY) * 0.3;
+        }
+        r.canvas.style.transform = 'translate(' + SP._camX + 'px,' + SP._camY + 'px) scale(' + scale + ')';
     };
 
     function toggleLegacy(hide) {
@@ -128,6 +136,7 @@
         host.style.display = 'block';
         toggleLegacy(true);
         SP._live = true;
+        SP._camX = null; // snap-center on the first frame of a new game
         SP._startCameraLoop();
         return true;
     };
