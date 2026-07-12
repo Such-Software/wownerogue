@@ -1708,81 +1708,95 @@ const SocketHandlers = {
     // Entry Choice Modal
     // =====================
 
+    // ONE consolidated entry modal: timing (when) + stakes (free vs ranked) in a single dialog, so
+    // the player never hits the old timing-modal-then-payment-modal double. Each card emits the
+    // FINAL intent — Free sends {free:true} (server skips its options modal), Ranked uses a credit
+    // or opens the real payment UI. Nothing starts until a card is clicked.
     showEntryChoiceModal: function(opts) {
         opts = opts || {};
-        // Remove any existing modal
         $('#entryChoiceOverlay').remove();
-
+        var freeAvailable = !!opts.freeAvailable;
+        var hasCredits = !!opts.hasCredits;
         var cost = this._creditsPerGame || 1;
-        var costText = opts.freeAvailable
-            ? 'Free play — no credits needed'
-            : ('Cost: ' + cost + ' credit per game');
+        var currency = this._currencyLabel || 'WOW';
+        var timing = 'wait'; // safe default
+
         var $overlay = $('<div id="entryChoiceOverlay">').css({
             position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-            background: 'rgba(0,0,0,0.7)', zIndex: 3000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
+            background: 'rgba(0,0,0,0.74)', zIndex: 3000, display: 'flex',
+            alignItems: 'center', justifyContent: 'center'
         });
-
         var $modal = $('<div>').css({
-            background: '#0a1a0a', border: '2px solid #0f0', borderRadius: '8px',
-            padding: '24px', maxWidth: '420px', width: '90%', color: '#0f0',
-            fontFamily: 'monospace', textAlign: 'center'
+            background: 'linear-gradient(180deg,#101609,#0b0f07)', border: '1px solid #33421f',
+            borderRadius: '12px', width: '92%', maxWidth: '480px', color: '#e6ead0',
+            fontFamily: 'monospace', boxShadow: '0 22px 60px rgba(0,0,0,.6)', overflow: 'hidden'
         });
 
-        $modal.html(
-            '<div style="font-size:18px; font-weight:bold; margin-bottom:16px;">How do you want to enter?</div>' +
-            '<div style="font-size:12px; color:#888; margin-bottom:20px;">' + costText + '</div>' +
-            '<button id="entryChoiceNow" style="' +
-                'display:block; width:100%; padding:12px; margin-bottom:10px; cursor:pointer; ' +
-                'background:linear-gradient(180deg,#662200,#441100); border:2px solid #ff6600; ' +
-                'color:#ffcc00; font-family:monospace; font-size:14px; font-weight:bold; border-radius:4px;' +
-            '">⚡ Start Now (risky)<br><span style="font-size:11px; font-weight:normal; color:#cc9966;">Game starts immediately — you die when next block arrives</span></button>' +
-            '<button id="entryChoiceQueue" style="' +
-                'display:block; width:100%; padding:12px; margin-bottom:10px; cursor:pointer; ' +
-                'background:linear-gradient(180deg,#003300,#001a00); border:2px solid #0f0; ' +
-                'color:#0f0; font-family:monospace; font-size:14px; font-weight:bold; border-radius:4px;' +
-            '">🛡️ Wait for Next Block (safe)<br><span style="font-size:11px; font-weight:normal; color:#6a6;">Queues you — full block window to escape</span></button>' +
-            '<button id="entryChoiceCancel" style="' +
-                'display:block; width:100%; padding:8px; cursor:pointer; ' +
-                'background:transparent; border:1px solid #555; color:#888; ' +
-                'font-family:monospace; font-size:12px; border-radius:4px;' +
-            '">Cancel</button>'
-        );
+        function seg(id, on, t, d, danger) {
+            var col = on ? (danger ? '#ff6a1a' : '#4fd463') : '#8b9a78';
+            var bg = on ? (danger ? 'linear-gradient(180deg,#4a1c05,#2a1103)' : 'linear-gradient(180deg,#123a17,#0b2410)') : '#0a0f07';
+            var bc = on ? (danger ? '#ff6a1a' : '#4fd463') : '#33421f';
+            return '<button id="' + id + '" style="flex:1;text-align:left;cursor:pointer;font-family:monospace;' +
+                'background:' + bg + ';border:1px solid ' + bc + ';border-radius:7px;padding:10px 11px;color:' + col + ';">' +
+                '<span style="display:block;font-size:13px;font-weight:bold;color:' + (on ? '#fff' : '#e6ead0') + '">' + t + '</span>' +
+                '<span style="display:block;font-size:10.5px;margin-top:2px;">' + d + '</span></button>';
+        }
+        function stake(id, k, t, s, accent) {
+            return '<div id="' + id + '" style="display:flex;align-items:center;gap:11px;cursor:pointer;' +
+                'background:#0a0f07;border:1px solid ' + accent + ';border-radius:8px;padding:11px 12px;margin-bottom:9px;">' +
+                '<span style="font-size:21px;width:26px;text-align:center;">' + k + '</span>' +
+                '<div style="flex:1;"><div style="font-size:14px;font-weight:bold;color:#fff;">' + t + '</div>' +
+                '<div style="font-size:10.5px;color:#8b9a78;margin-top:2px;">' + s + '</div></div>' +
+                '<span style="font-size:12px;letter-spacing:1px;color:' + accent + ';">ENTER &#9656;</span></div>';
+        }
+        function begin(msg, emit) {
+            $('#entryChoiceOverlay').remove();
+            emit();
+            $('#messages').append($('<li style="color:#f0a828;">').text(msg));
+            if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
+            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) ScreenManager.drawWaitingScreen();
+        }
+        function pay() {
+            $('#entryChoiceOverlay').remove();
+            if (typeof PaymentUI !== 'undefined' && PaymentUI.show) PaymentUI.show();
+        }
+        function render() {
+            $modal.html(
+                '<div style="display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid #25301c;">' +
+                    '<span style="font-size:20px;">&#9876;</span>' +
+                    '<h2 style="margin:0;font-size:18px;letter-spacing:1px;color:#fff;">Enter the Dungeon</h2>' +
+                    '<span id="ecX" style="margin-left:auto;color:#5d6a4c;border:1px solid #33421f;border-radius:5px;padding:2px 8px;font-size:12px;cursor:pointer;">esc</span>' +
+                '</div>' +
+                '<div style="padding:15px 18px;">' +
+                    '<div style="font-size:10px;letter-spacing:2px;color:#5d6a4c;text-transform:uppercase;font-weight:bold;margin-bottom:7px;">1 &middot; When do you drop in?</div>' +
+                    '<div style="display:flex;gap:8px;margin-bottom:15px;">' +
+                        seg('ecWait', timing === 'wait', '&#128737; Next block', 'Safe &mdash; full block window', false) +
+                        seg('ecNow', timing === 'now', '&#9889; Right now', 'Risky &mdash; die on next block', true) +
+                    '</div>' +
+                    '<div style="font-size:10px;letter-spacing:2px;color:#5d6a4c;text-transform:uppercase;font-weight:bold;margin-bottom:7px;">2 &middot; Choose your stakes</div>' +
+                    (freeAvailable ? stake('ecFree', '&#127379;', 'Free Play', 'No cost &middot; Pleb leaderboard', '#123a17') : '') +
+                    stake('ecRank', '&#128176;', 'Ranked', (hasCredits ? '1 credit' : ('Pay ' + cost + ' ' + currency)) + ' &middot; Hall of Champions', '#2a1a4a') +
+                    '<div style="margin-top:6px;font-size:11px;"><a id="ecBuy" style="color:#f0a828;cursor:pointer;">&#43; Buy credits (bulk discount)</a></div>' +
+                '</div>'
+            );
+            $('#ecWait').on('click', function () { timing = 'wait'; render(); });
+            $('#ecNow').on('click', function () { timing = 'now'; render(); });
+            $('#ecX').on('click', function () { $('#entryChoiceOverlay').remove(); });
+            $('#ecFree').on('click', function () {
+                if (timing === 'now') begin('⚡ Free game — dropping in now...', function () { socket.emit('auto_start', { free: true }); });
+                else begin('🛡️ Free game — queued for the next block...', function () { socket.emit('join_queue'); });
+            });
+            $('#ecRank').on('click', function () {
+                if (!hasCredits) { pay(); return; }
+                if (timing === 'now') begin('⚡ Ranked — dropping in now...', function () { socket.emit('auto_start'); });
+                else begin('🛡️ Ranked — queued for the next block...', function () { socket.emit('join_queue'); });
+            });
+            $('#ecBuy').on('click', pay);
+        }
 
-        $overlay.append($modal);
+        $overlay.append($modal).on('click', function (e) { if (e.target === this) $('#entryChoiceOverlay').remove(); });
         $('body').append($overlay);
-
-        // Handlers
-        $('#entryChoiceNow').on('click', function() {
-            $('#entryChoiceOverlay').remove();
-            socket.emit('auto_start');
-            $('#messages').append($('<li style="color:#ff6600;">').text('⚡ Starting game immediately...'));
-            UI.scrollChat();
-            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                ScreenManager.drawWaitingScreen();
-            }
-        });
-
-        $('#entryChoiceQueue').on('click', function() {
-            $('#entryChoiceOverlay').remove();
-            socket.emit('join_queue');
-            $('#messages').append($('<li style="color:#0f0;">').text('🛡️ Joining queue — waiting for next block...'));
-            UI.scrollChat();
-            if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                ScreenManager.drawWaitingScreen();
-            }
-        });
-
-        $('#entryChoiceCancel').on('click', function() {
-            $('#entryChoiceOverlay').remove();
-        });
-
-        // Close on overlay click (outside modal)
-        $overlay.on('click', function(e) {
-            if (e.target === this) {
-                $('#entryChoiceOverlay').remove();
-            }
-        });
+        render();
     }
 };
 
