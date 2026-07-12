@@ -10,32 +10,47 @@ const Appearance = require('./appearance');
 //   unlockMinCredits — lifetime-spend threshold to unlock, or null (not credit-unlockable).
 //   grantOnly       — only obtainable via an explicit grant/purchase.
 //   premium         — derived convenience flag: true unless the pack is free (no gate at all).
+// Cosmetic ladder. Unlock by LIFETIME CREDITS PURCHASED (cumulative — spend more, unlock more; NOT
+// deducted, so buying credits to play also walks you up the ladder) OR by subscription tier. Each
+// row is just data — a tilepack OR a char-skin, at any credit rung — so the operator adds more of
+// either by appending a row (+ assets + registerPack for a client pack). See docs/MONETIZATION.md.
+//
+//   free  original tiles (bare — no furniture, the "ugly tavern") + plain ASCII (in renderModes)
+//   1     Roguelike Interior (first premium tilepack)
+//   5     Character skins
+//   10    Iso technique (first iso pack)      20  another tilepack
+//   40    second iso pack                     50  3D technique
 const DEFAULT_CATALOG = Object.freeze({
-    'roguelike-interior': Object.freeze({
-        id: 'roguelike-interior', label: 'Kenney Roguelike Interior', kind: 'render-pack',
+    // FREE pleb baseline — the game's original bare tiles. Furniture kinds fall back to floor, so
+    // the free tavern is pointedly plain (just floor + walls + players/monsters). By design: it's
+    // the reason to unlock the richer packs.
+    'original': Object.freeze({
+        id: 'original', label: 'Original Tiles', kind: 'render-pack',
         projection: 'topdown', tier: 0, unlockMinCredits: null, grantOnly: false, premium: false
     }),
-    // Graduated ladder — unlock by lifetime credit spend OR by subscription tier, whichever comes
-    // first: Fancy(skins) at 1 credit / supporter, Iso at 10 / premium, 3D at 25 / operator.
-    'generated-skins': Object.freeze({
-        id: 'generated-skins', label: 'Premium Generated Skins', kind: 'render-pack',
+    'roguelike-interior': Object.freeze({
+        id: 'roguelike-interior', label: 'Kenney Roguelike Interior', kind: 'render-pack',
         projection: 'topdown', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
     }),
-    'roguelike-dungeon': Object.freeze({
-        id: 'roguelike-dungeon', label: 'Roguelike Dungeon (Tiles)', kind: 'render-pack',
-        projection: 'topdown', tier: 1, unlockMinCredits: 1, grantOnly: false, premium: true
+    'generated-skins': Object.freeze({
+        id: 'generated-skins', label: 'Premium Character Skins', kind: 'render-pack',
+        projection: 'topdown', tier: 1, unlockMinCredits: 5, grantOnly: false, premium: true
     }),
     'iso-dungeon': Object.freeze({
         id: 'iso-dungeon', label: 'Kenney Isometric Dungeon', kind: 'render-pack',
         projection: 'iso', tier: 2, unlockMinCredits: 10, grantOnly: false, premium: true
     }),
+    'roguelike-dungeon': Object.freeze({
+        id: 'roguelike-dungeon', label: 'Roguelike Dungeon (Tiles)', kind: 'render-pack',
+        projection: 'topdown', tier: 2, unlockMinCredits: 20, grantOnly: false, premium: true
+    }),
     'iso-medieval': Object.freeze({
         id: 'iso-medieval', label: 'Medieval Town (Isometric)', kind: 'render-pack',
-        projection: 'iso', tier: 2, unlockMinCredits: 15, grantOnly: false, premium: true
+        projection: 'iso', tier: 3, unlockMinCredits: 40, grantOnly: false, premium: true
     }),
     'kenney-3d-characters': Object.freeze({
         id: 'kenney-3d-characters', label: 'Kenney Animated 3D Characters', kind: 'render-pack',
-        projection: '3d', tier: 3, unlockMinCredits: 25, grantOnly: false, premium: true
+        projection: '3d', tier: 3, unlockMinCredits: 50, grantOnly: false, premium: true
     })
 });
 

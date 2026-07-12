@@ -27,13 +27,34 @@ owns a parallel catalog.
 ```
 1. it's free (tier 0, no gate)
 2. an explicit grant (products → grants)
-3. lifetime spend ≥ the pack's unlock_min_credits threshold
+3. lifetime credits PURCHASED ≥ the pack's unlock_min_credits threshold
 4. the user's premium TIER ≥ the pack's tier
 ```
 
 `TIER_OF = { free:0, credits:0, supporter:1, premium:2, operator:3 }`. Clause 4 is the premium hook.
 **Buying credits does NOT put you on the premium ladder** (`credits` → tier 0) — that was the old bug where
 any purchase unlocked every premium pack.
+
+### The ladder (loyalty model)
+
+Clause 3 keys off **lifetime credits _purchased_**, cumulatively — it is **not deducted**, so buying credits
+to *play* also walks you up the cosmetic ladder (cosmetics never compete with the core loop). Each catalog
+row is just data — a **tilepack OR a char-skin**, at any credit rung — so the operator adds more of either by
+appending a row (+ assets + `registerPack` for a client pack). This IS the "infinite packs" system.
+
+| Rung (lifetime credits) | Unlocks |
+|---|---|
+| **free** | `original` bare tiles (no furniture → the "ugly tavern", by design) · plain ASCII |
+| 1 | `roguelike-interior` (first premium tilepack) |
+| 5 | `generated-skins` (character skins) |
+| 10 | `iso-dungeon` — unlocks the **Iso** technique |
+| 20 | `roguelike-dungeon` (another tilepack) |
+| 40 | `iso-medieval` (second iso pack) |
+| 50 | `kenney-3d-characters` — unlocks **3D** |
+
+A render **technique** (Iso/3D) is available once the user has *any* unlocked pack for its projection, so the
+cheapest pack in a projection is effectively that technique's gate. Plain ASCII stays free (accessibility).
+Source of truth: `cosmetic_catalog` table (migration 028) mirrored by `DEFAULT_CATALOG` in `entitlements.js`.
 
 ## Premium subscription → cosmetics
 

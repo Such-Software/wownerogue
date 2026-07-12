@@ -47,9 +47,10 @@ describe('recordDirectEntryPurchase', () => {
         expect(insert[0]).toMatch(/'direct_entry'/); // audits the purchase leg
         expect(insert[0]).toMatch(/'game_entry'/);   // audits the spend leg
 
-        // A direct entry = 1 credit, which unlocks Fancy (generated-skins, threshold 1) but not the
-        // pricier Iso (10) / 3D (25) tiers.
-        expect(rec.entitlements.packs['generated-skins']).toBe(true);
+        // A direct entry = 1 credit, which unlocks the first tilepack (roguelike-interior, threshold
+        // 1) but not skins (5) / Iso (10) / 3D (50).
+        expect(rec.entitlements.packs['roguelike-interior']).toBe(true);
+        expect(rec.entitlements.packs['generated-skins']).toBe(false);
         expect(rec.entitlements.packs['iso-dungeon']).toBe(false);
         expect(rec.entitlements.premium).toBe(true);
         // ...but a direct buyer is still NOT a premium tier.

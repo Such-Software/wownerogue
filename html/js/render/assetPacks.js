@@ -130,6 +130,25 @@
     };
 
     RK.THEMES = {
+        // FREE baseline pack — the game's original bare tiles. Only the essentials are mapped
+        // (floor/wall/door/torch/features); furniture kinds (bar/keg/table/chair/…) are absent, so
+        // they fall back to floor and the free tavern reads plain — the intended "reason to unlock".
+        'original': {
+            id: 'original',
+            label: 'Original Tiles',
+            tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
+            tiles: {
+                floor: [5, 2],      // wood floor
+                floor2: [6, 2],     // stone accent
+                wall: [13, 12],     // masonry
+                door: [37, 9],
+                entrance: [37, 9],
+                exit: [37, 9],
+                treasure: [42, 15],
+                torch: [50, 10]
+                // No furniture kinds → bar/keg/table/chair/shelf/barrel/crate/rug fall back to floor.
+            }
+        },
         'roguelike-interior': {
             id: 'roguelike-interior',
             label: 'Kenney Roguelike Interior',
@@ -387,6 +406,7 @@
     // projection is entitlement-gated + user-selectable. Adding a pack later = registerPack(...) +
     // assets + a catalog row. Backward-compatible: one pack per projection resolves to these.
     if (RK.registerPack) {
+        RK.registerPack({ id: 'original', label: 'Original Tiles', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['original'] });
         RK.registerPack({ id: 'roguelike-interior', label: 'Roguelike Interior', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-interior'] });
         RK.registerPack({ id: 'roguelike-dungeon', label: 'Roguelike Dungeon', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-dungeon'] });
         RK.registerPack({ id: 'iso-dungeon', label: 'Isometric Dungeon', projection: 'iso', kind: 'tiles', assets: RK.isoAssets });

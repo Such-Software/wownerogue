@@ -13,8 +13,9 @@ const { snapshotForUser, DEFAULT_CATALOG } = Entitlements;
 describe('three-way unlock — default (seed) catalog', () => {
     test('free pack is always unlocked; premium packs are locked with no spend', () => {
         const s = snapshotForUser({ credits: 0, total_credits_purchased: 0 });
-        expect(s.packs['roguelike-interior']).toBe(true);   // free
-        expect(s.packs['generated-skins']).toBe(false);     // threshold 1, no spend
+        expect(s.packs['original']).toBe(true);             // free baseline
+        expect(s.packs['roguelike-interior']).toBe(false);  // now 1-credit premium
+        expect(s.packs['generated-skins']).toBe(false);     // threshold 5, no spend
         expect(s.packs['iso-dungeon']).toBe(false);
         expect(s.packs['kenney-3d-characters']).toBe(false);
         expect(s.premium).toBe(false);
@@ -22,18 +23,22 @@ describe('three-way unlock — default (seed) catalog', () => {
         expect(s.tier).toBe(0);
     });
 
-    test('graduated ladder: 1 credit unlocks Fancy (skins) only, not Iso or 3D', () => {
+    test('graduated ladder: 1 credit unlocks the first tilepack only, not skins/iso/3D', () => {
         const s = snapshotForUser({ credits: 5, total_credits_purchased: 1 });
-        expect(s.packs['generated-skins']).toBe(true);           // threshold 1
+        expect(s.packs['roguelike-interior']).toBe(true);        // threshold 1
+        expect(s.packs['generated-skins']).toBe(false);          // threshold 5
         expect(s.packs['iso-dungeon']).toBe(false);              // threshold 10
-        expect(s.packs['kenney-3d-characters']).toBe(false);     // threshold 25
+        expect(s.packs['kenney-3d-characters']).toBe(false);     // threshold 50
         expect(s.premium).toBe(true);                            // a premium pack IS unlocked
     });
 
-    test('graduated ladder: 25 credits unlocks the whole ladder', () => {
-        const s = snapshotForUser({ credits: 0, total_credits_purchased: 25 });
+    test('graduated ladder: 50 credits unlocks the whole ladder', () => {
+        const s = snapshotForUser({ credits: 0, total_credits_purchased: 50 });
+        expect(s.packs['roguelike-interior']).toBe(true);
         expect(s.packs['generated-skins']).toBe(true);
         expect(s.packs['iso-dungeon']).toBe(true);
+        expect(s.packs['roguelike-dungeon']).toBe(true);
+        expect(s.packs['iso-medieval']).toBe(true);
         expect(s.packs['kenney-3d-characters']).toBe(true);
     });
 
@@ -96,7 +101,7 @@ describe('grant-only packs', () => {
 describe('canUsePack reads the snapshot', () => {
     test('gates on the computed packs map', () => {
         const locked = snapshotForUser({ total_credits_purchased: 0 });
-        expect(Entitlements.canUsePack(locked, 'roguelike-interior')).toBe(true);  // free
+        expect(Entitlements.canUsePack(locked, 'original')).toBe(true);            // free
         expect(Entitlements.canUsePack(locked, 'iso-dungeon')).toBe(false);        // locked
         const unlocked = snapshotForUser({ total_credits_purchased: 10 }); // iso threshold is 10
         expect(Entitlements.canUsePack(unlocked, 'iso-dungeon')).toBe(true);
