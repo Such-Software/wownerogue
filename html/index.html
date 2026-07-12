@@ -84,6 +84,18 @@
     <script src="js/render/renderModes.js"></script>
     <script src="js/render/charCustomize.js"></script>
     <script src="js/render/avatarVisuals.js"></script>
+    <!-- Render-kit renderers so the single-player DUNGEON draws through the kit (Tiled/ASCII/Iso/3D
+         + unlocked packs), not the legacy ROT display. Loaded before spGameRenderer.js. -->
+    <script src="js/render/sceneModel.js"></script>
+    <script src="js/render/fxLayer.js"></script>
+    <script src="js/render/catSprites.js"></script>
+    <script src="js/render/asciiRenderer.js"></script>
+    <script src="js/render/tileRenderer.js"></script>
+    <script src="js/render/isoRenderer.js"></script>
+    <script src="js/render/threeRenderer.js"></script>
+    <script src="js/render/zoomControl.js"></script>
+    <script src="js/render/spGameRenderer.js"></script>
+    <script src="js/ui/spRenderPicker.js"></script>
     <script src="js/core/singlePlayerAvatar.js"></script>
     
     <!-- Other modules -->
@@ -128,6 +140,8 @@
             <button id="characterButton" class="ctrl-btn ctrl-btn--character" title="Create / customize your character">
                 🎭 <span id="characterButtonLabel" class="lbl-full">CHARACTER</span><span class="lbl-short">CHAR</span>
             </button>
+            <!-- Render mode + tile-pack picker (populated by spRenderPicker.js from entitlements). -->
+            <div id="renderPicker" class="hidden"></div>
             <button id="shopButton" class="ctrl-btn ctrl-btn--shop" style="display: none;">
                 🛒 SHOP
             </button>

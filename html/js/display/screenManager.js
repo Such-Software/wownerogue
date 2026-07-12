@@ -127,6 +127,7 @@ var ScreenManager = {
     },
 
     drawWelcomeScreen: function() {
+        if (window.RK && RK.SPGame) RK.SPGame.hide(); // full-screen text → hide the render-kit dungeon
         if (!DisplayManager.ensureDisplay()) return;
         
         // Mark that we're NOT showing the waiting screen
@@ -290,6 +291,7 @@ var ScreenManager = {
     },
 
     drawWinScreen: function(hasTreasure) {
+        if (window.RK && RK.SPGame) RK.SPGame.hide();
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();
 
@@ -317,6 +319,7 @@ var ScreenManager = {
     },
 
     drawLoseScreen: function(reason) {
+        if (window.RK && RK.SPGame) RK.SPGame.hide();
         if (!DisplayManager.ensureDisplay()) return;
         DisplayManager.clearDisplay();
 
@@ -340,6 +343,7 @@ var ScreenManager = {
     },
 
     drawWaitingScreen: function(_internalLoopCall = false) {
+        if (window.RK && RK.SPGame) RK.SPGame.hide();
         if (!DisplayManager.ensureDisplay()) return;
         
         // Mark that we're showing the waiting screen

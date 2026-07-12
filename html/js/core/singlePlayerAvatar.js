@@ -69,6 +69,7 @@
             if (!data) return;
             if (data.entitlements && root.RK && root.RK.setEntitlementSnapshot) {
                 root.RK.setEntitlementSnapshot(data.entitlements);
+                if (root.RK.rebuildRenderPicker) root.RK.rebuildRenderPicker();
             }
             if (data.appearance) this.setAppearance(data.appearance, { save: true, redraw: true });
             else this.updateButton();

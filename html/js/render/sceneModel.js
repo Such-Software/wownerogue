@@ -128,19 +128,42 @@ function dungeonTileKind(ch) {
     return 'floor';
 }
 
+// Grid dimensions from array grids OR sparse {y:{x:v}} maps (the single-player client uses the
+// latter). Returns the max seen index + 1 across every supplied map.
+function maxDims(maps) {
+    var rows = 0, cols = 0;
+    for (var i = 0; i < maps.length; i++) {
+        var m = maps[i];
+        if (!m || typeof m !== 'object') continue;
+        for (var yk in m) {
+            if (!Object.prototype.hasOwnProperty.call(m, yk)) continue;
+            var yi = parseInt(yk, 10);
+            if (!isFinite(yi)) continue;
+            if (yi + 1 > rows) rows = yi + 1;
+            var r = m[yk];
+            if (r && typeof r === 'object') {
+                for (var xk in r) {
+                    if (!Object.prototype.hasOwnProperty.call(r, xk)) continue;
+                    var xi = parseInt(xk, 10);
+                    if (isFinite(xi) && xi + 1 > cols) cols = xi + 1;
+                }
+            }
+        }
+    }
+    return { rows: rows, cols: cols };
+}
+
 function sceneFromGameState(state, opts) {
     state = state || {};
     opts = opts || {};
     var visible = state.visibleTiles || {};
     var explored = state.exploredTiles || {};
     var lighting = state.lighting || {};
-    var rows = visible.length || (state.dungeonRows || 0);
-    var cols = 0;
-    for (var y = 0; y < rows; y++) {
-        if (visible[y]) cols = Math.max(cols, visible[y].length);
-        if (explored[y]) cols = Math.max(cols, explored[y].length);
-    }
-    if (!cols && state.dungeonCols) cols = state.dungeonCols;
+    // Array grids expose .length; the SP client uses sparse {y:{x:v}} maps — fall back to the max
+    // seen index. Explicit dungeonRows/Cols (server) always win.
+    var dims = maxDims([visible, explored, state.map]);
+    var rows = state.dungeonRows || visible.length || dims.rows;
+    var cols = state.dungeonCols || dims.cols;
 
     var grid = [];
     var lightGrid = [];
@@ -239,5 +262,10 @@ function sceneFromGameState(state, opts) {
 
     root.RK = root.RK || {};
     root.RK.scene = api;
+    // Convenience aliases on RK directly — several callers (matchClient, tavern spectator, the SP
+    // render bridge) reference RK.sceneFromGameState / RK.sceneFromTavern; without these they were
+    // silently undefined (guarded → no-op). Expose them so those paths actually render.
+    root.RK.sceneFromGameState = root.RK.sceneFromGameState || sceneFromGameState;
+    if (api.sceneFromTavern) root.RK.sceneFromTavern = root.RK.sceneFromTavern || api.sceneFromTavern;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : this);

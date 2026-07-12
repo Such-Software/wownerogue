@@ -288,15 +288,31 @@ var Game = {
     },
 
     _drawGameScreen: function() {
-        if (!this._ensureDisplay()) return;
         const gameState = GameState.getGameStateForRender();
 
-        RenderEngine.drawGameScreen(gameState);
+        // Prefer the render kit (Tiled / ASCII / Iso / 3D + unlocked packs) for the dungeon — it
+        // draws its own lighting/FX and the player sprite. The legacy ROT renderer is the fallback
+        // (returns here only if the kit is unavailable or a render throws), so the game never blanks.
+        var rk = false;
+        if (window.RK && RK.SPGame && RK.SPGame.available()) {
+            RK.SPGame.show();
+            rk = RK.SPGame.render(gameState, {
+                cryptoType: (window.ScreenManager && ScreenManager._cryptoType) || undefined,
+                playerAppearance: (window.SinglePlayerAvatar && SinglePlayerAvatar.currentAppearance)
+                    ? SinglePlayerAvatar.currentAppearance() : null,
+                isSpectating: this._isSpectating
+            });
+        }
 
-        // JUICE: keep the FX overlay aligned to the base canvas and feed it the
-        // player's screen-space position so its torch lighting tracks the camera.
-        if (window.FX) {
-            try { this._fxSyncLighting(); } catch (e) { /* best-effort */ }
+        if (!rk) {
+            if (window.RK && RK.SPGame) RK.SPGame.hide();
+            if (!this._ensureDisplay()) return;
+            RenderEngine.drawGameScreen(gameState);
+            // JUICE: keep the FX overlay aligned to the base canvas and feed it the player's
+            // screen-space position so its torch lighting tracks the camera.
+            if (window.FX) {
+                try { this._fxSyncLighting(); } catch (e) { /* best-effort */ }
+            }
         }
     },
 
