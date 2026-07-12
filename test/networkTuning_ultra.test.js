@@ -14,27 +14,31 @@ beforeEach(() => { KEYS.forEach(k => { SAVE[k] = process.env[k]; delete process.
 afterEach(() => { KEYS.forEach(k => { if (SAVE[k] === undefined) delete process.env[k]; else process.env[k] = SAVE[k]; }); });
 
 describe('per-network difficulty tuning', () => {
-  test('WOW is the reference (sizeScale 1.0) — casino dims unchanged', () => {
-    const t = applyNetworkTuning(casino(), 'WOW');
-    expect(t.dungeon.width).toBe(DIFFICULTY_PRESETS.casino.dungeon.width);
-    expect(t.dungeon.height).toBe(DIFFICULTY_PRESETS.casino.dungeon.height);
+  test('XMR is the reference (sizeScale 1.0) — casino dims unchanged; WOW (5-min) scales up', () => {
+    const xmr = applyNetworkTuning(casino(), 'XMR');
+    expect(xmr.dungeon.width).toBe(DIFFICULTY_PRESETS.casino.dungeon.width);
+    expect(xmr.dungeon.height).toBe(DIFFICULTY_PRESETS.casino.dungeon.height);
+    // WOW is a slow chain now (5 min) → bigger map than XMR.
+    expect(applyNetworkTuning(casino(), 'WOW').dungeon.width).toBeGreaterThan(xmr.dungeon.width);
   });
 
-  test('dungeon size scales with block time: GRIN < WOW < BTC', () => {
+  test('dungeon size scales with block time: GRIN < XMR < WOW', () => {
     const g = applyNetworkTuning(casino(), 'GRIN').dungeon.width;
+    const x = applyNetworkTuning(casino(), 'XMR').dungeon.width;
     const w = applyNetworkTuning(casino(), 'WOW').dungeon.width;
-    const b = applyNetworkTuning(casino(), 'BTC').dungeon.width;
-    expect(g).toBeLessThan(w);
-    expect(w).toBeLessThan(b);
+    expect(g).toBeLessThan(x);
+    expect(x).toBeLessThan(w);
   });
 
-  test('monster speed is tuned for casino but NOT for other presets', () => {
-    expect(applyNetworkTuning(casino(), 'BTC').monster.movesPerPlayerMove).toBe(NETWORK_TUNING.BTC.monsterSpeed);
-    // normal keeps its own monster speed (tuning was calibrated for casino only)
+  test('tuning scales SIZE only — the monster stays at its fair preset speed', () => {
+    // No cheating-fast monster: every preset keeps its own movesPerPlayerMove.
+    expect(applyNetworkTuning(casino(), 'BTC').monster.movesPerPlayerMove)
+      .toBe(DIFFICULTY_PRESETS.casino.monster.movesPerPlayerMove);
     expect(applyNetworkTuning(normal(), 'BTC').monster.movesPerPlayerMove)
       .toBe(DIFFICULTY_PRESETS.normal.monster.movesPerPlayerMove);
-    // ...but normal STILL gets the pacing size scale
+    // ...but both get the pacing size scale.
     expect(applyNetworkTuning(normal(), 'BTC').dungeon.width).toBeGreaterThan(DIFFICULTY_PRESETS.normal.dungeon.width);
+    expect(NETWORK_TUNING.BTC.monsterSpeed).toBeUndefined();
   });
 
   test('unknown network is left untouched', () => {

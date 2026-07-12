@@ -17,7 +17,7 @@ const DEFAULT_DECIMALS = 12;
 
 // family: 'monero' (subaddress + transfer_split), 'utxo' (BTC/LTC-style), 'mimblewimble' (Grin).
 const PROFILES = Object.freeze({
-    WOW:  Object.freeze({ id: 'WOW',  symbol: 'WOW',  decimals: 11, meanBlockTimeMs: 120000, family: 'monero',       uriScheme: 'wownero'  }),
+    WOW:  Object.freeze({ id: 'WOW',  symbol: 'WOW',  decimals: 11, meanBlockTimeMs: 300000, family: 'monero',       uriScheme: 'wownero'  }),
     XMR:  Object.freeze({ id: 'XMR',  symbol: 'XMR',  decimals: 12, meanBlockTimeMs: 120000, family: 'monero',       uriScheme: 'monero'   }),
     BTC:  Object.freeze({ id: 'BTC',  symbol: 'BTC',  decimals: 8,  meanBlockTimeMs: 600000, family: 'utxo',         uriScheme: 'bitcoin'  }),
     LTC:  Object.freeze({ id: 'LTC',  symbol: 'LTC',  decimals: 8,  meanBlockTimeMs: 150000, family: 'utxo',         uriScheme: 'litecoin' }),

@@ -24,7 +24,7 @@ const { BOTS } = require('./simBots');
 const { meanBlockTimeMsFor } = require('../chain/chainProfile');
 const { DIFFICULTY_PRESETS } = require('../game/difficultyConfig');
 
-const BASE_BLOCK_MS = 120000; // WOW/XMR — the reference the size scale is relative to
+const BASE_BLOCK_MS = 120000; // XMR (2-min) — the reference the size scale is relative to
 
 function parseArgs(argv) {
     const a = { target: 0.70, preset: 'casino', bot: 'explorer-greedy', runs: 160, cadence: 320,

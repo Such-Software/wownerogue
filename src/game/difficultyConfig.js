@@ -13,13 +13,16 @@
  * 5. Treasure placement (farther from exit = riskier)
  * 6. Number of monsters (future enhancement)
  * 
- * Block times:
- * - Wownero (WOW): ~2 minutes (120 seconds)
- * - Monero (XMR): ~2 minutes (120 seconds)
- * - Bitcoin (for reference): ~10 minutes
- * 
- * Note: Previously docs said WOW was 5 min but it's actually 2 min like XMR.
- * We keep the config flexible for future adjustments.
+ * Block times (measured against live daemons; see chainProfile.js meanBlockTimeMs):
+ * - Grin (GRIN): ~1 minute
+ * - Monero (XMR): ~2 minutes
+ * - Litecoin (LTC): ~2.5 minutes
+ * - Wownero (WOW): ~5 minutes  (measured 5.01 min/block over 1000 blocks — an earlier "correction"
+ *   to 2 min was WRONG; WOW is a SLOW chain, closer to BTC than XMR for calibration purposes)
+ * - Bitcoin (BTC): ~10 minutes
+ *
+ * Slow chains (WOW/BTC) can't get a timer-driven house edge from a single dungeon without it
+ * becoming an unplayable slog → they want MULTI-LEVEL depth. See NETWORK_TUNING below.
  */
 
 const DIFFICULTY_PRESETS = {
@@ -47,7 +50,7 @@ const DIFFICULTY_PRESETS = {
         targetHouseWinRate: 0.3           // 30% house wins (player-friendly)
     },
 
-    // Normal - balanced for Wownero (2 min blocks)
+    // Normal - balanced baseline (~2 min blocks, i.e. XMR; WOW is actually ~5 min — see header)
     normal: {
         dungeon: {
             width: 45,
@@ -144,32 +147,32 @@ function getDifficultyPreset(cryptoType = 'WOW', overridePreset = null) {
     return { ...DIFFICULTY_PRESETS.casino, presetName: 'casino' };
 }
 
-// Per-network difficulty tuning, SOLVED by the balance sim (src/sim/calibrate.js) so cryptoType
-// finally shapes difficulty instead of being a dead parameter. Two independent levers:
-//   sizeScale ∝ √(blockTime/ref) — PACING: keeps a run's length a consistent fraction of the block
-//     interval (GRIN sprint … BTC epic), applied to EVERY preset; the timer then contributes a
-//     stable baseline. Reference network = WOW/XMR (2-min blocks) = 1.0.
-//   monsterSpeed (movesPerPlayerMove) — the house EDGE lever; calibrated for the CASINO preset
-//     (70% target) only, so it's applied ONLY to casino. On slow chains (BTC) the timer barely bites
-//     a ~30s run, so the monster carries the edge (and caps ~64% even maxed — a real property of
-//     block-timed play, not a bug).
-// CAVEAT: the sim bots don't actively evade the monster, so monsterSpeed is a STARTING POINT that
-// under-provisions vs skilled humans — validate/retune with live telemetry. The sizeScale half is
-// bot-robust. Operator env overrides (DUNGEON_*, MONSTER_*) still win. Kill-switch: NETWORK_TUNING_DISABLED=true.
+// Per-network SIZE tuning so cryptoType shapes difficulty (it used to be a dead parameter).
+//   sizeScale ∝ √(blockTime/ref) — PACING: a run's length as a consistent fraction of the block
+//     interval, applied to EVERY preset. Reference = XMR (2-min blocks) = 1.0. Clamped [0.7, 1.6]
+//     so single maps stay playable.
+//
+// DELIBERATELY NO monster-speed lever. The sim proved a supernaturally fast monster (a) feels like
+// cheating and (b) doesn't even WORK on slow chains — WOW (5-min blocks) caps ~64% house-win even
+// at a 2.2× monster on a 111×55 map, because a single dungeon clears in ~1 min << the block, so the
+// timer (the fair, on-theme "race the block" edge) barely bites. The real edge lever for slow chains
+// is MULTI-LEVEL DEPTH (cumulative run length across levels), which is the next build. Until then,
+// slow chains (WOW/BTC) run honest-but-under-target on the timer; the monster stays at its fair
+// preset speed. Operator env overrides (DUNGEON_*, MONSTER_*) still win. Kill: NETWORK_TUNING_DISABLED=true.
 const NETWORK_TUNING = {
-    WOW:  { sizeScale: 1.00, monsterSpeed: 1.08 },
-    XMR:  { sizeScale: 1.00, monsterSpeed: 1.08 },
-    LTC:  { sizeScale: 1.12, monsterSpeed: 1.11 },
-    BTC:  { sizeScale: 1.60, monsterSpeed: 2.20 },
-    GRIN: { sizeScale: 0.71, monsterSpeed: 0.94 }
+    GRIN: { sizeScale: 0.71 }, // ~1 min blocks
+    XMR:  { sizeScale: 1.00 }, // ~2 min (reference)
+    LTC:  { sizeScale: 1.12 }, // ~2.5 min
+    WOW:  { sizeScale: 1.60 }, // ~5 min (measured) — wants multi-level, not one giant map
+    BTC:  { sizeScale: 1.60 }  // ~10 min — wants multi-level
 };
 
-// Fold the per-network tuning into a resolved preset (size for all presets, monster for casino).
+// Fold the per-network SIZE scale into a resolved preset (pacing; monster left at the fair preset speed).
 function applyNetworkTuning(preset, cryptoType) {
     if (process.env.NETWORK_TUNING_DISABLED === 'true') return preset;
     const t = NETWORK_TUNING[String(cryptoType || '').trim().toUpperCase()];
     if (!t) return preset;
-    const out = {
+    return {
         ...preset,
         dungeon: {
             ...preset.dungeon,
@@ -177,10 +180,6 @@ function applyNetworkTuning(preset, cryptoType) {
             height: Math.max(12, Math.round(preset.dungeon.height * t.sizeScale))
         }
     };
-    if (preset.presetName === 'casino' && t.monsterSpeed) {
-        out.monster = { ...preset.monster, movesPerPlayerMove: t.monsterSpeed };
-    }
-    return out;
 }
 
 /**
