@@ -38,10 +38,13 @@ describe('single-player character identity wiring', () => {
     expect(renderEngine).toContain('SinglePlayerAvatar.drawPlayer');
   });
 
-  test('welcome legend resolves the player icon through the avatar bridge', () => {
+  test('welcome legend draws the player as the original hero tile (uniform grid, no overlay)', () => {
+    // The splash draws every icon — including the player — as a grid tile so the four rows align
+    // and the player is the original hero tile, not a staggered avatar overlay.
     expect(screenManager).toContain('role: "player"');
-    expect(screenManager).toContain('SinglePlayerAvatar.clearOverlay');
-    expect(screenManager).toContain('SinglePlayerAvatar.drawLegendIcon');
+    expect(screenManager).toContain('SinglePlayerAvatar.clearOverlay'); // overlay still cleared
+    expect(screenManager).not.toContain('SinglePlayerAvatar.drawLegendIcon'); // ...but not used to draw it
+    expect(screenManager).toContain('"@2"'); // the original player/hero tile
   });
 
   test('welcome legend uses compact one-row avatar metrics', () => {
