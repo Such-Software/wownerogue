@@ -42,6 +42,56 @@
         return !!(RK.createRenderer && RK.sceneFromGameState && gameDisplay());
     };
 
+    // A small lit "waiting room" Scene, drawn through the active renderer so the wait inherits the
+    // player's pack/mode. The tile renderer's FX loop flickers the torches; the camera centres it.
+    function waitingScene(opts) {
+        opts = opts || {};
+        var W = 11, H = 8, grid = [];
+        for (var y = 0; y < H; y++) {
+            var row = [];
+            for (var x = 0; x < W; x++) row.push((x === 0 || y === 0 || x === W - 1 || y === H - 1) ? 'wall' : 'floor');
+            grid.push(row);
+        }
+        grid[3][1] = 'torch'; grid[3][W - 2] = 'torch';   // wall torches (fire FX)
+        var px = (W - 1) >> 1;
+        var entities = [
+            { id: 'exit', x: px, y: 2, kind: 'feature', char: '>', color: '#d29922', label: null },
+            { id: 'player', x: px, y: H - 3, kind: 'player', you: true, facing: 'up', label: null,
+              avatar: (opts.playerAppearance && opts.playerAppearance.avatar) || 'default',
+              appearance: opts.playerAppearance || { avatar: 'default' } }
+        ];
+        return { cols: W, rows: H, grid: grid, entities: entities,
+                 legend: (RK.scene && RK.scene.DUNGEON_LEGEND) || null, isDungeon: true, background: '#0a0c0f' };
+    }
+
+    // Render the waiting-room scene + a text overlay (mining / payment). Returns true if it took over.
+    SP.showWaiting = function (title, sub, cryptoType, appearance) {
+        if (!SP.available()) return false;
+        SP.show();
+        SP._camX = null;
+        var r = SP._ensureRenderer();
+        if (!r) return false;
+        try { r.render(waitingScene({ playerAppearance: appearance, cryptoType: cryptoType })); SP._applyCamera(); }
+        catch (e) { return false; }
+        var host = rkHost();
+        var ov = doc().getElementById('rk-wait-overlay');
+        if (!ov) {
+            ov = doc().createElement('div');
+            ov.id = 'rk-wait-overlay';
+            ov.style.cssText = 'position:absolute;left:0;right:0;bottom:0;padding:0 12px 7%;text-align:center;' +
+                'pointer-events:none;font-family:ui-monospace,monospace;text-shadow:0 2px 8px #000;z-index:4;';
+            host.appendChild(ov);
+        }
+        ov.innerHTML = '<div style="font-size:20px;font-weight:800;letter-spacing:1px;color:#f0a828;">' + title + '</div>' +
+            '<div style="font-size:13px;color:#cfe0b8;margin-top:5px;">' + (sub || '') + '</div>';
+        ov.style.display = 'block';
+        return true;
+    };
+    SP.hideWaiting = function () {
+        var ov = doc() && doc().getElementById('rk-wait-overlay');
+        if (ov) ov.style.display = 'none';
+    };
+
     SP.mode = function () {
         if (!SP._mode) {
             var m = (RK.loadMode && RK.loadMode('tiles')) || 'tiles';
@@ -166,6 +216,7 @@
     // (caller then skips the legacy renderer). Non-destructive on failure.
     SP.render = function (clientState, opts) {
         if (!SP._live || !SP.available()) return false;
+        SP.hideWaiting(); // the real game is rendering — drop the waiting-room overlay
         var r = SP._ensureRenderer();
         if (!r) return false;
         opts = opts || {};
