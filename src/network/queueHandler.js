@@ -19,8 +19,13 @@ class QueueHandler {
     /**
      * Handle game queue request (typing "enter") with rate limiting
      */
-    async handleGameQueue(socket, getUserBySocket) {
+    async handleGameQueue(socket, getUserBySocket, opts = {}) {
         try {
+            // The player explicitly chose FREE play (Pleb board). Only honoured when the instance
+            // allows free play; otherwise fall through to the paid eligibility check below. Mirrors
+            // the auto_start free path so the "Next block · Free Play" choice doesn't wrongly pop the
+            // payment modal for a free queued game.
+            const wantsFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
             // Rate limiting for queue attempts
             const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:queue');
             if (!rateLimitResult.allowed) {
@@ -52,22 +57,24 @@ class QueueHandler {
                 return;
             }
 
-            // Check payment eligibility and payout address requirements
-            const paymentCheckResult = await this._checkPaymentEligibility(socket.id);
-            if (!paymentCheckResult.allowed) {
-                // Handle the specific reason for denial
-                switch (paymentCheckResult.action) {
-                    case 'set_address':
-                        this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
-                        break;
-                    case 'make_payment':
-                        await this.paymentHandlers.createAndShowPaymentRequest(socket);
-                        break;
-                    default:
-                        this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
-                            paymentCheckResult.reason || 'Not allowed to join queue');
+            // Check payment eligibility and payout address requirements — SKIPPED for free play.
+            if (!wantsFree) {
+                const paymentCheckResult = await this._checkPaymentEligibility(socket.id);
+                if (!paymentCheckResult.allowed) {
+                    // Handle the specific reason for denial
+                    switch (paymentCheckResult.action) {
+                        case 'set_address':
+                            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
+                            break;
+                        case 'make_payment':
+                            await this.paymentHandlers.createAndShowPaymentRequest(socket);
+                            break;
+                        default:
+                            this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                                paymentCheckResult.reason || 'Not allowed to join queue');
+                    }
+                    return;
                 }
-                return;
             }
 
             // Record the queue attempt
@@ -82,13 +89,15 @@ class QueueHandler {
                 } catch (e) {}
             }
 
-            // Add to waiting queue (in free mode or already authorized paid mode)
+            // Add to waiting queue (in free mode or already authorized paid mode). `free` carries the
+            // Pleb-board intent to processGameStart when the block lands, so no credit/payment is taken.
             this.queueManager.addPlayer({
                 serverId: socket.id,
                 clientId: currentUser.clientId,
                 userId: userId,
                 requiresConfirmation: false,
-                confirmed: true
+                confirmed: true,
+                free: wantsFree
             });
 
             const currentBlock = this.debugManager.getCurrentBlockHeight();

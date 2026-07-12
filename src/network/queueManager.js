@@ -22,9 +22,9 @@ class QueueManager {
         this._waitingPlayers = []; // internal queue
     }
 
-    addPlayer({ serverId, clientId, userId = null, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true }) {
+    addPlayer({ serverId, clientId, userId = null, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true, free = false }) {
         if (this.getPlayerIndex(serverId) !== -1) return; // already queued
-        this._waitingPlayers.push({ serverId, clientId, userId, entryTime, paymentId, requiresConfirmation, confirmed });
+        this._waitingPlayers.push({ serverId, clientId, userId, entryTime, paymentId, requiresConfirmation, confirmed, free });
         if (this.CONSOLE_LOGGING) {
             console.log(`[QueueManager] Added player ${serverId} (userId=${userId}, confirmed=${confirmed}, requiresConfirmation=${requiresConfirmation}). Queue length: ${this._waitingPlayers.length}`);
         }
@@ -117,9 +117,10 @@ class QueueManager {
                     gameState.proof = game.getProofCommitment();
                 }
 
-                // Process game start (credits deduction / payment link)
+                // Process game start (credits deduction / payment link). forceFree honours a queued
+                // Pleb-board entry so no credit/payment is taken when the block lands.
                 if (this.gameModeManager) {
-                    const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
+                    const startRes = await this.gameModeManager.processGameStart(serverId, game.id, { forceFree: !!entry.free });
                     if (!startRes.success) {
                         // Abort game + clean up orphaned DB record
                         if (this.activeGames) this.activeGames.delete(serverId);
@@ -187,9 +188,10 @@ class QueueManager {
                 gameState.proof = game.getProofCommitment();
             }
 
-            // Process game start (credits deduction / payment link)
+            // Process game start (credits deduction / payment link). forceFree honours a queued
+            // Pleb-board entry confirmed after the tick.
             if (this.gameModeManager) {
-                const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
+                const startRes = await this.gameModeManager.processGameStart(serverId, game.id, { forceFree: !!entry.free });
                 if (!startRes.success) {
                     // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);

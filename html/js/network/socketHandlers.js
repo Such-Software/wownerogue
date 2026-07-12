@@ -1792,7 +1792,7 @@ const SocketHandlers = {
             $('#ecX').on('click', function () { $('#entryChoiceOverlay').remove(); });
             $('#ecFree').on('click', function () {
                 if (timing === 'now') begin('⚡ Free game — dropping in...', function () { socket.emit('auto_start', { free: true }); });
-                else begin('🛡️ Free game — queued for the next block...', function () { socket.emit('join_queue'); });
+                else begin('🛡️ Free game — queued for the next block...', function () { socket.emit('join_queue', { free: true }); });
             });
             $('#ecRank').on('click', function () {
                 if (!hasCredits) { pay(); return; }

@@ -480,7 +480,7 @@ class SocketHandlers {
         });
         socket.on('auto_start', (data) => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {})); // New handler for start button
         socket.on('play_free', (data) => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true })); // Explicit free-play choice
-        socket.on('join_queue', () => this.handleJoinQueue(socket)); // Queue instead of auto-start
+        socket.on('join_queue', (data) => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {})); // Queue instead of auto-start ({ free: true } for Pleb-board free play)
         socket.on('early_entry', () => this.handleEarlyEntry(socket)); // Early entry without waiting for block
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
@@ -662,11 +662,12 @@ class SocketHandlers {
     /**
      * Handle join_queue request — adds player to block queue instead of starting immediately
      */
-    async handleJoinQueue(socket) {
+    async handleJoinQueue(socket, opts = {}) {
         try {
             await this.queueHandler.handleGameQueue(
                 socket,
-                this.connectionHandler.getUserBySocket.bind(this.connectionHandler)
+                this.connectionHandler.getUserBySocket.bind(this.connectionHandler),
+                opts
             );
             // queueHandler already emits queue status and adds to queue
             // Client receives queue_joined event from broadcastManager
