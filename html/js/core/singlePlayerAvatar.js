@@ -90,8 +90,12 @@
                 return;
             }
             var info = root.RK.appearance(this._appearance || DEFAULT_APPEARANCE);
+            // Show the chosen character's name, but keep it clearly a customize control (the leading
+            // 🎭 + this title) so it doesn't read like a mode/role button.
             label.textContent = (info && info.label ? info.label : 'CHARACTER').toUpperCase();
-            btn.title = info && info.premium ? 'Premium character' : 'Character';
+            btn.title = 'Create / customize your character'
+                + (info && info.label ? ' — currently ' + info.label : '')
+                + (info && info.premium ? ' (premium)' : '');
         },
 
         _baseCanvas: function () {

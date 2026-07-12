@@ -156,43 +156,42 @@ var ScreenManager = {
         const treasureTile = (typeof GameTiles !== 'undefined' && GameTiles.getTreasureTile) 
             ? GameTiles.getTreasureTile() 
             : (this._cryptoType === 'XMR' ? '$M' : '$W');
+        // Every row uses a uniform icon slot at `centerX` and a single fixed text column, so the
+        // icons share a left edge and all four descriptions line up — regardless of whether the
+        // icon is a 1-cell glyph (>, ~, $) or the 2-cell player avatar sprite.
         const legendItems = [
-            { tile: "@2", text: "This is you", role: "player", span: 2 },
-            { tile: ">", text: " Escape the dungeon" }, 
-            { tile: "~", text: " Avoid the monster" },
+            { tile: "@2", text: "This is you", role: "player" },
+            { tile: ">", text: "Escape the dungeon" },
+            { tile: "~", text: "Avoid the monster" },
             { tile: treasureTile, text: "Secure the bag" }
         ];
-        
+
         if (window.SinglePlayerAvatar && window.SinglePlayerAvatar.clearOverlay) {
             window.SinglePlayerAvatar.clearOverlay();
         }
 
+        const ICON_COLS = 2;                                     // uniform icon slot width
         const centerX = Math.floor(this._screenWidth / 2) - 10;
+        const textX = centerX + ICON_COLS + 1;                   // one fixed text column for every row
         for (let item of legendItems) {
-            let x = centerX;
-            const span = item.span || item.tile.length || 1;
             let iconDrawn = false;
-            
+
             if (item.role === "player" && window.SinglePlayerAvatar && window.SinglePlayerAvatar.drawLegendIcon) {
-                iconDrawn = window.SinglePlayerAvatar.drawLegendIcon(x, y, {
+                iconDrawn = window.SinglePlayerAvatar.drawLegendIcon(centerX, y, {
                     fallbackTile: item.tile,
-                    cols: span
+                    cols: ICON_COLS
                 });
             }
 
-            // Draw the special tile when the resolved avatar visual is not canvas-ready.
-            if (!iconDrawn && window.options?.tileMap?.hasOwnProperty(item.tile)) {
-                display.draw(x, y, item.tile, "transparent", "transparent");
-                x += span;
-            } else if (!iconDrawn) {
-                display.draw(x, y, "?", "transparent", "transparent");
-                x += 1;
-            } else {
-                x += span;
+            // Grid-tile icons: centre the (1-cell) glyph within the 2-cell slot so it aligns under
+            // the player sprite above it.
+            if (!iconDrawn) {
+                const glyph = window.options?.tileMap?.hasOwnProperty(item.tile) ? item.tile : "?";
+                const gx = centerX + Math.floor((ICON_COLS - (glyph.length || 1)) / 2);
+                display.draw(gx, y, glyph, "transparent", "transparent");
             }
-            
-            // Draw the descriptive text
-            this.drawText(x, y, item.text);
+
+            this.drawText(textX, y, item.text);
             y++;
         }
         

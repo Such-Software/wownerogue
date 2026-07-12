@@ -28,7 +28,7 @@
 
     function baseAppearances() {
         var list = [
-            { id: 'default', label: 'Operator', kind: 'color', color: '#9aa4b2' },
+            { id: 'default', label: 'Adventurer', kind: 'color', color: '#9aa4b2' },
             { id: 'green', label: 'Verdant', kind: 'color', color: '#3fb950' },
             { id: 'amber', label: 'Amber', kind: 'color', color: '#d29922' },
             { id: 'red', label: 'Crimson', kind: 'color', color: '#f85149' }
