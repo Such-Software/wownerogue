@@ -30,8 +30,13 @@
         doc().head.appendChild(s);
     }
 
+    // Disabled until the single-player render-kit path (RK.SPGame) has a camera + entity sprites.
+    // Keeping the module wired so re-enabling is a one-line flip.
+    var ENABLED = false;
+
     function build() {
         var h = host();
+        if (!ENABLED) { if (h) h.classList.add('hidden'); return; }
         if (!h || !RK.RENDER_MODES || !RK.SPGame) return;
         ensureStyle();
         h.innerHTML = '';

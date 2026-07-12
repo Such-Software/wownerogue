@@ -175,23 +175,11 @@ var ScreenManager = {
         const centerX = Math.floor(this._screenWidth / 2) - 10;
         const textX = centerX + ICON_COLS + 1;                   // one fixed text column for every row
         for (let item of legendItems) {
-            let iconDrawn = false;
-
-            if (item.role === "player" && window.SinglePlayerAvatar && window.SinglePlayerAvatar.drawLegendIcon) {
-                iconDrawn = window.SinglePlayerAvatar.drawLegendIcon(centerX, y, {
-                    fallbackTile: item.tile,
-                    cols: ICON_COLS
-                });
-            }
-
-            // Grid-tile icons: centre the (1-cell) glyph within the 2-cell slot so it aligns under
-            // the player sprite above it.
-            if (!iconDrawn) {
-                const glyph = window.options?.tileMap?.hasOwnProperty(item.tile) ? item.tile : "?";
-                const gx = centerX + Math.floor((ICON_COLS - (glyph.length || 1)) / 2);
-                display.draw(gx, y, glyph, "transparent", "transparent");
-            }
-
+            // Draw EVERY icon (incl. the player's original hero tile) as a grid tile — no avatar
+            // overlay — so all four share a left edge + baseline and the hero is the plain tile.
+            const glyph = window.options?.tileMap?.hasOwnProperty(item.tile) ? item.tile : "?";
+            const gx = centerX + Math.floor((ICON_COLS - (glyph.length || 1)) / 2);
+            display.draw(gx, y, glyph, "transparent", "transparent");
             this.drawText(textX, y, item.text);
             y++;
         }

@@ -288,31 +288,17 @@ var Game = {
     },
 
     _drawGameScreen: function() {
+        // The render-kit dungeon path (RK.SPGame) is DISABLED until it has a player-centered camera
+        // + real monster/entity sprites — without those it rendered the whole level tiny in a corner
+        // with a red-dot monster. Until then the single-player game uses the proven legacy renderer.
+        if (window.RK && RK.SPGame && RK.SPGame.hide) RK.SPGame.hide();
+        if (!this._ensureDisplay()) return;
         const gameState = GameState.getGameStateForRender();
-
-        // Prefer the render kit (Tiled / ASCII / Iso / 3D + unlocked packs) for the dungeon — it
-        // draws its own lighting/FX and the player sprite. The legacy ROT renderer is the fallback
-        // (returns here only if the kit is unavailable or a render throws), so the game never blanks.
-        var rk = false;
-        if (window.RK && RK.SPGame && RK.SPGame.available()) {
-            RK.SPGame.show();
-            rk = RK.SPGame.render(gameState, {
-                cryptoType: (window.ScreenManager && ScreenManager._cryptoType) || undefined,
-                playerAppearance: (window.SinglePlayerAvatar && SinglePlayerAvatar.currentAppearance)
-                    ? SinglePlayerAvatar.currentAppearance() : null,
-                isSpectating: this._isSpectating
-            });
-        }
-
-        if (!rk) {
-            if (window.RK && RK.SPGame) RK.SPGame.hide();
-            if (!this._ensureDisplay()) return;
-            RenderEngine.drawGameScreen(gameState);
-            // JUICE: keep the FX overlay aligned to the base canvas and feed it the player's
-            // screen-space position so its torch lighting tracks the camera.
-            if (window.FX) {
-                try { this._fxSyncLighting(); } catch (e) { /* best-effort */ }
-            }
+        RenderEngine.drawGameScreen(gameState);
+        // JUICE: keep the FX overlay aligned to the base canvas and feed it the player's screen-space
+        // position so its torch lighting tracks the camera.
+        if (window.FX) {
+            try { this._fxSyncLighting(); } catch (e) { /* best-effort */ }
         }
     },
 
