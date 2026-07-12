@@ -136,17 +136,24 @@
         'original': {
             id: 'original',
             label: 'Original Tiles',
-            tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
+            // The game's ORIGINAL tileset (html/tiles.png, 32px, no spacing) — the exact tiles the
+            // ROT instructions + waiting screens use, so the free pack IS the classic look. Grid
+            // coords = the legacy pixel coords / 32 (see options.js tileMap).
+            tileset: { url: 'tiles.png', tile: 32, spacing: 0 },
             tiles: {
-                floor: [5, 2],      // wood floor
-                floor2: [6, 2],     // stone accent
-                wall: [13, 12],     // masonry
-                door: [37, 9],
-                entrance: [37, 9],
-                exit: [37, 9],
-                treasure: [42, 15],
-                torch: [50, 10]
-                // No furniture kinds → bar/keg/table/chair/shelf/barrel/crate/rug fall back to floor.
+                floor: [0, 0],
+                floor2: [32, 0],    // alt/dirt floor
+                wall: [2, 1],       // stone brick wall
+                door: [1, 0],       // wooden door
+                entrance: [0, 1],
+                exit: [1, 0],
+                treasure: [30, 0],  // $W gold coin
+                torch: [32, 1],
+                // Classic entities too (the tiled renderer prefers a pack's player/monster tile over
+                // the sprite when present) — the blue-robe @ hero and the green ~ goblin.
+                player: [2, 0],
+                monster: [31, 1]
+                // No furniture kinds → tavern furniture falls back to floor (bare, as intended).
             }
         },
         'roguelike-interior': {

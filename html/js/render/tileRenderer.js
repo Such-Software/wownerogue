@@ -207,6 +207,10 @@
             // characters through), falling back to a red orb only if the sprite is unavailable.
             if (e.kind === 'monster') {
                 drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.9, cell * 0.32, cell * 0.13);
+                // Prefer the active pack's monster TILE (e.g. the Original pack's ~ goblin) so a
+                // classic tile pack renders classic; else the character sprite; else a red orb.
+                var mCoord = useAtlas ? pickVariant(tmap.monster, e.x, e.y) : null;
+                if (mCoord) { atlas.draw(ctx, mCoord[0], mCoord[1], e.x * cell, e.y * cell, cell); continue; }
                 var mAvatar = e.avatar || 'char-goblin';
                 if (window.RK && RK.avatarVisuals && RK.avatarVisuals.drawTopdownWorld) {
                     var mv = RK.avatarVisuals.resolve({ avatar: mAvatar }, { projection: 'topdown', context: 'dungeon', entity: e });
@@ -230,6 +234,12 @@
             }
             // Character-like entity: soft ground shadow, then the sprite (or fallback circle).
             drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.92, cell * 0.34, cell * 0.14);
+            // In the DUNGEON, prefer the active pack's player TILE (Original pack's @ hero) over the
+            // sprite so a classic pack is fully classic. The tavern keeps character sprites.
+            if (scene.isDungeon && (e.you || e.kind === 'player') && useAtlas) {
+                var pCoord = pickVariant(tmap.player, e.x, e.y);
+                if (pCoord) { atlas.draw(ctx, pCoord[0], pCoord[1], e.x * cell, e.y * cell, cell); continue; }
+            }
             // Roguelike character sprite, or premium animated skin; else the fallback circle.
             if (window.RK && RK.avatarVisuals && RK.avatarVisuals.drawTopdownWorld) {
                 var visual = RK.avatarVisuals.resolve(e.appearance || { avatar: e.avatar }, {
