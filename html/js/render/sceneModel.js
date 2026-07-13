@@ -167,6 +167,11 @@ function sceneFromGameState(state, opts) {
     var rows = state.dungeonRows || visible.length || dims.rows;
     var cols = state.dungeonCols || dims.cols;
 
+    // Player cell — explored MEMORY fades to black with distance from here (see below).
+    var _pl = state.player || {};
+    var _plx = typeof _pl.x === 'number' ? _pl.x : (cols / 2);
+    var _ply = typeof _pl.y === 'number' ? _pl.y : (rows / 2);
+
     var grid = [];
     var lightGrid = [];
     for (var y = 0; y < rows; y++) {
@@ -183,11 +188,18 @@ function sceneFromGameState(state, opts) {
             if (ch === null || ch === undefined || ch === ' ') {
                 row.push('dark');
                 lrow.push(0);
-            } else {
+            } else if (isVisible) {
                 row.push(dungeonTileKind(ch));
                 // Lighting: 0 = fully lit, higher = darker. Convert to brightness (1 = lit).
                 var la = (lighting[y] && lighting[y][x]) || 0;
-                lrow.push(isVisible ? Math.max(0.15, 1 - Math.min(la, 0.8)) : 0.25);
+                lrow.push(Math.max(0.15, 1 - Math.min(la, 0.8)));
+            } else {
+                // Explored MEMORY (seen before, not currently visible): dim, and fading toward black
+                // with distance from the player, so the remembered area melts into the dark instead
+                // of forming a hard-edged grey block that outlines the map's shape/edge (a FoW leak).
+                row.push(dungeonTileKind(ch));
+                var _dx = x - _plx, _dy = y - _ply;
+                lrow.push(Math.max(0, 0.26 - Math.sqrt(_dx * _dx + _dy * _dy) * 0.019));
             }
         }
         grid.push(row);

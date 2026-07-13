@@ -30,8 +30,10 @@
             // (the .container is height:100vh; overflow:hidden), so filling it gives the camera
             // reliable clientWidth/clientHeight every frame. The earlier `min(78vh)` + translate(-50%)
             // centering could resolve to a wrong/transient size, stranding the view in a top band.
+            // Pure-black background so the area BEYOND the map edge is the SAME black as an
+            // unexplored ('dark') in-bounds tile — otherwise the shade difference outlines the map.
             host.style.cssText = 'display:none; position:absolute; inset:0;' +
-                ' overflow:hidden; background:#0a0c0f; z-index:6; touch-action:none; cursor:grab;';
+                ' overflow:hidden; background:#000; z-index:6; touch-action:none; cursor:grab;';
             gd.appendChild(host);
         }
         return host;
