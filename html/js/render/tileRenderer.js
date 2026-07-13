@@ -117,13 +117,11 @@
                             ctx.fillStyle = bdef.color || def.color;
                             ctx.fillRect(px, py, cell, cell);
                         }
-                        // Fire fixtures (torch/hearth) carry a sprite — draw the sconce/torch tile over
-                        // its base so it reads as a mounted FIXTURE, not a bare procedural flame; RK.fx
-                        // then animates the flame + glow on top. Hazards (lava/poison/spikes) have no sprite.
-                        if (def.fx === 'fire' && useAtlas) {
-                            var fco = pickVariant(tmap[kind], x, y);
-                            if (fco) atlas.draw(ctx, fco[0], fco[1], px, py, cell);
-                        }
+                        // Fire fixtures draw ONLY their base (wall for a dungeon torch) here; RK.fx
+                        // paints the animated flame + warm glow centered on the cell in the flicker
+                        // loop. We deliberately skip the pack's torch SPRITE — several sheets place it
+                        // off-center / rotated, which read as misaligned; the procedural flame on a wall
+                        // base is a clean wall-mounted torch that looks right in every pack.
                         applyCellLight(ctx, scene, x, y, px, py, cell);
                         continue;
                     }

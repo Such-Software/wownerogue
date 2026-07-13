@@ -274,10 +274,10 @@ var WaitingScreenAnimator = {
         this.updateAnimation();
         const anim = this._waitingAnimation;
 
-        // JUICE: burst on the beats — treasure grabbed (treasureX flips to -1), escape, or caught.
+        // JUICE: a SUBTLE, tight sparkle when the hero breaks for the exit with the loot. No red
+        // "caught" burst — keep it a small glint, not an explosion near the torches.
         if (this._epicPhase !== anim.phase) {
-            if (anim.phase === 'escape')     this._burst(anim.playerX, anim.playerY, 'rgba(255,220,90,0.95)', 18, screenWidth, screenHeight, 1.8);
-            else if (anim.phase === 'caught') this._burst(anim.monsterX, anim.playerY, 'rgba(255,70,70,0.95)', 22, screenWidth, screenHeight, 2.2);
+            if (anim.phase === 'escape') this._burst(anim.playerX, anim.playerY, 'rgba(255,220,90,0.9)', 6, screenWidth, screenHeight, 0.7);
             this._epicPhase = anim.phase;
         }
 
@@ -497,18 +497,13 @@ var WaitingScreenAnimator = {
         // Update animation state
         this.updatePaymentAnimation();
 
-        // JUICE: fire a one-shot particle burst on each dramatic beat (grab / escape / death).
+        // JUICE: a SUBTLE, tight one-shot sparkle on the treasure grab / clean escape. Kept small and
+        // low-spread so it reads as a glint on the hero, not an explosion — and never sprays onto the
+        // wall torches. No red "death" burst (the animation's own red shockwave already covers that).
         if (this._payPhase !== anim.phase) {
-            if (anim.phase === 'grab')    this._burst(anim.treasureX, anim.treasureY, 'rgba(255,220,90,0.95)', 18, screenWidth, screenHeight, 1.8);
-            else if (anim.phase === 'escaped') this._burst(anim.playerX, anim.playerY, 'rgba(130,255,150,0.95)', 22, screenWidth, screenHeight, 2.2);
+            if (anim.phase === 'grab')         this._burst(anim.treasureX, anim.treasureY, 'rgba(255,220,90,0.9)', 6, screenWidth, screenHeight, 0.6);
+            else if (anim.phase === 'escaped') this._burst(anim.playerX, anim.playerY, 'rgba(130,255,150,0.9)', 7, screenWidth, screenHeight, 0.7);
             this._payPhase = anim.phase;
-        }
-        const _pGone = (anim.playerX === -1);
-        if (_pGone && !this._payDeathBurst) {
-            this._burst(anim.deathX || anim.treasureX, anim.deathY || centerY, 'rgba(255,70,70,0.95)', 24, screenWidth, screenHeight, 2.4);
-            this._payDeathBurst = true;
-        } else if (!_pGone) {
-            this._payDeathBurst = false;
         }
 
         // 💎💎💎 MEGA TREASURE - BIG pulsating with intense golden glow

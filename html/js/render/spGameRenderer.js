@@ -26,12 +26,11 @@
         if (!host) {
             host = doc().createElement('div');
             host.id = 'rk-game-host';
-            // A bounded viewport CENTERED in #game-display (which is position:relative). Absolute
-            // positioning dodges the flex centering + sibling ROT/FX canvases; capping the height
-            // (vs filling the very-tall #game-display) keeps the player-centered camera on-screen
-            // instead of low.
-            host.style.cssText = 'display:none; position:absolute; top:50%; left:50%;' +
-                ' width:min(100%, 1000px); height:min(100%, 78vh); transform:translate(-50%,-50%);' +
+            // FILL #game-display exactly (inset:0). #game-display is a definite, grid-bounded height
+            // (the .container is height:100vh; overflow:hidden), so filling it gives the camera
+            // reliable clientWidth/clientHeight every frame. The earlier `min(78vh)` + translate(-50%)
+            // centering could resolve to a wrong/transient size, stranding the view in a top band.
+            host.style.cssText = 'display:none; position:absolute; inset:0;' +
                 ' overflow:hidden; background:#0a0c0f; z-index:6; touch-action:none; cursor:grab;';
             gd.appendChild(host);
         }
