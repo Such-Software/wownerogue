@@ -143,6 +143,25 @@ var WaitingScreenAnimator = {
         } catch (e) { /* ignore */ }
     },
 
+    // JUICE: a one-shot particle burst at a grid cell (treasure grab / escape / death). Purely
+    // additive over window.FX — no-op if FX is absent — and tile-agnostic, so it works identically
+    // in every pack (it draws particles, never tiles). `spread` in grid cells, `count` particles.
+    _burst: function(gridX, gridY, color, count, screenWidth, screenHeight, spread) {
+        if (!window.FX || !window.FX.sparkle) return;
+        var canvas = this._fxBaseCanvas();
+        if (!canvas || !screenWidth || !screenHeight) return;
+        var cellW = canvas.width / screenWidth;
+        var cellH = canvas.height / screenHeight;
+        var s = spread || 1.6;
+        for (var i = 0; i < count; i++) {
+            var a = (i / count) * Math.PI * 2 + (this._fxTick || 0) * 0.3;
+            var r = ((i * 2654435761 % 100) / 100) * s; // deterministic-ish scatter, no Math.random churn
+            var px = (gridX + 0.5 + Math.cos(a) * r) * cellW;
+            var py = (gridY + 0.5 + Math.sin(a) * r) * cellH;
+            try { window.FX.sparkle(px, py, color); } catch (e) { /* ignore */ }
+        }
+    },
+
     drawAnimatedWaitingScreen: function(screenWidth, screenHeight, drawBorderFn, drawCenteredTextFn) {
         if (!DisplayManager.ensureDisplay()) return;
         const display = DisplayManager.getDisplay();
@@ -162,12 +181,11 @@ var WaitingScreenAnimator = {
             return;
         }
         
-        // Fixed-position animated text
+        // Fixed-position animated text. The label reflects the ACTUAL wait state, not this function's
+        // historical name — the two animations were wired to the opposite labels. This branch runs
+        // while genuinely awaiting a payment.
         let y = Math.floor(screenHeight / 2) - 8;
-        let baseText = "Awaiting next block";
-        if (typeof Game !== 'undefined') {
-            if (Game._unconfirmedPayment) baseText = 'Awaiting next block'; // mempool seen
-        }
+        let baseText = (typeof Game !== 'undefined' && Game._awaitingPayment) ? 'Awaiting payment' : 'Awaiting next block';
         const dots = ".".repeat((Math.floor(Date.now() / 500) % 4));
         const paddedDots = dots.padEnd(3, " ");
         drawCenteredTextFn(y, `${baseText}${paddedDots}`);
@@ -255,7 +273,14 @@ var WaitingScreenAnimator = {
         // Update character positions
         this.updateAnimation();
         const anim = this._waitingAnimation;
-        
+
+        // JUICE: burst on the beats — treasure grabbed (treasureX flips to -1), escape, or caught.
+        if (this._epicPhase !== anim.phase) {
+            if (anim.phase === 'escape')     this._burst(anim.playerX, anim.playerY, 'rgba(255,220,90,0.95)', 18, screenWidth, screenHeight, 1.8);
+            else if (anim.phase === 'caught') this._burst(anim.monsterX, anim.playerY, 'rgba(255,70,70,0.95)', 22, screenWidth, screenHeight, 2.2);
+            this._epicPhase = anim.phase;
+        }
+
         // ===== PHASE 1: DRAW ALL GLOW EFFECTS FIRST =====
         // This ensures glow appears behind entities
         
@@ -387,11 +412,14 @@ var WaitingScreenAnimator = {
         const anim = this._paymentAnimation;
         const time = Date.now();
         
-        // Fixed-position animated text
+        // Fixed-position animated text. This treasure-hunt animation runs for the block-QUEUE wait
+        // (see drawAnimatedWaitingScreen routing), so show the block label unless we're genuinely
+        // awaiting a payment. (Function name is historical — do not trust it for the label.)
         let y = Math.floor(screenHeight / 2) - 8;
         const dots = ".".repeat((Math.floor(time / 500) % 4));
         const paddedDots = dots.padEnd(3, " ");
-        drawCenteredTextFn(y, `Awaiting payment${paddedDots}`);
+        const label = (typeof Game !== 'undefined' && Game._awaitingPayment) ? 'Awaiting payment' : 'Awaiting next block';
+        drawCenteredTextFn(y, `${label}${paddedDots}`);
         
         // Room dimensions - relative to actual screen size
         const roomStartX = 1;
@@ -468,7 +496,21 @@ var WaitingScreenAnimator = {
 
         // Update animation state
         this.updatePaymentAnimation();
-        
+
+        // JUICE: fire a one-shot particle burst on each dramatic beat (grab / escape / death).
+        if (this._payPhase !== anim.phase) {
+            if (anim.phase === 'grab')    this._burst(anim.treasureX, anim.treasureY, 'rgba(255,220,90,0.95)', 18, screenWidth, screenHeight, 1.8);
+            else if (anim.phase === 'escaped') this._burst(anim.playerX, anim.playerY, 'rgba(130,255,150,0.95)', 22, screenWidth, screenHeight, 2.2);
+            this._payPhase = anim.phase;
+        }
+        const _pGone = (anim.playerX === -1);
+        if (_pGone && !this._payDeathBurst) {
+            this._burst(anim.deathX || anim.treasureX, anim.deathY || centerY, 'rgba(255,70,70,0.95)', 24, screenWidth, screenHeight, 2.4);
+            this._payDeathBurst = true;
+        } else if (!_pGone) {
+            this._payDeathBurst = false;
+        }
+
         // 💎💎💎 MEGA TREASURE - BIG pulsating with intense golden glow
         if (!anim.hasTreasure && anim.treasureX >= roomStartX && anim.treasureX <= roomEndX) {
             // Intense pulsing effect - the treasure is CALLING to the player
