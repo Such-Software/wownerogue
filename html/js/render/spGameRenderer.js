@@ -75,7 +75,23 @@
         if (SP._renderer) return SP._renderer;
         var host = rkHost();
         if (!host || !RK.createRenderer) return null;
-        SP._renderer = RK.createRenderer(SP.mode(), host, { cell: 24 });
+        var mode = SP.mode();
+        // 3D needs THREE, lazy-loaded from a CDN. The sync createRenderer() silently returns a Tiled
+        // renderer when THREE isn't loaded yet ("picked 3D, got original"). Kick off the load and
+        // re-mount as real 3D once it's ready; meanwhile we render Tiled so the screen isn't blank.
+        if (mode === '3d' && RK.ensureThree && RK.threeReady && !RK.threeReady()) {
+            if (!SP._threePending) {
+                SP._threePending = true;
+                RK.ensureThree(function (ok) {
+                    SP._threePending = false;
+                    if (ok && SP._live && SP.mode() === '3d') {
+                        SP._destroyRenderer();
+                        if (SP._lastState) SP.render(SP._lastState, SP._lastOpts);
+                    }
+                });
+            }
+        }
+        SP._renderer = RK.createRenderer(mode, host, { cell: 24 });
         // The camera owns the canvas transform (centre on the player), so position it absolutely
         // and let it overflow — do NOT use RK.attachZoom (it fights this transform).
         if (SP._renderer && SP._renderer.canvas) {

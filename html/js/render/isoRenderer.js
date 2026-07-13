@@ -73,6 +73,17 @@
         this.ctx.drawImage(img, cx - w / 2, baseY - h, w, h);
     };
 
+    // A flat iso diamond in the legend colour — the placeholder a tile draws while its pack image
+    // loads (or if an image is missing), so the view shows the dungeon shape instead of going black.
+    IsoRenderer.prototype._diamond = function (cx, cy, color) {
+        var ctx = this.ctx, hw = this.tileW / 2, hh = this.tileH / 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - hh); ctx.lineTo(cx + hw, cy); ctx.lineTo(cx, cy + hh); ctx.lineTo(cx - hw, cy);
+        ctx.closePath();
+        ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 1; ctx.stroke();
+    };
+
     // Soft contact shadow grounds props/characters so they don't float on the floor.
     IsoRenderer.prototype._contactShadow = function (cx, cy, rx, ry) {
         var ctx = this.ctx;
@@ -286,6 +297,7 @@
                 else tileKind = this._floorVariant(tileKind, it.x, it.y);
                 var rec = this._load(this._tileUrl(tileKind));
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
+                else if (it.kind !== 'dark') this._diamond(it.sx, it.sy + this.tileH * 0.5, (legend[it.kind] && legend[it.kind].color) || '#3a4048');
             } else if (it.type === 'prop') {
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.4, 22, 9);
                 rec = this._load(this._tileUrl(it.kind));

@@ -16,7 +16,8 @@
 
     AsciiRenderer.prototype.render = function (scene) {
         if (!scene) return;
-        var cell = this.cell, ctx = this.ctx;
+        this.lastScene = scene;
+        var cell = this.cell, ctx = this.ctx, now = Date.now(), hasTorch = false;
         this.canvas.width = scene.cols * cell;
         this.canvas.height = scene.rows * cell;
 
@@ -38,14 +39,33 @@
                     ctx.fillText(walk ? '·' : '#', x * cell + cell / 2, y * cell + cell / 2);
                 } else {
                     var def = scene.legend[scene.grid[y][x]] || { char: '?', color: '#555' };
-                    ctx.fillStyle = def.color;
-                    // Dungeon lighting: dim tiles in shadow.
-                    if (scene.lightGrid && scene.lightGrid[y] && scene.lightGrid[y][x] != null) {
-                        var b = scene.lightGrid[y][x];
-                        if (b < 1) ctx.globalAlpha = b;
+                    var gx = x * cell + cell / 2, gy = y * cell + cell / 2;
+                    if (def.fx === 'fire') {
+                        // Torches are ACTUAL light sources: a warm radial glow behind the glyph that
+                        // gently flickers; the glyph itself stays at full brightness (never dimmed).
+                        hasTorch = true;
+                        var seed = x * 7 + y * 13;
+                        var fl = 0.7 + Math.sin(now / 170 + seed) * 0.3;
+                        var rad = cell * (1.9 + Math.sin(now / 240 + seed) * 0.18);
+                        var g = ctx.createRadialGradient(gx, gy, 0, gx, gy, rad);
+                        g.addColorStop(0, 'rgba(255,196,96,' + (0.6 * fl) + ')');
+                        g.addColorStop(0.45, 'rgba(255,140,44,' + (0.24 * fl) + ')');
+                        g.addColorStop(1, 'rgba(255,120,30,0)');
+                        ctx.globalAlpha = 1;
+                        ctx.fillStyle = g;
+                        ctx.fillRect(gx - rad, gy - rad, rad * 2, rad * 2);
+                        ctx.fillStyle = '#ffd9a0';
+                        ctx.fillText(def.char, gx, gy);
+                    } else {
+                        ctx.fillStyle = def.color;
+                        // Dungeon lighting: dim tiles in shadow.
+                        if (scene.lightGrid && scene.lightGrid[y] && scene.lightGrid[y][x] != null) {
+                            var b = scene.lightGrid[y][x];
+                            if (b < 1) ctx.globalAlpha = b;
+                        }
+                        ctx.fillText(def.char, gx, gy);
+                        ctx.globalAlpha = 1;
                     }
-                    ctx.fillText(def.char, x * cell + cell / 2, y * cell + cell / 2);
-                    ctx.globalAlpha = 1;
                 }
             }
         }
@@ -95,9 +115,29 @@
                 break;
             }
         }
+
+        // Keep a light RAF alive so the torch glows flicker between game updates (~22fps).
+        this._hasTorches = hasTorch;
+        if (hasTorch) this._scheduleFlicker();
+    };
+
+    // Re-render on a throttled RAF so torch glows breathe even when the game isn't updating.
+    AsciiRenderer.prototype._scheduleFlicker = function () {
+        if (this._flickerRaf || !this._hasTorches || !this.ctx) return;
+        var self = this;
+        this._flickerRaf = requestAnimationFrame(function () {
+            self._flickerRaf = null;
+            if (!self.ctx || !self._hasTorches || !self.lastScene) return;
+            var t = Date.now();
+            if (self._lastFlick && t - self._lastFlick < 45) { self._scheduleFlicker(); return; }
+            self._lastFlick = t;
+            self.render(self.lastScene);
+        });
     };
 
     AsciiRenderer.prototype.destroy = function () {
+        this._hasTorches = false;
+        if (this._flickerRaf) { cancelAnimationFrame(this._flickerRaf); this._flickerRaf = null; }
         if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
         this.canvas = null;
         this.ctx = null;
