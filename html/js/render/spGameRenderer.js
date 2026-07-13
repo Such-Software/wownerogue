@@ -102,15 +102,12 @@
         var r = SP._renderer;
         var host = doc() && doc().getElementById('rk-game-host');
         if (!r || !r.canvas || !host) return;
-        // The 3D renderer drives its OWN THREE camera and sizes its canvas to the level, so a
-        // player-follow CSS transform would zoom/crop it wrongly. Instead scale-to-FIT the whole
-        // canvas into the host and centre it (no player follow) — a sane, non-broken view.
+        // The 3D renderer fills the host itself (setSize) and its OWN THREE camera follows the
+        // player — so DON'T apply a CSS transform (it would double-transform the WebGL view).
         if (r.name === '3d') {
-            var cw = r.canvas.width || 1, ch = r.canvas.height || 1;
-            var hw3 = host.clientWidth || host.offsetWidth || 640, hh3 = host.clientHeight || host.offsetHeight || 400;
-            var fit = Math.min(hw3 / cw, hh3 / ch);
-            r.canvas.style.transformOrigin = '0 0';
-            r.canvas.style.transform = 'translate(' + ((hw3 - cw * fit) / 2) + 'px,' + ((hh3 - ch * fit) / 2) + 'px) scale(' + fit + ')';
+            r.canvas.style.transform = 'none';
+            r.canvas.style.left = '0';
+            r.canvas.style.top = '0';
             return;
         }
         var scale = SP._zoom || 1.7;

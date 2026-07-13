@@ -50,11 +50,17 @@
         this._raf = requestAnimationFrame(function tick() { self._animate(); self._raf = requestAnimationFrame(tick); });
     };
 
-    ThreeRenderer.prototype._resize = function (scene) {
-        var w = Math.max(420, scene.cols * 32);
-        var h = Math.max(360, scene.rows * 28 + 120);
-        this.renderer.setSize(w, h, false);
-        var aspect = w / h, span = Math.max(scene.cols, scene.rows) * 0.78 + 2.5;
+    // Fill the host and frame a fixed "screenful" around the player. The camera FOLLOWS the player
+    // (see _animate) instead of framing the whole level, so 3D behaves like the other modes. Only
+    // does work when the host size actually changed (cheap to call every frame).
+    ThreeRenderer.prototype._fitToHost = function () {
+        var host = this.host;
+        var w = (host && (host.clientWidth || host.offsetWidth)) || 640;
+        var h = (host && (host.clientHeight || host.offsetHeight)) || 400;
+        if (w === this._cw && h === this._ch) return;
+        this._cw = w; this._ch = h;
+        this.renderer.setSize(w, h, true); // updateStyle:true → the canvas CSS-fills the host
+        var aspect = w / h, span = 8; // fixed zoom = a screenful around the player
         this.camera.left = -span * aspect;
         this.camera.right = span * aspect;
         this.camera.top = span;
@@ -219,7 +225,7 @@
 
     ThreeRenderer.prototype.render = function (scene) {
         if (!scene || !this.renderer) return;
-        this._resize(scene);
+        this._fitToHost();
         var key = scene.cols + 'x' + scene.rows + ':' + scene.grid.map(function (r) { return r.join(''); }).join('/');
         if (key !== this._sizeKey) {
             this._buildTiles(scene);
@@ -272,6 +278,19 @@
                 var r = ent.e.facing === 'up' ? Math.PI : ent.e.facing === 'left' ? -Math.PI / 2 : ent.e.facing === 'right' ? Math.PI / 2 : 0;
                 o.rotation.y += (r - o.rotation.y) * 0.18;
             }
+        }
+
+        // Player-follow camera: keep the fixed iso offset (8,9,8) but re-target the player's world
+        // position each frame. The player mesh itself lerps, so the camera glides smoothly with it.
+        this._fitToHost(); // pick up any host resize
+        var pcam = null;
+        for (var pid in this.entities) {
+            var pen = this.entities[pid];
+            if (pen.e && (pen.e.you || pen.e.kind === 'player')) { pcam = pen.obj; break; }
+        }
+        if (pcam) {
+            this.camera.position.set(pcam.position.x + 8, 9, pcam.position.z + 8);
+            this.camera.lookAt(pcam.position.x, 0, pcam.position.z);
         }
         this.renderer.render(this.scene, this.camera);
     };
