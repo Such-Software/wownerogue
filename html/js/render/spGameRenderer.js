@@ -104,9 +104,18 @@
         if (!r || !r.canvas || !host) return;
         var scale = SP._zoom || 1.7;
         var fp = r.focusPoint;
+        // ROBUSTNESS: if the renderer hasn't reported a focus this frame — a race at game start, or a
+        // camera tick reading a just-(re)created renderer instance before its first render — derive the
+        // focus straight from the last known player cell (tiled coords). Without this the camera falls
+        // back to a scale-only transform that pins the whole level to the top-left corner.
+        if (!fp && r.name === 'tiles' && SP._lastState && SP._lastState.player &&
+            typeof SP._lastState.player.x === 'number') {
+            var _c = r.cell || 24;
+            fp = { x: (SP._lastState.player.x + 0.5) * _c, y: (SP._lastState.player.y + 0.5) * _c };
+        }
         r.canvas.style.transformOrigin = '0 0';
         if (!fp) { r.canvas.style.transform = 'scale(' + scale + ')'; return; }
-        var w = host.clientWidth || 640, h = host.clientHeight || 400;
+        var w = host.clientWidth || host.offsetWidth || 640, h = host.clientHeight || host.offsetHeight || 400;
         var tx = w / 2 - fp.x * scale, ty = h / 2 - fp.y * scale;
         // Smooth follow: glide toward the target so single steps aren't jerky; SNAP on a big jump
         // (level-change teleport / a stale-then-updated focus) rather than slowly panning the map.
