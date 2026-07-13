@@ -29,7 +29,12 @@
     ThreeRenderer.prototype._init = function () {
         var T = this.THREE;
         this.scene = new T.Scene();
-        this.scene.background = new T.Color(0x0a0c0f);
+        this.scene.background = new T.Color(0x000000);
+        // Fog-of-war parity with the 2D modes: the camera follows the player, so distance fog fades
+        // explored tiles to black away from you, and _buildTiles skips unexplored ('dark') tiles so
+        // they never render. Together: unexplored = hidden, explored fades with distance, no map leak.
+        // (camera sits ~14.5 units from the player; fade from there out to ~15 tiles.)
+        this.scene.fog = new T.Fog(0x000000, 14, 32);
         this.camera = new T.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
         this.camera.position.set(8, 9, 8);
         this.camera.lookAt(0, 0, 0);
@@ -83,6 +88,7 @@
         for (var y = 0; y < scene.rows; y++) {
             for (var x = 0; x < scene.cols; x++) {
                 var kind = scene.grid[y][x];
+                if (kind === 'dark') continue; // unexplored — leave it void (fog-of-war: never render it)
                 var def = scene.legend[kind] || {};
                 var h = kind === 'wall' ? 0.9 : (kind === 'bar' ? 0.42 : (kind === 'table' ? 0.28 : 0.08));
                 var geom = new T.BoxGeometry(kind === 'wall' ? 1 : 0.96, h, kind === 'wall' ? 1 : 0.96);
