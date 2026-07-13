@@ -117,6 +117,13 @@
                             ctx.fillStyle = bdef.color || def.color;
                             ctx.fillRect(px, py, cell, cell);
                         }
+                        // Fire fixtures (torch/hearth) carry a sprite — draw the sconce/torch tile over
+                        // its base so it reads as a mounted FIXTURE, not a bare procedural flame; RK.fx
+                        // then animates the flame + glow on top. Hazards (lava/poison/spikes) have no sprite.
+                        if (def.fx === 'fire' && useAtlas) {
+                            var fco = pickVariant(tmap[kind], x, y);
+                            if (fco) atlas.draw(ctx, fco[0], fco[1], px, py, cell);
+                        }
                         applyCellLight(ctx, scene, x, y, px, py, cell);
                         continue;
                     }

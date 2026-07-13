@@ -104,7 +104,9 @@
     entrance: { char: '<',  color: '#3fb950', solid: false },
     exit:     { char: '>',  color: '#d29922', solid: false },
     treasure: { char: '$',  color: '#fbbf24', solid: false },
-    torch:    { char: 'i',  color: '#d29922', solid: false, fx: 'fire', fxScale: 0.34 },
+    // The generator only places torches on WALL cells adjacent to floor, so the fixture is
+    // wall-mounted: base on `wall`, draw the torch sprite over it, then RK.fx animates the flame.
+    torch:    { char: 'i',  color: '#d29922', solid: false, over: 'wall', fx: 'fire', fxScale: 0.34 },
     // Hazard zones. The base tile stays walkable/ground; RK.fx paints the pulsing overlay. These
     // render as soon as the dungeon generator emits their chars (L/P/^) in the tile stream.
     lava:     { char: '≈',  color: '#7a2a0e', solid: false, hazard: 'lava' },
