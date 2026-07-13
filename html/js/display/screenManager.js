@@ -331,17 +331,8 @@ var ScreenManager = {
     },
 
     drawWaitingScreen: function(_internalLoopCall = false) {
-        // Render the waiting "mining room" through the render kit (active pack/mode) when available,
-        // so the wait inherits your tiles/iso/3D. Falls back to the ROT animation below.
-        if (window.RK && RK.SPGame && RK.SPGame.showWaiting && RK.SPGame.available()) {
-            this._isShowingWaitingScreen = true;
-            var _appr = (window.SinglePlayerAvatar && SinglePlayerAvatar.currentAppearance) ? SinglePlayerAvatar.currentAppearance() : null;
-            var _crypto = this._cryptoType || undefined;
-            if (RK.SPGame.showWaiting('⛏ Mining the next block…', 'You drop in when it lands — then escape before the one after.', _crypto, _appr)) {
-                this.showAnimationButton();
-                return;
-            }
-        }
+        // The waiting screen is the beloved ROT "treasure hunt" scripted animation (chase / grab /
+        // escape-or-devoured drama). Hide the render-kit host so the ROT display owns the screen.
         if (window.RK && RK.SPGame) RK.SPGame.hide();
         if (!DisplayManager.ensureDisplay()) return;
         
