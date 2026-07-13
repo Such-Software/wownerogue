@@ -450,19 +450,10 @@ var Game = {
             window.FX.sparkle(pp.x, pp.y, '#fbbf24');
         }
 
-        // Monster proximity: throttled red edge pulse, stronger the closer it is.
-        var m = GameState._monster;
-        if (m && typeof m.x === 'number' && typeof m.y === 'number' && window.FX.flash) {
-            var md = this._fxDist(player.x, player.y, m.x, m.y);
-            if (md <= 3) {
-                var now = Date.now();
-                if (!this._fxLastMonsterFlash || (now - this._fxLastMonsterFlash) > 550) {
-                    this._fxLastMonsterFlash = now;
-                    var alpha = (md <= 1) ? 0.22 : (md <= 2 ? 0.14 : 0.09);
-                    window.FX.flash('rgba(255,60,60,1)', alpha, 260);
-                }
-            }
-        }
+        // NOTE: removed the monster-proximity red screen flash — it fired on nearly every step
+        // (monster usually within 3 tiles) and read as a constant annoying pulse. The monster is
+        // already visible on-screen, so proximity needs no full-screen flash. Reserve FX.flash for
+        // genuine one-shot events (win/lose in handleGameOver).
     },
 
     // Attach + start the FX loop for a fresh game.

@@ -139,8 +139,11 @@ const SocketHandlers = {
                 var lvl = (data.depth && data.maxDepth) ? ('Level ' + data.depth + ' of ' + data.maxDepth + ' — ') : '';
                 $m.append($('<li class="status" style="color:#ffcc00; font-weight:bold;">')
                     .text('⬇️ Stairs down! ' + lvl + 'keep going — escape before the block!'));
+                var lvlTitle = (data.depth && data.maxDepth) ? ('⬇ LEVEL ' + data.depth + ' / ' + data.maxDepth) : '⬇ DESCEND';
+                SocketHandlers.showEventBanner(lvlTitle, 'Deeper in — escape before the block!', '#ffcc00');
             } else if (data.event === 'treasure_found') {
                 $m.append($('<li class="status" style="color:#fbbf24; font-weight:bold;">').text('💰 Treasure secured!'));
+                SocketHandlers.showEventBanner('💰 TREASURE SECURED', 'Now get to the stairs and escape!', '#fbbf24');
             } else return;
             if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
         });
@@ -331,6 +334,42 @@ const SocketHandlers = {
     onMessage: function(msg) {
         $('#messages').append($('<li>').text(msg));
         UI.scrollChat();
+    },
+
+    // A big, one-shot on-screen banner over the game view for headline in-run events (descend /
+    // treasure). Pops in, holds, fades — pointer-events:none so it never eats input, and auto-removes.
+    showEventBanner: function(title, sub, color) {
+        color = color || '#ffcc00';
+        var host = document.getElementById('game-display') || document.body;
+        if (!document.getElementById('evt-banner-style')) {
+            var st = document.createElement('style');
+            st.id = 'evt-banner-style';
+            st.textContent =
+                '@keyframes evtBannerIn{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}' +
+                '12%{opacity:1;transform:translate(-50%,-50%) scale(1.12)}' +
+                '22%{transform:translate(-50%,-50%) scale(1)}' +
+                '76%{opacity:1;transform:translate(-50%,-50%) scale(1)}' +
+                '100%{opacity:0;transform:translate(-50%,-50%) scale(1.05)}}';
+            document.head.appendChild(st);
+        }
+        // Drop any banner still on screen so they never stack.
+        var prev = document.getElementById('evt-banner');
+        if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+
+        var b = document.createElement('div');
+        b.id = 'evt-banner';
+        var positioned = host.id === 'game-display'; // #game-display is position:relative
+        b.style.cssText = (positioned ? 'position:absolute;' : 'position:fixed;') +
+            'left:50%;top:34%;z-index:30;pointer-events:none;text-align:center;' +
+            'font-family:ui-monospace,monospace;animation:evtBannerIn 2600ms ease-out forwards;';
+        b.innerHTML =
+            '<div style="font-size:38px;font-weight:900;letter-spacing:2px;color:' + color + ';' +
+            'text-shadow:0 3px 0 #000,0 0 20px ' + color + '99;">' + title + '</div>' +
+            (sub ? '<div style="font-size:15px;color:#e6ead0;margin-top:8px;text-shadow:0 2px 6px #000;">' + sub + '</div>' : '');
+        host.appendChild(b);
+        setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 2650);
+        // A little extra pop: a soft colored flash if the FX overlay is up.
+        try { if (window.FX && window.FX.flash) window.FX.flash(color, 0.16, 320); } catch (e) {}
     },
 
     onStatusUpdate: function(data) {
