@@ -84,6 +84,17 @@
                 ctx.fillText(e.label, cx, e.y * cell - 1);
             }
         }
+
+        // Camera focus — centre the SP camera on the player cell (same convention as the tiled
+        // renderer). Sticky: only update when the player is present, so switching TO ascii mid-game
+        // doesn't leave focusPoint null (which pinned the whole grid to the corner → black screen).
+        for (var pj = 0; pj < scene.entities.length; pj++) {
+            var pe = scene.entities[pj];
+            if (pe.kind === 'player' || pe.you) {
+                this.focusPoint = { x: pe.x * cell + cell / 2, y: pe.y * cell + cell / 2 };
+                break;
+            }
+        }
     };
 
     AsciiRenderer.prototype.destroy = function () {

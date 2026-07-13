@@ -102,13 +102,24 @@
         var r = SP._renderer;
         var host = doc() && doc().getElementById('rk-game-host');
         if (!r || !r.canvas || !host) return;
+        // The 3D renderer drives its OWN THREE camera and sizes its canvas to the level, so a
+        // player-follow CSS transform would zoom/crop it wrongly. Instead scale-to-FIT the whole
+        // canvas into the host and centre it (no player follow) — a sane, non-broken view.
+        if (r.name === '3d') {
+            var cw = r.canvas.width || 1, ch = r.canvas.height || 1;
+            var hw3 = host.clientWidth || host.offsetWidth || 640, hh3 = host.clientHeight || host.offsetHeight || 400;
+            var fit = Math.min(hw3 / cw, hh3 / ch);
+            r.canvas.style.transformOrigin = '0 0';
+            r.canvas.style.transform = 'translate(' + ((hw3 - cw * fit) / 2) + 'px,' + ((hh3 - ch * fit) / 2) + 'px) scale(' + fit + ')';
+            return;
+        }
         var scale = SP._zoom || 1.7;
         var fp = r.focusPoint;
         // ROBUSTNESS: if the renderer hasn't reported a focus this frame — a race at game start, or a
         // camera tick reading a just-(re)created renderer instance before its first render — derive the
         // focus straight from the last known player cell (tiled coords). Without this the camera falls
         // back to a scale-only transform that pins the whole level to the top-left corner.
-        if (!fp && r.name === 'tiles' && SP._lastState && SP._lastState.player &&
+        if (!fp && (r.name === 'tiles' || r.name === 'ascii') && SP._lastState && SP._lastState.player &&
             typeof SP._lastState.player.x === 'number') {
             var _c = r.cell || 24;
             fp = { x: (SP._lastState.player.x + 0.5) * _c, y: (SP._lastState.player.y + 0.5) * _c };
