@@ -231,10 +231,18 @@
         var visual = this._visualFor(e);
         if (visual && visual.allowed === false) return null;
         var dirs = this.assets.directions || {};
-        var facing = (e && e.facing) || 'down';
         var key = e.id || 'anon';
-        var st = this.last[key] || (this.last[key] = { x: e.x, y: e.y, t: 0 });
-        if (st.x !== e.x || st.y !== e.y) { st.x = e.x; st.y = e.y; st.t = now; }
+        var st = this.last[key] || (this.last[key] = { x: e.x, y: e.y, t: 0, facing: 'down' });
+        if (st.x !== e.x || st.y !== e.y) {
+            // Infer facing from the actual movement delta — the SP game doesn't send player.facing
+            // (only the tavern does), so without this the character always faced 'down' (SW) no matter
+            // which way it moved. Explicit e.facing (tavern) still wins below.
+            var ddx = e.x - st.x, ddy = e.y - st.y;
+            if (Math.abs(ddx) >= Math.abs(ddy)) st.facing = ddx > 0 ? 'right' : 'left';
+            else st.facing = ddy > 0 ? 'down' : 'up';
+            st.x = e.x; st.y = e.y; st.t = now;
+        }
+        var facing = (e && e.facing) || st.facing || 'down';
         var moving = (now - st.t) < 360;
         var ch = dirs[facing] || (visual && visual.character) || (this.assets.character || {});
         if (!moving || !ch.run || ch.run.length === 0) return { url: ch.idle, character: ch, visual: visual };

@@ -51,7 +51,13 @@
         if (!RK.canUseMode(mode)) return new RK.TileRenderer(host, opts);
         if (mode === 'ascii' && RK.AsciiRenderer) return new RK.AsciiRenderer(host, opts);
         if (mode === 'iso' && RK.IsoRenderer) return new RK.IsoRenderer(host, opts);
-        if (mode === '3d' && RK.ThreeRenderer && RK.THREE) return new RK.ThreeRenderer(host, opts);
+        if (mode === '3d' && RK.ThreeRenderer && RK.THREE) {
+            try { return new RK.ThreeRenderer(host, opts); }
+            catch (e) {
+                if (root.console) console.warn('3D renderer failed; using tiled:', e && e.message);
+                return new RK.TileRenderer(host, opts);
+            }
+        }
         if (mode === 'fancy') {
             try {
                 if (!RK.FancyRenderer) throw new Error('fancy renderer not loaded');

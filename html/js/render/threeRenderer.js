@@ -260,6 +260,7 @@
 
     ThreeRenderer.prototype._animate = function () {
         if (!this.renderer) return;
+        try {
         var dt = this.clock.getDelta();
         var now = Date.now();
         for (var i = 0; i < this.mixers.length; i++) this.mixers[i].update(dt);
@@ -280,12 +281,16 @@
                 o._model.rotation.z = moving ? Math.sin(now / 120) * 0.045 : 0;
             }
             this._playAction(o, moving ? 'run' : 'idle');
-            if (ent.e && ent.e.facing) {
-                var r = ent.e.facing === 'up' ? Math.PI : ent.e.facing === 'left' ? -Math.PI / 2 : ent.e.facing === 'right' ? Math.PI / 2 : 0;
+            // Face the way you move. Prefer explicit facing (tavern); else infer from the world delta
+            // (the SP game doesn't send player.facing). world x=grid x, world z=grid y.
+            var face = ent.e && ent.e.facing;
+            if (!face && moving) { face = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 'right' : 'left') : (dz > 0 ? 'down' : 'up'); ent._face = face; }
+            face = face || ent._face;
+            if (face) {
+                var r = face === 'up' ? Math.PI : face === 'left' ? -Math.PI / 2 : face === 'right' ? Math.PI / 2 : 0;
                 o.rotation.y += (r - o.rotation.y) * 0.18;
             }
         }
-
         // Player-follow camera: keep the fixed iso offset (8,9,8) but re-target the player's world
         // position each frame. The player mesh itself lerps, so the camera glides smoothly with it.
         this._fitToHost(); // pick up any host resize
@@ -299,6 +304,11 @@
             this.camera.lookAt(pcam.position.x, 0, pcam.position.z);
         }
         this.renderer.render(this.scene, this.camera);
+        } catch (err) {
+            if (root.console) console.warn('3D animate error; stopping 3D loop:', err && err.message);
+            if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; }
+            return;
+        }
     };
 
     ThreeRenderer.prototype.destroy = function () {

@@ -38,7 +38,8 @@
                     ctx.fillStyle = walk ? '#2f4030' : '#39404c';
                     ctx.fillText(walk ? '·' : '#', x * cell + cell / 2, y * cell + cell / 2);
                 } else {
-                    var def = scene.legend[scene.grid[y][x]] || { char: '?', color: '#555' };
+                    var kind = scene.grid[y][x];
+                    var def = scene.legend[kind] || { char: '?', color: '#555' };
                     var gx = x * cell + cell / 2, gy = y * cell + cell / 2;
                     if (def.fx === 'fire') {
                         // Torches are ACTUAL light sources: a warm radial glow behind the glyph that
@@ -57,7 +58,12 @@
                         ctx.fillStyle = '#ffd9a0';
                         ctx.fillText(def.char, gx, gy);
                     } else {
-                        ctx.fillStyle = def.color;
+                        // Brighter glyph colours for readability: the dungeon legend colours are
+                        // near-black (tuned for TILE fog, not glyphs), which made ASCII walls/floors
+                        // almost invisible. Features (entrance/exit/treasure) keep their own colours.
+                        ctx.fillStyle = kind === 'wall' ? '#8b95a6'
+                            : (kind === 'floor' || kind === 'floor2') ? '#5b6472'
+                            : def.color;
                         // Dungeon lighting: dim tiles in shadow.
                         if (scene.lightGrid && scene.lightGrid[y] && scene.lightGrid[y][x] != null) {
                             var b = scene.lightGrid[y][x];
