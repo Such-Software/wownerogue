@@ -251,7 +251,9 @@ function sceneFromGameState(state, opts) {
         var playerEntity = {
             id: 'player', x: state.player.x, y: state.player.y,
             kind: 'player', char: '@', color: '#9aa4b2',
-            facing: state.player.facing || 'down', label: null,
+            // No bogus default: the SP server doesn't send facing, so leave it null and let the iso/3D
+            // renderers INFER facing from movement. A hardcoded 'down' made them always face down/SW.
+            facing: state.player.facing || null, label: null,
             you: !state.isSpectating
         };
         // Attach the player's appearance if available (for render-kit character rendering).

@@ -73,6 +73,27 @@
         this.ctx.drawImage(img, cx - w / 2, baseY - h, w, h);
     };
 
+    // Map a dungeon FEATURE entity (entrance/exit/treasure/item) to a pack tile: stairs for the
+    // entrance/exit, a chest for treasure/items. Null if the pack has no fitting tile (→ glyph).
+    IsoRenderer.prototype._featureTileUrl = function (e) {
+        var tiles = this.assets.tiles || {};
+        var c = e.char;
+        if (c === '<' || c === '>') return tiles.stairs || null;
+        if (c === '$' || c === '$W' || c === '$M') return tiles.chestClosed || tiles.chest || null;
+        return null;
+    };
+
+    // Draw a text glyph centered at a projected cell (feature fallback when no pack tile fits).
+    IsoRenderer.prototype._glyph = function (cx, cy, ch, color) {
+        var ctx = this.ctx;
+        ctx.save();
+        ctx.font = 'bold ' + Math.round(this.tileH * 0.95) + "px monospace";
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = color || '#fff';
+        ctx.fillText(ch, cx, cy);
+        ctx.restore();
+    };
+
     // A flat iso diamond in the legend colour — the placeholder a tile draws while its pack image
     // loads (or if an image is missing), so the view shows the dungeon shape instead of going black.
     IsoRenderer.prototype._diamond = function (cx, cy, color) {
@@ -325,12 +346,25 @@
                     RK.fx.fire(ctx, fcx, fgy, fscale, now, (it.x * 7 + it.y * 13) % 97);
                 }
             } else if (it.type === 'entity') {
+                // Dungeon FEATURES/ITEMS (entrance/exit/treasure/items) are tiles/glyphs, NOT avatars.
+                // The iso renderer is shared with the tavern (where every entity is an avatar); without
+                // this branch the entrance was drawn as a male character — the "copy of the player at
+                // the start" the map origin showed.
+                if (it.e.kind === 'feature' || it.e.kind === 'item') {
+                    var furl = this._featureTileUrl(it.e);
+                    var frec = furl && this._load(furl);
+                    if (frec && frec.ready) this._drawImage(frec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
+                    else this._glyph(it.sx, it.sy + this.tileH * 0.4, it.e.char || '?', it.e.color || '#fff');
+                    continue;
+                }
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.15, 18, 7);
                 var frame = this._charFrame(it.e, now);
                 rec = this._load(frame && frame.url);
                 if (rec && rec.ready) {
                     var ch = frame.character || this.assets.character || {};
-                    var tint = this._skinTintFor(frame.visual);
+                    // Monsters use the same character art — tint them RED so they don't read as a
+                    // second player following you around.
+                    var tint = it.e.kind === 'monster' ? '#f85149' : this._skinTintFor(frame.visual);
                     this._drawSpriteImage(this._tintedImage(rec.img, tint), it.sx, it.sy + this.tileH * 0.95, ch.imageH || 92);
                 } else {
                     ctx.beginPath();
