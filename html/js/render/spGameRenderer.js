@@ -97,8 +97,15 @@
         if (SP._renderer && SP._renderer.canvas) {
             var c = SP._renderer.canvas;
             c.style.position = 'absolute'; c.style.top = '0'; c.style.left = '0';
-            // Beat `.rotdis canvas { max-width:100% !important }` so the camera controls the size.
+            // Beat the `.rotdis canvas { max-width/height:100%; object-fit:contain }` rules (meant for
+            // the legacy ROT canvas) so the render-kit buffer maps 1:1 to the element and the CAMERA
+            // transform is the SOLE controller of scale/position. WITHOUT the max-height/object-fit
+            // override, a canvas TALLER than the host got object-fit-shrunk and the camera translate —
+            // computed in buffer space — pushed the player far off-screen (iso went fully BLACK; tiled's
+            // shorter canvas usually fit the host so it escaped the bug).
             c.style.setProperty('max-width', 'none', 'important');
+            c.style.setProperty('max-height', 'none', 'important');
+            c.style.setProperty('object-fit', 'fill', 'important');
             c.style.setProperty('image-rendering', 'pixelated', 'important');
         }
         if (!host._rkZoomBound) {
@@ -126,7 +133,9 @@
             r.canvas.style.top = '0';
             return;
         }
-        var scale = SP._zoom || 1.7;
+        // Default zoom is mode-aware: iso tiles are large (84px), so a lower default frames a sensible
+        // number of them; tiled/ascii cells are small (~24px) so they want more magnification.
+        var scale = SP._zoom || (r.name === 'iso' ? 1.0 : 1.7);
         var fp = r.focusPoint;
         // ROBUSTNESS: if the renderer hasn't reported a focus this frame — a race at game start, or a
         // camera tick reading a just-(re)created renderer instance before its first render — derive the
