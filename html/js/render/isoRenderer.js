@@ -321,6 +321,9 @@
         for (i = 0; i < items.length; i++) {
             var it = items[i];
             if (it.type === 'tile') {
+                // FOG OF WAR: never render unexplored cells. Without this they fell back to the floor
+                // tile (`_tileUrl('dark')` → tiles.floor) and revealed the ENTIRE map from move 0.
+                if (it.kind === 'dark') continue;
                 var tileKind = PROP[it.kind] ? 'floor' : it.kind;
                 if (WALLISH[tileKind]) tileKind = this._wallVariant(scene, it.x, it.y, tileKind);
                 else tileKind = this._floorVariant(tileKind, it.x, it.y);
@@ -332,9 +335,12 @@
                     it.x >= this._plx && it.y >= this._ply &&
                     (it.x + it.y) > (this._plx + this._ply) &&
                     ((it.x - this._plx) + (it.y - this._ply)) <= 3;
-                if (cut) ctx.globalAlpha = 0.28;
+                // Fog fade: dim explored-but-distant tiles toward the (near-black) background so the
+                // remembered area melts into the dark with distance — parity with the 2D modes.
+                var lb = (scene.lightGrid && scene.lightGrid[it.y] && scene.lightGrid[it.y][it.x] != null) ? scene.lightGrid[it.y][it.x] : 1;
+                ctx.globalAlpha = cut ? 0.28 : Math.max(0.16, lb);
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
-                else if (it.kind !== 'dark') this._diamond(it.sx, it.sy + this.tileH * 0.5, (legend[it.kind] && legend[it.kind].color) || '#3a4048');
+                else this._diamond(it.sx, it.sy + this.tileH * 0.5, (legend[it.kind] && legend[it.kind].color) || '#3a4048');
                 ctx.globalAlpha = 1;
             } else if (it.type === 'prop') {
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.4, 22, 9);
