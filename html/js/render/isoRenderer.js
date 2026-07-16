@@ -313,7 +313,7 @@
             p = this._project(e.x, e.y, originX, originY);
             items.push({ type: 'entity', e: e, sx: p.x, sy: p.y, depth: e.x + e.y + 0.55 });
             // Sticky camera target (keep last if the player is momentarily absent).
-            if (e.you || e.kind === 'player') this.focusPoint = { x: p.x, y: p.y + this.tileH };
+            if (e.you || e.kind === 'player') { this.focusPoint = { x: p.x, y: p.y + this.tileH }; this._plx = e.x; this._ply = e.y; }
         }
         items.sort(function (a, b) { return a.depth === b.depth ? (a.y || 0) - (b.y || 0) : a.depth - b.depth; });
 
@@ -325,8 +325,17 @@
                 if (WALLISH[tileKind]) tileKind = this._wallVariant(scene, it.x, it.y, tileKind);
                 else tileKind = this._floorVariant(tileKind, it.x, it.y);
                 var rec = this._load(this._tileUrl(tileKind));
+                // Cutaway: fade the walls sitting between the camera and the player (higher x+y, toward
+                // the SE camera, within a few cells) so they don't hide the player or the openings right
+                // in front of them. Iso occlusion otherwise makes near hallways impossible to read.
+                var cut = WALLISH[it.kind] && this._plx != null &&
+                    it.x >= this._plx && it.y >= this._ply &&
+                    (it.x + it.y) > (this._plx + this._ply) &&
+                    ((it.x - this._plx) + (it.y - this._ply)) <= 3;
+                if (cut) ctx.globalAlpha = 0.28;
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
                 else if (it.kind !== 'dark') this._diamond(it.sx, it.sy + this.tileH * 0.5, (legend[it.kind] && legend[it.kind].color) || '#3a4048');
+                ctx.globalAlpha = 1;
             } else if (it.type === 'prop') {
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.4, 22, 9);
                 rec = this._load(this._tileUrl(it.kind));

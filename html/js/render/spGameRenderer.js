@@ -112,11 +112,21 @@
             host._rkZoomBound = true;
             host.addEventListener('wheel', function (ev) {
                 ev.preventDefault();
-                SP._zoom = Math.max(0.6, Math.min(4, (SP._zoom || 1.7) * Math.exp(-ev.deltaY * 0.0015)));
+                // Base the step on the CURRENT effective zoom (mode-aware default if not yet set),
+                // NOT a hardcoded 1.7 — otherwise the first scroll on iso (default 1.0) jumped up to
+                // 1.7 and BOTH directions read as "zoom in".
+                var base = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
+                SP._zoom = Math.max(0.4, Math.min(4, base * Math.exp(-ev.deltaY * 0.0015)));
                 SP._applyCamera();
             }, { passive: false });
         }
         return SP._renderer;
+    };
+
+    // Mode-aware default zoom: iso tiles are large (84px) so they want less magnification than the
+    // small tiled/ascii cells (~24px).
+    SP._defaultZoom = function () {
+        return (SP._renderer && SP._renderer.name === 'iso') ? 1.0 : 1.7;
     };
 
     // Centre the (whole-scene) canvas on the player via a CSS transform, clipped to the host —
@@ -133,9 +143,7 @@
             r.canvas.style.top = '0';
             return;
         }
-        // Default zoom is mode-aware: iso tiles are large (84px), so a lower default frames a sensible
-        // number of them; tiled/ascii cells are small (~24px) so they want more magnification.
-        var scale = SP._zoom || (r.name === 'iso' ? 1.0 : 1.7);
+        var scale = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
         var fp = r.focusPoint;
         // ROBUSTNESS: if the renderer hasn't reported a focus this frame — a race at game start, or a
         // camera tick reading a just-(re)created renderer instance before its first render — derive the
