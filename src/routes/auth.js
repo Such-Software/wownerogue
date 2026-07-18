@@ -251,14 +251,20 @@ router.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
     return res.status(401).json({ error: 'Session token required' });
   }
 
+  // Identify the caller by anon_token ALONE — it is the ownership secret. The previous query also
+  // required socket_id = current socket.id, but socket_id is VOLATILE (changes on every refresh /
+  // reconnect), so after a refresh the row's stored socket_id no longer matched and this 403'd —
+  // which left the client's _isLinked=false and silently disabled Smirk one-click payment. Matching
+  // on the unguessable token is the same guarantee (you can only read your OWN state) without the
+  // socket_id fragility. (socketId is still required in the query string for API shape.)
   const result = await db.query(`
     SELECT smirk_public_key, payout_address
     FROM users
-    WHERE socket_id = $1 AND anon_token = $2
-  `, [socketId, token]);
+    WHERE anon_token = $1
+  `, [token]);
 
   if (result.rows.length === 0) {
-    // Do not disclose whether the socketId exists — ownership check failed.
+    // Unknown/again-rotated token — ownership check failed; disclose nothing.
     return res.status(403).json({ error: 'Session ownership verification failed' });
   }
 

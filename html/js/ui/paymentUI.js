@@ -18,9 +18,14 @@ const PaymentUI = {
 
         // Bind mode options (use delegation for dynamic content)
         $('#payment-ui').on('click', '.mode-option', function() {
+            // The "Buy Selected Package" button ALSO carries .mode-option (for styling) but has its
+            // own handler below; without this guard it double-fired here with NO data attrs, defaulting
+            // to single_game — so buying a 10-credit pack ALSO created a spurious 1-credit invoice.
+            if (this.id === 'buy-credits-btn') return;
             const mode = $(this).data('mode');
             const action = $(this).data('action');
             const packageId = $(this).data('package-id');
+            if (!mode && !action) return; // stray click with no intent
             PaymentUI.handleModeSelection(mode, action, packageId);
         });
 
