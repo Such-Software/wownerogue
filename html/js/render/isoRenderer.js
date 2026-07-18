@@ -355,6 +355,16 @@
                 ctx.globalAlpha = cut ? 0.28 : Math.max(0.16, lb);
                 if (rec && rec.ready) this._drawImage(rec.img, it.sx, it.sy + this.tileH, this.imageW, this.imageH);
                 else this._diamond(it.sx, it.sy + this.tileH * 0.5, (legend[it.kind] && legend[it.kind].color) || '#3a4048');
+                // Walkable-floor pip: mark every visible floor cell with a soft dot so the WALKABLE
+                // ground is explicit everywhere. A dark gap with no pip is unambiguously NOT floor —
+                // that's what stops iso wall-gaps/voids from reading as holes you can walk into.
+                if (it.kind === 'floor' || it.kind === 'floor2') {
+                    ctx.globalAlpha = Math.max(0.14, lb) * 0.5;
+                    ctx.fillStyle = 'rgba(150,215,255,1)';
+                    ctx.beginPath();
+                    ctx.arc(it.sx, it.sy + this.tileH * 0.5, 2.4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
                 ctx.globalAlpha = 1;
             } else if (it.type === 'prop') {
                 this._contactShadow(it.sx, it.sy + this.tileH * 1.4, 22, 9);
