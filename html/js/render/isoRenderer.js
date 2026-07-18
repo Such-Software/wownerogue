@@ -83,6 +83,20 @@
         return null;
     };
 
+    // A stroked iso diamond outline — used to flag the floor cells the player can actually step to,
+    // so ambiguous wall gaps are never mistaken for openings.
+    IsoRenderer.prototype._diamondOutline = function (cx, cy, color) {
+        var ctx = this.ctx, hw = this.tileW / 2, hh = this.tileH / 2;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - hh); ctx.lineTo(cx + hw, cy); ctx.lineTo(cx, cy + hh); ctx.lineTo(cx - hw, cy);
+        ctx.closePath();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        ctx.restore();
+    };
+
     // Draw a text glyph centered at a projected cell (feature fallback when no pack tile fits).
     IsoRenderer.prototype._glyph = function (cx, cy, ch, color) {
         var ctx = this.ctx;
@@ -402,6 +416,25 @@
                 }
             }
         }
+
+        // Walkability affordance: the iso wall tiles leave ambiguous gaps that read as doorways, so
+        // flag the floor cells the player can actually step to (orthogonally adjacent, walkable +
+        // explored) with a soft pulsing outline — a reliable "you can go here" cue independent of how
+        // the walls render.
+        if (this._plx != null) {
+            var pulse = 0.30 + Math.sin(now / 320) * 0.18;
+            var nbrs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+            for (var ni = 0; ni < nbrs.length; ni++) {
+                var nx = this._plx + nbrs[ni][0], ny = this._ply + nbrs[ni][1];
+                if (ny < 0 || nx < 0 || !scene.grid[ny] || nx >= scene.cols) continue;
+                var nk = scene.grid[ny][nx];
+                if (nk === 'wall' || nk === 'dark' || nk === 'torch' || nk === undefined) continue;
+                var np = this._project(nx, ny, originX, originY);
+                this._diamondOutline(np.x, np.y + this.tileH * 0.5, 'rgba(130,220,255,' + pulse + ')');
+            }
+            this._animating = true; // keep the pulse animating between game updates
+        }
+
         this._vignette();
         if (this._animating) this._invalidate();
     };
