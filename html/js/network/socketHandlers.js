@@ -236,6 +236,17 @@ const SocketHandlers = {
             UI.scrollChat();
             // New session = no address set yet
             SocketHandlers._updateAddressButtonStatus(false);
+            SocketHandlers._refreshSmirkLinked();
+        }
+    },
+
+    // The server ROTATES the session token on every resume, so the initial SmirkAuth.checkStatus()
+    // races the rotation and 403's with the stale token — leaving _isLinked=false and disabling
+    // one-click Smirk payment after a reload. Re-check with the FRESH token once it's stored.
+    _refreshSmirkLinked: function() {
+        if (typeof SmirkAuth !== 'undefined' && SmirkAuth.checkStatus &&
+            SmirkAuth.isAvailable && SmirkAuth.isAvailable()) {
+            try { SmirkAuth.checkStatus(); } catch (e) { /* non-critical */ }
         }
     },
 
@@ -244,6 +255,7 @@ const SocketHandlers = {
             try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('Session resumed.'));
             UI.scrollChat();
+            SocketHandlers._refreshSmirkLinked();
         }
         if (data && typeof data.credits === 'number') {
             SocketHandlers._updateCreditsDisplay(data.credits);
