@@ -52,12 +52,35 @@ const TWO_PENDING = [
     { id: 10, user_id: 1, game_id: 'g1', payout_address: 'addrA', amount: '200000000000', multiplier: 2, reason: 'escape' },
     { id: 11, user_id: 2, game_id: 'g2', payout_address: 'addrB', amount: '300000000000', multiplier: 3, reason: 'escape' }
 ];
+const ONE_PENDING = [TWO_PENDING[0]];
+const SHARED_TX_HASH = 'e'.repeat(64);
 
 describe('Batch payout dispatch', () => {
+    test('shared runtime dispatch predicate stops internal batch paths before DB or wallet work', async () => {
+        const walletService = {
+            getBalance: jest.fn(),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn()
+        };
+        const { gmm, db } = buildGmm(walletService);
+        gmm.payoutDispatchAllowed = jest.fn(() => false);
+
+        gmm._scheduleBatchPayout();
+        await gmm._processPendingPayouts();
+
+        expect(gmm.payoutDispatchAllowed).toHaveBeenCalled();
+        expect(gmm._batchPayoutTimer).toBeNull();
+        expect(db.withTransaction).not.toHaveBeenCalled();
+        expect(db.query).not.toHaveBeenCalled();
+        expect(walletService.processPayout).not.toHaveBeenCalled();
+        expect(walletService.processBatchPayout).not.toHaveBeenCalled();
+    });
+
     test('marks the whole batch completed with the shared tx_hash in one transaction', async () => {
         const walletService = {
             processPayout: jest.fn(),
-            processBatchPayout: jest.fn().mockResolvedValue({ tx_hash_list: ['txSHARED'], totalFee: 200 })
+            processBatchPayout: jest.fn().mockResolvedValue({ success: true, tx_hash_list: [SHARED_TX_HASH], totalFee: 200 }),
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' })
         };
         const { gmm, db } = buildGmm(walletService);
 
@@ -79,7 +102,7 @@ describe('Batch payout dispatch', () => {
         expect(batchUpdate).toMatch(/status = 'completed'/);
 
         const batchUpdateCall = db._mockClient.query.mock.calls.find(c => /UPDATE payouts SET tx_hash/i.test(c[0]) && /id = ANY/i.test(c[0]));
-        expect(batchUpdateCall[1][0]).toBe('txSHARED');     // tx_hash param
+        expect(batchUpdateCall[1][0]).toBe(SHARED_TX_HASH); // tx_hash param
         expect(batchUpdateCall[1][3]).toEqual([10, 11]);    // ids array
 
         // Per-user stats incremented for each winner inside the same transaction (BIGINT, no float).
@@ -112,6 +135,78 @@ describe('Batch payout dispatch', () => {
         expect(failedCall).toBeUndefined();
     });
 
+    test('single payout retains a valid wallet hash when the completion DB write fails', async () => {
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
+            processPayout: jest.fn().mockResolvedValue({ success: true, txHash: SHARED_TX_HASH, fee: 20 }),
+            processBatchPayout: jest.fn()
+        };
+        const { gmm, db } = buildGmm(walletService);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: ONE_PENDING })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockRejectedValueOnce(new Error('database write failed after broadcast'));
+
+        await gmm._processPendingPayouts();
+
+        const review = db.query.mock.calls.find(call => call[1]?.[0] === 'needs_review');
+        expect(review).toBeDefined();
+        expect(review[0]).toMatch(/tx_hash = COALESCE\(\$3, tx_hash\)/i);
+        expect(review[1][2]).toBe(SHARED_TX_HASH);
+        expect(review[1][3]).toBe(10);
+        expect(db.query.mock.calls.some(call => call[1]?.[0] === 'pending')).toBe(false);
+        expect(walletService.processPayout).toHaveBeenCalledTimes(1);
+    });
+
+    test('batch retains its one valid wallet hash when the completion DB write fails', async () => {
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn().mockResolvedValue({
+                success: true,
+                tx_hash_list: [SHARED_TX_HASH],
+                totalFee: 200
+            })
+        };
+        const { gmm, db } = buildGmm(walletService);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockRejectedValueOnce(new Error('database write failed after batch broadcast'));
+
+        await gmm._processPendingPayouts();
+
+        const review = db.query.mock.calls.find(call => call[1]?.[0] === 'needs_review');
+        expect(review).toBeDefined();
+        expect(review[0]).toMatch(/tx_hash = COALESCE\(\$4, tx_hash\)/i);
+        expect(review[1][2]).toEqual([10, 11]);
+        expect(review[1][3]).toBe(SHARED_TX_HASH);
+        expect(db.query.mock.calls.some(call => call[1]?.[0] === 'pending')).toBe(false);
+        expect(walletService.processBatchPayout).toHaveBeenCalledTimes(1);
+    });
+
+    test('multiple valid wallet hashes are not guessed onto every liability', async () => {
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn().mockResolvedValue({
+                success: true,
+                tx_hash_list: ['a'.repeat(64), 'b'.repeat(64)],
+                totalFee: 200
+            })
+        };
+        const { gmm, db } = buildGmm(walletService);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        const review = db.query.mock.calls.find(call => call[1]?.[0] === 'needs_review');
+        expect(review).toBeDefined();
+        expect(db._mockClient.query.mock.calls.some(call => /status = 'completed'/i.test(call[0]))).toBe(false);
+    });
+
     test('MONERO LOCKING: defers the batch to pending when unlocked balance is insufficient (no transfer attempted)', async () => {
         // TWO_PENDING needs 200000000000 + 300000000000 = 500000000000 atomic.
         // Unlocked balance is far below that (outputs locked ~10 blocks) -> defer, do not send.
@@ -136,6 +231,50 @@ describe('Batch payout dispatch', () => {
         const deferSql = db.query.mock.calls.find(c => /SET status = 'pending'/i.test(c[0]) && /id = ANY/i.test(c[0]));
         expect(deferSql).toBeDefined();
         expect(deferSql[1][0]).toEqual([10, 11]); // ids array param
+    });
+
+    test('defers without transfer when unlocked balance cannot be verified', async () => {
+        const walletService = {
+            getBalance: jest.fn().mockRejectedValue(new Error('wallet unavailable')),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn()
+        };
+        const { gmm, db } = buildGmm(walletService);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        expect(walletService.processPayout).not.toHaveBeenCalled();
+        expect(walletService.processBatchPayout).not.toHaveBeenCalled();
+        const deferred = db.query.mock.calls.find(call => /wallet unlocked balance could not be verified/.test(call[1]?.[1] || ''));
+        expect(deferred).toBeDefined();
+        expect(deferred[1][0]).toEqual([10, 11]);
+    });
+
+    test('rechecks a gate that closes after claim and wallet probe before transfer', async () => {
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({
+                balance: '10000000000000',
+                unlocked_balance: '10000000000000'
+            }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn()
+        };
+        const { gmm, db } = buildGmm(walletService);
+        let checks = 0;
+        gmm.payoutDispatchAllowed = jest.fn(() => ++checks === 1);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        expect(walletService.getBalance).toHaveBeenCalledTimes(1);
+        expect(walletService.processPayout).not.toHaveBeenCalled();
+        expect(walletService.processBatchPayout).not.toHaveBeenCalled();
+        expect(db.query.mock.calls.some(call => call[1]?.[1] === 'Payout dispatch paused before wallet transfer')).toBe(true);
     });
 
     test('a pre-broadcast insufficient-funds batch error is retried (pending), not needs_review', async () => {

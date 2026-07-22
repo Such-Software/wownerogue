@@ -8,12 +8,12 @@
 const GameModeManager = require('../src/game/gameModeManager');
 
 const createMockDb = () => {
-  const mockClient = { query: jest.fn().mockResolvedValue({ rows: [] }) };
-  return {
+  const db = {
     query: jest.fn().mockResolvedValue({ rows: [] }),
-    withTransaction: jest.fn().mockImplementation(async (cb) => cb(mockClient)),
-    _mockClient: mockClient
+    withTransaction: jest.fn()
   };
+  db.withTransaction.mockImplementation(async (cb) => cb(db));
+  return db;
 };
 
 const createMockPaymentConfig = () => ({
@@ -105,5 +105,76 @@ describe('Payout uses the snapshot recorded at game start', () => {
     // No payout INSERT happened.
     const insertedPayout = db.query.mock.calls.find(c => /INSERT INTO payouts/i.test(c[0]));
     expect(insertedPayout).toBeUndefined();
+  });
+
+  test('master payout switch prevents payout creation even when direct payouts are enabled', async () => {
+    const { gmm, db } = buildGmm();
+    gmm.payoutsEnabled = false;
+    gmm.directPayoutEnabled = true;
+
+    db.query
+      .mockResolvedValueOnce({ rows: [{ id: 1, user_id: 1, game_mode: 'PAID_SINGLE', payout_address: 'wow1addr' }] })
+      .mockResolvedValue({ rows: [] });
+
+    const result = await gmm.completeGame('socket1', 'game-master-off', true, true, { moves: 10 });
+
+    expect(result.success).toBe(true);
+    expect(db.query.mock.calls.find(c => /INSERT INTO payouts/i.test(c[0]))).toBeUndefined();
+    expect(gmm._scheduleBatchPayout).not.toHaveBeenCalled();
+  });
+
+  test('a start-time eligible liability survives a mid-game master kill switch', async () => {
+    const { gmm, db } = buildGmm();
+    gmm.payoutsEnabled = false; // dispatch is paused after the game committed its terms
+    db.query
+      .mockResolvedValueOnce({ rows: [{
+        id: 1,
+        user_id: 1,
+        status: 'active',
+        game_mode: 'PAID_SINGLE',
+        payout_address: 'wow1addr',
+        payout_eligible: true,
+        payout_terms: {
+          version: 1,
+          eligible: true,
+          escapeAmount: '222',
+          treasureAmount: '333',
+          escapeMultiplier: 2,
+          treasureMultiplier: 3,
+          minAmount: '1',
+          maxAmount: '1000'
+        }
+      }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 1, payout_address: 'wow1addr' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 901 }], rowCount: 1 });
+
+    const result = await gmm.completeGame('socket1', 'committed-game', true, false, {});
+
+    expect(result.payout).toEqual(expect.objectContaining({ payoutId: 901, amount: '222' }));
+    expect(db.query.mock.calls.find(c => /INSERT INTO payouts/i.test(c[0]))).toBeDefined();
+  });
+
+  test('a start-time ineligible game never gains a payout after policy is enabled', async () => {
+    const { gmm, db } = buildGmm();
+    gmm.payoutsEnabled = true;
+    gmm.directPayoutEnabled = true;
+    db.query
+      .mockResolvedValueOnce({ rows: [{
+        id: 2,
+        user_id: 1,
+        status: 'active',
+        game_mode: 'PAID_SINGLE',
+        payout_eligible: false,
+        payout_terms: { version: 1, mode: 'PAID_SINGLE', eligible: false }
+      }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await gmm.completeGame('socket1', 'ineligible-game', true, true, {});
+
+    expect(result.success).toBe(true);
+    expect(result.payout).toBeNull();
+    expect(db.query.mock.calls.find(c => /INSERT INTO payouts/i.test(c[0]))).toBeUndefined();
   });
 });

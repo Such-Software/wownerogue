@@ -2,6 +2,7 @@
 // Uses the 'qrcode' package if available; degrades gracefully if not.
 
 let QR;
+const money = require('../money/atomic');
 try {
   QR = require('qrcode');
 } catch (e) {
@@ -9,11 +10,12 @@ try {
 }
 
 function formatAmount(atomic, decimals = 12) {
-  if (!atomic || atomic <= 0) return '0';
-  const divisor = Math.pow(10, decimals);
-  return (Number(atomic) / divisor).toFixed(decimals)
-    .replace(/0+$/, '')
-    .replace(/\.$/, '');
+  try {
+    const exact = money.toBig(atomic);
+    return exact > 0n ? money.format(exact, decimals) : '0';
+  } catch (_) {
+    return '0';
+  }
 }
 
 async function generatePaymentQR(address, amountAtomic, cryptoType, description, decimals = 12) {

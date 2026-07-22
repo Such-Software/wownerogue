@@ -119,6 +119,13 @@ class SuspendedGameManager {
 
         const game = suspended.game;
 
+        // A settlement retry may have committed after disconnect but before reconnect. Never
+        // resurrect that terminal object as an active game; the durable result is authoritative.
+        if (game?.settlementCommitted) {
+            this.suspendedGames.delete(dbUserId);
+            return null;
+        }
+
         // Update game with new socket ID
         game.socketId = newSocketId;
 
@@ -151,7 +158,10 @@ class SuspendedGameManager {
         // Update the user reference if provided
         if (newUser) {
             game.user = newUser;
-            newUser.joinGame(game);
+            // A terminal-pending object is restored only as an ownership lock while its DB
+            // transaction retries. Re-counting it as a newly joined game would corrupt in-memory
+            // stats and leave currentGame pointing at an ended run after settlement succeeds.
+            if (!game.settlementPending && !game.settlementCommitted) newUser.joinGame(game);
         }
 
         // Re-add to active games with new socket ID
@@ -181,10 +191,10 @@ class SuspendedGameManager {
      * @param {number} dbUserId - Database user ID
      * @returns {boolean} True if game was removed
      */
-    removeSuspendedGame(dbUserId) {
+    removeSuspendedGame(dbUserId, { countExpired = true } = {}) {
         this._cancelCleanup(dbUserId);
         const had = this.suspendedGames.delete(dbUserId);
-        if (had) {
+        if (had && countExpired) {
             this.stats.gamesExpired++;
         }
         return had;

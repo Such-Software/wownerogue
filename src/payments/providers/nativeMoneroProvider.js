@@ -68,12 +68,15 @@ class NativeMoneroProvider extends PaymentProvider {
 
     async validateAddress(chain, address) {
         try {
+            if (typeof this.wallet.validateAddress === 'function') {
+                return await this.wallet.validateAddress(address);
+            }
             if (typeof this.wallet.rpcCall === 'function') {
                 const r = await this.wallet.rpcCall('validate_address', { address });
-                return { valid: !!(r && r.valid) };
+                return { valid: !!(r && (r.valid === true || r.result?.valid === true)) };
             }
         } catch (_) { /* fall through */ }
-        return { valid: true };
+        return { valid: false, reason: 'wallet address validation unavailable' };
     }
 }
 

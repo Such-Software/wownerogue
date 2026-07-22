@@ -5,6 +5,14 @@
  */
 
 const { normalizeError } = require('../utils/errors');
+const money = require('../money/atomic');
+const {
+    buildCommerceDisclosure,
+    validatePaidAcknowledgement
+} = require('../config/commerceDisclosurePolicy');
+
+const PENDING_COMMERCE_ACK_TTL_MS = 5 * 60 * 1000;
+const PENDING_COMMERCE_ACK_MAX = 256;
 
 class PaymentHandlers {
     constructor({ io, gameModeManager, walletService, debugManager, queueManager, broadcastManager, sessionManager }) {
@@ -24,6 +32,14 @@ class PaymentHandlers {
         this.paymentMonitors = new Map();
         // Track pending payment metadata per socket (may reuse existing)
         this.socketPaymentMap = new Map(); // socketId -> { address, paymentId, amount, cryptoType, createdAt }
+        // A single-game fairness offer may arrive before payout-address confirmation. Preserve
+        // the already-consumed proof across that prompt; never fall back to generating a layout
+        // from an unpublished server seed when payment later confirms.
+        this.pendingEntryFairness = new Map();
+        // Retain a canonical acknowledgement across the payout-address prompt. Entries are tiny,
+        // bounded, expire quickly, and are cleared on disconnect; raw client objects never enter
+        // this map.
+        this.pendingCommerceAcknowledgement = new Map();
         // Track paymentIds already confirmed (avoid duplicate emits / queue actions)
         this.confirmedPayments = new Set();
         // Periodic cleanup (confirmed payment IDs older than retention window)
@@ -46,6 +62,7 @@ class PaymentHandlers {
                     this.mempoolNotified.delete(addr);
                 }
             }
+            this._sweepPendingCommerceAcknowledgements(now);
         }, 30 * 60 * 1000); // sweep every 30 min
         if (this._cleanupInterval && this._cleanupInterval.unref) {
             // Allow process (including Jest) to exit naturally without waiting for this interval
@@ -53,28 +70,193 @@ class PaymentHandlers {
         }
     }
 
+    _entryModeForPaymentType(paymentType) {
+        if (paymentType === 'single_game') return 'PAID_SINGLE';
+        if (paymentType === 'credits_package') return 'PAID_CREDITS';
+        return null;
+    }
+
+    _requiresBoundPaidFairness() {
+        return typeof this.gameModeManager?._requiresPaidFairnessV2 === 'function'
+            && this.gameModeManager._requiresPaidFairnessV2();
+    }
+
+    _invoiceCanLeadDirectlyToPayout(paymentType, { preselection = false } = {}) {
+        const type = String(paymentType || '').toLowerCase();
+        if (type === 'single_game' || type === 'pay_direct') {
+            return !!this.gameModeManager?.isPayoutEnabledForMode?.('PAID_SINGLE');
+        }
+        if (type === 'use_credit' || type === 'paid_credits') {
+            return !!this.gameModeManager?.isPayoutEnabledForMode?.('PAID_CREDITS');
+        }
+        if (preselection && !type) {
+            return !!(this.gameModeManager?.isPayoutEnabledForMode?.('PAID_SINGLE')
+                || this.gameModeManager?.isPayoutEnabledForMode?.('PAID_CREDITS'));
+        }
+        // Buying credits/products creates no immediate payout promise. The authoritative reserve
+        // gate runs later when a credit is actually consumed for a payout-bearing game.
+        return false;
+    }
+
+    _sweepPendingCommerceAcknowledgements(now = Date.now()) {
+        for (const [socketId, entry] of this.pendingCommerceAcknowledgement.entries()) {
+            if (!entry || entry.expiresAt <= now) this.pendingCommerceAcknowledgement.delete(socketId);
+        }
+    }
+
+    _rememberPendingCommerceAcknowledgement(socketId, acknowledgement) {
+        if (!socketId || !acknowledgement) return;
+        this._sweepPendingCommerceAcknowledgements();
+        this.pendingCommerceAcknowledgement.delete(socketId);
+        while (this.pendingCommerceAcknowledgement.size >= PENDING_COMMERCE_ACK_MAX) {
+            const oldest = this.pendingCommerceAcknowledgement.keys().next().value;
+            if (oldest === undefined) break;
+            this.pendingCommerceAcknowledgement.delete(oldest);
+        }
+        // Clone only the bounded canonical contract. Never retain a caller-owned object or any
+        // incidental socket payload fields in this short-lived continuation cache.
+        const canonicalAcknowledgement = Object.freeze({
+            policyVersion: String(acknowledgement.policyVersion),
+            ageEligible: acknowledgement.ageEligible === true,
+            termsRead: acknowledgement.termsRead === true,
+            riskAccepted: acknowledgement.riskAccepted === true,
+            testnetUnderstood: acknowledgement.testnetUnderstood === true
+        });
+        this.pendingCommerceAcknowledgement.set(socketId, {
+            acknowledgement: canonicalAcknowledgement,
+            expiresAt: Date.now() + PENDING_COMMERCE_ACK_TTL_MS
+        });
+    }
+
+    _getPendingCommerceAcknowledgement(socketId) {
+        const entry = this.pendingCommerceAcknowledgement.get(socketId);
+        if (!entry) return null;
+        if (entry.expiresAt <= Date.now()) {
+            this.pendingCommerceAcknowledgement.delete(socketId);
+            return null;
+        }
+        return entry.acknowledgement;
+    }
+
+    clearPendingCommerceAcknowledgement(socketId) {
+        this.pendingCommerceAcknowledgement.delete(socketId);
+    }
+
+    _requirePaidAcknowledgement(socket, acknowledgement) {
+        const disclosure = buildCommerceDisclosure(this.gameModeManager, process.env);
+        // This method is reached only for value-bearing actions. Force the action-level gate even
+        // when payment intake is paused and a user is spending an existing credit/ticket.
+        const result = validatePaidAcknowledgement(acknowledgement, disclosure, { required: true });
+        if (result.ok) return result.acknowledgement;
+        this.clearPendingCommerceAcknowledgement(socket.id);
+        this.pendingEntryFairness.delete(socket.id);
+        const payload = {
+            error: result.message,
+            message: result.message,
+            code: result.code,
+            policyVersion: disclosure.policyVersion
+        };
+        this.io.to(socket.id).emit('commerce_ack_required', payload);
+        this.io.to(socket.id).emit('payment_error', payload);
+        return null;
+    }
+
+    async _allowInvoiceFlowForReserve(socket, paymentType, options = {}) {
+        if (!this._invoiceCanLeadDirectlyToPayout(paymentType, options)) return true;
+        const alertService = this.gameModeManager?.alertService;
+        if (!alertService || typeof alertService.checkBalanceForGameStart !== 'function') {
+            return true; // authoritative transactional start gate remains fail-closed
+        }
+        const balanceCheck = await alertService.checkBalanceForGameStart();
+        if (!balanceCheck.halted) return true;
+        this.io.to(socket.id).emit('balance_critical', {
+            reason: 'low_balance',
+            message: balanceCheck.reason || 'Sorry, the house balance is too low to initiate new games. Please try again later.'
+        });
+        return false;
+    }
+
+    /**
+     * Fail closed before creating an invoice when the resulting entry mode can pay out and the
+     * operator requires an address. The primary browser flow calls handlePaymentRequest directly,
+     * so this cannot live only in the legacy createAndShowPaymentRequest path.
+     */
+    async _ensureRequiredPayoutAddress(socket, paymentType) {
+        const mode = this._entryModeForPaymentType(paymentType);
+            if (!mode || !this.gameModeManager) return { ok: true, reason: 'not_required' };
+        const needsAddress = typeof this.gameModeManager.requiresPayoutAddressForMode === 'function'
+            ? this.gameModeManager.requiresPayoutAddressForMode(mode)
+            : ((mode === 'PAID_SINGLE')
+                || (mode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled));
+        if (!needsAddress) return { ok: true, reason: 'not_required' };
+
+        try {
+            const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
+            if (userRow?.payout_address) return { ok: true, reason: 'present' };
+            const message = 'Before paying, add a payout address so winnings can be delivered.';
+            this.broadcastManager.sendStatusUpdate(socket.id, 'payment', `💳 ${message}`);
+            this.io.to(socket.id).emit('payment_error', { error: message, code: 'PAYOUT_ADDRESS_REQUIRED' });
+            return { ok: false, reason: 'address_required' };
+        } catch (error) {
+            const normalized = normalizeError(error, 'Failed to verify payout address');
+            console.error('Address pre-check failed:', normalized.message);
+            this.io.to(socket.id).emit('payment_error', {
+                error: 'Could not verify your payout address. Please try again.',
+                code: 'PAYOUT_ADDRESS_CHECK_FAILED'
+            });
+            return { ok: false, reason: 'address_check_failed' };
+        }
+    }
+
     async handlePaymentRequest(socket, data) {
         if (!this.gameModeManager) {
+            this.clearPendingCommerceAcknowledgement(socket.id);
             this.io.to(socket.id).emit('payment_error', { error: 'Payment system not available' });
             return;
         }
 
-        // Check if house balance is critically low before proceeding with payment
-        if (this.gameModeManager.alertService) {
-            const balanceCheck = await this.gameModeManager.alertService.checkBalanceForGameStart();
-            if (balanceCheck.halted) {
-                this.io.to(socket.id).emit('balance_critical', {
-                    reason: 'low_balance',
-                    message: balanceCheck.reason || 'Sorry, the house balance is too low to initiate new games. Please try again later.'
-                });
-                return;
-            }
+        const paymentType = data?.type || data?.gameMode || 'single_game';
+        if (typeof this.gameModeManager.isPaymentIntakeEnabled === 'function'
+            && !this.gameModeManager.isPaymentIntakeEnabled(paymentType)) {
+            this.clearPendingCommerceAcknowledgement(socket.id);
+            this.pendingEntryFairness.delete(socket.id);
+            this.io.to(socket.id).emit('payment_error', {
+                error: 'That paid product is not available on this server.',
+                code: 'PAYMENT_INTAKE_DISABLED'
+            });
+            return;
         }
 
+        const acknowledgement = this._requirePaidAcknowledgement(socket, data?.legalAcknowledgement);
+        if (!acknowledgement) return;
+
         try {
-            const { type, packageId, productId } = data;
-            const paymentType = type || data.gameMode || 'single_game';
-            const options = { packageId, productId, reuseExisting: true };
+            const { type, packageId, productId } = data || {};
+            const paymentType = type || data?.gameMode || 'single_game';
+            if (!await this._allowInvoiceFlowForReserve(socket, paymentType)) {
+                this.clearPendingCommerceAcknowledgement(socket.id);
+                this.pendingEntryFairness.delete(socket.id);
+                return;
+            }
+            if (paymentType === 'single_game' && data?.fairnessProof) {
+                this.pendingEntryFairness.set(socket.id, data.fairnessProof);
+            }
+            const addressCheck = await this._ensureRequiredPayoutAddress(socket, paymentType);
+            if (!addressCheck.ok) {
+                if (addressCheck.reason === 'address_required') {
+                    this._rememberPendingCommerceAcknowledgement(socket.id, acknowledgement);
+                } else {
+                    this.clearPendingCommerceAcknowledgement(socket.id);
+                    this.pendingEntryFairness.delete(socket.id);
+                }
+                return;
+            }
+            const options = {
+                packageId,
+                productId,
+                reuseExisting: true,
+                fairnessProof: data.fairnessProof || this.pendingEntryFairness.get(socket.id) || null
+            };
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, options);
             const cryptoType = this.gameModeManager.cryptoType;
             
@@ -108,8 +290,16 @@ class PaymentHandlers {
                 grants: paymentRequest.grants,
                 paymentType: paymentType,
                 qr: qrDataUrl,
-                reused: !!paymentRequest.reused
+                reused: !!paymentRequest.reused,
+                fairness: paymentRequest.fairnessProof ? {
+                    proofVersion: paymentRequest.fairnessProof.proofVersion,
+                    offerId: paymentRequest.fairnessProof.offerId,
+                    offerIssuedAt: paymentRequest.fairnessProof.offerIssuedAt,
+                    commitment: paymentRequest.fairnessProof.commitment,
+                    clientSeed: paymentRequest.fairnessProof.clientSeed
+                } : null
             });
+            this.clearPendingCommerceAcknowledgement(socket.id);
             
             // CRITICAL: Start payment monitoring!
             // Stop any existing monitoring for this socket first
@@ -120,10 +310,14 @@ class PaymentHandlers {
                 this.queueManager.getUserBySocket(socket.id) : { serverId: socket.id };
             
             // Start monitoring for payment
-            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser, paymentType);
+            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser,
+                paymentType, paymentRequest.fairnessProof || options.fairnessProof || null);
+            if (paymentType === 'single_game') this.pendingEntryFairness.delete(socket.id);
             
             if (this.debugManager.CONSOLE_LOGGING) console.log(`💳 Payment request created for ${socket.id}: ${paymentRequest.amount}`);
         } catch (e) {
+            this.clearPendingCommerceAcknowledgement(socket.id);
+            this.pendingEntryFairness.delete(socket.id);
             const err = normalizeError(e, 'Failed to create payment request');
             console.error('Error creating payment request:', err.message);
             this.io.to(socket.id).emit('payment_error', { error: err.safeMessage });
@@ -131,18 +325,23 @@ class PaymentHandlers {
     }
 
     async createAndShowPaymentRequest(socket, options = {}) {
-        if (!this.gameModeManager) return;
+        if (!this.gameModeManager) {
+            this.clearPendingCommerceAcknowledgement(socket.id);
+            this.pendingEntryFairness.delete(socket.id);
+            return;
+        }
 
-        // Check if house balance is critically low before proceeding with payment
-        if (this.gameModeManager.alertService) {
-            const balanceCheck = await this.gameModeManager.alertService.checkBalanceForGameStart();
-            if (balanceCheck.halted) {
-                this.io.to(socket.id).emit('balance_critical', {
-                    reason: 'low_balance',
-                    message: balanceCheck.reason || 'Sorry, the house balance is too low to initiate new games. Please try again later.'
-                });
-                return;
-            }
+        const suppliedAcknowledgement = options.legalAcknowledgement
+            || this._getPendingCommerceAcknowledgement(socket.id);
+        const acknowledgement = this._requirePaidAcknowledgement(socket, suppliedAcknowledgement);
+        if (!acknowledgement) return;
+
+        if (!await this._allowInvoiceFlowForReserve(socket, options.paymentType, {
+            preselection: !options.paymentType
+        })) {
+            this.clearPendingCommerceAcknowledgement(socket.id);
+            this.pendingEntryFairness.delete(socket.id);
+            return;
         }
 
         // If both direct and credits modes are enabled, let the user choose
@@ -155,26 +354,11 @@ class PaymentHandlers {
                 reason: 'choose_payment_method',
                 message: 'Choose how you want to play'
             });
+            this.clearPendingCommerceAcknowledgement(socket.id);
             return;
         }
         
         try {
-            // Ensure payout address exists for modes that may payout (PAID_SINGLE or PAID_CREDITS with payouts)
-            const mode = this.gameModeManager.gameMode;
-            const needsAddress = (mode === 'PAID_SINGLE') || (mode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
-            if (needsAddress) {
-                try {
-                    const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
-                    if (!userRow.payout_address) {
-                        this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '💳 Before paying, paste your payout address (XMR/WOW) then type confirm.');
-                        // Do not proceed until address is set
-                        return;
-                    }
-                } catch (e) {
-                    const err = normalizeError(e, 'Failed to verify payout address');
-                    console.error('Address pre-check failed:', err.message);
-                }
-            }
             const currentUser = socket.id && this.queueManager.getUserBySocket ? this.queueManager.getUserBySocket(socket.id) : null;
             // caller (SocketHandlers) will handle user existence; keep method generic
             const gameMode = this.gameModeManager.gameMode;
@@ -192,23 +376,46 @@ class PaymentHandlers {
                 }
             }
 
+            if (paymentType === 'single_game' && options.fairnessProof) {
+                this.pendingEntryFairness.set(socket.id, options.fairnessProof);
+            }
+
+            const fairnessProof = paymentType === 'single_game'
+                ? (options.fairnessProof || this.pendingEntryFairness.get(socket.id) || null)
+                : null;
+
+            const addressCheck = await this._ensureRequiredPayoutAddress(socket, paymentType);
+            if (!addressCheck.ok) {
+                if (addressCheck.reason === 'address_required') {
+                    this._rememberPendingCommerceAcknowledgement(socket.id, acknowledgement);
+                } else {
+                    this.clearPendingCommerceAcknowledgement(socket.id);
+                    this.pendingEntryFairness.delete(socket.id);
+                }
+                return;
+            }
+
             if (paymentType === 'single_game') {
                 amount = this.gameModeManager.singleGamePrice;
                 description = 'Single game entry';
             } else if (paymentType === 'credits_package') {
                 const primaryPackage = this.gameModeManager.getPrimaryCreditPackage();
-                amount = Number(primaryPackage?.price ?? this.gameModeManager.creditsPackagePrice);
+                amount = money.toSafe(money.toBig(primaryPackage?.price ?? this.gameModeManager.creditsPackagePrice));
                 const credits = primaryPackage?.credits ?? this.gameModeManager.creditsPerGameCost * 10;
                 description = `${credits} credit package`;
             } else if (paymentType === 'cosmetic_pack') {
                 const product = this.gameModeManager.getCosmeticProduct(options.productId || options.packageId);
                 if (!product) {
+                    this.clearPendingCommerceAcknowledgement(socket.id);
+                    this.pendingEntryFairness.delete(socket.id);
                     this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Invalid product selection.');
                     return;
                 }
-                amount = Number(product.price);
+                amount = money.toSafe(money.toBig(product.price));
                 description = product.label || product.id;
             } else {
+                this.clearPendingCommerceAcknowledgement(socket.id);
+                this.pendingEntryFairness.delete(socket.id);
                 this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Invalid game mode configuration.');
                 return;
             }
@@ -223,7 +430,8 @@ class PaymentHandlers {
                 reuseExisting: true,
                 packageId: options.packageId,
                 productId: options.productId,
-                userId: sessionUserId
+                userId: sessionUserId,
+                fairnessProof
             });
             const reused = !!paymentRequest.reused;
 
@@ -264,8 +472,16 @@ class PaymentHandlers {
                 expiresAt: paymentRequest.expiresAt,
                 qr: qrDataUrl,
                 package: paymentRequest.package,
-                reused
+                reused,
+                fairness: paymentRequest.fairnessProof ? {
+                    proofVersion: paymentRequest.fairnessProof.proofVersion,
+                    offerId: paymentRequest.fairnessProof.offerId,
+                    offerIssuedAt: paymentRequest.fairnessProof.offerIssuedAt,
+                    commitment: paymentRequest.fairnessProof.commitment,
+                    clientSeed: paymentRequest.fairnessProof.clientSeed
+                } : null
             });
+            this.clearPendingCommerceAcknowledgement(socket.id);
 
             const statusHeader = reused
                 ? '🔁 Existing payment request still pending. Use the details below to pay.'
@@ -284,15 +500,19 @@ class PaymentHandlers {
 
             // If we reused an existing request, ensure we refresh monitoring to avoid duplicate watchers
             this.stopMonitoringForSocket(socket.id);
-            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser, paymentType);
+            this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser,
+                paymentType, paymentRequest.fairnessProof || fairnessProof);
+            if (paymentType === 'single_game') this.pendingEntryFairness.delete(socket.id);
         } catch (e) {
+            this.clearPendingCommerceAcknowledgement(socket.id);
+            this.pendingEntryFairness.delete(socket.id);
             const err = normalizeError(e, 'Failed to create payment request');
             console.error('Error creating payment request:', err.message);
             this.broadcastManager.sendStatusUpdate(socket.id, 'error', err.safeMessage);
         }
     }
 
-    _monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser, paymentType = 'single_game') {
+    _monitorAddress(socket, paymentRequest, amount, cryptoType, currentUser, paymentType = 'single_game', fairnessProof = null) {
         // Select the provider that owns this chain: native wallet-RPC by default, or a BTCPay/
         // checkout gateway when this.cryptoType is routed to one. Native watches by subaddress;
         // a gateway watches by invoice id. The confirmation handler is identical either way.
@@ -308,6 +528,7 @@ class PaymentHandlers {
             amount: paymentRequest.amount,
             cryptoType,
             paymentType,
+            fairnessProof: paymentType === 'single_game' ? fairnessProof : null,
             package: paymentRequest.package,
             provider: provider || null,
             watchRef,
@@ -349,10 +570,28 @@ class PaymentHandlers {
                 const mapping = this.socketPaymentMap.get(socket.id);
                 const isGameEntry = !mapping || mapping.paymentType === 'single_game';
 
+                // A production paid entry is only usable with the proof durably bound to its
+                // invoice. Never put a legacy/corrupt unbound payment into the queue merely
+                // because its transaction appeared in the mempool.
+                if (isGameEntry && this._requiresBoundPaidFairness() && !mapping?.fairnessProof) {
+                    console.error(`[PaymentHandlers] Refusing to queue unbound paid entry ${paymentRequest.id}`);
+                    socket.emit('payment_review_required', {
+                        paymentId: paymentRequest.id,
+                        code: 'PAYMENT_FAIRNESS_UNBOUND',
+                        message: 'This payment requires support review before a game can start.'
+                    });
+                    return;
+                }
+
                 const detectMessage = !isGameEntry
                     ? 'Payment detected in mempool! Awaiting block confirmation to apply your purchase...'
                     : 'Payment detected in mempool! Adding you to the game queue...';
-                socket.emit('payment_detected', { paymentId: paymentRequest.id, message: detectMessage, amount: status.amount, confirmations: 0 });
+                socket.emit('payment_detected', {
+                    paymentId: paymentRequest.id,
+                    message: detectMessage,
+                    amount: status.observedAmount ?? status.amount,
+                    confirmations: 0
+                });
 
                 // Only queue for single_game payments. Product purchases just apply grants.
                 if (isGameEntry) {
@@ -370,7 +609,8 @@ class PaymentHandlers {
                             userId: userId,
                             paymentId: paymentRequest.id,
                             requiresConfirmation: true,
-                            confirmed: false
+                            confirmed: false,
+                            fairnessProof: mapping?.fairnessProof || null
                         });
                     }
                     socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
@@ -381,14 +621,23 @@ class PaymentHandlers {
                 // checkPaymentStatus() sets `confirmed` for ANY incoming tx on the subaddress,
                 // while `complete` means totalReceived >= required. Without this gate a player
                 // could send a single atomic unit and play (or buy credits) for free.
-                if (!status.complete) {
+                let exactCoverage = false;
+                try {
+                    exactCoverage = money.toBig(status.amount || 0)
+                        >= money.toBig(paymentRequest.amount);
+                } catch (_) { exactCoverage = false; }
+                if (!status.complete || !exactCoverage) {
                     // Underpaid. Keep monitoring so a later top-up to the same address can
                     // complete it; warn the user once to avoid spamming on every 2s poll.
                     if (!this.underpaidNotified.has(paymentRequest.id)) {
                         this.underpaidNotified.add(paymentRequest.id);
                         const required = status.required || 0;
                         const received = status.amount || 0;
-                        const shortfall = Math.max(0, required - received);
+                        let shortfall = 0;
+                        try {
+                            const exact = money.toBig(required) - money.toBig(received);
+                            shortfall = money.toSafe(exact > 0n ? exact : 0n);
+                        } catch (_) { shortfall = 0; }
                         console.warn(`[PaymentHandlers] Underpaid payment ${paymentRequest.id}: received ${received}, required ${required} (shortfall ${shortfall})`);
                         try {
                             socket.emit('payment_underpaid', {
@@ -412,6 +661,23 @@ class PaymentHandlers {
                     return;
                 }
 
+                const confirmedMapping = this.socketPaymentMap.get(socket.id);
+                const confirmedIsGameEntry = !confirmedMapping
+                    || confirmedMapping.paymentType === 'single_game';
+                if (confirmedIsGameEntry && this._requiresBoundPaidFairness()
+                    && !confirmedMapping?.fairnessProof) {
+                    console.error(`[PaymentHandlers] Refusing to confirm unbound paid entry ${paymentRequest.id}`);
+                    socket.emit('payment_review_required', {
+                        paymentId: paymentRequest.id,
+                        code: 'PAYMENT_FAIRNESS_UNBOUND',
+                        message: 'Funds were detected, but this entry requires support review.'
+                    });
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                        'Payment received, but its fairness commitment is missing. No game was started; contact support.');
+                    this.stopMonitoringForSocket(socket.id);
+                    return;
+                }
+
                 // Mark in memory to prevent duplicate processing within this session
                 this.confirmedPayments.add(paymentRequest.id);
                 this._confirmedTimestamps.set(paymentRequest.id, Date.now());
@@ -425,7 +691,8 @@ class PaymentHandlers {
                             socket.id,
                             paymentRequest.id,
                             mapping.package,
-                            Math.round(status.amount || 0)
+                            money.toBig(status.amount || 0).toString(),
+                            status.receipts || []
                         );
                         if (creditsResult.success) {
                             socket.emit('credits_update', {
@@ -454,11 +721,23 @@ class PaymentHandlers {
                             socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment already processed.', confirmations: status.confirmations });
                         } else {
                             console.error('Failed to process credits package:', creditsResult.reason);
-                            socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed but failed to add credits. Contact support.', confirmations: status.confirmations });
+                            socket.emit('payment_review_required', {
+                                paymentId: paymentRequest.id,
+                                code: 'PAYMENT_GRANT_REJECTED',
+                                message: 'Funds were detected, but the purchase was not applied and requires support review.'
+                            });
+                            this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                                'Payment received, but no entitlement was applied. Contact support for review.');
                         }
                     } catch (e) {
                         console.error('Error processing credits package confirmation:', e.message);
-                        socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
+                        socket.emit('payment_review_required', {
+                            paymentId: paymentRequest.id,
+                            code: 'PAYMENT_RECEIPT_REJECTED',
+                            message: 'Funds were detected, but the purchase transaction failed and requires support review.'
+                        });
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                            'Payment received, but no entitlement was applied. Contact support for review.');
                     }
                     // Defensively remove from queue — credits purchases should never be queued
                     this.queueManager.removePlayer(socket.id);
@@ -467,8 +746,16 @@ class PaymentHandlers {
                     // CRITICAL: Atomically update payment status and check if we actually updated it
                     // This prevents double-processing on server restart
                     let wasUpdated = false;
+                    let confirmationError = null;
                     try {
-                        if (this.gameModeManager && this.gameModeManager.db) {
+                        if (typeof this.gameModeManager?.confirmSingleGamePayment === 'function') {
+                            const confirmation = await this.gameModeManager.confirmSingleGamePayment(
+                                paymentRequest.id,
+                                money.toBig(status.amount || 0).toString(),
+                                status.receipts || []
+                            );
+                            wasUpdated = confirmation?.updated === true;
+                        } else if (this.gameModeManager && this.gameModeManager.db) {
                             const updateResult = await this.gameModeManager.db.query(`
                                 UPDATE payments
                                 SET status = 'confirmed',
@@ -476,18 +763,28 @@ class PaymentHandlers {
                                     received_amount = $2
                                 WHERE id = $1 AND status = 'pending'
                                 RETURNING id
-                            `, [paymentRequest.id, Math.round(status.amount || 0)]);
+                            `, [paymentRequest.id, money.toBig(status.amount || 0).toString()]);
                             wasUpdated = updateResult.rows.length > 0;
                             if (this.debugManager.CONSOLE_LOGGING) {
                                 console.log(`[PaymentHandlers] Payment ${paymentRequest.id} status update: ${wasUpdated ? 'success' : 'already confirmed'}`);
                             }
                         }
                     } catch (dbErr) {
+                        confirmationError = dbErr;
                         console.error('[PaymentHandlers] Failed to update payment status in DB:', dbErr.message);
                     }
 
                     // Only proceed with game logic if we actually confirmed this payment
                     if (!wasUpdated) {
+                        if (confirmationError) {
+                            socket.emit('payment_review_required', {
+                                paymentId: paymentRequest.id,
+                                code: 'PAYMENT_RECEIPT_REJECTED',
+                                message: 'Funds were detected, but their receipt evidence requires support review.'
+                            });
+                            this.stopMonitoringForSocket(socket.id);
+                            return;
+                        }
                         console.log(`[PaymentHandlers] Payment ${paymentRequest.id} already confirmed, skipping duplicate processing`);
                         socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment already processed.', confirmations: status.confirmations });
                         this.stopMonitoringForSocket(socket.id);
@@ -531,7 +828,8 @@ class PaymentHandlers {
                             userId: userId,
                             paymentId: paymentRequest.id,
                             requiresConfirmation: false, // Already confirmed
-                            confirmed: true
+                            confirmed: true,
+                            fairnessProof: mapping?.fairnessProof || null
                         });
                     } else {
                         // Player was in queue from mempool detection, just mark confirmed
@@ -610,6 +908,8 @@ class PaymentHandlers {
             clearTimeout(to);
             this._expiryTimeouts.delete(socketId);
         }
+        this.pendingCommerceAcknowledgement.clear();
+        this.pendingEntryFairness.clear();
     }
 }
 

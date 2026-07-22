@@ -48,8 +48,7 @@ const DEFAULT_CONFIG = Object.freeze({
                 enabled: true,
                 multipliers: {
                     escape: 2.0,
-                    escapeWithTreasure: 3.0,
-                    perfectRun: 5.0
+                    escapeWithTreasure: 3.0
                 },
                 minPayout: 1000000000n,
                 maxPayout: 10000000000000n
@@ -58,8 +57,7 @@ const DEFAULT_CONFIG = Object.freeze({
                 enabled: false,
                 multipliers: {
                     escape: 2.0,
-                    escapeWithTreasure: 3.0,
-                    perfectRun: 3.0
+                    escapeWithTreasure: 3.0
                 },
                 baseValue: 100000000000n,
                 minPayout: 1000000000n,
@@ -163,10 +161,12 @@ function parseAtomicValue(value, fallback) {
     }
 
     if (typeof value === 'number') {
-        if (!Number.isFinite(value)) {
+        // A Number above MAX_SAFE_INTEGER has already lost atomic units before it reaches
+        // this parser. Reject it instead of freezing a rounded value into the config.
+        if (!Number.isSafeInteger(value)) {
             return fallback;
         }
-        return BigInt(Math.round(value));
+        return BigInt(value);
     }
 
     const normalized = String(value).trim().toLowerCase().replace(/_/g, '');
@@ -174,7 +174,9 @@ function parseAtomicValue(value, fallback) {
         return fallback;
     }
 
-    if (normalized.startsWith('0x')) {
+    // Parse integer text with BigInt before touching Number. Atomic-unit configuration often
+    // exceeds Number.MAX_SAFE_INTEGER; routing it through Number first silently rounds money.
+    if (/^[+-]?\d+$/.test(normalized) || /^0x[0-9a-f]+$/i.test(normalized)) {
         try {
             return BigInt(normalized);
         } catch (error) {
@@ -182,16 +184,9 @@ function parseAtomicValue(value, fallback) {
         }
     }
 
-    const numeric = Number(normalized);
-    if (Number.isFinite(numeric)) {
-        return BigInt(Math.round(numeric));
-    }
-
-    try {
-        return BigInt(normalized);
-    } catch (error) {
-        return fallback;
-    }
+    // Atomic-unit configuration is integral by definition. Decimal/exponential text must
+    // not be rounded through Number, especially once values exceed 2^53.
+    return fallback;
 }
 
 function parseFloatValue(value, fallback) {
@@ -255,7 +250,12 @@ class PaymentConfigManager {
     loadConfig() {
         const config = cloneConfig(DEFAULT_CONFIG);
 
-        config.paymentsEnabled = parseBoolean(process.env.PAYMENTS_ENABLED, config.paymentsEnabled);
+        // PAYMENTS_ENABLED is the authoritative master switch.  Keep its explicit value
+        // separate while parsing the subordinate mode selectors below; otherwise
+        // PAYMENT_MODES/DIRECT_PAYMENT_ENABLED/CREDITS_ENABLED can accidentally turn the
+        // payment system back on after an operator has set PAYMENTS_ENABLED=false.
+        const paymentsMaster = parseBoolean(process.env.PAYMENTS_ENABLED, null);
+        config.paymentsEnabled = paymentsMaster === null ? config.paymentsEnabled : paymentsMaster;
 
         const gameModeOverride = process.env.GAME_MODE ? process.env.GAME_MODE.toUpperCase() : null;
         if (gameModeOverride === 'FREE') {
@@ -299,6 +299,12 @@ class PaymentConfigManager {
         if (creditsEnabled !== undefined) {
             config.modes.credits.enabled = creditsEnabled;
         }
+
+        if (paymentsMaster === false) {
+            config.paymentsEnabled = false;
+            config.modes.direct.enabled = false;
+            config.modes.credits.enabled = false;
+        }
         config.modes.credits.creditsPerGame = parseInteger(process.env.CREDITS_PER_GAME, config.modes.credits.creditsPerGame);
         config.modes.credits.requiresAddress = parseBoolean(process.env.CREDITS_REQUIRES_ADDRESS, config.modes.credits.requiresAddress);
         config.modes.credits.allowMixedMode = parseBoolean(process.env.ALLOW_MIXED_MODE, config.modes.credits.allowMixedMode);
@@ -340,8 +346,21 @@ class PaymentConfigManager {
         config.payouts.rules.credits.multipliers.escape = parseFloatValue(process.env.CREDITS_PAYOUT_ESCAPE, config.payouts.rules.credits.multipliers.escape);
         config.payouts.rules.credits.multipliers.escapeWithTreasure = parseFloatValue(process.env.CREDITS_PAYOUT_TREASURE, config.payouts.rules.credits.multipliers.escapeWithTreasure);
         config.payouts.rules.credits.baseValue = parseAtomicValue(process.env.CREDITS_PAYOUT_BASE, config.payouts.rules.credits.baseValue);
+        config.payouts.rules.credits.minPayout = parseAtomicValue(process.env.CREDITS_PAYOUT_MIN ?? process.env.PAYOUT_MIN_AMOUNT, config.payouts.rules.credits.minPayout);
+        // PAYOUT_MAX_PER_GAME is an outer safety bound for every solo payout. A dedicated
+        // credits override is supported, but absent one the global cap must not protect only
+        // direct entries while leaving credit wins at a larger default.
+        const globalPayoutMax = parseAtomicValue(process.env.PAYOUT_MAX_PER_GAME, null);
+        const creditsPayoutMax = parseAtomicValue(process.env.CREDITS_PAYOUT_MAX, config.payouts.rules.credits.maxPayout);
+        config.payouts.rules.credits.maxPayout = globalPayoutMax !== null && globalPayoutMax < creditsPayoutMax
+            ? globalPayoutMax
+            : creditsPayoutMax;
 
         config.payouts.processing.batchInterval = parseInteger(process.env.PAYOUT_BATCH_INTERVAL, config.payouts.processing.batchInterval);
+        config.payouts.processing.confirmations = parseInteger(
+            process.env.PAYMENT_CONFIRMATIONS,
+            config.payouts.processing.confirmations
+        );
         config.payouts.processing.maxRetries = parseInteger(process.env.PAYOUT_MAX_RETRIES, config.payouts.processing.maxRetries);
 
         config.limits.maxGamesPerHour = parseInteger(process.env.MAX_GAMES_PER_HOUR, config.limits.maxGamesPerHour);
@@ -398,6 +417,11 @@ class PaymentConfigManager {
 
         if (!directEnabled && !creditsEnabled && this.config.paymentsEnabled) {
             this.logger.warn?.('⚠️ Payments enabled but no payment modes active. Falling back to FREE mode.');
+        }
+
+        if (!Number.isSafeInteger(this.config.payouts.processing.confirmations)
+            || this.config.payouts.processing.confirmations < 1) {
+            throw new Error('Payment confirmations must be an integer of at least 1');
         }
 
         this.validatePrices();

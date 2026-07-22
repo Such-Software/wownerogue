@@ -27,15 +27,19 @@ describe('TavernMatchBridge', () => {
         return {
             id,
             economy: 'free',
+            variant: 'race',
             tickCount: 5,
             status: 'active',
+            rows: 2,
+            cols: 3,
             occupants: new Map([['a', { id: 'a', x: 1, y: 2, name: 'A', avatar: 'default', facing: 'down' }]]),
             playerStates: new Map([['a', { alive: true, finished: false, escaped: false, hasTreasure: false, placement: null }]]),
             monster: { x: 3, y: 4 },
             treasure: null,
-            dungeon: { exit: [10, 10] },
+            dungeon: { map: [["'1", "'1", '#'], ['#', "'1", '>']], entrance: [0, 0], exit: [2, 1] },
             winnerId: null,
-            seedHash: 'deadbeef'
+            seedHash: 'deadbeef',
+            seed: 'never-publish-this'
         };
     }
 
@@ -64,5 +68,31 @@ describe('TavernMatchBridge', () => {
         expect(list.length).toBe(1);
         expect(list[0].matchId).toBe('m3');
         expect(list[0].players.length).toBe(1);
+    });
+
+    test('public snapshots include a renderer-safe map but never the unrevealed seed', () => {
+        const room = makeRoom('m-render');
+        room.toGameState = () => ({
+            visibleTiles: room.dungeon.map,
+            exploredTiles: room.dungeon.map,
+            lighting: {},
+            dungeonRows: 2,
+            dungeonCols: 3,
+            players: [{ id: 'a', x: 1, y: 1, alive: true }],
+            monster: { x: 0, y: 1 },
+            treasure: { x: 1, y: 0, carrierId: null },
+            entrance: [0, 0],
+            exit: [2, 1],
+            seed: room.seed,
+            privateEvents: [{ input: 'left' }]
+        });
+        const { bridge } = makeBridge({ rooms: [room] });
+        const snap = bridge.getActiveMatches()[0];
+
+        expect(snap.visibleTiles).toEqual(room.dungeon.map);
+        expect(snap.exploredTiles).toEqual(room.dungeon.map);
+        expect(snap).toMatchObject({ dungeonRows: 2, dungeonCols: 3, seedHash: 'deadbeef' });
+        expect(snap.seed).toBeUndefined();
+        expect(snap.privateEvents).toBeUndefined();
     });
 });

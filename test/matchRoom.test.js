@@ -194,6 +194,23 @@ describe('MatchRoom', () => {
             expect(room.playerStates.get('a').alive).toBe(false);
             expect(result.events.some(e => e.type === 'player_death')).toBe(true);
         });
+
+        test('fractional monster speed accumulates across ticks and zero stays stationary', () => {
+            const room = makeRoom();
+            room.start();
+            room.monster.hasLineOfSight = jest.fn(() => true);
+            room.monster.moveTowardPlayer = jest.fn(() => true);
+
+            room.difficultyConfig.monster.movesPerPlayerMove = 0.5;
+            expect(room._moveMonster().filter(e => e.type === 'monster_move')).toHaveLength(0);
+            expect(room._moveMonster().filter(e => e.type === 'monster_move')).toHaveLength(1);
+            expect(room.monster.moveTowardPlayer).toHaveBeenCalledTimes(1);
+
+            room.difficultyConfig.monster.movesPerPlayerMove = 0;
+            room._moveMonster();
+            room._moveMonster();
+            expect(room.monster.moveTowardPlayer).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('expiration / rankings', () => {

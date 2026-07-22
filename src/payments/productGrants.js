@@ -5,6 +5,17 @@ function asInt(value, fallback = 0) {
     return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
+function asPositiveAtomicString(value) {
+    const raw = String(value ?? '').trim().replace(/_/g, '');
+    if (!/^\d+$/.test(raw)) return null;
+    try {
+        const amount = BigInt(raw);
+        return amount > 0n ? amount.toString() : null;
+    } catch (_) {
+        return null;
+    }
+}
+
 function normalizePremiumLevel(value) {
     if (typeof value !== 'string') return null;
     const level = value.trim().toLowerCase();
@@ -48,6 +59,9 @@ function normalizeProductGrants(product = {}, fallback = {}) {
     if (explicit.race_entries != null || explicit.raceEntries != null) {
         raceEntries = asInt(explicit.race_entries || explicit.raceEntries, 0);
     }
+    const raceEntryValueAtomic = asPositiveAtomicString(
+        explicit.race_entry_value_atomic ?? explicit.raceEntryValueAtomic
+    );
 
     const packs = [];
     const packInputs = Array.isArray(explicit.packs) ? explicit.packs : [];
@@ -62,6 +76,7 @@ function normalizeProductGrants(product = {}, fallback = {}) {
         credits: Math.max(0, credits),
         packs,
         raceEntries: Math.max(0, raceEntries),
+        raceEntryValueAtomic,
         premiumLevel: normalizePremiumLevel(explicit.premiumLevel || explicit.premium_level)
     };
 }
@@ -70,6 +85,9 @@ function serializeProductGrants(grants = {}) {
     return {
         credits: asInt(grants.credits, 0),
         raceEntries: asInt(grants.raceEntries || grants.race_entries, 0),
+        raceEntryValueAtomic: asPositiveAtomicString(
+            grants.raceEntryValueAtomic ?? grants.race_entry_value_atomic
+        ),
         packs: Array.isArray(grants.packs)
             ? grants.packs.map(normalizePackGrant).filter(Boolean)
             : [],

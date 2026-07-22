@@ -42,6 +42,9 @@ const DUNGEON_CONFIGS = {
  * Dungeon generation utilities
  */
 class DungeonGenerator {
+    static get GENERATOR_VERSION() { return 'dungeon-generator-v1'; }
+    static get FINGERPRINT_VERSION() { return 1; }
+
     // Get the configuration object with difficulty settings applied
     static getConfig(cryptoType = null) {
         const difficulty = getDifficultyConfig(cryptoType || process.env.CRYPTO_TYPE || 'WOW');
@@ -99,7 +102,10 @@ class DungeonGenerator {
      * @param {object} dungeon - A dungeon object from generate()/regenerateFromSeed()
      * @returns {string} SHA-256 hex of the layout-defining fields
      */
-    static layoutFingerprint(dungeon) {
+    static layoutFingerprint(dungeon, fingerprintVersion = this.FINGERPRINT_VERSION) {
+        if (Number(fingerprintVersion) !== 1) {
+            throw new Error(`Unsupported dungeon fingerprint version: ${fingerprintVersion}`);
+        }
         const payload = JSON.stringify({
             map: dungeon.map,
             entrance: dungeon.entrance,

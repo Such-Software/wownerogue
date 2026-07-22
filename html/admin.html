@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - Wowngeon</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -162,8 +161,13 @@
 
         .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.85em; font-weight: 500; }
         .status-pending { background: #f59e0b20; color: #f59e0b; }
+        .status-requested { background: #f59e0b20; color: #f59e0b; }
+        .status-processing { background: #3b82f620; color: #60a5fa; }
         .status-failed { background: #ef444420; color: #ef4444; }
+        .status-needs_review { background: #ef444440; color: #fca5a5; border: 1px solid #ef4444; }
         .status-completed { background: #22c55e20; color: #22c55e; }
+        .status-recorded { background: #6b728020; color: #9ca3af; }
+        .status-batched { background: #8b5cf620; color: #a78bfa; }
         .status-permanently_failed { background: #7f1d1d; color: #fca5a5; }
         .status-won { background: #22c55e20; color: #22c55e; }
         .status-lost { background: #ef444420; color: #ef4444; }
@@ -271,6 +275,16 @@
                     <div id="statFailed" class="subtext">0 failed</div>
                 </div>
                 <div class="stat-card">
+                    <h3>Payout Review</h3>
+                    <div id="statPayoutReview" class="value">-</div>
+                    <div id="statPayoutProcessing" class="subtext">0 processing</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Refund Attention</h3>
+                    <div id="statRefundAttention" class="value">-</div>
+                    <div id="statRefundBreakdown" class="subtext">0 requested · 0 processing</div>
+                </div>
+                <div class="stat-card">
                     <h3>Wallet Balance</h3>
                     <div id="statBalance" class="value">-</div>
                     <div id="statUnlocked" class="subtext">Unlocked: -</div>
@@ -282,6 +296,7 @@
                 <button class="tab-btn active" data-tab="overview">Overview</button>
                 <button class="tab-btn" data-tab="queue">Queue</button>
                 <button class="tab-btn" data-tab="payouts">Payouts</button>
+                <button class="tab-btn" data-tab="refunds">Refunds</button>
                 <button class="tab-btn" data-tab="games">Games</button>
                 <button class="tab-btn" data-tab="users">Users</button>
                 <button class="tab-btn" data-tab="chat">Chat</button>
@@ -330,12 +345,19 @@
                         <h3>Payouts</h3>
                         <select id="payoutStatusFilter">
                             <option value="">All Status</option>
+                            <option value="attention">Needs Attention</option>
                             <option value="pending">Pending</option>
+                            <option value="processing">Processing</option>
                             <option value="failed">Failed</option>
+                            <option value="needs_review">Needs Review</option>
                             <option value="completed">Completed</option>
                             <option value="permanently_failed">Permanently Failed</option>
+                            <option value="batched">Batched</option>
                         </select>
                     </div>
+                    <p id="payoutTotals" style="color:#888; margin: 10px 15px; font-size:12px;">
+                        Loading payout totals...
+                    </p>
                     <table>
                         <thead>
                             <tr>
@@ -344,11 +366,52 @@
                                 <th>Address</th>
                                 <th>Status</th>
                                 <th>TX Hash</th>
+                                <th>Last Error</th>
                                 <th>Created</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="payoutsTable">
+                            <tr><td colspan="8" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab: Refunds -->
+            <div id="tab-refunds" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Payment Refund Outbox</h3>
+                        <select id="refundStatusFilter">
+                            <option value="attention">Needs Attention</option>
+                            <option value="">All Status</option>
+                            <option value="requested">Requested</option>
+                            <option value="processing">Processing</option>
+                            <option value="needs_review">Needs Review</option>
+                            <option value="recorded">Recorded (no transfer)</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                    <p id="refundTotals" style="color:#888; margin: 10px 15px; font-size:12px;">
+                        Loading refund totals...
+                    </p>
+                    <p style="color:#f59e0b; margin: 10px 15px; font-size:12px;">
+                        Processing and needs-review transfers may already have broadcast. Never resend them from this dashboard.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Payment</th>
+                                <th>Amount</th>
+                                <th>Address</th>
+                                <th>Status</th>
+                                <th>TX / Error</th>
+                                <th>Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="refundsTable">
                             <tr><td colspan="7" class="loading">Loading...</td></tr>
                         </tbody>
                     </table>
@@ -470,6 +533,7 @@
 
         // Payout filter
         document.getElementById('payoutStatusFilter').addEventListener('change', loadPayouts);
+        document.getElementById('refundStatusFilter').addEventListener('change', loadRefunds);
 
         // User search on enter
         document.getElementById('userSearch').addEventListener('keypress', (e) => {
@@ -535,6 +599,7 @@
             // Load data for tab
             if (tab === 'queue') loadQueue();
             else if (tab === 'payouts') loadPayouts();
+            else if (tab === 'refunds') loadRefunds();
             else if (tab === 'games') loadGames();
             else if (tab === 'users') loadUsers();
             else if (tab === 'chat') loadChat();
@@ -558,11 +623,27 @@
                 document.getElementById('statWinRate').textContent = `${winRate}% win rate`;
 
                 const pending = overview.pendingPayouts || 0;
+                const processing = overview.processingPayouts || 0;
                 const failed = overview.failedPayouts || 0;
+                const needsReview = overview.payoutsNeedsReview || 0;
+                const permanentlyFailed = overview.permanentlyFailedPayouts || 0;
                 document.getElementById('statPending').textContent = pending;
                 document.getElementById('statPending').className = 'value' + (pending > 5 ? ' warning' : '');
-                document.getElementById('statFailed').textContent = `${failed} failed`;
-                document.getElementById('statFailed').className = 'subtext' + (failed > 0 ? ' danger' : '');
+                document.getElementById('statFailed').textContent = `${failed} failed · ${permanentlyFailed} permanent`;
+                document.getElementById('statFailed').className = 'subtext' + (failed + permanentlyFailed > 0 ? ' danger' : '');
+                document.getElementById('statPayoutReview').textContent = needsReview;
+                document.getElementById('statPayoutReview').className = 'value' + (needsReview > 0 ? ' danger' : '');
+                document.getElementById('statPayoutProcessing').textContent = `${processing} processing`;
+                document.getElementById('statPayoutProcessing').className = 'subtext' + (processing > 0 ? ' warning' : '');
+
+                const refundRequested = overview.refunds?.requested || 0;
+                const refundProcessing = overview.refunds?.processing || 0;
+                const refundReview = overview.refunds?.needsReview || 0;
+                const refundAttention = refundRequested + refundProcessing + refundReview;
+                document.getElementById('statRefundAttention').textContent = refundAttention;
+                document.getElementById('statRefundAttention').className = 'value' + (refundAttention > 0 ? ' danger' : '');
+                document.getElementById('statRefundBreakdown').textContent =
+                    `${refundRequested} requested · ${refundProcessing} processing · ${refundReview} review`;
 
                 // Update divisor and symbol from server
                 if (overview.atomicDivisor) atomicDivisor = overview.atomicDivisor;
@@ -615,31 +696,69 @@
         }
 
         function renderOutcomesChart(summary) {
-            const ctx = document.getElementById('outcomesChart').getContext('2d');
+            const canvas = document.getElementById('outcomesChart');
+            const ctx = canvas.getContext('2d');
 
             if (outcomesChart) outcomesChart.destroy();
+            const labels = ['Won/Escaped', 'Caught', 'Expired', 'Other'];
+            const values = [
+                (summary.won || 0) + (summary.escaped || 0),
+                summary.caught || 0,
+                summary.expired || 0,
+                Math.max(0, (summary.total || 0) - (summary.won || 0) - (summary.escaped || 0) - (summary.caught || 0) - (summary.expired || 0))
+            ];
+            const colors = ['#22c55e', '#ef4444', '#f59e0b', '#6b7280'];
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const cssWidth = Math.max(320, canvas.clientWidth || 480);
+            const cssHeight = Math.max(200, canvas.clientHeight || 240);
+            canvas.width = Math.round(cssWidth * dpr);
+            canvas.height = Math.round(cssHeight * dpr);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-            outcomesChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Won/Escaped', 'Caught', 'Expired', 'Other'],
-                    datasets: [{
-                        data: [
-                            (summary.won || 0) + (summary.escaped || 0),
-                            summary.caught || 0,
-                            summary.expired || 0,
-                            Math.max(0, (summary.total || 0) - (summary.won || 0) - (summary.escaped || 0) - (summary.caught || 0) - (summary.expired || 0))
-                        ],
-                        backgroundColor: ['#22c55e', '#ef4444', '#f59e0b', '#6b7280']
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: { position: 'right', labels: { color: '#888' } }
-                    }
-                }
+            const total = values.reduce((sum, value) => sum + value, 0);
+            const centerX = Math.min(cssWidth * 0.34, cssHeight * 0.5);
+            const centerY = cssHeight * 0.5;
+            const radius = Math.max(45, Math.min(cssHeight * 0.36, centerX - 12));
+            let angle = -Math.PI / 2;
+            values.forEach((value, index) => {
+                if (value <= 0 || total <= 0) return;
+                const next = angle + (value / total) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, radius, angle, next);
+                ctx.closePath();
+                ctx.fillStyle = colors[index];
+                ctx.fill();
+                angle = next;
             });
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius * 0.58, 0, Math.PI * 2);
+            ctx.fillStyle = '#111827';
+            ctx.fill();
+            ctx.fillStyle = '#e5e7eb';
+            ctx.font = '600 18px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(total), centerX, centerY - 5);
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '11px system-ui, sans-serif';
+            ctx.fillText('games', centerX, centerY + 14);
+
+            const legendX = Math.max(centerX + radius + 28, cssWidth * 0.62);
+            labels.forEach((label, index) => {
+                const y = centerY - 54 + index * 34;
+                ctx.fillStyle = colors[index];
+                ctx.fillRect(legendX, y - 6, 12, 12);
+                ctx.fillStyle = '#9ca3af';
+                ctx.textAlign = 'left';
+                ctx.font = '12px system-ui, sans-serif';
+                ctx.fillText(`${label}: ${values[index]}`, legendX + 20, y);
+            });
+
+            outcomesChart = {
+                destroy: () => ctx.clearRect(0, 0, cssWidth, cssHeight)
+            };
         }
 
         // Queue management functions
@@ -729,37 +848,50 @@
                 const data = await res.json();
 
                 const tbody = document.getElementById('payoutsTable');
+                const totals = data.totals || {};
+                document.getElementById('payoutTotals').textContent =
+                    `${totals.pending || 0} pending · ${totals.processing || 0} processing · ` +
+                    `${totals.failed || 0} failed · ${totals.needsReview || 0} needs review · ` +
+                    `${totals.permanentlyFailed || 0} permanently failed · ${totals.completed || 0} completed`;
                 if (!data.payouts?.length) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No payouts found</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" class="loading">No payouts found</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = data.payouts.map(p => `
-                    <tr>
-                        <td>${p.id}</td>
-                        <td>${(p.amount / atomicDivisor).toFixed(6)}</td>
-                        <td title="${escapeHtml(p.address || '')}">${p.address ? escapeHtml(p.address.substring(0, 12)) + '...' : '-'}</td>
-                        <td><span class="status-badge status-${escapeHtml(p.status)}">${escapeHtml(p.status)}</span></td>
-                        <td class="tx-hash">${p.txHash ? escapeHtml(p.txHash.substring(0, 16)) + '...' : '-'}</td>
-                        <td>${new Date(p.createdAt).toLocaleString()}</td>
-                        <td>
-                            ${p.status === 'failed' || p.status === 'permanently_failed' ?
-                                `<button class="btn btn-primary" onclick="retryPayout(${p.id})">Retry</button>` : '-'}
-                        </td>
-                    </tr>
-                `).join('');
+                tbody.innerHTML = data.payouts.map(p => {
+                    const retryable = (p.status === 'failed' || p.status === 'permanently_failed') && !p.txHash;
+                    const lastError = p.lastError || '';
+                    return `
+                        <tr>
+                            <td>${p.id}</td>
+                            <td title="${escapeHtml(String(p.amount))} atomic">${(p.amount / atomicDivisor).toFixed(6)}</td>
+                            <td title="${escapeHtml(p.address || '')}">${p.address ? escapeHtml(p.address.substring(0, 12)) + '...' : '-'}</td>
+                            <td><span class="status-badge status-${escapeHtml(p.status)}">${escapeHtml(p.status)}</span></td>
+                            <td class="tx-hash">${p.txHash ? escapeHtml(p.txHash.substring(0, 16)) + '...' : '-'}</td>
+                            <td title="${escapeHtml(lastError)}">${lastError ? escapeHtml(lastError.substring(0, 48)) : '-'}</td>
+                            <td>${new Date(p.createdAt).toLocaleString()}</td>
+                            <td>
+                                ${retryable ? `<button class="btn btn-primary" onclick="retryPayout(${p.id})">Retry</button>` : '-'}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
             } catch (e) {
                 console.error('Failed to load payouts:', e);
             }
         }
 
         async function retryPayout(id) {
-            if (!confirm('Queue this payout for retry?')) return;
+            if (!confirm('Only retry after confirming the recorded failure was pre-broadcast and wallet history contains no matching transfer. Queue this payout?')) return;
 
             try {
                 const res = await fetch(`/api/admin/payouts/${id}/retry`, {
                     method: 'POST',
-                    headers: { 'X-Admin-Key': apiKey }
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ confirm: true })
                 });
 
                 if (res.ok) {
@@ -771,6 +903,49 @@
                 }
             } catch (e) {
                 alert('Failed to retry payout');
+            }
+        }
+
+        async function loadRefunds() {
+            const status = document.getElementById('refundStatusFilter').value;
+            const url = `/api/admin/stats/refunds?limit=50${status ? `&status=${status}` : ''}`;
+
+            try {
+                const res = await fetch(url, { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+                const tbody = document.getElementById('refundsTable');
+                const totals = data.totals || {};
+                document.getElementById('refundTotals').textContent =
+                    `${totals.requested || 0} requested · ${totals.processing || 0} processing · ` +
+                    `${totals.needsReview || 0} needs review · ${totals.recorded || 0} recorded · ` +
+                    `${totals.completed || 0} completed`;
+
+                if (!data.refunds?.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No refunds found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.refunds.map(refund => {
+                    const evidence = refund.txHash
+                        ? `TX ${refund.txHash.substring(0, 16)}...`
+                        : (refund.error || refund.reason || '-');
+                    const updated = refund.updatedAt || refund.createdAt;
+                    return `
+                        <tr>
+                            <td>${refund.id}</td>
+                            <td>${refund.paymentId}</td>
+                            <td title="${escapeHtml(String(refund.amount))} atomic">${(refund.amount / atomicDivisor).toFixed(6)}</td>
+                            <td title="${escapeHtml(refund.address || '')}">${refund.address ? escapeHtml(refund.address.substring(0, 12)) + '...' : '-'}</td>
+                            <td><span class="status-badge status-${escapeHtml(refund.status)}">${escapeHtml(refund.status)}</span></td>
+                            <td title="${escapeHtml(evidence)}">${escapeHtml(evidence.substring(0, 56))}</td>
+                            <td>${new Date(updated).toLocaleString()}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load refunds:', e);
+                document.getElementById('refundsTable').innerHTML =
+                    '<tr><td colspan="7" class="loading">Failed to load refunds</td></tr>';
             }
         }
 

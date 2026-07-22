@@ -7,11 +7,46 @@
 const express = require('express');
 const crypto = require('crypto');
 const asyncHandler = require('../middleware/asyncHandler');
-const { AppError, ValidationError, NotFoundError } = require('../utils/errors');
+const { ValidationError, NotFoundError } = require('../utils/errors');
+const PaymentRefundService = require('../services/paymentRefundService');
+
+const PAYOUT_STATUSES = Object.freeze([
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+  'needs_review',
+  'permanently_failed',
+  'batched'
+]);
+const PAYOUT_ATTENTION_STATUSES = Object.freeze([
+  'pending',
+  'processing',
+  'failed',
+  'needs_review',
+  'permanently_failed'
+]);
+const REFUND_STATUSES = Object.freeze([
+  'recorded',
+  'requested',
+  'processing',
+  'completed',
+  'needs_review'
+]);
+const REFUND_ATTENTION_STATUSES = Object.freeze([
+  'requested',
+  'processing',
+  'needs_review'
+]);
 
 module.exports = function createAdminRoutes(ctx) {
   const { db, gameModeManager, walletRPCService, socketHandlers, io } = ctx;
   const router = express.Router();
+  const paymentRefundService = ctx.paymentRefundService || new PaymentRefundService({
+    db,
+    walletService: walletRPCService,
+    isSendEnabled: ctx.canDispatchPayouts
+  });
 
 // =============================================================================
 // Admin API Endpoints (requires ADMIN_API_KEY)
@@ -56,9 +91,11 @@ const adminAuth = (req, res, next) => {
   }
 
   const providedKey = req.headers['x-admin-key'];
-  if (!providedKey ||
-      providedKey.length !== adminKey.length ||
-      !crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(adminKey))) {
+  const providedKeyBuffer = typeof providedKey === 'string' ? Buffer.from(providedKey) : null;
+  const adminKeyBuffer = Buffer.from(adminKey);
+  if (!providedKeyBuffer ||
+      providedKeyBuffer.length !== adminKeyBuffer.length ||
+      !crypto.timingSafeEqual(providedKeyBuffer, adminKeyBuffer)) {
     return res.status(401).json({
       error: 'Unauthorized',
       message: 'Invalid or missing X-Admin-Key header.'
@@ -75,144 +112,25 @@ const adminAuth = (req, res, next) => {
  */
 router.post('/api/admin/refund/payment', adminAuth, asyncHandler(async (req, res) => {
   const { paymentId, reason, sendFunds } = req.body || {};
-  
-  if (!paymentId || typeof paymentId !== 'number') {
+
+  if (!Number.isSafeInteger(paymentId) || paymentId <= 0) {
     throw new ValidationError('Invalid paymentId', {
-      safeMessage: 'paymentId (number) is required.'
+      safeMessage: 'paymentId (positive integer) is required.'
     });
   }
-  
-  // Get payment record
-  const paymentResult = await db.query(`
-    SELECT p.*, u.payout_address, u.socket_id
-    FROM payments p
-    LEFT JOIN users u ON p.user_id = u.id
-    WHERE p.id = $1
-  `, [paymentId]);
-  
-  if (paymentResult.rows.length === 0) {
-    throw new NotFoundError('Payment not found', {
-      safeMessage: `Payment ${paymentId} not found.`
+  if (sendFunds !== undefined && typeof sendFunds !== 'boolean') {
+    throw new ValidationError('Invalid sendFunds', {
+      safeMessage: 'sendFunds must be a boolean when provided.'
     });
   }
-  
-  const payment = paymentResult.rows[0];
-  
-  if (payment.status === 'refunded') {
-    return res.json({
-      success: false,
-      message: 'Payment already refunded.',
-      payment: { id: payment.id, status: payment.status }
+  if (reason !== undefined && (typeof reason !== 'string' || reason.length > 500)) {
+    throw new ValidationError('Invalid refund reason', {
+      safeMessage: 'reason must be a string of at most 500 characters.'
     });
   }
-  
-  // Begin transaction
-  const client = await db.getClient();
-  try {
-    await client.query('BEGIN');
-    
-    // Mark payment as refunded
-    await client.query(`
-      UPDATE payments 
-      SET status = 'refunded', 
-          description = COALESCE(description, '') || ' | Refunded: ' || $2
-      WHERE id = $1
-    `, [paymentId, reason || 'Admin refund']);
-    
-    // If credits were purchased, deduct them
-    let creditsDeducted = 0;
-    if (payment.credits_purchased > 0 && payment.user_id) {
-      // SECURITY: Use FOR UPDATE to lock the row and prevent race conditions
-      const userResult = await client.query(`
-        SELECT credits FROM users WHERE id = $1 FOR UPDATE
-      `, [payment.user_id]);
 
-      const currentCredits = userResult.rows[0]?.credits || 0;
-      creditsDeducted = Math.min(payment.credits_purchased, currentCredits);
-
-      if (creditsDeducted > 0) {
-        // SECURITY: Use atomic decrement with guard to prevent negative balance
-        const updateResult = await client.query(`
-          UPDATE users SET credits = credits - $1 WHERE id = $2 AND credits >= $1
-          RETURNING credits
-        `, [creditsDeducted, payment.user_id]);
-
-        let newBalance = updateResult.rows[0]?.credits;
-
-        // If update failed (race condition changed credits), recalculate
-        if (updateResult.rows.length === 0) {
-          const recheckResult = await client.query(`SELECT credits FROM users WHERE id = $1 FOR UPDATE`, [payment.user_id]);
-          const actualCredits = recheckResult.rows[0]?.credits || 0;
-          creditsDeducted = Math.min(payment.credits_purchased, actualCredits);
-          if (creditsDeducted > 0) {
-            const retryResult = await client.query(`
-              UPDATE users SET credits = credits - $1 WHERE id = $2 AND credits >= $1 RETURNING credits
-            `, [creditsDeducted, payment.user_id]);
-            newBalance = retryResult.rows[0]?.credits ?? (actualCredits - creditsDeducted);
-          } else {
-            newBalance = actualCredits;
-          }
-        }
-
-        // Record credit transaction
-        if (creditsDeducted > 0) {
-          await client.query(`
-            INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
-            VALUES ($1, $2, $3, $4, 'refund')
-          `, [payment.user_id, -creditsDeducted, `Refund for payment ${paymentId}`, newBalance]);
-        }
-      }
-    }
-    
-    await client.query('COMMIT');
-    
-    // Optionally send funds back via wallet RPC. Refund what the user ACTUALLY paid
-    // (received_amount, recorded at confirmation) when available, falling back to the
-    // expected amount for older records.
-    let fundsSent = false;
-    let txHash = null;
-    const refundAmount = (payment.received_amount != null && Number(payment.received_amount) > 0)
-      ? payment.received_amount
-      : payment.expected_amount;
-    if (sendFunds && payment.payout_address && Number(refundAmount) > 0) {
-      try {
-        // processPayout validates the address and performs the transfer; returns
-        // { success, txHash, fee }. (The previous code called a nonexistent sendPayment(),
-        // so refunds were silently never sent while still reporting success.)
-        const result = await walletRPCService.processPayout({
-          address: payment.payout_address,
-          amount: refundAmount,
-          userId: payment.user_id,
-          description: `Refund for payment ${paymentId}`
-        });
-        fundsSent = !!(result && result.success);
-        txHash = (result && result.txHash) || null;
-      } catch (err) {
-        console.error('Failed to send refund funds:', err.message);
-        // Don't fail the request - refund is recorded, funds can be sent manually
-      }
-    }
-    
-    res.json({
-      success: true,
-      message: 'Payment refunded successfully.',
-      refund: {
-        paymentId,
-        originalAmount: payment.expected_amount,
-        originalAmountFormatted: gameModeManager.formatAtomicHuman(payment.expected_amount, 4),
-        creditsDeducted,
-        fundsSent,
-        txHash,
-        reason: reason || 'Admin refund'
-      }
-    });
-    
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  const result = await paymentRefundService.refundPayment({ paymentId, reason, sendFunds });
+  res.json(PaymentRefundService.toApiResult(result, gameModeManager));
 }));
 
 /**
@@ -224,15 +142,15 @@ router.post('/api/admin/refund/payment', adminAuth, asyncHandler(async (req, res
 router.post('/api/admin/credits/adjust', adminAuth, asyncHandler(async (req, res) => {
   const { socketId, amount, reason } = req.body || {};
   
-  if (!socketId || typeof socketId !== 'string') {
+  if (!socketId || typeof socketId !== 'string' || socketId.length > 200) {
     throw new ValidationError('Invalid socketId', {
       safeMessage: 'socketId (string) is required.'
     });
   }
   
-  if (typeof amount !== 'number' || amount === 0) {
+  if (!Number.isSafeInteger(amount) || amount === 0 || Math.abs(amount) > 1000000) {
     throw new ValidationError('Invalid amount', {
-      safeMessage: 'amount (non-zero number) is required. Positive to add, negative to subtract.'
+      safeMessage: 'amount must be a non-zero safe integer between -1000000 and 1000000.'
     });
   }
   
@@ -577,10 +495,24 @@ router.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res)
   const payoutStats = await db.query(`
     SELECT
       COUNT(*) FILTER (WHERE status = 'pending') as pending_payouts,
+      COUNT(*) FILTER (WHERE status = 'processing') as processing_payouts,
       COUNT(*) FILTER (WHERE status = 'failed') as failed_payouts,
+      COUNT(*) FILTER (WHERE status = 'needs_review') as review_payouts,
+      COUNT(*) FILTER (WHERE status = 'permanently_failed') as permanently_failed_payouts,
       COUNT(*) FILTER (WHERE status = 'completed') as completed_payouts,
       COUNT(*) FILTER (WHERE status = 'completed' AND processed_at > NOW() - INTERVAL '24 hours') as payouts_24h
     FROM payouts
+  `);
+
+  // Refund transfers have their own durable outbox. `processing` and `needs_review`
+  // are intentionally non-retryable, so they must be visible beside payout liabilities.
+  const refundStats = await db.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'requested') as requested_refunds,
+      COUNT(*) FILTER (WHERE status = 'processing') as processing_refunds,
+      COUNT(*) FILTER (WHERE status = 'needs_review') as review_refunds,
+      COUNT(*) FILTER (WHERE status = 'completed') as completed_refunds
+    FROM payment_refunds
   `);
 
   // Get game counts for last 24h
@@ -607,6 +539,7 @@ router.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res)
 
   const user = userStats.rows[0];
   const payout = payoutStats.rows[0];
+  const refund = refundStats.rows[0];
   const game = gameStats.rows[0];
 
   const cryptoType = gameModeManager.cryptoType || process.env.CRYPTO_TYPE || 'WOW';
@@ -619,8 +552,17 @@ router.get('/api/admin/stats/overview', adminAuth, asyncHandler(async (req, res)
     totalGamesWon: parseInt(user.total_wins) || 0,
     totalPayoutVolume: user.total_payout_volume || '0',
     pendingPayouts: parseInt(payout.pending_payouts) || 0,
+    processingPayouts: parseInt(payout.processing_payouts) || 0,
     failedPayouts: parseInt(payout.failed_payouts) || 0,
+    payoutsNeedsReview: parseInt(payout.review_payouts) || 0,
+    permanentlyFailedPayouts: parseInt(payout.permanently_failed_payouts) || 0,
     completedPayouts: parseInt(payout.completed_payouts) || 0,
+    refunds: {
+      requested: parseInt(refund.requested_refunds) || 0,
+      processing: parseInt(refund.processing_refunds) || 0,
+      needsReview: parseInt(refund.review_refunds) || 0,
+      completed: parseInt(refund.completed_refunds) || 0
+    },
     walletBalance: walletBalance,
     cryptoType,
     atomicDivisor,
@@ -643,7 +585,10 @@ router.get('/api/admin/stats/payouts', adminAuth, asyncHandler(async (req, res) 
   let whereClause = '';
   const params = [limitNum, offsetNum];
 
-  if (status && ['pending', 'failed', 'completed', 'permanently_failed'].includes(status)) {
+  if (status === 'attention') {
+    whereClause = 'WHERE status = ANY($3::varchar[])';
+    params.push(PAYOUT_ATTENTION_STATUSES);
+  } else if (status && PAYOUT_STATUSES.includes(status)) {
     whereClause = 'WHERE status = $3';
     params.push(status);
   }
@@ -661,9 +606,12 @@ router.get('/api/admin/stats/payouts', adminAuth, asyncHandler(async (req, res) 
   const totals = await db.query(`
     SELECT
       COUNT(*) FILTER (WHERE status = 'pending') as pending_count,
+      COUNT(*) FILTER (WHERE status = 'processing') as processing_count,
       COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
+      COUNT(*) FILTER (WHERE status = 'needs_review') as review_count,
       COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
       COUNT(*) FILTER (WHERE status = 'permanently_failed') as permanently_failed_count,
+      COUNT(*) FILTER (WHERE status = 'batched') as batched_count,
       COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as total_volume
     FROM payouts
   `);
@@ -685,10 +633,87 @@ router.get('/api/admin/stats/payouts', adminAuth, asyncHandler(async (req, res) 
     })),
     totals: {
       pending: parseInt(totals.rows[0].pending_count) || 0,
+      processing: parseInt(totals.rows[0].processing_count) || 0,
       failed: parseInt(totals.rows[0].failed_count) || 0,
+      needsReview: parseInt(totals.rows[0].review_count) || 0,
       completed: parseInt(totals.rows[0].completed_count) || 0,
       permanentlyFailed: parseInt(totals.rows[0].permanently_failed_count) || 0,
+      batched: parseInt(totals.rows[0].batched_count) || 0,
       totalVolume: totals.rows[0].total_volume || '0'
+    }
+  });
+}));
+
+// GET /api/admin/stats/refunds - Durable payment-refund outbox details
+router.get('/api/admin/stats/refunds', adminAuth, asyncHandler(async (req, res) => {
+  const { status, limit = 50, offset = 0 } = req.query;
+  const limitNum = Math.min(parseInt(limit) || 50, 200);
+  const offsetNum = parseInt(offset) || 0;
+
+  let whereClause = '';
+  const params = [limitNum, offsetNum];
+  if (status === 'attention') {
+    whereClause = 'WHERE r.status = ANY($3::varchar[])';
+    params.push(REFUND_ATTENTION_STATUSES);
+  } else if (status && REFUND_STATUSES.includes(status)) {
+    whereClause = 'WHERE r.status = $3';
+    params.push(status);
+  }
+
+  const result = await db.query(`
+    SELECT r.id, r.payment_id, r.user_id, r.status, r.amount, r.payout_address,
+           r.credits_deducted, r.purchase_progress_deducted,
+           r.race_entries_deducted, r.tx_hash, r.error_message, r.reason,
+           r.requested_at, r.processing_started_at, r.completed_at,
+           r.needs_review_at, r.created_at, r.updated_at,
+           p.status AS payment_status
+    FROM payment_refunds r
+    JOIN payments p ON p.id = r.payment_id
+    ${whereClause}
+    ORDER BY r.updated_at DESC, r.id DESC
+    LIMIT $1 OFFSET $2
+  `, params);
+
+  const totals = await db.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'recorded') as recorded_count,
+      COUNT(*) FILTER (WHERE status = 'requested') as requested_count,
+      COUNT(*) FILTER (WHERE status = 'processing') as processing_count,
+      COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
+      COUNT(*) FILTER (WHERE status = 'needs_review') as review_count,
+      COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as completed_volume
+    FROM payment_refunds
+  `);
+
+  res.json({
+    refunds: result.rows.map(r => ({
+      id: r.id,
+      paymentId: r.payment_id,
+      userId: r.user_id,
+      paymentStatus: r.payment_status,
+      status: r.status,
+      amount: r.amount,
+      address: r.payout_address,
+      creditsDeducted: r.credits_deducted,
+      purchaseProgressDeducted: r.purchase_progress_deducted,
+      raceEntriesDeducted: r.race_entries_deducted,
+      txHash: r.tx_hash,
+      error: r.error_message,
+      reason: r.reason,
+      requestedAt: r.requested_at,
+      processingStartedAt: r.processing_started_at,
+      completedAt: r.completed_at,
+      needsReviewAt: r.needs_review_at,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    })),
+    totals: {
+      recorded: parseInt(totals.rows[0].recorded_count) || 0,
+      requested: parseInt(totals.rows[0].requested_count) || 0,
+      processing: parseInt(totals.rows[0].processing_count) || 0,
+      completed: parseInt(totals.rows[0].completed_count) || 0,
+      needsReview: parseInt(totals.rows[0].review_count) || 0,
+      completedVolume: totals.rows[0].completed_volume || '0'
     }
   });
 }));
@@ -885,55 +910,18 @@ router.get('/api/admin/users/:id', adminAuth, asyncHandler(async (req, res) => {
   });
 }));
 
-/**
- * Scan the wallet for a recent OUTGOING transfer to this payout's address (and,
- * when known, matching amount). Used before force-retrying a needs_review payout
- * that has no recorded tx_hash — if the funds already left the wallet we must NOT
- * re-send. Conservative: any RPC failure is treated as "not clean" so we never
- * risk a silent double-pay.
- * Returns { clean: boolean, txid?: string }.
- */
-async function isRecentTransferClean(payout) {
-  try {
-    const resp = await walletRPCService.rpcCall('get_transfers', {
-      out: true,
-      pending: true,
-      pool: true,
-      account_index: walletRPCService.accountIndex || 0
-    });
-    const target = String(payout.payout_address || '');
-    const amt = Number(payout.amount);
-    for (const bucket of ['out', 'pending', 'pool']) {
-      const list = resp.result?.[bucket];
-      if (!Array.isArray(list)) continue;
-      for (const tx of list) {
-        const dests = Array.isArray(tx.destinations) ? tx.destinations : [];
-        for (const d of dests) {
-          if (d.address === target && (!Number.isFinite(amt) || amt <= 0 || Number(d.amount) === amt)) {
-            return { clean: false, txid: tx.txid };
-          }
-        }
-        // Some transfers record the recipient at the top level without destinations.
-        if (target && tx.address === target) {
-          return { clean: false, txid: tx.txid };
-        }
-      }
-    }
-    return { clean: true };
-  } catch (err) {
-    // Can't verify -> assume NOT clean to avoid a double-pay.
-    return { clean: false, txid: null, error: err.message };
-  }
-}
-
 // POST /api/admin/payouts/:id/retry - Manually retry a failed payout
 router.post('/api/admin/payouts/:id/retry', adminAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const confirm = req.query.confirm === 'true' || !!(req.body && req.body.confirm === true);
+  const payoutId = Number(id);
+  if (!Number.isSafeInteger(payoutId) || payoutId <= 0) {
+    throw new ValidationError('Payout id must be a positive integer');
+  }
 
   const payoutResult = await db.query(`
     SELECT * FROM payouts WHERE id = $1
-  `, [id]);
+  `, [payoutId]);
 
   if (!payoutResult.rows.length) {
     throw new NotFoundError('Payout not found');
@@ -941,67 +929,50 @@ router.post('/api/admin/payouts/:id/retry', adminAuth, asyncHandler(async (req, 
 
   const payout = payoutResult.rows[0];
 
-  if (payout.status === 'completed') {
-    throw new ValidationError('Payout already completed');
-  }
-
-  // M2: never allow a silent double-pay. Before resetting a payout to 'pending'
-  // (which requeues it for a fresh transfer) prove the funds have NOT already left
-  // the wallet.
+  // A transaction hash, processing claim, or needs_review state is evidence that a wallet call
+  // may have happened. "Not found" is not proof of non-broadcast, so these rows are deliberately
+  // reconciliation-only and can never be resent through this endpoint.
   if (payout.tx_hash) {
-    // A tx hash is recorded — verify it is NOT on-chain before retrying.
-    let txStatus;
-    try {
-      txStatus = await walletRPCService.checkTransactionStatus(payout.tx_hash);
-    } catch (err) {
-      // RPC uncertain — refuse rather than risk re-sending.
-      return res.status(409).json({
-        success: false,
-        message: `Could not verify on-chain status of tx ${payout.tx_hash}: ${err.message}. Refusing to retry.`
-      });
-    }
-    if (txStatus && txStatus.exists) {
-      // Tx is on-chain (confirmed or in mempool): the payout already went out.
-      return res.status(409).json({
-        success: false,
-        message: `Payout tx ${payout.tx_hash} is already on-chain (confirmed=${txStatus.confirmed}, in_mempool=${txStatus.in_mempool}). Refusing to retry to avoid a double-pay.`,
-        onChain: true,
-        txStatus
-      });
-    }
-    // Not found on-chain -> safe to reset for retry.
-  } else if (payout.status === 'needs_review') {
-    // No tx_hash but flagged for manual review: require an explicit confirm flag AND
-    // a clean recent-transfer check before allowing a resend.
-    if (!confirm) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payout is in needs_review with no tx_hash. Pass ?confirm=true (or {confirm:true}) to force a retry after manual review.',
-        requiresConfirm: true
-      });
-    }
-    const clean = await isRecentTransferClean(payout);
-    if (!clean.clean) {
-      return res.status(409).json({
-        success: false,
-        message: clean.error
-          ? `Refusing to retry: could not verify recent transfers (${clean.error}).`
-          : `Refusing to retry: found a recent outgoing transfer to ${payout.payout_address} (txid ${clean.txid}) that may already fulfill this payout.`,
-        onChain: !clean.error,
-        txid: clean.txid || undefined
-      });
-    }
+    return res.status(409).json({
+      success: false,
+      message: 'Payout has transaction evidence and requires manual reconciliation; it cannot be resent.'
+    });
+  }
+  if (!['failed', 'permanently_failed'].includes(payout.status)) {
+    return res.status(409).json({
+      success: false,
+      message: `Payout status ${payout.status} is not retryable. Only hashless failed rows may be requeued.`
+    });
+  }
+  if (!confirm) {
+    return res.status(400).json({
+      success: false,
+      message: 'Pass ?confirm=true (or {confirm:true}) after reviewing the failure before requeueing.',
+      requiresConfirm: true
+    });
   }
 
-  // Reset status to pending for retry
-  await db.query(`
-    UPDATE payouts SET status = 'pending', last_error = 'Manual retry requested' WHERE id = $1
-  `, [id]);
+  // The predicate repeats every safety condition so a concurrent worker/status change cannot be
+  // overwritten after the row was read.
+  const reset = await db.query(`
+    UPDATE payouts
+    SET status = 'pending', last_error = 'Manual retry requested after reviewed pre-broadcast failure'
+    WHERE id = $1
+      AND status IN ('failed', 'permanently_failed')
+      AND tx_hash IS NULL
+    RETURNING id
+  `, [payoutId]);
+  if (reset.rowCount !== 1) {
+    return res.status(409).json({
+      success: false,
+      message: 'Payout changed while it was being reviewed and was not requeued.'
+    });
+  }
 
   res.json({
     success: true,
     message: 'Payout queued for retry',
-    payoutId: id
+    payoutId
   });
 }));
 

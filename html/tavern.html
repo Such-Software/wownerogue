@@ -3,11 +3,12 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Tavern - Wownerogue</title>
-    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <title>Wownerogue — Tavern</title>
+    <link rel="stylesheet" href="styles/commerce-consent.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/legal/commerceConsent.js"></script>
     <script src="js/smirkChatSign.js"></script>
-    <!-- PixiJS (+ @pixi/unsafe-eval for the CSP) is lazy-loaded by renderModes.js only when the
-         Fancy mode is first selected, so ASCII/Tiled users never download the WebGL library. -->
+    <!-- Optional external renderers are lazy-loaded only when the server's runtime policy opts in. -->
     <script src="js/render/sceneModel.js"></script>
     <script src="js/render/fxLayer.js"></script>
     <script src="js/render/skins.js"></script>
@@ -26,35 +27,47 @@
     <script src="js/render/isoRenderer.js"></script>
     <script src="js/render/threeRenderer.js"></script>
     <script src="js/render/tavernLife.js"></script>
+    <script src="/runtime-config.js"></script>
     <script src="js/render/renderModes.js"></script>
+    <script src="js/ui/matchUiCopy.js"></script>
     <style>
-        :root { --bg: #0f1216; --panel: #171b21; --line: #2a313a; --text: #d7dbe0; --accent: #3fb950; }
+        @font-face { font-family: PixelOperator; src: url('styles/fonts/pixel-operator/PixelOperator.ttf') format('truetype'); font-display: swap; }
+        @font-face { font-family: PixelOperator; src: url('styles/fonts/pixel-operator/PixelOperator-Bold.ttf') format('truetype'); font-weight: 700; font-display: swap; }
+        :root { --bg: #090b0f; --panel: #151a20; --panel2:#1b2129; --line: #303944; --text: #d7dbe0;
+                --muted:#8b97a7; --accent: #51d569; --gold:#efb64b; --purple:#a98bff; --cyan:#62d8ff; }
         * { box-sizing: border-box; }
-        body { margin: 0; background: var(--bg); color: var(--text);
-               font-family: ui-monospace, Menlo, Consolas, monospace; }
-        .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
-        h1 { font-size: 18px; margin: 4px 0 12px; }
-        .muted { color: #8b949e; font-size: 13px; }
-        .rk-canvas { background: #0a0c0f; border: 1px solid var(--line); border-radius: 6px;
-                     display: block; max-width: 100%; }
-        .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-                 padding: 12px; margin-bottom: 12px; }
+        body { min-height:100vh; margin:0; background:radial-gradient(circle at 50% -15%,rgba(116,70,32,.25),transparent 38%),
+               linear-gradient(180deg,#111015,var(--bg) 48%); color:var(--text); font-family:PixelOperator,ui-monospace,monospace; }
+        body::before { content:"";position:fixed;inset:0;pointer-events:none;opacity:.14;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:24px 24px; }
+        .wrap { position:relative; max-width:980px; margin:0 auto; padding:18px clamp(10px,3vw,26px) 32px; }
+        .tavern-head { display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px; }
+        h1 { color:#fff;font-size:clamp(24px,4vw,34px);margin:0;letter-spacing:.03em; }
+        .backlink { color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:5px;padding:6px 10px;font-size:13px; }
+        .backlink:hover { color:#fff;border-color:#667386; }
+        .muted { color:var(--muted);font-size:13px; }
+        .rk-canvas { background:#050609;display:block;max-width:100%;image-rendering:pixelated; }
+        .panel { background:rgba(21,26,32,.97);border:1px solid var(--line);border-radius:9px;padding:14px;margin-bottom:12px;box-shadow:inset 0 1px rgba(255,255,255,.025); }
         label { font-size: 13px; margin-right: 6px; }
-        input, select, button { font: inherit; background: #0a0c0f; color: var(--text);
-                 border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
-        button { background: var(--accent); color: #08130a; border: 0; cursor: pointer; font-weight: 600; }
+        input, select, button { font:inherit;background:#0d1116;color:var(--text);border:1px solid var(--line);border-radius:5px;padding:7px 9px; }
+        input:focus,button:focus-visible { outline:2px solid rgba(98,216,255,.7);outline-offset:2px; }
+        button { background:linear-gradient(#63df77,#43b859);color:#071209;border-color:#78eb8a;cursor:pointer;font-weight:700; }
+        button:hover:not(:disabled) { filter:brightness(1.08); }
+        button.secondary { background:#202731;color:var(--text);border-color:#414d5c; }
         button:disabled { opacity: 0.5; cursor: default; }
         #status { min-height: 18px; font-size: 13px; }
-        .hidden { display: none; }
-        #modebar { display: flex; gap: 6px; margin-bottom: 8px; }
+        .hidden { display: none !important; }
+        #modebar { display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap; }
         .modebtn { background: #0a0c0f; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
         .modebtn.active { background: var(--accent); color: #08130a; border-color: var(--accent); }
         .modebtn.locked { opacity: 0.55; }
-        #packbar { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; }
+        #packbar { display:flex;gap:6px;margin-bottom:8px;align-items:center;flex-wrap:wrap; }
         #packbar .packlabel { color: var(--muted); font-size: 12px; margin-right: 2px; }
         .packbtn { background: #0a0c0f; color: var(--text); border: 1px solid var(--line); font-size: 12px; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
         .packbtn.active { background: var(--accent); color: #08130a; border-color: var(--accent); }
-        #chatPanel { margin-top: 12px; }
+        #stage,.spectator-render { position:relative;width:100%;height:clamp(360px,62vh,620px);overflow:hidden;background:#000;
+            border:1px solid var(--line);border-radius:9px;box-shadow:0 18px 55px rgba(0,0,0,.38),inset 0 0 60px rgba(0,0,0,.5);isolation:isolate; }
+        #stage::after,.spectator-render::after { content:"";position:absolute;inset:0;pointer-events:none;z-index:10;box-shadow:inset 0 0 70px rgba(0,0,0,.58); }
+        #chatPanel { margin-top:12px; }
         #chatLog { height: 160px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px;
                    padding: 8px; background: #0a0c0f; font-size: 13px; line-height: 1.45; }
         #chatLog .cname { color: var(--accent); font-weight: 600; }
@@ -62,11 +75,28 @@
         #chatLog .csys { color: #8b949e; font-style: italic; }
         #chatForm { display: flex; gap: 6px; margin-top: 8px; }
         #chatInput { flex: 1; }
+        .actionbar { display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px; }
+        .actionbar button { margin:0!important; }
+        #watchGamesBtn { background:#102b35;color:var(--cyan);border-color:#367287; }
+        #matchQueueBtn { background:#271d3b;color:#d4c5ff;border-color:#7156a6; }
+        .panel h3,.panel h4 { color:#fff; }
+        .gamerow { display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line); }
+        .gamerow:last-child { border-bottom:0; }
+        .spectator-head { display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px; }
+        .touch-pad { display:none;grid-template-areas:". up ." "left down right";gap:5px;justify-content:end;margin:8px 0; }
+        .touch-pad button { width:44px;height:40px;padding:0;touch-action:manipulation;background:rgba(25,45,31,.94);color:#93f3a2;border-color:#4f9a5c; }
+        .touch-pad [data-dir="up"]{grid-area:up}.touch-pad [data-dir="left"]{grid-area:left}.touch-pad [data-dir="down"]{grid-area:down}.touch-pad [data-dir="right"]{grid-area:right}
+        @media (max-width:700px),(pointer:coarse) { .touch-pad{display:grid} #stage,.spectator-render{height:min(54vh,500px)} #joinPanel{display:flex;flex-wrap:wrap;gap:7px;align-items:center} #joinPanel label{width:100%} #name{min-width:0;flex:1} }
+        @media (max-width:430px) { .wrap{padding-inline:8px}.tavern-head .muted{display:none}#modebar{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}.modebtn{white-space:nowrap} }
+        @media (prefers-reduced-motion:reduce) { *,*::before,*::after{animation:none!important;transition:none!important} }
     </style>
 </head>
 <body>
     <div class="wrap">
-        <h1>Tavern <span class="muted">— early preview</span></h1>
+        <header class="tavern-head">
+            <h1>🔥 The Tavern <span class="muted">social hall</span></h1>
+            <span><a class="backlink" href="/responsible-play">Responsible Play</a> <a class="backlink" href="/">← Lobby</a></span>
+        </header>
 
         <div id="joinPanel" class="panel">
             <label for="name">Name</label>
@@ -78,9 +108,15 @@
 
         <div id="modebar" class="hidden"></div>
         <div id="packbar" class="hidden"></div>
-        <div id="stage" class="hidden"></div>
-        <p id="status" class="muted"></p>
-        <p class="muted">Move with arrow keys or WASD. ★ modes are premium (credit unlock).</p>
+        <div id="stage" class="hidden" aria-label="Shared tavern room"></div>
+        <div id="tavernDpad" class="touch-pad hidden" role="group" aria-label="Tavern movement controls">
+            <button type="button" data-dir="up" aria-label="Move up">▲</button>
+            <button type="button" data-dir="left" aria-label="Move left">◀</button>
+            <button type="button" data-dir="down" aria-label="Move down">▼</button>
+            <button type="button" data-dir="right" aria-label="Move right">▶</button>
+        </div>
+        <p id="status" class="muted" role="status" aria-live="polite"></p>
+        <p id="movementHint" class="muted">Move with arrow keys or WASD · drag/pinch to explore · ★ may require credits · ⛔ is unavailable on this server.</p>
 
         <div id="chatPanel" class="panel hidden">
             <div id="chatLog" aria-live="polite"></div>
@@ -91,34 +127,43 @@
         </div>
 
         <!-- Spectator camera: watch live dungeon runs from inside the tavern -->
-        <button id="watchGamesBtn" class="hidden" style="margin-top:8px;">👁️ Watch Live Games</button>
+        <div class="actionbar">
+            <button id="watchGamesBtn" class="hidden">👁 Watch Solo Runs</button>
+            <button id="matchQueueBtn" class="hidden">🎮 Multiplayer Arena</button>
+        </div>
         <div id="spectatorPanel" class="panel hidden">
             <h3 style="margin:0 0 8px;font-size:14px;">Live Games</h3>
             <div id="gameList" style="max-height:200px;overflow-y:auto;font-size:13px;"></div>
-            <button id="closeGameListBtn" style="margin-top:8px;">Close</button>
+            <button id="closeGameListBtn" class="secondary" style="margin-top:8px;">Close</button>
         </div>
 
         <!-- Match mode panel -->
-        <button id="matchQueueBtn" class="hidden" style="margin-top:8px;">🏁 Queue for Race</button>
         <div id="matchPanel" class="panel hidden">
-            <h3 style="margin:0 0 8px;font-size:14px;">Race Queue</h3>
+            <h3 id="tavernMatchTitle" style="margin:0 0 4px;font-size:16px;">Multiplayer Arena</h3>
+            <div id="tavernMatchDescription" class="muted" style="margin-bottom:10px;">Choose a leaderboard for the server's active mode.</div>
             <div id="matchEconomies" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>
             <div id="matchQueueStatus" class="muted" style="margin-bottom:8px;">Choose an economy.</div>
             <div style="display:flex;gap:6px;">
                 <button id="joinMatchQueueBtn">Join Queue</button>
-                <button id="leaveMatchQueueBtn" class="hidden">Leave Queue</button>
+                <button id="leaveMatchQueueBtn" class="hidden secondary">Leave Queue</button>
             </div>
             <hr style="border-color:var(--line);margin:12px 0;">
-            <h4 style="margin:0 0 8px;font-size:13px;">Active Races</h4>
+            <h4 style="margin:0 0 8px;font-size:13px;">Active Matches</h4>
             <div id="activeMatchList" style="max-height:160px;overflow-y:auto;font-size:13px;"></div>
-            <button id="closeMatchPanelBtn" style="margin-top:8px;">Close</button>
+            <button id="closeMatchPanelBtn" class="secondary" style="margin-top:8px;">Close</button>
         </div>
         <div id="spectatorStage" class="hidden">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div class="spectator-head">
                 <span id="spectatorLabel" class="muted"></span>
-                <button id="leaveSpectateBtn">← Back to tavern</button>
+                <button id="leaveSpectateBtn" class="secondary">← Back to tavern</button>
             </div>
-            <div id="spectatorRender" style="position:relative;min-height:300px;"></div>
+            <div id="spectatorRender" class="spectator-render"></div>
+            <div id="spectatorDpad" class="touch-pad hidden" role="group" aria-label="Match movement controls">
+                <button type="button" data-dir="up" aria-label="Move up">▲</button>
+                <button type="button" data-dir="left" aria-label="Move left">◀</button>
+                <button type="button" data-dir="down" aria-label="Move down">▼</button>
+                <button type="button" data-dir="right" aria-label="Move right">▶</button>
+            </div>
         </div>
     </div>
 
@@ -131,6 +176,7 @@
         } catch (_) {}
         var socket = io(socketOpts);
         var RK = window.RK;
+        var MatchCopy = window.MatchUiCopy;
 
         var statusEl = document.getElementById('status');
         var joinPanel = document.getElementById('joinPanel');
@@ -141,6 +187,18 @@
         var chatLog = document.getElementById('chatLog');
         var chatForm = document.getElementById('chatForm');
         var chatInput = document.getElementById('chatInput');
+        var chatPanel = document.getElementById('chatPanel');
+        var movementHint = document.getElementById('movementHint');
+        var tavernDpad = document.getElementById('tavernDpad');
+        var watchGamesBtn = document.getElementById('watchGamesBtn');
+        var spectatorPanel = document.getElementById('spectatorPanel');
+        var gameList = document.getElementById('gameList');
+        var closeGameListBtn = document.getElementById('closeGameListBtn');
+        var spectatorStage = document.getElementById('spectatorStage');
+        var spectatorLabel = document.getElementById('spectatorLabel');
+        var spectatorRender = document.getElementById('spectatorRender');
+        var spectatorDpad = document.getElementById('spectatorDpad');
+        var leaveSpectateBtn = document.getElementById('leaveSpectateBtn');
 
         // Character customization — persisted appearance identity, chosen before entering.
         var customizeBtn = document.getElementById('customizeBtn');
@@ -165,6 +223,19 @@
         var currentScene = null;
         var tavernLife = null;
         var rafActive = false;
+        var mainCamera = null;
+        var rendererRequest = 0;
+        var cryptoType = 'WOW';
+        var lastGameModeInfo = null;
+        var spectatorKind = null; // solo | match | player-match
+        var spectatorRenderer = null;
+        var spectatorCamera = null;
+        var spectatorPendingState = null;
+        var spectatorRequest = 0;
+        var currentSpectatingMatchId = null;
+        var activeMatchSnapshots = {};
+        var activeMatchTickMs = 250;
+        var currentMatchRuleset = MatchCopy.normalize({ id: 'race' });
 
         function setStatus(msg) { statusEl.textContent = msg; }
         function applyEntitlements(data) {
@@ -185,7 +256,10 @@
             if (!currentScene) return;
             // Inject client-side NPCs (bartender, patrons, cat) into the scene.
             if (tavernLife) tavernLife.injectInto(currentScene);
-            if (currentRenderer) currentRenderer.render(currentScene);
+            if (currentRenderer) {
+                currentRenderer.render(currentScene);
+                if (mainCamera) mainCamera.update(currentRenderer);
+            }
         }
 
         // rAF loop for smooth NPC animation + speech bubbles.
@@ -199,13 +273,16 @@
                     if (!currentScene._npcInjected) tavernLife.injectInto(currentScene);
                     tavernLife.update(currentScene, currentRenderer && currentRenderer.cell || 24, currentMode || 'tiles');
                 }
-                root.requestAnimationFrame(loop);
+                window.requestAnimationFrame(loop);
             }
-            root.requestAnimationFrame(loop);
+            window.requestAnimationFrame(loop);
         }
         function lockedModeMessage(mode) {
             var meta = RK.modeMeta ? RK.modeMeta(mode) : null;
             var label = (meta && meta.label) || mode;
+            if (RK.isModeRuntimeAvailable && !RK.isModeRuntimeAvailable(mode)) {
+                return label + ' is unavailable on this server because its optional renderer dependency is disabled.';
+            }
             if (meta && meta.pack && RK.pack) {
                 var pack = RK.pack(meta.pack);
                 return label + ' is locked. Buy any credits or unlock ' + ((pack && pack.label) || 'the pack') + '.';
@@ -214,6 +291,7 @@
         }
         function setMode(mode) {
             if (!RK.canUseMode(mode)) { setStatus(lockedModeMessage(mode)); return; }
+            var request = ++rendererRequest;
             if (currentRenderer) { currentRenderer.destroy(); currentRenderer = null; }
             currentMode = mode;
             if (tavernLife) tavernLife.setMode(mode);
@@ -222,12 +300,21 @@
             if (mode === 'fancy' && !RK.pixiReady()) setStatus('Loading Fancy renderer…');
             // Async: Fancy lazy-loads PixiJS on first use.
             RK.createRendererAsync(mode, stageEl, {}, function (r) {
-                if (currentMode !== mode) { r.destroy(); return; } // switched again while loading
+                if (currentMode !== mode || request !== rendererRequest) { r.destroy(); return; } // switched while loading
                 currentRenderer = r;
                 draw();
-                if (RK.attachZoom) { RK.attachZoom(stageEl); RK.applyZoom(stageEl); } // wheel/pinch zoom, all modes
+                var activeMode = r.name || mode;
+                var defaultZoom = activeMode === 'iso' ? 0.8 : (activeMode === '3d' ? 1.05 : 1.25);
+                if (!mainCamera && RK.attachCamera) {
+                    mainCamera = RK.attachCamera(stageEl, { zoom: defaultZoom, fitRatio: 0.75, min: 0.5, max: 3.2 });
+                }
+                if (mainCamera) {
+                    if (mainCamera.setDefaultZoom) mainCamera.setDefaultZoom(defaultZoom);
+                    if (activeMode === '3d' || !mainCamera.fit) mainCamera.setZoom(defaultZoom);
+                    else mainCamera.fit(r, 0.75);
+                }
                 buildPackbar(); // show pack choices for this mode's projection
-                var active = r.name || mode;
+                var active = activeMode;
                 setStatus(active === mode
                     ? 'Render mode: ' + active
                     : '“' + mode + '” unavailable here — using “' + active + '”.');
@@ -236,10 +323,11 @@
         function buildModebar() {
             modebar.innerHTML = '';
             RK.RENDER_MODES.forEach(function (m) {
+                var runtimeAvailable = !RK.isModeRuntimeAvailable || RK.isModeRuntimeAvailable(m.id);
                 var b = document.createElement('button');
                 b.className = 'modebtn';
                 b.dataset.mode = m.id;
-                b.textContent = m.label + (m.premium ? ' ★' : '');
+                b.textContent = m.label + (!runtimeAvailable ? ' ⛔' : (m.premium ? ' ★' : ''));
                 if (!RK.canUseMode(m.id)) { b.classList.add('locked'); b.title = lockedModeMessage(m.id); }
                 b.addEventListener('click', function () { setMode(m.id); });
                 modebar.appendChild(b);
@@ -299,8 +387,9 @@
             setStatus((e && e.message) || 'Could not enter the tavern.');
         });
         socket.on('game_mode_info', function (data) {
+            lastGameModeInfo = data || null;
             if (data && data.entitlements) applyEntitlements(data.entitlements);
-            if (data && data.cryptoType) SocketHandlers_cryptoType = data.cryptoType;
+            if (data && data.cryptoType) cryptoType = data.cryptoType;
         });
         socket.on('credits_update', applyEntitlements);
         socket.on('session_token', function (data) {
@@ -329,7 +418,8 @@
             joinPanel.classList.add('hidden');
             modebar.classList.remove('hidden');
             stageEl.classList.remove('hidden');
-            document.getElementById('chatPanel').classList.remove('hidden');
+            chatPanel.classList.remove('hidden');
+            tavernDpad.classList.remove('hidden');
             rebuildScene();
             buildModebar();
             setMode(RK.loadMode('tiles'));
@@ -435,20 +525,171 @@
             ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
             w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right'
         };
+        function sendDirection(dir) {
+            if (spectatorKind === 'player-match') {
+                var delta = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
+                if (delta) socket.emit('match_move', { dx: delta[0], dy: delta[1] });
+                return;
+            }
+            if (!spectatorKind && state.you) socket.emit('tavern_move', { dir: dir });
+        }
         window.addEventListener('keydown', function (e) {
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
             var dir = KEYS[e.key];
-            if (!dir || !state.you) return;
+            if (!dir || (!state.you && spectatorKind !== 'player-match')) return;
             e.preventDefault();
-            socket.emit('tavern_move', { dir: dir });
+            sendDirection(dir);
         });
+        function bindDpad(el) {
+            if (!el) return;
+            Array.prototype.forEach.call(el.querySelectorAll('[data-dir]'), function (b) {
+                // Native click includes touch/mouse plus Enter and Space for keyboard and AT users.
+                b.addEventListener('click', function () { sendDirection(b.dataset.dir); });
+            });
+        }
+        bindDpad(tavernDpad);
+        bindDpad(spectatorDpad);
 
         setStatus('Connecting…');
         socket.on('connect', function () {
             socket.emit('register_client', { clientId: socket.id, userAgent: navigator.userAgent });
             socket.emit('identity:get');
+            socket.emit('match_reconnect', {});
             setStatus('Connected. Choose a name and enter.');
         });
+
+        // ---- Shared spectator viewport (solo runs + public PvP races) -----------------
+        function spectatorZoom(mode) { return mode === 'iso' ? 0.78 : (mode === '3d' ? 1.05 : 1.3); }
+        function destroySpectatorRenderer() {
+            spectatorRequest++;
+            if (spectatorRenderer && spectatorRenderer.destroy) {
+                try { spectatorRenderer.destroy(); } catch (_) {}
+            }
+            spectatorRenderer = null;
+        }
+        function renderSpectatorState(gameState) {
+            if (!gameState) return;
+            spectatorPendingState = gameState;
+            if (!spectatorRenderer) return;
+            var safeState = Object.assign({}, gameState, { isSpectating: spectatorKind !== 'player-match' });
+            var scene = RK.sceneFromGameState ? RK.sceneFromGameState(safeState, {
+                viewerId: spectatorKind === 'player-match' ? socket.id : null,
+                cryptoType: cryptoType
+            }) : null;
+            if (!scene) return;
+            spectatorRenderer.render(scene);
+            if (spectatorCamera) spectatorCamera.update(spectatorRenderer);
+        }
+        function openSpectatorView(kind, label, initialState) {
+            spectatorKind = kind;
+            spectatorPendingState = initialState || null;
+            joinPanel.classList.add('hidden');
+            stageEl.classList.add('hidden');
+            modebar.classList.add('hidden');
+            packbar.classList.add('hidden');
+            tavernDpad.classList.add('hidden');
+            movementHint.classList.add('hidden');
+            spectatorPanel.classList.add('hidden');
+            matchPanel.classList.add('hidden');
+            spectatorStage.classList.remove('hidden');
+            spectatorDpad.classList.toggle('hidden', kind !== 'player-match');
+            spectatorLabel.textContent = label || 'Live dungeon';
+            leaveSpectateBtn.textContent = kind === 'player-match' ? 'Forfeit match' : '← Back to tavern';
+            destroySpectatorRenderer();
+            var request = ++spectatorRequest;
+            var renderMode = currentMode || (RK.loadMode && RK.loadMode('tiles')) || 'tiles';
+            RK.createRendererAsync(renderMode, spectatorRender, {}, function (r) {
+                if (request !== spectatorRequest || !spectatorKind) { r.destroy(); return; }
+                spectatorRenderer = r;
+                if (!spectatorCamera && RK.attachCamera) {
+                    spectatorCamera = RK.attachCamera(spectatorRender, { zoom: spectatorZoom(r.name || renderMode), min: 0.5, max: 3.2 });
+                }
+                if (spectatorCamera) spectatorCamera.setZoom(spectatorZoom(r.name || renderMode));
+                renderSpectatorState(spectatorPendingState);
+            });
+        }
+        function closeSpectatorView(notifyServer) {
+            var previous = spectatorKind;
+            if (notifyServer && previous === 'solo') socket.emit('leave_spectate');
+            spectatorKind = null;
+            currentSpectatingMatchId = null;
+            spectatorPendingState = null;
+            destroySpectatorRenderer();
+            spectatorStage.classList.add('hidden');
+            spectatorDpad.classList.add('hidden');
+            if (state.you) {
+                stageEl.classList.remove('hidden');
+                modebar.classList.remove('hidden');
+                tavernDpad.classList.remove('hidden');
+                movementHint.classList.remove('hidden');
+                buildPackbar();
+                draw();
+            } else {
+                joinPanel.classList.remove('hidden');
+            }
+            leaveSpectateBtn.textContent = '← Back to tavern';
+        }
+
+        function populateSoloGames(data) {
+            gameList.innerHTML = '';
+            var games = data && Array.isArray(data.games) ? data.games : [];
+            if (!games.length) {
+                gameList.textContent = 'No live solo runs right now.';
+                return;
+            }
+            games.forEach(function (game) {
+                var row = document.createElement('div');
+                row.className = 'gamerow';
+                var text = document.createElement('span');
+                var seconds = Number(game.durationSeconds) || 0;
+                text.textContent = 'Delver ' + (game.playerId || '??????') + ' · ' + (game.difficulty || 'normal') + ' · ' + seconds + 's';
+                var watch = document.createElement('button');
+                watch.type = 'button'; watch.textContent = 'Watch'; watch.className = 'secondary';
+                watch.addEventListener('click', function () {
+                    setStatus('Joining live solo run…');
+                    socket.emit('spectate_game', { gameId: game.gameId });
+                });
+                row.appendChild(text); row.appendChild(watch); gameList.appendChild(row);
+            });
+        }
+
+        watchGamesBtn.addEventListener('click', function () {
+            spectatorPanel.classList.toggle('hidden');
+            if (!spectatorPanel.classList.contains('hidden')) {
+                gameList.textContent = 'Loading live runs…';
+                socket.emit('get_active_games', { page: 1, pageSize: 20 });
+            }
+        });
+        closeGameListBtn.addEventListener('click', function () { spectatorPanel.classList.add('hidden'); });
+        socket.on('active_games', populateSoloGames);
+        socket.on('spectate_start', function (data) {
+            if (!data || !data.initialState) return;
+            openSpectatorView('solo', '👁 Watching delver ' + (data.playerId || 'live'), data.initialState);
+            setStatus('Watching a live solo run.');
+        });
+        socket.on('spectator_update', function (data) {
+            if (spectatorKind === 'solo' && data && data.gameState) renderSpectatorState(data.gameState);
+        });
+        socket.on('spectate_ended', function (data) {
+            if (spectatorKind !== 'solo') return;
+            closeSpectatorView(false);
+            setStatus(data && data.reason === 'game_over' ? 'That run has ended.' : 'Back in the tavern.');
+        });
+        socket.on('spectate_error', function (data) {
+            setStatus((data && data.message) || 'Could not watch that run.');
+        });
+        leaveSpectateBtn.addEventListener('click', function () {
+            if (spectatorKind === 'player-match') {
+                if (!window.confirm('Forfeit this match and return to the tavern?')) return;
+                socket.emit('match_leave');
+                closeSpectatorView(false);
+                setStatus('You forfeited the match.');
+                return;
+            }
+            closeSpectatorView(spectatorKind === 'solo');
+            setStatus('Back in the tavern.');
+        });
+
         // ---- Tavern Match spectator / queue UI -------------------------------
         var matchQueueBtn = document.getElementById('matchQueueBtn');
         var matchPanel = document.getElementById('matchPanel');
@@ -458,13 +699,24 @@
         var leaveMatchQueueBtn = document.getElementById('leaveMatchQueueBtn');
         var activeMatchList = document.getElementById('activeMatchList');
         var closeMatchPanelBtn = document.getElementById('closeMatchPanelBtn');
+        var tavernMatchTitle = document.getElementById('tavernMatchTitle');
+        var tavernMatchDescription = document.getElementById('tavernMatchDescription');
         var selectedMatchEconomy = 'free';
         var inMatchQueue = false;
+        var matchEndTimer = null;
+
+        function activeRulesetFrom(info) {
+            var match = info && info.modes && info.modes.match || {};
+            var raw = match.activeRuleset || { id: match.rulesetId || 'race' };
+            return MatchCopy.normalize(raw);
+        }
 
         function buildMatchEconomies(info) {
             if (!info || !info.modes || !info.modes.match || !info.modes.match.enabled) return;
             var economies = info.modes.match.economies || {};
-            var labels = { free: 'Free', credits_prestige: 'Prestige', crypto_race: 'Crypto' };
+            var labels = { free: 'Pleb · Free', credits_prestige: 'Prestige · Credits', crypto_race: 'Stagenet · Stakes' };
+            var available = Object.keys(labels).filter(function (key) { return !!economies[key]; });
+            if (!economies[selectedMatchEconomy] && available.length) selectedMatchEconomy = available[0];
             matchEconomies.innerHTML = '';
             Object.keys(labels).forEach(function (key) {
                 if (!economies[key]) return;
@@ -478,20 +730,29 @@
                 });
                 matchEconomies.appendChild(b);
             });
+            joinMatchQueueBtn.disabled = available.length === 0;
         }
 
         socket.on('game_mode_info', function (data) {
-            // Extend existing handler: also build match economies.
-            if (data && data.entitlements) applyEntitlements(data.entitlements);
-            if (data && data.cryptoType) SocketHandlers_cryptoType = data.cryptoType;
+            lastGameModeInfo = data || lastGameModeInfo;
+            if (data && data.cryptoType) cryptoType = data.cryptoType;
             if (data && data.modes && data.modes.match && data.modes.match.enabled) {
+                var ruleset = activeRulesetFrom(data);
+                tavernMatchTitle.textContent = '🎮 ' + ruleset.label;
+                tavernMatchDescription.textContent = ruleset.description + (ruleset.cooperative
+                    ? ' This is a team result, not an individual leaderboard win.'
+                    : ' Choose a separate leaderboard below.');
+                matchQueueBtn.textContent = '🎮 ' + ruleset.label;
                 matchQueueBtn.classList.remove('hidden');
                 buildMatchEconomies(data);
             }
         });
 
         socket.on('match_queue_joined', function (res) {
+            res = res || {};
+            joinMatchQueueBtn.disabled = false;
             if (res.success) {
+                selectedMatchEconomy = res.economy || selectedMatchEconomy;
                 inMatchQueue = true;
                 joinMatchQueueBtn.classList.add('hidden');
                 leaveMatchQueueBtn.classList.remove('hidden');
@@ -502,6 +763,7 @@
         });
 
         socket.on('match_queue_left', function (res) {
+            res = res || {};
             inMatchQueue = false;
             joinMatchQueueBtn.classList.remove('hidden');
             leaveMatchQueueBtn.classList.add('hidden');
@@ -510,37 +772,132 @@
 
         socket.on('tavern_match_list', function (list) {
             activeMatchList.innerHTML = '';
+            activeMatchSnapshots = {};
             if (!list || list.length === 0) {
-                activeMatchList.textContent = 'No active races right now.';
+                activeMatchList.textContent = 'No active multiplayer matches right now.';
                 return;
             }
             list.forEach(function (m) {
+                if (!m || !m.matchId) return;
+                activeMatchSnapshots[m.matchId] = m;
                 var row = document.createElement('div');
                 row.className = 'gamerow';
-                row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line);';
-                row.innerHTML = '<span>' + (m.economy || 'race') + ' — ' + (m.players ? m.players.length : 0) + ' players</span> <button class="watchMatchBtn" data-matchid="' + m.matchId + '">Watch</button>';
+                var summary = document.createElement('span');
+                var mode = MatchCopy.fromPayload(m, { id: m.rulesetId || m.variant || 'race' });
+                var count = m.players ? m.players.length : 0;
+                summary.textContent = mode.label + ' · ' + (m.economy || 'free') + ' · ' + count + ' ' + MatchCopy.plural(mode, count);
+                var watch = document.createElement('button');
+                watch.type = 'button'; watch.className = 'watchMatchBtn secondary'; watch.dataset.matchid = m.matchId; watch.textContent = 'Watch';
+                row.appendChild(summary); row.appendChild(watch);
                 activeMatchList.appendChild(row);
             });
             Array.prototype.forEach.call(activeMatchList.querySelectorAll('.watchMatchBtn'), function (b) {
                 b.addEventListener('click', function () {
                     var matchId = b.dataset.matchid;
-                    // Switch spectator renderer to the public match state stream.
-                    enterSpectatorMode(matchId);
+                    var snap = activeMatchSnapshots[matchId];
+                    currentSpectatingMatchId = matchId;
+                    currentMatchRuleset = MatchCopy.fromPayload(snap, { id: snap && (snap.rulesetId || snap.variant) || 'race' });
+                    var count = (snap && snap.players && snap.players.length) || 0;
+                    openSpectatorView('match', '👁 ' + currentMatchRuleset.label + ' · ' + count + ' ' + MatchCopy.plural(currentMatchRuleset, count), snap);
                 });
             });
         });
 
         socket.on('tavern_match_tick', function (state) {
             if (currentSpectatingMatchId && state.matchId === currentSpectatingMatchId) {
-                var scene = RK.sceneFromGameState ? RK.sceneFromGameState(state, null) : null;
-                if (scene && spectatorRenderer) spectatorRenderer.render(scene);
+                renderSpectatorState(state);
+                currentMatchRuleset = MatchCopy.fromPayload(state, currentMatchRuleset);
+                spectatorLabel.textContent = '👁 ' + currentMatchRuleset.label + ' · '
+                    + MatchCopy.liveSummary(state, null, currentMatchRuleset) + ' · tick ' + (state.tick || 0);
             }
         });
 
         socket.on('tavern_match_end', function (data) {
             if (currentSpectatingMatchId && data.matchId === currentSpectatingMatchId) {
-                spectatorLabel.textContent = 'Race ended. Winner: ' + (data.winnerId ? data.winnerId.slice(0, 6) : 'none');
+                var priorPlayers = spectatorPendingState && spectatorPendingState.players || [];
+                var namedPlayers = (data.players || []).map(function (player) {
+                    var prior = priorPlayers.filter(function (candidate) { return candidate.id === player.id; })[0];
+                    return Object.assign({}, prior || {}, player);
+                });
+                var result = MatchCopy.finalResult(Object.assign({}, data, { players: namedPlayers }), null, currentMatchRuleset);
+                spectatorLabel.textContent = result.text;
             }
+        });
+
+        // A player can queue without leaving the tavern. When that queue becomes a match, reuse the
+        // same viewport as a first-class playable arena (local camera + movement), not a blind queue.
+        socket.on('match_joined', function (data) {
+            if (!data) return;
+            selectedMatchEconomy = data.economy || selectedMatchEconomy;
+            var ruleset = activeRulesetFrom({ modes: { match: { activeRuleset: data.ruleset || (lastGameModeInfo && lastGameModeInfo.modes && lastGameModeInfo.modes.match.activeRuleset) } } });
+            currentMatchRuleset = ruleset;
+            var count = data.players ? data.players.length : 0;
+            matchQueueStatus.textContent = 'Match found: ' + ruleset.label + ' · ' + count + ' ' + MatchCopy.plural(ruleset, count) + ' · starting in ' + ((Number(data.countdownMs) || 0) / 1000).toFixed(1) + 's.';
+            setStatus(ruleset.objective + ' Get ready…');
+        });
+        socket.on('match_start', function (data) {
+            data = data || {};
+            if (matchEndTimer) clearTimeout(matchEndTimer);
+            activeMatchTickMs = Math.max(50, Number(data.tickMs) || 250);
+            currentSpectatingMatchId = data.matchId || null;
+            var ruleset = activeRulesetFrom({ modes: { match: { activeRuleset: data.ruleset || (lastGameModeInfo && lastGameModeInfo.modes && lastGameModeInfo.modes.match.activeRuleset) } } });
+            currentMatchRuleset = ruleset;
+            openSpectatorView('player-match', '⚔️ ' + ruleset.label + ' · GO', null);
+            setStatus('Match live. ' + ruleset.objective);
+        });
+        socket.on('match_rejoined', function (data) {
+            if (!data || !data.state) return;
+            currentSpectatingMatchId = data.matchId || data.state.matchId || null;
+            selectedMatchEconomy = data.state.economy || selectedMatchEconomy;
+            var ruleset = activeRulesetFrom({ modes: { match: { activeRuleset: data.state.ruleset || data.ruleset || (lastGameModeInfo && lastGameModeInfo.modes && lastGameModeInfo.modes.match.activeRuleset) } } });
+            currentMatchRuleset = ruleset;
+            openSpectatorView('player-match', '⚔️ Rejoined ' + ruleset.label, data.state);
+            setStatus('Rejoined your active multiplayer match.');
+        });
+        socket.on('match_tick', function (data) {
+            if (!data || !data.state) return;
+            if (spectatorKind !== 'player-match') {
+                currentSpectatingMatchId = data.matchId || data.state.matchId || null;
+                openSpectatorView('player-match', '⚔️ Multiplayer match', data.state);
+            } else {
+                renderSpectatorState(data.state);
+            }
+            currentMatchRuleset = MatchCopy.fromPayload(data, currentMatchRuleset);
+            var elapsed = ((Number(data.tick) || Number(data.state.tick) || 0) * activeMatchTickMs / 1000).toFixed(1);
+            spectatorLabel.textContent = '⚔️ ' + currentMatchRuleset.label + ' · ' + elapsed + 's · '
+                + MatchCopy.liveSummary(data.state, socket.id, currentMatchRuleset);
+        });
+        socket.on('match_end', function (data) {
+            if (spectatorKind !== 'player-match') return;
+            data = data || {};
+            var result = MatchCopy.finalResult(data, socket.id, currentMatchRuleset);
+            currentMatchRuleset = result.mode;
+            spectatorKind = 'match-result';
+            spectatorDpad.classList.add('hidden');
+            leaveSpectateBtn.textContent = '← Back to tavern';
+            spectatorLabel.textContent = result.text;
+            setStatus(result.mode.cooperative
+                ? 'Team result recorded; co-op does not create an individual leaderboard winner.'
+                : 'Competitive result recorded on its separate leaderboard.');
+            matchEndTimer = setTimeout(function () {
+                if (spectatorKind === 'match-result') closeSpectatorView(false);
+            }, 5000);
+        });
+        socket.on('match_error', function (data) {
+            var message = data && (data.message || data.reason) || 'Could not update the multiplayer match.';
+            matchQueueStatus.textContent = message;
+            setStatus(message);
+        });
+        socket.on('commerce_ack_required', function (data) {
+            if (!window.CommerceConsent || !window.CommerceConsent.require) return;
+            var refreshed = window.CommerceConsent.reject
+                ? window.CommerceConsent.reject(data)
+                : Promise.resolve();
+            refreshed.catch(function () { return null; }).then(function () {
+                window.CommerceConsent.require(function () {
+                    matchQueueStatus.textContent = 'Disclosures acknowledged. Retry the paid queue when ready.';
+                });
+            });
         });
 
         matchQueueBtn.addEventListener('click', function () {
@@ -551,7 +908,19 @@
 
         joinMatchQueueBtn.addEventListener('click', function () {
             if (inMatchQueue) return;
-            socket.emit('match_queue', { economy: selectedMatchEconomy, action: 'join' });
+            function join(acknowledgement) {
+                joinMatchQueueBtn.disabled = true;
+                matchQueueStatus.textContent = 'Joining queue…';
+                var payload = { economy: selectedMatchEconomy, action: 'join' };
+                if (acknowledgement) payload.legalAcknowledgement = acknowledgement;
+                socket.emit('match_queue', payload);
+                setTimeout(function () { if (!inMatchQueue) joinMatchQueueBtn.disabled = false; }, 1500);
+            }
+            if (selectedMatchEconomy !== 'free' && window.CommerceConsent) {
+                window.CommerceConsent.require(join);
+            } else {
+                join(null);
+            }
         });
         leaveMatchQueueBtn.addEventListener('click', function () {
             if (!inMatchQueue) return;
@@ -560,7 +929,10 @@
 
         // ---- End match UI ----------------------------------------------------
 
-        socket.on('disconnect', function () { setStatus('Disconnected.'); });
+        socket.on('disconnect', function () {
+            if (window.CommerceConsent && window.CommerceConsent.clear) window.CommerceConsent.clear();
+            setStatus('Disconnected.');
+        });
     })();
     </script>
 </body>

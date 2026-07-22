@@ -1,22 +1,17 @@
 const ChainProfile = require('../../chain/chainProfile');
+const money = require('../../money/atomic');
 
 const DEFAULT_DECIMALS = 12;
 
 const parseAtomicEnvValue = (val, fallback) => {
     if (val === undefined || val === null || val === '') return fallback;
-    if (typeof val !== 'string') {
-        const numVal = Number(val);
-        return Number.isFinite(numVal) ? Math.trunc(numVal) : fallback;
-    }
-    const cleaned = val.replace(/_/g, '').trim();
-    if (!cleaned) {
+    const cleaned = typeof val === 'string' ? val.replace(/_/g, '').trim() : val;
+    try {
+        const parsed = money.toBig(cleaned);
+        return parsed >= 0n ? money.toSafe(parsed) : fallback;
+    } catch (_) {
         return fallback;
     }
-    const num = Number(cleaned);
-    if (!Number.isFinite(num) || num < 0) {
-        return fallback;
-    }
-    return Math.trunc(num);
 };
 
 // Delegates to the ChainProfile registry — one source for all chains (WOW 11, XMR 12, BTC/LTC 8,
@@ -53,24 +48,36 @@ const formatAtomic = ({ value, decimals, digits = 6 }) => {
     if (value === undefined || value === null) {
         return '0';
     }
-    const divisor = getDecimalDivisor(decimals);
-    const quotient = Number(value) / divisor;
-    if (!Number.isFinite(quotient)) {
-        return value.toString();
+    try {
+        const atomic = money.toBig(value);
+        const negative = atomic < 0n;
+        const abs = negative ? -atomic : atomic;
+        const scale = 10n ** BigInt(decimals);
+        const whole = abs / scale;
+        const fraction = (abs % scale).toString().padStart(decimals, '0')
+            .slice(0, Math.max(0, digits)).replace(/0+$/, '');
+        return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+    } catch (_) {
+        return String(value);
     }
-    return quotient.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
 };
 
 const formatAtomicHuman = ({ value, decimals, digits = 3 }) => {
     if (value === undefined || value === null) {
         return '0';
     }
-    const divisor = getDecimalDivisor(decimals);
-    const quotient = Number(value) / divisor;
-    if (!Number.isFinite(quotient)) {
-        return value.toString();
+    try {
+        const atomic = money.toBig(value);
+        const negative = atomic < 0n;
+        const abs = negative ? -atomic : atomic;
+        const scale = 10n ** BigInt(decimals);
+        const whole = abs / scale;
+        const fraction = (abs % scale).toString().padStart(decimals, '0')
+            .slice(0, Math.max(0, digits)).padEnd(Math.max(0, digits), '0');
+        return `${negative ? '-' : ''}${whole}${digits > 0 ? `.${fraction}` : ''}`;
+    } catch (_) {
+        return String(value);
     }
-    return quotient.toFixed(digits);
 };
 
 module.exports = {

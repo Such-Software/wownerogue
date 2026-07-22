@@ -47,6 +47,16 @@ function createMockDb() {
                 users.set(id, newUser);
                 return { rows: [newUser] };
             }
+            if (text.includes('UPDATE users') && text.includes('SET socket_id = $1') &&
+                text.includes('anon_token = $2') && text.includes('anon_token = $4')) {
+                const [socketId, newToken, userId, presentedToken] = params;
+                const user = users.get(userId);
+                if (!user || user.anon_token !== presentedToken) return { rows: [] };
+                user.socket_id = socketId;
+                user.anon_token = newToken;
+                user.last_seen = new Date();
+                return { rows: [{ ...user }] };
+            }
             if (text.includes('UPDATE users SET socket_id')) {
                 const socketId = params[0];
                 const userId = params[1];
@@ -280,6 +290,69 @@ describe('SQL Injection Prevention', () => {
                 resumeToken: firstToken
             });
             expect(replay.resumed).toBe(false);
+        });
+
+        test('concurrent resume is compare-and-swap: one wins, the loser is rejected, and stale live identity is disconnected', async () => {
+            const localDb = createMockDb();
+            const staleDisconnect = jest.fn();
+            const io = {
+                sockets: {
+                    sockets: new Map([['cas-socket-old', { disconnect: staleDisconnect }]])
+                }
+            };
+            const manager = new SessionManager({
+                db: localDb,
+                debugManager: { CONSOLE_LOGGING: false },
+                gameModeManager: { creditsPerGameCost: 1 },
+                io
+            });
+            const created = await manager.resumeOrCreate({
+                socketId: 'cas-socket-old',
+                ipAddress: '127.0.0.1',
+                resumeToken: null
+            });
+
+            // Hold both SELECT-by-token calls until they have each observed the old token,
+            // forcing the race to be decided by the conditional UPDATE rather than timing.
+            const baseQuery = localDb.query;
+            let waitingSelects = 0;
+            let releaseFirstSelect;
+            localDb.query = jest.fn(async (text, params = []) => {
+                const result = await baseQuery(text, params);
+                if (text.includes('SELECT * FROM users WHERE anon_token') && params[0] === created.token) {
+                    waitingSelects += 1;
+                    if (waitingSelects === 1) {
+                        await new Promise(resolve => { releaseFirstSelect = resolve; });
+                    } else if (releaseFirstSelect) {
+                        releaseFirstSelect();
+                    }
+                }
+                return result;
+            });
+
+            const attempts = await Promise.allSettled([
+                manager.resumeOrCreate({
+                    socketId: 'cas-socket-a',
+                    ipAddress: '127.0.0.1',
+                    resumeToken: created.token
+                }),
+                manager.resumeOrCreate({
+                    socketId: 'cas-socket-b',
+                    ipAddress: '127.0.0.1',
+                    resumeToken: created.token
+                })
+            ]);
+
+            const fulfilled = attempts.filter(r => r.status === 'fulfilled');
+            const rejected = attempts.filter(r => r.status === 'rejected');
+            expect(fulfilled).toHaveLength(1);
+            expect(fulfilled[0].value.resumed).toBe(true);
+            expect(rejected).toHaveLength(1);
+            expect(rejected[0].reason.code).toBe('SESSION_TOKEN_REPLAY');
+
+            expect(manager.sessions.has('cas-socket-old')).toBe(false);
+            await expect(manager.getBySocket('cas-socket-old')).resolves.toBeNull();
+            expect(staleDisconnect).toHaveBeenCalledWith(true);
         });
 
         test('should safely handle malicious socket ID', async () => {

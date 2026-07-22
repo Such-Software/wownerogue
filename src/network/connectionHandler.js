@@ -234,11 +234,10 @@ class ConnectionHandler {
 
     _getResumeToken(socket) {
         try {
-            // Prefer the handshake `auth` payload (not logged by proxies); fall back to the
-            // query string for backward compatibility with older clients during rollout.
-            return socket.handshake.auth?.resumeToken
-                || socket.handshake.query?.resumeToken
-                || null;
+            // Session credentials belong only in Socket.IO's handshake auth payload. Query
+            // strings are routinely retained by reverse-proxy/access logs and must never resume
+            // an account, even when an older client still sends one there.
+            return socket.handshake.auth?.resumeToken || null;
         } catch (_) {
             return null;
         }
@@ -257,6 +256,10 @@ class ConnectionHandler {
             });
         } catch (e) {
             console.error('Session initialization failed:', e.message);
+            // A compare-and-swap loser presented a credential another concurrent connection
+            // already consumed. Do not downgrade it into an anonymous live socket: the outer
+            // connection handler will emit a generic error and disconnect it.
+            if (e.code === 'SESSION_TOKEN_REPLAY') throw e;
             // For database connection issues, allow connection but without session features
             if (e.message.includes('Database not connected')) {
                 console.log('⚠️ Database not ready, allowing connection without session features');

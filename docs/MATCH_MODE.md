@@ -21,21 +21,32 @@ starts.
 ## Lifecycle: a race every block
 
 The existing solo `queueHandler` already reacts to new crypto blocks. `MatchScheduler` subscribes to
-the same block event and drains per-economy queues:
+the same block-count event. Free and value-bearing queues intentionally have different starts:
 
-- If a queue has ≥2 players at block H, all queued players are placed into a new `MatchRoom` and the
-  race starts immediately.
-- If a queue has 1 player, they carry over to block H+1 and may leave at any time.
+- A free queue with ≥2 players drains into a `MatchRoom` immediately on the current block event.
+- A paid queue with ≥2 players at canonical header H atomically creates a `pending` match and links
+  the exact FIFO queue rows and entrants. That transaction records a deterministic entrant-freeze
+  commitment and fixes canonical header H+the configured entropy delay as its target; it does not
+  read a block hash or create a playable seed. A fresh post-commit count is persisted while the
+  target is still in the future.
+- Only a later, sufficiently confirmed block-count event can resolve that pending match. The
+  scheduler twice requests the canonical hash for the exact target, verifies the frozen IDs again,
+  derives the seed, and changes the match from `pending` to `starting` before collection/countdown.
+  It immediately checks the hash again. Another height and server randomness are not substitutes.
+- If a queue has 1 player, they carry over and may leave until a freeze claims their row.
 - If a queue is empty, nothing happens.
 
-A race ends when:
-1. The first player reaches the exit.
-2. The next block is detected (with a `MATCH_MIN_DURATION_MS` floor to prevent degenerate short
-   races).
+A match ends when:
+1. Its selected ruleset resolves (for example, first exit, last alive, or all players resolved).
+2. If `ruleset.timing.blockDeadline` is enabled, the first advancing canonical header after both
+   the match's start header and `MATCH_MIN_DURATION_MS` of active play is observed. A duplicate
+   block poll, the start header itself, or a block arriving before the floor cannot end the match;
+   after an early block, the match waits for the next advancing header.
 3. The `MATCH_HARD_CEILING_MS` absolute ceiling expires.
 
-If no one escaped, living players are ranked by proximity to the exit; dead players are ranked after
-them by progress, treasure, and moves.
+Final placement and `winnerId` come from the selected ruleset's deterministic rank strategy. The
+classic race uses exit/proximity ranking; last-alive and score-attack use their own competitive
+rankings.
 
 ## Architecture
 
@@ -63,7 +74,8 @@ them by progress, treasure, and moves.
 
 See migration `src/migrations/022_match_mode.sql`:
 
-- `matches` — one race, provably-fair seed, economy, pot/fee, winner.
+- `matches` — one race, including the durable `pending` entrant-freeze envelope and later
+  verifiable seed commitment, economy, pot/fee, winner.
 - `match_entrants` — per-player state, placement, score, payment link.
 - `match_events` — replay / spectator / audit feed.
 - `match_queue_entries` — persisted queue for restart safety.
@@ -71,11 +83,35 @@ See migration `src/migrations/022_match_mode.sql`:
 - `users.race_entries` — hot-read ticket balance.
 - `payouts.match_id` — links winner payout to match.
 
-### Provably fair
+### Match seed verification
 
-Each match commits to a SHA-256 `seed_hash` at creation. The `seed` is revealed on finish so anyone
-can regenerate the exact dungeon and verify the hash. This mirrors the existing solo
-`games.dungeon_seed` / `games.seed` pattern.
+Paid matches use `future-block-freeze-v2` / `future-chain-block-v2`. At canonical header H the
+server commits the exact economy, ruleset, sorted durable FIFO queue-entry IDs, configured delay,
+and target `H + MATCH_PAID_ENTROPY_DELAY_BLOCKS` in a `pending` row before requesting any hash.
+After that transaction commits, a fresh strict daemon count must prove that the target does not yet
+exist; the witnessed tip and verification timestamp are durable and immutable. A delayed commit
+that reaches the target is cancelled and every exact escrow anchor is refunded without reading the
+target hash. Legacy v1 or otherwise unverified pending freezes are also refunded at startup.
+
+Activation waits until the target itself has the configured confirmation depth (the target counts
+as confirmation one). The scheduler reads count/header/count/header and requires both exact-height
+headers to have the same canonical hash. It re-reads that target immediately after the activation
+transaction and before ticket collection, gameplay, or client notification; an unavailable or
+changed hash aborts and refunds the match. The playable seed is SHA-256-derived only from the v2
+freeze commitment and exact target hash. The persisted/public proof records the delay, required
+confirmations, minimum activation tip, and post-commit witness. Confirmation settings are safety
+metadata rather than extra seed material.
+
+Monero-family `getblockcount` is a count, while `get_block(height)` uses zero-based header heights.
+The scheduler normalizes the event exactly once (`observedHeaderHeight = blockCount - 1`). Every
+persisted/disclosed `blockHeight` is the actual header height passed unchanged to `get_block`, so the
+published height resolves to the published hash without an off-by-one translation.
+
+This proves the documented seed derivation and deterministic dungeon; it does not prove honest
+input handling, block-source independence, payout delivery, or resistance to a malicious chain
+producer/operator. Free development matches may use a server-random commitment and are labelled
+`server commitment only`. Do not describe match mode as equivalent to the solo two-party fairness
+protocol without an independent review.
 
 ## Configuration
 
@@ -85,11 +121,20 @@ Add to `src/.env` (documented in `src/.env.example`):
 # Enable match mode (default false)
 MATCH_ENABLED=false
 
-# Max players per race (2–32)
+# Max players per match (also bounded by the selected ruleset; built-ins max at 8)
 MATCH_MAX_PLAYERS=4
 
 # Server tick interval in ms
 MATCH_TICK_MS=250
+
+# Server-selected gameplay ruleset; clients cannot override it
+# race | last-alive | score-attack | coop-escape
+MATCH_RULESET_ID=race
+
+# Paid freeze target distance and activation confirmation depth.
+# Production requires explicit safe integers from 2 through 100.
+MATCH_PAID_ENTROPY_DELAY_BLOCKS=2
+MATCH_PAID_ENTROPY_CONFIRMATIONS=2
 
 # Minimum race duration before the next block can end it
 MATCH_MIN_DURATION_MS=20000
@@ -100,20 +145,25 @@ MATCH_HARD_CEILING_MS=240000
 # Credits cost for prestige-only races
 MATCH_CREDITS_COST=1
 
-# Crypto race house fee percent (default 5)
+# Crypto race house fee percent (required; 0 <= fee < 100)
 MATCH_HOUSE_FEE_PERCENT=5
 
-# Optional: override per-player entry fee atomic amount.
-# If unset, uses the existing per-game price (singleGamePrice / DIRECT_GAME_PRICE).
-# MATCH_ENTRY_FEE_ATOMIC=5000000000
+# Required per-player funded ticket value in atomic units.
+MATCH_ENTRY_FEE_ATOMIC=5000000000
 
-# Enable the crypto race-entry ticket economy
+# Crypto admission requires both explicit match gates and an outer atomic-unit payout cap
 MATCH_CRYPTO_RACE_ENABLED=false
+MATCH_PAYOUTS_ENABLED=false
+MATCH_PAYOUT_MAX=50000000000
 ```
 
 Crypto races also require:
 - A paid instance (`GAME_MODE=PAID_SINGLE` / `PAID_CREDITS` or equivalent `PAYMENT_MODES`).
-- Race-entry ticket products in the credit/cosmetic catalog with `grants.race_entries: N`.
+- At least one race-entry product with `grants.race_entries: N` and
+  `grants.race_entry_value_atomic` exactly equal to `MATCH_ENTRY_FEE_ATOMIC`. The product price
+  must cover `N * MATCH_ENTRY_FEE_ATOMIC`; confirmation records a durable lot per payment.
+- A competitive single-winner ruleset. `coop-escape` is rejected until split-payout semantics are
+  implemented.
 
 ## Client surfaces
 
@@ -125,7 +175,7 @@ Crypto races also require:
 ## Socket events
 
 Server emits:
-- `game_mode_info` — now includes `modes.match { enabled, economies, maxPlayers }`.
+- `game_mode_info` — includes `modes.match { enabled, economies, maxPlayers, activeRuleset, rulesets }`.
 - `match_queue_joined` / `match_queue_left` — queue responses.
 - `match_joined` / `match_start` / `match_tick` / `match_end` — race lifecycle for players.
 - `tavern_match_list` / `tavern_match_tick` / `tavern_match_end` — public race feed for tavern
@@ -139,11 +189,17 @@ Client sends:
 
 ## Leaderboards
 
-- **Free races** create synthetic `games` rows with `game_mode = 'FREE'` for the Pleb board.
-- **Credits/prestige races** populate the `prestige_leaderboard` view and are served by
-  `GET /api/leaderboard?board=prestige`.
-- **Crypto races** create synthetic `games` rows with `game_mode = 'PAID_CREDITS'` for the Hall of
-  Champions board.
+- **Free competitive matches** create synthetic `games` rows with `game_mode = 'FREE'` for the
+  Pleb board.
+- **Credits/prestige competitive matches** are served from authoritative `matches` and
+  `match_entrants` rows by `GET /api/leaderboard?board=prestige`.
+- **Crypto competitive matches** create synthetic `games` rows with `game_mode = 'PAID_CREDITS'`
+  for the Hall of Champions board.
+
+An individual win requires the durable match winner and placement #1 to agree; reaching the exit
+alone is never treated as a win in last-alive or score-attack. `coop-escape` is collective, records
+no individual `winnerId`, and keeps its results in `matches` / `match_entrants`; it is intentionally
+excluded from individual boards until a dedicated team leaderboard exists.
 
 ## Tests
 
@@ -154,15 +210,8 @@ cd src
 npx jest ../test/match
 ```
 
-Current result: **40 passing** across 7 suites:
-
-- `matchRoom.test.js`
-- `matchQueue.test.js`
-- `matchScheduler.test.js`
-- `matchLeaderboard.test.js`
-- `matchPayoutService.test.js`
-- `tavernMatchBridge.test.js`
-- `matchReconnect.test.js`
+The suite includes block-deadline, authoritative leaderboard-result, co-op exclusion, durable
+finish, and finished-room reconnect regressions in addition to the core room/queue/payout tests.
 
 ## Files added / modified
 
@@ -188,7 +237,18 @@ Modified:
 ## Operational notes
 
 - Match mode is **opt-in** and inert unless `MATCH_ENABLED=true`.
+- `MATCH_RULESET_ID` is trusted server configuration; unknown/solo-only values fall back to `race`.
 - Crypto race payouts reuse the existing `payouts` table, batch processor, and retry service.
-- The unique partial index `idx_payouts_one_per_match` prevents double payouts.
-- Race-entry tickets are held in escrow on queue join and consumed only when a match starts.
+- `MATCH_PAYOUTS_ENABLED=false` stops new admission and refunds queued ticket escrow. Matches whose
+  pot/liability was already accepted still create their durable payout; the global payout master
+  switch may pause dispatch without erasing it.
+- The unconditional unique index `idx_payouts_one_per_match` prevents a replacement payout in every
+  status, including `failed` and `needs_review`.
+- Only confirmed-payment ticket lots with the current exact entry value can enter a crypto race;
+  legacy/admin-granted aggregate tickets cannot create a payout liability. The exact lot is held
+  on queue join and consumed in the same transaction that accepts the immutable match liability.
 - Players who disconnect during a race have a 30-second grace period to reconnect.
+- Paid freeze/start block events are serialized. A crash before activation leaves a resumable
+  `pending` freeze; a crash after activation is handled by abandoned-match recovery. Orderly
+  shutdown stops the scheduler, waits for its block task, and transactionally cancels/refunds every
+  still-pending freeze before shutting down match transport.

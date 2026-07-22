@@ -1,18 +1,18 @@
 # Tavern & Multiplayer — Design & Build Plan
 
-Match mode (multiplayer races) now has its own dedicated design doc: see `docs/MATCH_MODE.md`.
+Match mode has its own dedicated design doc: see `docs/MATCH_MODE.md`.
 
-**Status:** Tavern is complete; multiplayer race mode is implemented (see `docs/MATCH_MODE.md`).
-PvP combat remains a future extension. Both modes are disabled by default and gated by config, so
-existing single-player play is unaffected.
+**Status:** Tavern and server-selected multiplayer rulesets (`race`, `last-alive`, `score-attack`,
+`coop-escape`) are implemented (see `docs/MATCH_MODE.md`). Both surfaces are disabled by default
+and gated by config, so existing single-player play is unaffected.
 
 ## Shared engine: one Room, two modes
 
 Both modes are built on a single shared component — a real-time, multi-occupant `Room`:
 
 - **Tavern** — a peaceful Room: players pick an avatar, walk around, chat, and watch live games.
-- **Multiplayer** — the same Room engine with a dungeon, monsters, hazards, and player-vs-player
-  combat added.
+- **Multiplayer** — the same Room engine with a dungeon, monsters, and ruleset-selected
+  collision/combat behavior.
 
 The engine (`src/multiplayer/`) has no Socket.IO, database, or Wownerogue coupling. A manager
 layer owns transport (Socket.IO rooms, broadcasts) and the server-tick timer. Keeping the engine
@@ -24,35 +24,36 @@ transport-agnostic makes it unit-testable in isolation and reusable as a standal
 choose an avatar, move around a shared map, and chat. A spectator camera lets them watch live
 single-player or multiplayer games from inside the room.
 
-**Multiplayer Race** — a shared match Room. Players race to escape a dungeon before the next block
-and contend with a shared monster. Match rooms enable occupant collision; the Tavern does not.
-PvP combat is planned for a later milestone.
+**Multiplayer Match** — a shared dungeon Room using the operator-selected ruleset. Players may race
+to escape, fight to remain last alive, compete for score, or cooperate. Block-bounded rulesets end
+on the first advancing header after their active-play duration floor; every match also has a hard
+ceiling. Match rooms enable the collision/combat rules selected by the ruleset; the Tavern does not.
 
 ## Operator Policy
 
 The server operator controls which modes are enabled and, for multiplayer, the economic model.
-Configuration is driven through the existing `config/` layer (DB-backed, hot-reloadable) rather
-than static env vars alone, so operators can adjust settings without a restart. A later extension
-allows per-room settings.
+Mode activation, the multiplayer ruleset, and multiplayer economy switches are startup environment
+configuration. Change `SOLO_ENABLED`, `TAVERN_ENABLED`, `MATCH_ENABLED`, `MATCH_RULESET_ID`, or the
+`MATCH_*` economy settings in the deployment configuration and restart the service. The separate
+database-backed `ConfigPersistence` allowlist covers a limited set of solo payment/difficulty
+values; it does not hot-reload match modes or rulesets. There is no per-room ruleset editor today.
 
 Which modes are enabled is surfaced to clients in the `game_mode_info` event as
-`modes: { solo, tavern, multiplayer }` (from `SOLO_ENABLED` / `TAVERN_ENABLED` /
-`MULTIPLAYER_ENABLED`). The client shows or hides entry points from this, so any single mode can
-run on its own — including a Tavern-only instance. Solo is on unless explicitly disabled;
-Tavern and Multiplayer are opt-in.
+`modes: { solo, tavern, match }` (from `SOLO_ENABLED`, `TAVERN_ENABLED`, and `MATCH_ENABLED`).
+The client shows or hides entry points from this, so any single mode can run on its own — including
+a Tavern-only instance. Solo is on unless explicitly disabled; Tavern and Match are opt-in.
 
 Multiplayer economic models (operator-selected per instance):
 
 | Model | Description |
 |---|---|
-| Free | No entry cost or payout. |
-| Entry fee, leaderboard only | Players pay to enter; results affect a leaderboard, no payout. |
-| Winner-take-pot | Entrants stake into a pot awarded to the winner. |
-| Even-return | Entrants recover their stake; only a flat fee is deducted. |
+| `free` | No entry cost or payout; competitive results use the Free/Pleb board. |
+| `credits_prestige` | Spend credits; competitive results use the separate PvP Prestige board, with no crypto payout. |
+| `crypto_race` | Use a backed race-entry ticket; an eligible competitive winner receives the disclosed pot less the configured fee. |
 
-The default configuration is conservative (free, no payout), matching the current wownerogue
-instance. Operators are responsible for ensuring their chosen configuration complies with
-applicable laws in their jurisdiction.
+The baseline defaults are conservative (free, no payout). Instance deployment configuration may
+enable additional economies; operators are responsible for ensuring their selected configuration
+complies with applicable laws in their jurisdiction.
 
 ## Avatars
 
@@ -147,7 +148,8 @@ can be swapped later without changing callers. The current backend remains the d
 
 Rendering goes through a shared, renderer-agnostic **scene model**: game/tavern state is adapted
 into a `Scene` (a tile grid + entities), and any renderer draws it. This lives in
-`html/js/render/` and is used by both the Tavern and (planned) the main game.
+`html/js/render/` and is used by the Tavern, multiplayer client, spectators, and the single-player
+render bridge.
 
 Render tiers:
 - **ASCII** — monospace glyph grid (canvas). Always-available fallback; accessible.
@@ -201,22 +203,21 @@ Tavern:
 - **T1** — `TavernManager`: Socket.IO room, server-tick timer, join/move/leave broadcasts; minimal
   client (`html/tavern.html`) rendering avatars; gated behind `TAVERN_ENABLED`. (Done)
 - **T2a** — `ChatProvider` seam + tavern chat. (Done)
-- **T2b** — Spectator camera into live games from the Tavern.
-- **T3** — Avatar picker with policy-gated unlocks.
+- **T2b** — Spectator camera into live solo and multiplayer games from the Tavern. (Done)
+- **T3** — Avatar picker with policy-gated unlocks. (Done)
 
 Multiplayer:
-- **M0** — Match Room with a dungeon and shared monsters; players race the block. Includes a load
-  test with many simulated clients to measure server-tick performance under concurrency.
-- **M1** — Player-vs-player combat.
+- **M0** — Match Room with a dungeon, shared monster, server ticks, and bounded lifecycle. (Done)
+- **M1** — Player-vs-player combat for the `last-alive` ruleset. (Done)
 - **M2** — Environmental hazards.
-- **M3** — Operator Policy economic models wired in.
+- **M3** — Free, credit-prestige, and gated crypto-race economies wired in. (Done)
 
 Rendering:
 - **R0** — Shared render kit: scene model + ASCII / Tiled / Fancy (PixiJS) renderers + mode
   switch, wired to the Tavern. Premium-mode gating scaffolded. (Done)
-- **R1** — Wire the main game to the render kit (refactor the `display/` layer behind it).
+- **R1** — Wire the main game to the render kit behind the existing display layer. (Done)
 - **R2** — Real tilesets / sprite sheets and the Fancy-ASCII tier.
-- **R3** — Wire premium render modes to credit entitlements (Operator Policy).
+- **R3** — Wire premium render modes to credit entitlements (Operator Policy). (Done)
 
 All milestones are additive and config-gated; the single-player path is unchanged.
 
@@ -232,18 +233,18 @@ All milestones are additive and config-gated; the single-player path is unchange
 and Socket.IO room broadcasts. Wired into `SocketHandlers` (`tavern_join` / `tavern_move` /
 `tavern_leave`, plus disconnect cleanup and shutdown). Inert unless `TAVERN_ENABLED=true`.
 
-`html/tavern.html` — a minimal self-contained client: connect, choose a name/avatar, enter the
-room, walk with arrow keys / WASD, and chat. Renders the map and occupants on a canvas.
+`html/tavern.html` — the browser client: connect, choose a name/avatar, enter the room, walk with
+keyboard or on-screen controls, chat, watch solo/multiplayer games, or join a match.
 
 `src/network/chat/` — the `ChatProvider` seam. `ChatProvider` (interface) + `SocketChatProvider`
 (default: Socket.IO delivery + Postgres history). Both the global chat (`ChatHandler`) and tavern
 chat deliver through it, so the backend can be swapped (e.g. a Nostr channel) without changing
 callers. Tavern chat is room-scoped and ephemeral.
 
-`html/js/render/` — the render kit: `sceneModel.js` (renderer-agnostic scene + tavern adapter),
-`asciiRenderer.js`, `tileRenderer.js`, `fancyRenderer.js` (PixiJS), and `renderModes.js`
-(registry, factory with graceful fallback, entitlements, persistence). The tavern client uses it
-with a mode toolbar; premium modes are marked and gated by `RK.entitlements`.
+`html/js/render/` — the render kit: `sceneModel.js` (renderer-agnostic adapters), ASCII, tiled,
+Fancy (PixiJS), isometric, and Three.js renderers, plus `renderModes.js` (registry, factory with
+graceful fallback, entitlements, persistence). Clients expose a mode toolbar where applicable;
+premium modes are marked and gated by `RK.entitlements`.
 
 Tests: `test/tavernRoom.test.js` (engine), `test/tavernManager.test.js` (manager incl. chat),
 `test/chatProvider.test.js`, `test/renderScene.test.js` (scene adapter),

@@ -21,17 +21,18 @@ function renderVerifyPage(gameId, gameRecord, opts = {}) {
     const baseUrl = (opts.baseUrl || '').replace(/\/$/, '');
     const ogImage = opts.ogImage ? `${baseUrl}/${opts.ogImage.replace(/^\//, '')}` : '';
     const pageUrl = `${baseUrl}/verify/${esc(gameId)}`;
+    const gameIdJson = JSON.stringify(String(gameId)).replace(/</g, '\\u003c');
 
     // Social card description reflects the actual result when we have a record.
-    let ogDescription = `Provably-fair roguelike — escape the dungeon before the next block. Verify any game was fair.`;
+    let ogDescription = `Committed-layout roguelike — verify the published seed generated the recorded dungeon depths.`;
     if (gameRecord) {
         const escaped = gameRecord.status === 'won';
         const bag = gameRecord.treasure_found ? ' with the treasure bag' : '';
         ogDescription = escaped
-            ? `Escaped the dungeon${bag} in ${gameRecord.moves_made || '?'} moves. Cryptographically verified provably fair.`
-            : `A provably-fair run that didn't make it out. Verify the seed generated this exact dungeon.`;
+            ? `Escaped the dungeon${bag} in ${gameRecord.moves_made || '?'} moves. Verify the committed dungeon layout.`
+            : `A run that didn't make it out. Verify the committed seed generated its recorded dungeon layout.`;
     }
-    const ogTitle = `${name} — Provably-Fair Roguelike`;
+    const ogTitle = `${name} — Dungeon Layout Verification`;
     const metaTags = `
   <meta property="og:type" content="website">
   <meta property="og:title" content="${esc(ogTitle)}">
@@ -43,6 +44,12 @@ function renderVerifyPage(gameId, gameRecord, opts = {}) {
   <meta name="twitter:description" content="${esc(ogDescription)}">
   ${ogImage ? `<meta name="twitter:image" content="${esc(ogImage)}">` : ''}`;
 
+    const hasV2Proof = !!(gameRecord && gameRecord.server_seed && gameRecord.proof_commitment && gameRecord.effective_seed);
+    let recordedManifest = gameRecord?.layout_fingerprints || null;
+    if (typeof recordedManifest === 'string') {
+        try { recordedManifest = JSON.parse(recordedManifest); } catch (_) { recordedManifest = null; }
+    }
+    const recordedDepths = Array.isArray(recordedManifest) ? recordedManifest.length : 0;
     const recordBlock = gameRecord ? `
   <div class="box">
     <h3>Game Record</h3>
@@ -52,6 +59,17 @@ function renderVerifyPage(gameId, gameRecord, opts = {}) {
     <p><strong>Moves:</strong> ${esc(gameRecord.moves_made || 'N/A')}</p>
     <p><strong>Duration:</strong> ${gameRecord.duration_seconds ? esc(gameRecord.duration_seconds) + 's' : 'N/A'}</p>
     <p><strong>Created:</strong> ${esc(gameRecord.created_at)}</p>
+    ${hasV2Proof ? `
+    <p><strong>Proof version:</strong> ${esc(gameRecord.proof_version || 2)}</p>
+    <p><strong>Published commitment:</strong> <code>${esc(String(gameRecord.proof_commitment).trim())}</code></p>
+    <p><strong>Client seed:</strong> <code>${esc(gameRecord.client_seed || '(empty)')}</code></p>
+    <p><strong>Revealed server seed:</strong> <code>${esc(String(gameRecord.server_seed).trim())}</code></p>
+    <p><strong>Derived effective seed:</strong> <code>${esc(String(gameRecord.effective_seed).trim())}</code></p>
+    <p><strong>Generator version:</strong> <code>${esc(gameRecord.generator_version || gameRecord.proof_context?.generatorVersion || 'legacy')}</code></p>
+    <p><strong>Verification scope:</strong> ${recordedDepths ? `All ${recordedDepths} dungeon depth(s)` : 'Legacy level 1 only'}</p>
+    <p><strong>Played layout fingerprint:</strong> <code>${esc(String(gameRecord.layout_fingerprint || '').trim())}</code></p>
+    <button onclick="verifyRecorded()">🔍 Verify recorded proof + dungeon</button>
+    ` : '<p class="info">This legacy/in-progress game has no revealed v2 proof.</p>'}
   </div>
   ` : '';
 
@@ -78,61 +96,125 @@ function renderVerifyPage(gameId, gameRecord, opts = {}) {
   </style>
 </head>
 <body>
-  <h1>🔐 ${esc(name)} Provably Fair Verification</h1>
+  <h1>🔐 ${esc(name)} Committed Dungeon Verification</h1>
 
   <div class="box">
     <h3>How it works:</h3>
     <ol>
-      <li>Before game start, you received a <strong>commitment hash</strong> (SHA-256)</li>
-      <li>After the game, you received the <strong>seed</strong></li>
-      <li>This page verifies: <code>SHA256(seed) === commitment</code></li>
-      <li>The seed deterministically generated your dungeon layout</li>
+      <li>The server publishes <code>SHA256(serverSeed)</code> before your browser chooses a client seed.</li>
+      <li>Your one-time offer and client seed are bound to the game before dungeon generation.</li>
+      <li>After the game, the server seed is revealed and this page re-derives the effective seed with HMAC-SHA256.</li>
+      <li>The effective seed regenerates every advertised depth and each must match its versioned recorded fingerprint.</li>
     </ol>
+    <p class="info">Scope: this verifies seed commitment and recorded dungeon layouts. It does not replay player input, block timing, monster turns, the reported outcome, or payout delivery.</p>
   </div>
 
   <div class="box">
-    <h3>Verify Game</h3>
-    <label>Game Seed (revealed after game):</label>
-    <input type="text" id="seed" placeholder="64 character hex string">
+    <h3>Manual v2 verification</h3>
+    <label>Server seed (revealed after game):</label>
+    <input type="text" id="serverSeed" placeholder="64 character hex string" value="${hasV2Proof ? esc(String(gameRecord.server_seed).trim()) : ''}">
+
+    <label>Client seed (accepted before game; empty for legacy clients):</label>
+    <input type="text" id="clientSeed" placeholder="up to 64 hexadecimal characters" value="${hasV2Proof ? esc(gameRecord.client_seed || '') : ''}">
+
+    <label>Effective dungeon seed:</label>
+    <input type="text" id="effectiveSeed" placeholder="64 character hex string" value="${hasV2Proof ? esc(String(gameRecord.effective_seed).trim()) : ''}">
 
     <label>Commitment Hash (shown before game):</label>
-    <input type="text" id="commitment" placeholder="64 character hex string">
+    <input type="text" id="commitment" placeholder="64 character hex string" value="${hasV2Proof ? esc(String(gameRecord.proof_commitment).trim()) : ''}">
 
-    <button onclick="verify()">🔍 Verify</button>
+    <button onclick="verifyManual()">🔍 Verify seed relationship</button>
 
     <div id="result"></div>
   </div>
   ${recordBlock}
   <div class="box info">
     <p>For technical verification, you can also use the API:</p>
-    <code>GET /api/verify?seed=YOUR_SEED&commitment=YOUR_COMMITMENT</code>
+    <code>GET /api/verify/${esc(gameId)}</code>
   </div>
 
   <script>
-    async function verify() {
-      const seed = document.getElementById('seed').value.trim();
-      const commitment = document.getElementById('commitment').value.trim();
-      const result = document.getElementById('result');
+    const gameId = ${gameIdJson};
 
-      if (!seed || !commitment) {
-        result.innerHTML = '<p class="error">Please enter both seed and commitment.</p>';
+    function clearResult() {
+      const result = document.getElementById('result');
+      result.textContent = '';
+      return result;
+    }
+
+    function appendLine(parent, text, className) {
+      const line = document.createElement('p');
+      if (className) line.className = className;
+      line.textContent = String(text == null ? '' : text);
+      parent.appendChild(line);
+    }
+
+    function appendCodeLine(parent, label, value, suffix) {
+      const line = document.createElement('p');
+      line.appendChild(document.createTextNode(label));
+      const code = document.createElement('code');
+      code.textContent = String(value == null ? '' : value);
+      line.appendChild(code);
+      if (suffix) line.appendChild(document.createTextNode(suffix));
+      parent.appendChild(line);
+    }
+
+    function showFailure(message) {
+      const result = clearResult();
+      appendLine(result, message || 'Verification failed', 'error');
+    }
+
+    function show(data) {
+      const result = clearResult();
+      if (data.valid) {
+        appendLine(result, data.message, 'success');
+        appendCodeLine(result, 'Commitment: ', data.computedCommitment);
+        appendCodeLine(result, 'Effective seed: ', data.computedEffectiveSeed);
+        if (Array.isArray(data.levels)) {
+          const depthSummary = data.levels.map(function(level) {
+            const state = level.matches === true ? 'match' : (level.matches === false ? 'mismatch' : 'unscoped');
+            return String(level.depth) + ':' + state;
+          }).join(', ');
+          appendCodeLine(result, 'Verified depths: ', depthSummary);
+        }
+        if (data.layoutFingerprint) {
+          appendCodeLine(result, 'Layout fingerprint: ', data.layoutFingerprint,
+            data.layoutMatches === true ? ' ✅' : '');
+        }
+      } else {
+        showFailure(data.message || data.error || 'Verification failed');
+      }
+    }
+
+    async function verifyRecorded() {
+      try {
+        const response = await fetch('/api/verify/' + encodeURIComponent(gameId));
+        show(await response.json());
+      } catch (err) {
+        showFailure('Error: ' + err.message);
+      }
+    }
+
+    async function verifyManual() {
+      const serverSeed = document.getElementById('serverSeed').value.trim();
+      const clientSeed = document.getElementById('clientSeed').value.trim();
+      const effectiveSeed = document.getElementById('effectiveSeed').value.trim();
+      const commitment = document.getElementById('commitment').value.trim();
+
+      if (!serverSeed || !effectiveSeed || !commitment) {
+        showFailure('Please enter server seed, effective seed, and commitment.');
         return;
       }
 
       try {
-        const response = await fetch('/api/verify?seed=' + encodeURIComponent(seed) + '&commitment=' + encodeURIComponent(commitment));
-        const data = await response.json();
-
-        if (data.valid) {
-          result.innerHTML = '<p class="success">✅ ' + data.message + '</p>' +
-            '<p>Computed hash: <code>' + data.computedHash + '</code></p>';
-        } else {
-          result.innerHTML = '<p class="error">❌ ' + data.message + '</p>' +
-            '<p>Expected: <code>' + data.expectedCommitment + '</code></p>' +
-            '<p>Got: <code>' + data.computedHash + '</code></p>';
-        }
+        const query = '?serverSeed=' + encodeURIComponent(serverSeed) +
+          '&clientSeed=' + encodeURIComponent(clientSeed) +
+          '&effectiveSeed=' + encodeURIComponent(effectiveSeed) +
+          '&commitment=' + encodeURIComponent(commitment);
+        const response = await fetch('/api/verify' + query);
+        show(await response.json());
       } catch (err) {
-        result.innerHTML = '<p class="error">Error: ' + err.message + '</p>';
+        showFailure('Error: ' + err.message);
       }
     }
   </script>

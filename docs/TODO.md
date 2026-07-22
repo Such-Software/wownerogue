@@ -28,8 +28,11 @@ Done:
 
 Pending:
 - [ ] **Multi-level calibration run**: lock per-network level counts against a target house-win (sim multi-level support is in; counts are currently starting points).
-- [ ] **Block-bounded pot race** (flagship): consume `Ruleset.timing.blockDeadline`; add pot+rake economy (house = zero-risk rake-taker). Decisions pending: empty-pot rule, prize split.
-- [ ] **PvP wiring**: connect the already-built `last-alive`/`score-attack` rulesets to a real queue.
+- [x] **Block-bounded pot race** (flagship): `Ruleset.timing.blockDeadline` expires active matches
+      on the first advancing header after the play-time floor; winner-take-pot-minus-fee admission
+      is durable and co-op is excluded until split-payout semantics exist.
+- [x] **PvP wiring**: the server selects `race`, `last-alive`, `score-attack`, or `coop-escape`
+      with `MATCH_RULESET_ID`; match state and persistence record the active ruleset.
 - [ ] **Hazard gameplay**: generator places lava/poison/spikes (FX already renders them) + damage stakes; escalate per level.
 - [ ] **Client polish**: "Level N/M" indicator + "descended" toast (server sends `depth`/`maxDepth` + `game_event: descend`).
 

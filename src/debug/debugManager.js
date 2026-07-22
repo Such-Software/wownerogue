@@ -4,7 +4,6 @@
  * Keeps debug/development code separate from production logic
  */
 
-const rpc = require('../rpc/rpccalls.js');
 const packageConfig = require('../package.json');
 
 class DebugManager {
@@ -40,6 +39,7 @@ class DebugManager {
         this.debugInterval = null;
         this.statusInterval = null;
         this.lastProductionBlockHeight = 0;
+        this.lastSuccessfulRpcAt = 0;
         
         // Log configuration on startup
         this.logConfig();
@@ -119,13 +119,17 @@ class DebugManager {
         // Initialize RPC service if available
         const RpcService = require('../rpc/rpcService');
         this.rpcService = new RpcService();
-        
+
         // Real blockchain monitoring with new RPC service
         const poll = async () => {
             try {
                 const currentHeight = await this.rpcService.getBlockHeight();
+
+                if (this.rpcService.healthy) {
+                    this.lastSuccessfulRpcAt = Date.now();
+                }
                 
-                if (!currentHeight) {
+                if (!currentHeight || !this.rpcService.healthy) {
                     if (this.CONSOLE_LOGGING) {
                         console.log("❌ Failed to get block count from daemon");
                     }
@@ -151,18 +155,6 @@ class DebugManager {
                     console.error("❌ RPC Error:", error.message);
                 }
                 
-                // Fallback to legacy RPC if new service fails
-                rpc.daemonCall("get_block_count", "", (result) => {
-                    if (result && result.result && result.result.count) {
-                        const currentHeight = result.result.count;
-                        this.broadcastManager.broadcastBlockHeight(currentHeight);
-                        
-                        if (currentHeight > this.lastProductionBlockHeight) {
-                            this.onNewBlock(currentHeight);
-                            this.lastProductionBlockHeight = currentHeight;
-                        }
-                    }
-                });
             }
         };
         // immediate first poll so UI shows real height quickly
@@ -179,6 +171,24 @@ class DebugManager {
     getCurrentBlockHeight() {
         if (this.SIMULATED_BLOCKS) return this.debugBlockHeight;
         return this.lastProductionBlockHeight;
+    }
+
+    /** Whether the production daemon has answered recently enough for readiness. */
+    isChainHealthy(maxStaleMs = Number(process.env.RPC_HEALTH_MAX_STALE_MS) || 15000) {
+        if (this.SIMULATED_BLOCKS) return true;
+        return this.lastSuccessfulRpcAt > 0 && (Date.now() - this.lastSuccessfulRpcAt) <= maxStaleMs;
+    }
+
+    /** Sanitized chain identity for readiness; never exposes RPC URLs or credentials. */
+    getChainIdentity() {
+        return this.rpcService?.getIdentityStatus?.() || {
+            required: this.IS_PRODUCTION,
+            verified: false,
+            expected: null,
+            actual: null,
+            reason: 'not_checked',
+            checkedAt: 0
+        };
     }
 
     /**
@@ -263,6 +273,8 @@ class DebugManager {
             currentBlockHeight: this.getCurrentBlockHeight(),
             isRunning: !!this.debugInterval,
             lastProductionBlock: this.lastProductionBlockHeight,
+            chainHealthy: this.isChainHealthy(),
+            lastSuccessfulRpcAt: this.lastSuccessfulRpcAt,
             debugBlock: this.debugBlockHeight
         };
     }

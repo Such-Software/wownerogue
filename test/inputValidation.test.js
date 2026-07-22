@@ -53,3 +53,18 @@ describe('handleRegisterClient validation', () => {
     expect(reg.data.success).toBe(false);
   });
 });
+
+describe('session resume credential transport', () => {
+  let ch;
+  afterEach(() => ch && ch.shutdown && ch.shutdown());
+
+  test('accepts auth payload token and ignores URL query token', () => {
+    ch = buildHandler();
+    expect(ch._getResumeToken({
+      handshake: { auth: { resumeToken: 'auth-secret' }, query: { resumeToken: 'url-secret' } }
+    })).toBe('auth-secret');
+    expect(ch._getResumeToken({
+      handshake: { auth: {}, query: { resumeToken: 'url-secret' } }
+    })).toBeNull();
+  });
+});

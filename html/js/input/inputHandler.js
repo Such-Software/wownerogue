@@ -48,7 +48,11 @@ const InputHandler = {
             // If the message is "enter", always send it to server
             // The server will handle queueing logic and timing
             if (msg.toLowerCase() === 'enter') {
-                socket.emit('chat message', msg);
+                if (typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
+                    if (!SocketHandlers.emitFairGameStart('join_queue')) return false;
+                } else {
+                    socket.emit('chat message', msg);
+                }
 
                 // Don't automatically switch to waiting screen - let the server control screen state
                 // The server will send appropriate events (payment_created, waiting_status, etc.)
@@ -157,7 +161,11 @@ const InputHandler = {
                                        window.location.hostname === '127.0.0.1' || 
                                        window.location.protocol === 'file:';
                     
-                    socket.emit('chat message', 'enter');
+                    if (typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
+                        if (!SocketHandlers.emitFairGameStart('join_queue')) return;
+                    } else {
+                        socket.emit('chat message', 'enter');
+                    }
                     
                     if (isDebugMode || ScreenManager.canEnterGame()) {
                         // Check if we should show waiting screen
@@ -217,7 +225,11 @@ const InputHandler = {
             }
 
             // Default: attempt immediate start (payment-required modes go through their own flow)
-            socket.emit('auto_start');
+            if (typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
+                if (!SocketHandlers.emitFairGameStart('auto_start')) return;
+            } else {
+                socket.emit('auto_start');
+            }
 
             // Check if we should show waiting screen
             const addressRequired = typeof SocketHandlers !== 'undefined' && SocketHandlers.payoutAddressRequired();

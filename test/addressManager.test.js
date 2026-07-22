@@ -4,14 +4,19 @@ const { AppError } = require('../src/utils/errors');
 describe('AddressManager', () => {
     const sampleAddress = 'WW3UyJFX6GPKdM21APyVYjGhfX3ebyHvPPgtFC3wHxkYTCGg8k2UM9DLTCzcgoaLHSKnvJKRtCPgJ1sxvgYiFCoK19vLk83Jn';
 
-    function createManager({ existingAddress = null } = {}) {
+    function createManager({ existingAddress = null, cryptoType = null, network = null, walletValidation = null } = {}) {
         const emitMock = jest.fn();
         const toMock = jest.fn().mockReturnValue({ emit: emitMock });
         const broadcastMock = { sendStatusUpdate: jest.fn() };
         const gameModeManager = {
+            cryptoType,
+            network,
             setUserPayoutAddress: jest.fn().mockResolvedValue(true),
             getOrCreateUser: jest.fn().mockResolvedValue({ payout_address: existingAddress })
         };
+        if (walletValidation) {
+            gameModeManager.validatePayoutAddress = jest.fn().mockResolvedValue(walletValidation);
+        }
 
         const manager = new AddressManager({
             gameModeManager,
@@ -46,5 +51,32 @@ describe('AddressManager', () => {
         expect(gameModeManager.getOrCreateUser).toHaveBeenCalled();
         expect(manager.pending.has('socket-3')).toBe(false);
         expect(emitMock).toHaveBeenCalledWith('address_confirmed', expect.objectContaining({ message: expect.stringContaining('already set') }));
+    });
+
+    test('accepts stagenet XMR prefixes and rejects mainnet prefixes on a stagenet server', async () => {
+        const { manager, gameModeManager } = createManager({
+            cryptoType: 'XMR',
+            network: 'stagenet',
+            walletValidation: { valid: true, nettype: 'stagenet' }
+        });
+        const stagenetAddress = `5${'1'.repeat(94)}`;
+        const mainnetAddress = `4${'1'.repeat(94)}`;
+
+        expect(manager.isValidAddress(stagenetAddress)).toBe(true);
+        expect(manager.isValidAddress(mainnetAddress)).toBe(false);
+        expect(await manager.saveAddress('socket-stage', stagenetAddress)).toBe(stagenetAddress);
+        expect(gameModeManager.setUserPayoutAddress).toHaveBeenCalledWith('socket-stage', stagenetAddress);
+    });
+
+    test('wallet-RPC validation fails closed before an address is persisted', async () => {
+        const { manager, gameModeManager } = createManager({
+            cryptoType: 'XMR',
+            network: 'stagenet',
+            walletValidation: { valid: false, nettype: 'mainnet' }
+        });
+        const stagenetShapedAddress = `7${'1'.repeat(94)}`;
+
+        expect(await manager.saveAddress('socket-bad', stagenetShapedAddress)).toBe(false);
+        expect(gameModeManager.setUserPayoutAddress).not.toHaveBeenCalled();
     });
 });

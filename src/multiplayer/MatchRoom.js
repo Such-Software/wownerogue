@@ -11,7 +11,7 @@
  *   • Player-on-player collision is enabled (solidOccupants = true).
  *   • One shared treasure exists; first player to reach it picks it up.
  *   • If the treasure carrier dies, the treasure drops at their corpse.
- *   • First player to reach the exit wins; timer expiry ranks by proximity.
+ *   • The selected ruleset owns resolution and ranking; timer/block expiry remains deterministic.
  */
 
 const { v4: uuidv4 } = require('uuid');
@@ -89,6 +89,9 @@ class MatchRoom extends Room {
 
         // Movement queue for current tick: occupantId -> { dx, dy }
         this.moveQueue = new Map();
+        // Carries fractional monster speed between ticks (for example 0.5 = one move every
+        // other tick). This is match state, so it remains deterministic from the committed seed.
+        this.monsterMoveAccumulator = 0;
 
         // Timer / deadline bookkeeping (from the ruleset; defaults reproduce the classic values).
         this.minDurationMs = this.ruleset.timing.minDurationMs;  // floor before next-block expiry can fire (20s)
@@ -195,6 +198,9 @@ class MatchRoom extends Room {
             this.occupants.set(id, occ);
             this.playerStates.set(id, {
                 userId: e.userId || null,
+                // Stable across socket reconnect/re-keying. Same-tick action priority is derived
+                // from this slot + the committed seed, never packet arrival order or socket id.
+                entrantSlot: i,
                 alive: true,
                 finished: false,
                 escaped: false,
@@ -285,8 +291,18 @@ class MatchRoom extends Room {
             const nx = occ.x + dx;
             const ny = occ.y + dy;
             const facing = Room.facingFor(dx, dy);
-            plans.push({ id, from: { x: occ.x, y: occ.y }, to: { x: nx, y: ny }, facing });
+            plans.push({
+                id,
+                from: { x: occ.x, y: occ.y },
+                to: { x: nx, y: ny },
+                facing,
+                priority: this._tickActionPriority(id)
+            });
         }
+
+        // Network arrival order must never decide a paid match. Resolve the tick in a committed,
+        // reproducible order which changes per tick but remains stable across reconnects.
+        plans.sort((a, b) => a.priority.localeCompare(b.priority));
 
         // If A moves to B's tile and B moves to A's tile, both bounce.
         const swapPairs = new Set();
@@ -312,14 +328,25 @@ class MatchRoom extends Room {
 
         // Apply each valid move.
         for (const p of plans) {
+            if (this.status !== 'active') break;
             const occ = this.occupants.get(p.id);
+            const actorState = this.playerStates.get(p.id);
+            // An earlier same-tick strike may have eliminated this actor after intents were
+            // captured. A dead/escaped actor never gets a post-mortem move or attack.
+            if (!occ || !actorState || !actorState.alive || actorState.finished) {
+                events.push({
+                    type: 'move_failed', id: p.id, reason: 'eliminated_before_action',
+                    from: p.from, to: p.to, tick: this.tickCount
+                });
+                continue;
+            }
             let reason = null;
 
             if (swapPairs.has(p.id)) {
                 reason = 'collision_swap';
             } else if (!this.isWalkable(p.to.x, p.to.y)) {
                 reason = 'blocked';
-            } else if (this.solidOccupants && this.isOccupied(p.to.x, p.to.y, p.id)) {
+            } else if (this.solidOccupants && this._isBlockingOccupantAt(p.to.x, p.to.y, p.id)) {
                 // PvP: stepping onto a living rival strikes them down; the attacker holds position.
                 if (this.pvpCombat) {
                     const victimId = this._livingOccupantIdAt(p.to.x, p.to.y, p.id);
@@ -344,8 +371,7 @@ class MatchRoom extends Room {
             }
 
             occ.moveTo(p.to.x, p.to.y, p.facing);
-            const state = this.playerStates.get(p.id);
-            state.moves++;
+            actorState.moves++;
             events.push({ type: 'move', id: p.id, from: p.from, to: p.to, facing: p.facing, tick: this.tickCount });
             // If the player stepped onto the monster, they die immediately.
             if (this.monster && p.to.x === this.monster.x && p.to.y === this.monster.y) {
@@ -355,6 +381,14 @@ class MatchRoom extends Room {
         }
 
         return events;
+    }
+
+    _tickActionPriority(id, tick = this.tickCount) {
+        const slot = this.playerStates.get(id)?.entrantSlot;
+        const stableSlot = Number.isInteger(slot) ? slot : -1;
+        return crypto.createHash('sha256')
+            .update(`${this.seed}:${tick}:${stableSlot}`)
+            .digest('hex');
     }
 
     _moveMonster() {
@@ -392,11 +426,14 @@ class MatchRoom extends Room {
             }
         }
 
-        const movesPerTick = this.difficultyConfig.monster.movesPerPlayerMove || 1.0;
-        let movesRemaining = movesPerTick;
+        const configuredSpeed = Number(this.difficultyConfig?.monster?.movesPerPlayerMove);
+        const movesPerTick = Number.isFinite(configuredSpeed) && configuredSpeed >= 0
+            ? configuredSpeed
+            : 1.0;
+        this.monsterMoveAccumulator += movesPerTick;
 
-        while (movesRemaining >= 1) {
-            movesRemaining--;
+        while (this.monsterMoveAccumulator >= 1) {
+            this.monsterMoveAccumulator -= 1;
             const moved = this.monster.moveTowardPlayer(
                 target,
                 this.dungeon,
@@ -433,6 +470,21 @@ class MatchRoom extends Room {
             }
         }
         return null;
+    }
+
+    // Terminal players stay in occupants so spectators and final results can render them, but a
+    // corpse or escaped hero must not become permanent dungeon geometry. This is especially
+    // important at the single exit tile: Co-op and Score Attack require multiple players to pass
+    // through it on different ticks. Live, in-play players remain solid (or attackable in PvP).
+    _isBlockingOccupantAt(x, y, excludeId) {
+        for (const occ of this.occupants.values()) {
+            if (occ.id === excludeId || occ.x !== x || occ.y !== y) continue;
+            const state = this.playerStates.get(occ.id);
+            // Only an explicitly terminal state becomes pass-through. An unexpected occupant
+            // without match state stays solid instead of failing open into an overlap.
+            if (!state || (state.alive && !state.finished)) return true;
+        }
+        return false;
     }
 
     _checkResolution() {
@@ -571,10 +623,12 @@ class MatchRoom extends Room {
             r.state.score = this._calculateScore(r.state, i + 1, r.dist);
         }
 
-        // Winner consistency across ALL end paths: the payout target (winnerId) and the
-        // leaderboard's placement #1 always name the SAME player. finalize() is the single source
-        // of truth — it runs after expire() in every path, reconciling any provisional winner.
-        if (ranked.length > 0) this.winnerId = ranked[0].id;
+        // Competitive winner consistency across ALL end paths: the payout target (winnerId) and
+        // placement #1 name the same player. Co-op is deliberately collective and therefore has
+        // no individual winnerId; placements remain useful progress/order metadata.
+        const collective = this.ruleset.mode === 'coop'
+            || this.ruleset.winCondition.type === 'all-escape';
+        this.winnerId = collective ? null : (ranked[0]?.id || null);
 
         return this.playerStates;
     }
@@ -624,6 +678,7 @@ class MatchRoom extends Room {
         return {
             matchId: this.id,
             economy: this.economy,
+            ruleset: this._rulesetSummary(),
             tick: this.tickCount,
             status: this.status,
             visibleTiles: visible,
@@ -664,6 +719,7 @@ class MatchRoom extends Room {
             ...super.snapshot(),
             economy: this.economy,
             variant: this.variant,
+            ruleset: this._rulesetSummary(),
             tick: this.tickCount,
             status: this.status,
             treasure: this.treasure,
@@ -682,7 +738,48 @@ class MatchRoom extends Room {
             walkable: this.walkable,
             dungeon: this.dungeon,
             seedHash: this.seedHash,
+            fairness: this.fairnessProof(this.status === 'finished'),
             gameState: this.toGameState(viewerId)
+        };
+    }
+
+    fairnessProof(reveal = false) {
+        const derivation = this.seedDerivation || { version: 'server-random-v1' };
+        const revealed = reveal && this.status === 'finished';
+        const futureBlockFreeze = derivation.version === 'future-chain-block-v2';
+        return {
+            scope: futureBlockFreeze
+                ? 'future-block seed after durable entrant freeze'
+                : (derivation.version === 'chain-block-v1'
+                    ? 'chain-derived entrant-locked seed'
+                    : 'server commitment only'),
+            version: derivation.version,
+            seedHash: this.seedHash,
+            seed: revealed ? this.seed : null,
+            blockHeight: derivation.blockHeight ?? this.startBlockHeight ?? null,
+            blockHash: derivation.blockHash || null,
+            freezeBlockHeight: derivation.freezeBlockHeight ?? null,
+            targetBlockHeight: derivation.targetBlockHeight ?? null,
+            entropyDelayBlocks: derivation.entropyDelayBlocks ?? null,
+            entropyConfirmations: derivation.entropyConfirmations ?? null,
+            minimumConfirmedTipHeight: derivation.minimumConfirmedTipHeight ?? null,
+            precommitTipHeight: derivation.precommitTipHeight ?? null,
+            precommitVerifiedAt: derivation.precommitVerifiedAt ?? null,
+            freezeCommitment: derivation.freezeCommitment || null,
+            economy: derivation.economy || this.economy,
+            rulesetId: derivation.rulesetId || this.ruleset.id,
+            queueEntryIds: revealed ? (derivation.queueEntryIds || null) : null
+        };
+    }
+
+    _rulesetSummary() {
+        return {
+            id: this.ruleset.id,
+            label: this.ruleset.label,
+            mode: this.ruleset.mode,
+            description: this.ruleset.metadata?.description || '',
+            winCondition: this.ruleset.winCondition.type,
+            pvpCombat: this.ruleset.entities.pvpCombat
         };
     }
 }

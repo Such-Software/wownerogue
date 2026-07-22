@@ -88,11 +88,14 @@ class MatchState {
             status: room.status,
             economy: room.economy,
             variant: room.variant,
+            ruleset_id: room.ruleset?.id || 'race',
             difficulty_preset: room.difficultyPreset,
             max_players: room.maxPlayers,
             seed_hash: room.seedHash,
             seed: room.status === 'finished' ? room.seed : null,
-            dungeon: room.dungeon,
+            dungeon: room.seedDerivation
+                ? { ...room.dungeon, match_fairness: room.seedDerivation }
+                : room.dungeon,
             start_block_height: room.startBlockHeight,
             started_at: room.startedAt ? new Date(room.startedAt) : null,
             ended_at: room.endedAt ? new Date(room.endedAt) : null,

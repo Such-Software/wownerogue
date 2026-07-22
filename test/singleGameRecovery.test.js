@@ -9,21 +9,34 @@
 
 const SessionManager = require('../src/network/sessionManager');
 
-function makeDb({ singleGamePayments = [], gamesForPayment = new Set(), recoveredReasons = new Set() }) {
+function makeDb({ singleGamePayments = [], gamesForPayment = new Set(), recoveredReasons = new Set(), entitlementPaymentIds = new Set() }) {
   let credits = 0;
   const handler = async (text, params = []) => {
     // credits_package recovery queries (unprocessed + orphaned) — none in these tests
     if (/FROM payments[\s\S]*credits_package/i.test(text)) return { rows: [] };
+    if (/FROM payments\s+WHERE id = \$1[\s\S]*FOR UPDATE/i.test(text)) {
+      const p = singleGamePayments.find(row => row.id === params[0]);
+      return { rows: p ? [{ id: p.id, user_id: 7, status: 'confirmed', payment_type: 'single_game' }] : [] };
+    }
     // outer "unconsumed single_game" discovery query
     if (/payment_type = 'single_game'/i.test(text)) {
       return {
         rows: singleGamePayments
-          .filter(p => !gamesForPayment.has(p.id) && !recoveredReasons.has(`single_game_recovered:${p.id}`))
+          .filter(p => !gamesForPayment.has(p.id)
+            && !entitlementPaymentIds.has(p.id)
+            && !recoveredReasons.has(`single_game_recovered:${p.id}`))
           .map(p => ({ id: p.id, confirmed_at: p.confirmed_at }))
       };
     }
-    if (/SELECT id FROM payments WHERE id = \$1 FOR UPDATE/i.test(text)) return { rows: [{ id: params[0] }] };
     if (/SELECT 1 FROM games WHERE payment_id/i.test(text)) return { rows: gamesForPayment.has(params[0]) ? [{}] : [] };
+    if (/SELECT payment_id FROM payment_entitlement_grants/i.test(text)) {
+      return { rows: entitlementPaymentIds.has(params[0]) ? [{ payment_id: params[0] }] : [] };
+    }
+    if (/INSERT INTO payment_entitlement_grants/i.test(text)) {
+      if (entitlementPaymentIds.has(params[0])) return { rows: [], rowCount: 0 };
+      entitlementPaymentIds.add(params[0]);
+      return { rows: [{ payment_id: params[0] }], rowCount: 1 };
+    }
     if (/FROM credit_transactions WHERE user_id = \$1 AND reason = \$2/i.test(text)) {
       return { rows: recoveredReasons.has(params[1]) ? [{}] : [] };
     }

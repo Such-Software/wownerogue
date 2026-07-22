@@ -11,7 +11,7 @@ function decimalToAtomic(dec, decimals) {
     const [ip, fpRaw = ''] = s.replace('-', '').split('.');
     const fp = (fpRaw + '0'.repeat(decimals)).slice(0, decimals);
     const atomic = BigInt(ip || '0') * (10n ** BigInt(decimals)) + BigInt(fp || '0');
-    return Number(neg ? -atomic : atomic);
+    return Atomic.toSafe(neg ? -atomic : atomic);
 }
 
 /**
@@ -139,6 +139,17 @@ class BTCPayProvider extends PaymentProvider {
             complete: mapped.complete,
             amount,
             required,
+            receipts: mapped.status === 'paid' && Atomic.toBig(amount) > 0n
+                ? [{
+                    evidenceType: 'provider_invoice',
+                    evidenceId: String(id),
+                    providerId: this.id,
+                    txHash: null,
+                    addressIndex: null,
+                    amount: Atomic.toBig(amount).toString(),
+                    confirmed: true
+                }]
+                : [],
             confirmations: null,
             _terminal: mapped.status === 'expired' || mapped.status === 'invalid'
         };

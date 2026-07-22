@@ -36,6 +36,8 @@ class DatabaseManager {
     constructor() {
         this.pool = null;
         this.connected = false;
+        this.lastSuccessfulQueryAt = 0;
+        this.lastFailedQueryAt = 0;
         this.queryValidator = new QueryValidator();
     }
 
@@ -78,6 +80,7 @@ class DatabaseManager {
             client.release();
 
             this.connected = true;
+            this.lastSuccessfulQueryAt = Date.now();
             console.log('✅ Database connected successfully');
             
             return true;
@@ -155,6 +158,7 @@ class DatabaseManager {
         try {
             const start = Date.now();
             const result = await this.pool.query(text, params);
+            this.lastSuccessfulQueryAt = Date.now();
             const duration = Date.now() - start;
 
             if (process.env.NODE_ENV === 'development') {
@@ -163,6 +167,7 @@ class DatabaseManager {
 
             return result;
         } catch (error) {
+            this.lastFailedQueryAt = Date.now();
             console.error('❌ Database query error:', error.message);
             console.error('Query:', text);
             throw error;
@@ -242,6 +247,12 @@ class DatabaseManager {
      */
     isConnected() {
         return this.connected;
+    }
+
+    isHealthy(maxStaleMs = Number(process.env.DB_HEALTH_MAX_STALE_MS) || 30000) {
+        return this.connected
+            && this.lastSuccessfulQueryAt > 0
+            && (Date.now() - this.lastSuccessfulQueryAt) <= maxStaleMs;
     }
 
     /**

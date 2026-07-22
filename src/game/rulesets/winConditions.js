@@ -4,7 +4,7 @@
  *
  *   onExit(room, id)  — a player reached the exit. Decide whether that ends the match / sets a winner.
  *   onDeath(room)     — a player just died. Decide whether the match is now over.
- *   rank(room)        — final ordering (best-first) used by finalize() for placement + winnerId.
+ *   rank(room)        — final ordering used for placement and competitive winnerId.
  *
  * FIRST_TO_EXIT reproduces the classic race behavior byte-for-byte (so existing matches are
  * unchanged); LAST_ALIVE and HIGH_SCORE are the new PvP / score modes.

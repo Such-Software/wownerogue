@@ -62,17 +62,9 @@ block deadline, so the house edge is a simulation problem. `src/sim/` drives the
 headless bots; `NETWORK_TUNING` + multi-level depth are the calibrated levers. See
 [BALANCE_SIM.md](BALANCE_SIM.md) and [MULTI_LEVEL.md](MULTI_LEVEL.md).
 
-## Regenerating the API reference (autodocs)
-
-The code is heavily JSDoc-commented. To regenerate a Markdown API reference from those comments:
-
-```bash
-cd src && npm install   # first time, pulls jsdoc-to-markdown (devDependency)
-npm run docs:api        # writes docs/API/*.md
-```
-
-Autodocs cover the **reference** layer (what each function/param is). The **why** — the seams and
-flows in the pages above — is hand-authored and lives here in `docs/`. Keep both.
+The code is heavily JSDoc-commented, while the hand-authored pages here explain subsystem seams and
+operator intent. A docs-only generator is intentionally not part of the production dependency lock;
+add one in a dedicated documentation toolchain if generated API pages become a release artifact.
 
 ## Conventions worth knowing
 

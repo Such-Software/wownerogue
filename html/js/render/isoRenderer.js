@@ -326,8 +326,9 @@
             var e = scene.entities[i];
             p = this._project(e.x, e.y, originX, originY);
             items.push({ type: 'entity', e: e, sx: p.x, sy: p.y, depth: e.x + e.y + 0.55 });
-            // Sticky camera target (keep last if the player is momentarily absent).
-            if (e.you || e.kind === 'player') { this.focusPoint = { x: p.x, y: p.y + this.tileH }; this._plx = e.x; this._ply = e.y; }
+            // Sticky camera target (keep last if the player is momentarily absent). Multiplayer
+            // scenes explicitly mark one racer as cameraTarget; never let a later rival steal it.
+            if (e.you || e.cameraTarget) { this.focusPoint = { x: p.x, y: p.y + this.tileH }; this._plx = e.x; this._ply = e.y; }
         }
         items.sort(function (a, b) { return a.depth === b.depth ? (a.y || 0) - (b.y || 0) : a.depth - b.depth; });
 

@@ -1,0 +1,44 @@
+# play.wowne.ro game instance (Wownero mainnet, free + paid prestige, no payouts).
+# Install to /etc/systemd/system/wownerogue.service.
+[Unit]
+Description=Wownerogue Game Server (Wownero Mainnet)
+After=network-online.target postgresql.service wownero-wallet-rpc.service
+Wants=network-online.target
+Wants=wownero-wallet-rpc.service
+
+[Service]
+Type=simple
+User=wownerogue
+Group=wownerogue
+WorkingDirectory=/var/www/wownerogue/current/src
+EnvironmentFile=/etc/wownerogue/app.env
+EnvironmentFile=/etc/wownerogue/wallet-rpc.env
+ExecStartPre=/usr/bin/node scripts/preflight.js
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

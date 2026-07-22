@@ -38,6 +38,7 @@ describe('admin routes factory', () => {
       '/api/admin/users/search',
       '/api/admin/stats/overview',
       '/api/admin/stats/payouts',
+      '/api/admin/stats/refunds',
       '/api/admin/stats/games',
       '/api/admin/users',
       '/api/admin/users/:id',
@@ -52,7 +53,14 @@ describe('admin routes factory', () => {
 
 describe('auth (smirk) routes factory', () => {
   test('builds a router and registers the smirk endpoints', () => {
-    const router = createAuthRoutes({ db: { query: jest.fn() } });
+    const query = jest.fn();
+    const router = createAuthRoutes({
+      db: { query, withTransaction: jest.fn() },
+      sessionManager: {
+        generateSecureToken: jest.fn(),
+        disconnectUserSessions: jest.fn()
+      }
+    });
     const paths = router.stack.filter(l => l.route).map(l => l.route.path);
     expect(paths).toEqual(expect.arrayContaining([
       '/api/auth/smirk/challenge',

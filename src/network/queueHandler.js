@@ -26,6 +26,8 @@ class QueueHandler {
             // the auto_start free path so the "Next block · Free Play" choice doesn't wrongly pop the
             // payment modal for a free queued game.
             const wantsFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
+            let authorizedFairnessProof = opts.fairnessProof || null;
+            let authorizedPaymentId = null;
             // Rate limiting for queue attempts
             const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:queue');
             if (!rateLimitResult.allowed) {
@@ -67,13 +69,25 @@ class QueueHandler {
                             this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
                             break;
                         case 'make_payment':
-                            await this.paymentHandlers.createAndShowPaymentRequest(socket);
+                            await this.paymentHandlers.createAndShowPaymentRequest(socket, {
+                                fairnessProof: opts.fairnessProof || null,
+                                legalAcknowledgement: opts.legalAcknowledgement
+                            });
                             break;
                         default:
                             this.broadcastManager.sendStatusUpdate(socket.id, 'error',
                                 paymentCheckResult.reason || 'Not allowed to join queue');
                     }
                     return;
+                }
+                if (paymentCheckResult.effectiveMode === 'PAID_SINGLE') {
+                    authorizedFairnessProof = paymentCheckResult.fairnessProof || null;
+                    authorizedPaymentId = paymentCheckResult.paymentId || null;
+                    if (this.gameModeManager._requiresPaidFairnessV2?.() && !authorizedFairnessProof) {
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                            'This paid entry has no durable fairness binding and requires support review.');
+                        return;
+                    }
                 }
             }
 
@@ -95,9 +109,11 @@ class QueueHandler {
                 serverId: socket.id,
                 clientId: currentUser.clientId,
                 userId: userId,
+                paymentId: authorizedPaymentId,
                 requiresConfirmation: false,
                 confirmed: true,
-                free: wantsFree
+                free: wantsFree,
+                fairnessProof: authorizedFairnessProof
             });
 
             const currentBlock = this.debugManager.getCurrentBlockHeight();
@@ -179,7 +195,7 @@ class QueueHandler {
      * Handle early entry request - start game immediately without waiting for next block
      * Risk: Player will die if next block is found before they escape
      */
-    async handleEarlyEntry(socket, getUserBySocket) {
+    async handleEarlyEntry(socket, getUserBySocket, opts = {}) {
         try {
             // Rate limiting
             const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:queue');
@@ -234,7 +250,9 @@ class QueueHandler {
                         this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
                         break;
                     case 'make_payment':
-                        await this.paymentHandlers.createAndShowPaymentRequest(socket);
+                        await this.paymentHandlers.createAndShowPaymentRequest(socket, {
+                            legalAcknowledgement: opts.legalAcknowledgement
+                        });
                         break;
                     default:
                         this.broadcastManager.sendStatusUpdate(socket.id, 'error', 
@@ -251,7 +269,9 @@ class QueueHandler {
             
             // For early entry, the player's blockRec is set to current block
             // This means they will die when the NEXT block is found (currentBlock + 1)
-            const result = await this.queueManager.startEarlyGame(socket.id, currentUser, currentBlock);
+            const result = await this.queueManager.startEarlyGame(socket.id, currentUser, currentBlock, {
+                fairnessProof: opts.fairnessProof || null
+            });
             
             if (result.success) {
                 // Emit early entry success event
@@ -293,41 +313,51 @@ class QueueHandler {
         }
 
         try {
-            // Check payout address requirement for payout-eligible modes
-            const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || 
-                                 (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
-            
-            if (payoutEligible) {
-                const user = await this.gameModeManager.getOrCreateUser(socketId);
-                if (!user.payout_address) {
-                    return { 
-                        allowed: false, 
-                        action: 'set_address',
-                        reason: 'Payout address required' 
-                    };
-                }
-            }
-
-            // Check general payment eligibility
+            // Resolve eligibility first: on a mixed instance the actual entry may consume a
+            // credit or a confirmed direct payment, and those modes can have different payout
+            // policies. Address-gate the mode that processGameStart will really use.
             const eligibility = await this.gameModeManager.canUserStartGame(socketId);
-            
+
             if (!eligibility.allowed) {
                 if (this.debugManager.CONSOLE_LOGGING) {
                     console.log(`❌ Payment required for ${socketId}: ${eligibility.reason}`);
                 }
-                
+
                 return {
                     allowed: false,
                     action: eligibility.action === 'purchase_credits' ? 'make_payment' : 'make_payment',
                     reason: eligibility.reason
                 };
             }
-            
+
+            const effectiveMode = eligibility.effectiveMode || this.gameModeManager.gameMode;
+            const needsAddress = typeof this.gameModeManager.requiresPayoutAddressForMode === 'function'
+                ? this.gameModeManager.requiresPayoutAddressForMode(effectiveMode)
+                : ((effectiveMode === 'PAID_SINGLE')
+                    || (effectiveMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled));
+
+            if (needsAddress) {
+                const user = await this.gameModeManager.getOrCreateUser(socketId);
+                if (!user.payout_address) {
+                    return {
+                        allowed: false,
+                        action: 'set_address',
+                        reason: 'Payout address required'
+                    };
+                }
+            }
+
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log(`✅ Payment validated for ${socketId}: ${eligibility.reason}`);
             }
             
-            return { allowed: true, reason: eligibility.reason };
+            return {
+                allowed: true,
+                reason: eligibility.reason,
+                effectiveMode,
+                paymentId: eligibility.paymentId || null,
+                fairnessProof: eligibility.fairnessProof || null
+            };
             
         } catch (error) {
             console.error('Error checking payment eligibility:', error);

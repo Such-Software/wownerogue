@@ -230,39 +230,58 @@ describe('(ix) route layer — single-use challenge consume rejects replay', () 
   const createAuthRoutes = require('../src/routes/auth');
 
   // Mock DB modelling the atomic single-use UPDATE ... WHERE used=FALSE ... RETURNING.
-  function mockDb(challengeValue, socketId) {
-    const challenges = new Map([[challengeValue, { id: 1, socket_id: socketId, used: false }]]);
-    return {
-      challenges,
-      query: async (sql, params = []) => {
-        const s = sql.replace(/\s+/g, ' ').trim();
-        if (/^UPDATE smirk_challenges SET used = TRUE/i.test(s)) {
-          const [ch, sock] = params;
-          const row = challenges.get(ch);
-          if (row && row.socket_id === sock && row.used === false) {
-            row.used = true; // atomic FALSE -> TRUE, exactly once
-            return { rows: [{ id: row.id }] };
-          }
-          return { rows: [] };
-        }
-        if (/SELECT id FROM users WHERE socket_id = \$1$/i.test(s)) {
-          return { rows: [{ id: 77 }] };
-        }
-        if (/SELECT id FROM users WHERE smirk_public_key = \$1 AND id != \$2/i.test(s)) {
-          return { rows: [] }; // not linked elsewhere
-        }
-        if (/^UPDATE users SET smirk_public_key = \$1/i.test(s)) {
-          return { rows: [] };
+  function mockDb(challengeValue, socketId, token) {
+    const user = { id: 77, socket_id: socketId, anon_token: token };
+    const challenges = new Map([[
+      challengeValue,
+      { id: 1, socket_id: socketId, user_id: user.id, used: false }
+    ]]);
+    const query = async (sql, params = []) => {
+      const s = sql.replace(/\s+/g, ' ').trim();
+      if (/SELECT id, socket_id, anon_token FROM users/i.test(s)) {
+        return params[0] === user.socket_id && params[1] === user.anon_token
+          ? { rows: [user] }
+          : { rows: [] };
+      }
+      if (/^UPDATE smirk_challenges SET used = TRUE/i.test(s)) {
+        const [ch, userId, sock] = params;
+        const row = challenges.get(ch);
+        if (row && row.user_id === userId && row.socket_id === sock && row.used === false) {
+          row.used = true; // atomic FALSE -> TRUE, exactly once
+          return { rows: [{ id: row.id }] };
         }
         return { rows: [] };
-      },
+      }
+      if (/SELECT id FROM users WHERE id = \$1 AND socket_id = \$2 AND anon_token = \$3 FOR UPDATE/i.test(s)) {
+        return params[0] === user.id && params[1] === user.socket_id && params[2] === user.anon_token
+          ? { rows: [{ id: user.id }] }
+          : { rows: [] };
+      }
+      if (/SELECT id, socket_id, payout_address FROM users WHERE smirk_public_key/i.test(s)) {
+        return { rows: [] }; // not linked elsewhere
+      }
+      if (/^UPDATE users SET smirk_public_key = \$1/i.test(s)) {
+        return { rows: [{ id: user.id }] };
+      }
+      return { rows: [] };
+    };
+    return {
+      challenges,
+      query,
+      withTransaction: async (fn) => fn({ query }),
     };
   }
 
   function startServer(db) {
     const app = express();
     app.use(express.json());
-    app.use(createAuthRoutes({ db }));
+    app.use(createAuthRoutes({
+      db,
+      sessionManager: {
+        generateSecureToken: () => 'unused-test-token',
+        disconnectUserSessions: jest.fn()
+      }
+    }));
     // Minimal error handler mirroring the app's (ValidationError -> 400, etc.).
     app.use((err, req, res, _next) => {
       res.status(err.statusCode || 500).json({ error: err.message });
@@ -273,11 +292,11 @@ describe('(ix) route layer — single-use challenge consume rejects replay', () 
     });
   }
 
-  async function postJson(server, path, body) {
+  async function postJson(server, path, body, token) {
     const { port } = server.address();
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
       body: JSON.stringify(body),
     });
     const json = await res.json().catch(() => ({}));
@@ -287,20 +306,21 @@ describe('(ix) route layer — single-use challenge consume rejects replay', () 
   test('a valid NIP-98 event links once, then the identical replay is rejected', async () => {
     const sk = generateSecretKey();
     const socketId = 'sock-xyz-1';
+    const token = 'route-session-token';
     const challenge = 'route-nonce-9f8e7d';
     // created_at must be genuinely fresh — the route uses real Date.now().
     const ev = buildEvent(sk, { created_at: Math.floor(Date.now() / 1000), challenge });
 
-    const db = mockDb(challenge, socketId);
+    const db = mockDb(challenge, socketId, token);
     const server = await startServer(db);
     try {
-      const first = await postJson(server, PATH_SUFFIX, { socketId, event: ev });
+      const first = await postJson(server, PATH_SUFFIX, { socketId, event: ev }, token);
       expect(first.status).toBe(200);
       expect(first.json).toMatchObject({ success: true, linked: true });
       expect(db.challenges.get(challenge).used).toBe(true);
 
       // Replay the exact same event: the single-use consume now fails -> 400.
-      const second = await postJson(server, PATH_SUFFIX, { socketId, event: ev });
+      const second = await postJson(server, PATH_SUFFIX, { socketId, event: ev }, token);
       expect(second.status).toBe(400);
       expect(second.json.error).toBeTruthy();
     } finally {

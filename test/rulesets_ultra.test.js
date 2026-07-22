@@ -59,6 +59,15 @@ function findAdjacentWalkable(room) {
     return null;
 }
 
+function stageSequentialExit(room) {
+    room.dungeon.exit = [2, 2];
+    room.walkable[2][1] = true;
+    room.walkable[2][2] = true;
+    room.walkable[3][2] = true;
+    room.occupants.get('a').moveTo(1, 2);
+    room.occupants.get('b').moveTo(2, 3);
+}
+
 describe('MatchRoom drives new rulesets', () => {
     test('last-alive PvP: stepping onto a rival kills them and ends the match with the survivor as winner', () => {
         const room = new MatchRoom({
@@ -87,6 +96,89 @@ describe('MatchRoom drives new rulesets', () => {
         expect(room.playerStates.get('b').placement).toBe(2);
     });
 
+    test('same-tick PvP is independent of packet order and eliminated actors never retaliate', () => {
+        const run = (submissionOrder) => {
+            const room = new MatchRoom({
+                ruleset: { id: 'ordered-pvp', winCondition: { type: WIN.LAST_ALIVE }, entities: { monster: false, pvpCombat: true }, players: { min: 2, max: 4 } },
+                entrants: { a: { userId: 1 }, b: { userId: 2 }, c: { userId: 3 } },
+                seed: SEED
+            });
+            room.start();
+
+            const ids = ['a', 'b', 'c'].sort((left, right) =>
+                room._tickActionPriority(left, room.tickCount + 1)
+                    .localeCompare(room._tickActionPriority(right, room.tickCount + 1))
+            );
+            const [attacker, victim, downstream] = ids;
+            room.occupants.get(attacker).moveTo(2, 2);
+            room.occupants.get(victim).moveTo(3, 2);
+            room.occupants.get(downstream).moveTo(4, 2);
+            room.walkable[2][2] = true;
+            room.walkable[2][3] = true;
+            room.walkable[2][4] = true;
+
+            const moves = new Map([
+                [attacker, [1, 0]],       // kills victim first by committed tick priority
+                [victim, [1, 0]]          // would kill downstream if post-mortem actions ran
+            ]);
+            for (const id of submissionOrder(ids)) room.queueMove(id, ...moves.get(id));
+            const result = room.resolveTick();
+            return {
+                attacker,
+                victim,
+                downstream,
+                events: result.events,
+                status: room.status,
+                winnerId: room.winnerId,
+                players: Array.from(room.playerStates.entries()).map(([id, state]) => [id, {
+                    alive: state.alive,
+                    killedBy: state.killedBy,
+                    moves: state.moves,
+                    placement: state.placement
+                }])
+            };
+        };
+
+        const forward = run(ids => [ids[0], ids[1]]);
+        const reverse = run(ids => [ids[1], ids[0]]);
+        expect(reverse).toEqual(forward);
+        expect(forward.players.find(([id]) => id === forward.victim)[1].alive).toBe(false);
+        expect(forward.players.find(([id]) => id === forward.downstream)[1].alive).toBe(true);
+        expect(forward.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'move_failed', id: forward.victim, reason: 'eliminated_before_action'
+            })
+        ]));
+    });
+
+    test('last-alive corpses remain visible but do not trap surviving players', () => {
+        const room = new MatchRoom({
+            ruleset: {
+                id: 'corpse-pass-through', winCondition: { type: WIN.LAST_ALIVE },
+                entities: { monster: false, pvpCombat: true }, players: { min: 2, max: 4 }
+            },
+            entrants: { a: { userId: 1 }, b: { userId: 2 }, c: { userId: 3 } },
+            seed: SEED
+        });
+        room.start();
+        room.walkable[2][1] = true;
+        room.walkable[2][2] = true;
+        room.walkable[2][3] = true;
+        room.occupants.get('a').moveTo(1, 2);
+        room.occupants.get('b').moveTo(2, 2);
+        room.occupants.get('c').moveTo(3, 2);
+        room._killPlayer('b', 'monster');
+
+        room.queueMove('a', 1, 0);
+        const result = room.resolveTick();
+
+        expect(room.occupants.get('b')).toBeDefined();
+        expect(room.occupants.get('a')).toEqual(expect.objectContaining({ x: 2, y: 2 }));
+        expect(result.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'move', id: 'a' })
+        ]));
+    });
+
     test('high-score: reaching the exit does NOT instantly win — the match keeps going', () => {
         const room = new MatchRoom({
             ruleset: { id: 'test-score', winCondition: { type: WIN.HIGH_SCORE }, entities: { monster: false }, players: { min: 1, max: 4 } },
@@ -94,14 +186,50 @@ describe('MatchRoom drives new rulesets', () => {
             seed: SEED
         });
         room.start();
-        const exit = room.dungeon.exit;
-        room.occupants.get('a').moveTo(exit[0], exit[1]);
+        stageSequentialExit(room);
+        room.queueMove('a', 1, 0);
         const res = room.resolveTick();
 
         expect(room.playerStates.get('a').escaped).toBe(true);
         expect(room.status).toBe('active');   // b is still in play — no instant win
         expect(room.winnerId).toBeNull();
         expect(res.finished).toBe(false);
+
+        room.queueMove('b', 0, -1);
+        const second = room.resolveTick();
+        expect(room.playerStates.get('b').escaped).toBe(true);
+        expect(room.occupants.get('b')).toEqual(expect.objectContaining({ x: 2, y: 2 }));
+        expect(second.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'player_exit', id: 'b' })
+        ]));
+    });
+
+    test('co-op success is collective and never invents an individual winner', () => {
+        const room = new MatchRoom({
+            ruleset: {
+                id: 'test-coop', mode: 'coop',
+                winCondition: { type: WIN.ALL_ESCAPE },
+                entities: { monster: false }, players: { min: 2, max: 2 }
+            },
+            entrants: { a: { userId: 1 }, b: { userId: 2 } },
+            seed: SEED
+        });
+        room.start();
+        stageSequentialExit(room);
+        room.queueMove('a', 1, 0);
+        room.resolveTick();
+        expect(room.status).toBe('active');
+
+        room.queueMove('b', 0, -1);
+        const second = room.resolveTick();
+        expect(room.endReason).toBe('all_escaped');
+        expect(second.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'player_exit', id: 'b' })
+        ]));
+
+        room.finalize();
+        expect(room.winnerId).toBeNull();
+        expect([...room.playerStates.values()].map(s => s.placement).sort()).toEqual([1, 2]);
     });
 
     test('race (default) still ends the moment someone escapes', () => {

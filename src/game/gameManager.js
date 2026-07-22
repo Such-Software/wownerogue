@@ -6,13 +6,30 @@
 const Game = require('../game/game');
 
 class GameManager {
-    constructor({ activeGames, io, broadcastManager, debugManager, gameModeManager, spectatorManager = null }) {
+    constructor({
+        activeGames,
+        io,
+        broadcastManager,
+        debugManager,
+        gameModeManager,
+        spectatorManager = null,
+        settlementRetryBaseMs = 1000,
+        settlementRetryMaxMs = 30000
+    }) {
         this.activeGames = activeGames;
         this.io = io;
         this.broadcastManager = broadcastManager;
         this.debugManager = debugManager;
         this.gameModeManager = gameModeManager;
         this.spectatorManager = spectatorManager;
+        this.suspendedGameManager = null;
+        this._pendingSettlements = new Map();
+        this._settlementRetryBaseMs = Math.max(1, Number(settlementRetryBaseMs) || 1000);
+        this._settlementRetryMaxMs = Math.max(
+            this._settlementRetryBaseMs,
+            Number(settlementRetryMaxMs) || 30000
+        );
+        this._isShuttingDown = false;
     }
 
     /**
@@ -23,6 +40,11 @@ class GameManager {
         this.spectatorManager = spectatorManager;
     }
 
+    /** Late binding avoids a constructor cycle with reconnect support. */
+    setSuspendedGameManager(suspendedGameManager) {
+        this.suspendedGameManager = suspendedGameManager;
+    }
+
     /**
      * Create a new game for a user
      * @param {Object} user - User object
@@ -31,6 +53,13 @@ class GameManager {
      * @returns {Object} Created game instance
      */
     async createGameForUser(user, gameType = 'standard', options = {}) {
+        // Settlement-pending games intentionally remain in activeGames. This is the last-line
+        // guard against starting/charging a replacement run while the previous terminal result
+        // is not yet durable (and also closes ordinary double-start races between handlers).
+        if (this.activeGames.has(user.id)) {
+            throw new Error('User already has an active or settlement-pending game');
+        }
+
         let game;
 
         if (gameType === 'legacy') {
@@ -39,11 +68,17 @@ class GameManager {
             game = Game.createStandardGame(user.id, user, options);
         }
 
+        // Persist before exposing the game or charging entry. Paid-start processing updates this
+        // exact row; allowing play to continue after a failed INSERT can consume a payment/credit
+        // with no durable game or payout-liability anchor.
+        await this._insertGameRecord(game, user);
+
+        if (this.gameModeManager?.paymentsEnabled && !game.dbId) {
+            throw new Error('Durable game record is required before a paid game can start');
+        }
+
         user.joinGame(game);
         this.activeGames.set(user.id, game);
-
-        // Insert DB record and wait for it (needed for processGameStart to find the row)
-        await this._insertGameRecord(game, user);
 
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id} (dbId: ${game.dbId || 'none'})`);
@@ -61,130 +96,298 @@ class GameManager {
      * @param {number} score - Game score
      */
     async handleGameOver(socket, game, status, reason, message, score = 0) {
+        const socketId = socket?.id || socket;
+        if (!socketId || !game?.id) return { success: false, reason: 'Invalid game completion' };
+        if (game.settlementCommitted) return { success: true, reason: 'Game already completed' };
+
+        // Escape, monster collision, and block timeout may converge in one event-loop turn. The
+        // first caller freezes the authoritative terminal facts synchronously; every later caller
+        // shares that exact settlement attempt instead of overwriting it or paying twice.
+        const existing = this._pendingSettlements.get(game.id);
+        if (existing) return this._attemptSettlement(existing);
+
         try {
-            const socketId = socket.id || socket;
-
-            // IMMEDIATELY remove from active games to prevent double-processing.
-            // If escape + block timeout fire in the same event loop tick, the second
-            // call would find the game still here during the first call's await.
-            this.activeGames.delete(socketId);
-
-            game.gameState = status;
             const moves = game.moveCount || 0;
-            const durationSeconds = game.startedAt ? Math.max(0, Math.round((Date.now() - game.startedAt) / 1000)) : null;
+            const durationSeconds = game.startedAt
+                ? Math.max(0, Math.round((Date.now() - game.startedAt) / 1000))
+                : null;
             const finalScore = score > 0 ? score : this._calculateScore(game, status, reason);
-            const gameStats = {
-                score: finalScore,
-                reason: reason,
-                treasuresFound: game.player.hasTreasure ? 1 : 0,
-                moves,
-                durationSeconds
-            };
-            game.endGame(status, gameStats);
-
-            // Process game completion with payment system
-            let payoutInfo = null;
-            if (this.gameModeManager) {
-                try {
-                    payoutInfo = await this.gameModeManager.completeGame(
-                        socketId,
-                        game.id,
-                        status === 'won',
-                        game.player.hasTreasure || false,
-                        { moves, durationSeconds, score: finalScore }
-                    );
-
-                    if (this.debugManager.CONSOLE_LOGGING && payoutInfo) {
-                        console.log(`💰 Payout processed for ${socketId}:`, payoutInfo);
-                    }
-                } catch (error) {
-                    console.error('Error processing game completion:', error);
-                }
-            }
-
-            // Emit game over event with provably fair reveal
-            const proofReveal = game.getProofReveal ? game.getProofReveal() : null;
-
-            this.io.to(socketId).emit('game_over', {
-                status: status,
-                reason: reason,
-                message: message,
+            const treasure = !!game.player?.hasTreasure;
+            const terminal = Object.freeze({
+                status,
+                reason,
+                message,
                 score: finalScore,
                 moves,
                 durationSeconds,
-                payout: payoutInfo,
-                treasure: game.player.hasTreasure || false,
-                proof: proofReveal
+                treasure,
+                won: status === 'won',
+                outcome: reason === 'escaped' ? 'escaped' : reason
             });
 
-            // Persist completion details if DB available
-            await this._updateGameRecord(game, socketId, status, reason, moves, durationSeconds);
-
-            // Notify spectators that the game has ended and broadcast updated list
-            if (this.spectatorManager) {
-                this.spectatorManager.notifyGameEnded(game.id, {
-                    status,
-                    reason,
-                    message,
+            // Mark terminal before any await. Keep ownership in activeGames until the transaction
+            // commits: movement and all existing start paths can then fail closed on this entry.
+            game.gameState = status;
+            game.settlementPending = true;
+            const settlement = {
+                game,
+                socketId,
+                terminal,
+                proof: null,
+                attempts: 0,
+                retryTimer: null,
+                inFlight: null,
+                pendingNoticeSent: false,
+                committed: false
+            };
+            this._pendingSettlements.set(game.id, settlement);
+            try {
+                game.endGame(status, {
                     score: finalScore,
+                    reason,
+                    treasuresFound: treasure ? 1 : 0,
                     moves,
-                    durationSeconds,
-                    treasure: game.player.hasTreasure || false
+                    durationSeconds
                 });
+            } catch (error) {
+                // In-memory user stats and rendering state are secondary to the durable result.
+                // A local callback failure must not suppress the settlement retry.
+                console.error('In-memory game finalization failed:', error.message || error);
+            }
+            try {
+                settlement.proof = game.getProofReveal ? game.getProofReveal() : null;
+            } catch (error) {
+                console.error('Game proof reveal failed:', error.message || error);
+            }
+            return await this._attemptSettlement(settlement);
+        } catch (error) {
+            // Never release a terminal game merely because orchestration failed. If an intent was
+            // installed it remains retryable; otherwise retain the game and flag it for operators.
+            game.settlementPending = true;
+            console.error('GameManager.handleGameOver error:', error.message || error);
+            return { success: false, reason: 'Game settlement pending' };
+        }
+    }
+
+    async _attemptSettlement(settlement) {
+        if (!settlement || settlement.committed) return { success: true, reason: 'Game already completed' };
+        if (settlement.inFlight) return settlement.inFlight;
+
+        const attempt = (async () => {
+            settlement.attempts += 1;
+            const socketId = this._socketIdForGame(settlement.game, settlement.socketId);
+            settlement.socketId = socketId;
+            let payoutInfo;
+
+            try {
+                if (this.gameModeManager) {
+                    const terminal = settlement.terminal;
+                    payoutInfo = await this.gameModeManager.completeGame(
+                        socketId,
+                        settlement.game.id,
+                        terminal.won,
+                        terminal.treasure,
+                        {
+                            moves: terminal.moves,
+                            durationSeconds: terminal.durationSeconds,
+                            score: terminal.score,
+                            reason: terminal.reason,
+                            outcome: terminal.outcome
+                        }
+                    );
+                } else {
+                    const terminal = settlement.terminal;
+                    await this._updateGameRecord(
+                        settlement.game,
+                        socketId,
+                        terminal.status,
+                        terminal.reason,
+                        terminal.moves,
+                        terminal.durationSeconds
+                    );
+                    payoutInfo = { success: true, payout: null };
+                }
+            } catch (error) {
+                console.error('Error processing game completion:', error.message || error);
+                payoutInfo = { success: false };
             }
 
-            // Broadcast leaderboard update if score > 0
-            if (finalScore > 0) {
-                try {
-                    let displayName = null;
-                    if (this.gameModeManager?.db) {
-                        const userRow = await this.gameModeManager.db.query(
-                            `SELECT COALESCE(display_name,
-                                CASE WHEN payout_address IS NOT NULL
-                                    THEN LEFT(payout_address, 4) || '...' || RIGHT(payout_address, 4)
-                                    ELSE 'Anon#' || id
-                                END) as name
-                            FROM users WHERE socket_id = $1`, [socketId]);
-                        displayName = userRow.rows[0]?.name || 'Unknown';
-                    }
-                    this.io.emit('leaderboard_update', {
-                        name: displayName || 'Unknown',
-                        score: finalScore,
-                        treasure: game.player.hasTreasure || false
-                    });
+            // `completeGame` deliberately normalizes transaction errors into success:false.
+            // Treat every other shape as non-durable and retry; only explicit success releases
+            // the game and publishes a result.
+            if (!payoutInfo || payoutInfo.success !== true) {
+                this._emitSettlementPending(settlement);
+                this._scheduleSettlementRetry(settlement);
+                return payoutInfo || { success: false, reason: 'Game settlement pending' };
+            }
 
-                    // Global "win feed": announce actual escapes to everyone so the room feels
-                    // alive (the leaderboard_update above also fires for lost-with-treasure runs;
-                    // the feed should only celebrate real escapes). Payout amount is intentionally
-                    // omitted — it's processed asynchronously and not reliably known yet here.
-                    if (status === 'won') {
-                        this.io.emit('win_feed', {
-                            name: displayName || 'Someone',
-                            treasure: game.player.hasTreasure || false,
-                            score: finalScore,
-                            paid: !!(payoutInfo && payoutInfo.amount)
-                        });
-                    }
-                } catch (lbErr) {
-                    // Non-critical, don't block game over
-                    if (this.debugManager.CONSOLE_LOGGING) {
-                        console.warn('Leaderboard broadcast failed:', lbErr.message);
-                    }
+            settlement.committed = true;
+            settlement.game.settlementPending = false;
+            settlement.game.settlementCommitted = true;
+            if (settlement.retryTimer) {
+                clearTimeout(settlement.retryTimer);
+                settlement.retryTimer = null;
+            }
+            this._pendingSettlements.delete(settlement.game.id);
+
+            // Capture the reconnect-adjusted socket before releasing ownership. Remove only this
+            // exact game so a theoretically newer entry can never be deleted by a late retry.
+            const committedSocketId = this._socketIdForGame(settlement.game, settlement.socketId);
+            for (const [activeSocketId, activeGame] of this.activeGames.entries()) {
+                if (activeGame === settlement.game) this.activeGames.delete(activeSocketId);
+            }
+            const stableUserId = settlement.game.dbUserId ?? settlement.game.userId;
+            if (stableUserId != null) {
+                try {
+                    this.suspendedGameManager?.removeSuspendedGame?.(stableUserId, { countExpired: false });
+                } catch (error) {
+                    console.error('Committed suspended-game cleanup failed:', error.message || error);
                 }
             }
 
-            if (this.debugManager.CONSOLE_LOGGING) {
-                console.log(`🎮 Game ${game.id} ended for ${socketId}: ${status} (${reason}), score: ${finalScore}`);
-            }
+            await this._publishCommittedSettlement(settlement, payoutInfo, committedSocketId);
+            return payoutInfo;
+        })();
 
+        settlement.inFlight = attempt;
+        try {
+            return await attempt;
+        } finally {
+            if (settlement.inFlight === attempt) settlement.inFlight = null;
+        }
+    }
+
+    _scheduleSettlementRetry(settlement) {
+        if (this._isShuttingDown || !settlement || settlement.committed || settlement.retryTimer) return;
+        const exponent = Math.min(Math.max(settlement.attempts - 1, 0), 10);
+        const delay = Math.min(this._settlementRetryBaseMs * (2 ** exponent), this._settlementRetryMaxMs);
+        const timer = setTimeout(() => {
+            if (settlement.retryTimer === timer) settlement.retryTimer = null;
+            if (settlement.committed || !this._pendingSettlements.has(settlement.game.id)) return;
+            this._attemptSettlement(settlement).catch(error => {
+                console.error('Solo settlement retry failed:', error.message || error);
+            });
+        }, delay);
+        timer.unref?.();
+        settlement.retryTimer = timer;
+    }
+
+    _emitSettlementPending(settlement) {
+        if (settlement.pendingNoticeSent) return;
+        settlement.pendingNoticeSent = true;
+        const socketId = this._socketIdForGame(settlement.game, settlement.socketId);
+        try {
+            this.io.to(socketId).emit('game_settlement_pending', {
+                gameId: settlement.game.id,
+                code: 'GAME_FINISH_NOT_DURABLE',
+                retrying: true
+            });
         } catch (error) {
-            console.error('GameManager.handleGameOver error:', error);
-            // Still try to clean up even if there was an error
-            const socketId = socket?.id || socket;
-            if (socketId) {
-                this.activeGames.delete(socketId);
+            // Socket delivery is best-effort. It must never prevent the authoritative DB retry.
+            console.error('Solo settlement-pending broadcast failed:', error.message || error);
+        }
+    }
+
+    _socketIdForGame(game, fallback) {
+        for (const [socketId, activeGame] of this.activeGames.entries()) {
+            if (activeGame === game) return socketId;
+        }
+        return game?.socketId || fallback;
+    }
+
+    async _publishCommittedSettlement(settlement, payoutInfo, socketId) {
+        const { game, terminal, proof } = settlement;
+
+        try {
+            this.io.to(socketId).emit('game_over', {
+                status: terminal.status,
+                reason: terminal.reason,
+                message: terminal.message,
+                score: terminal.score,
+                moves: terminal.moves,
+                durationSeconds: terminal.durationSeconds,
+                payout: payoutInfo,
+                treasure: terminal.treasure,
+                proof
+            });
+        } catch (error) {
+            console.error('Game-over broadcast failed:', error.message || error);
+        }
+
+        try {
+            this.spectatorManager?.notifyGameEnded(game.id, {
+                status: terminal.status,
+                reason: terminal.reason,
+                message: terminal.message,
+                score: terminal.score,
+                moves: terminal.moves,
+                durationSeconds: terminal.durationSeconds,
+                treasure: terminal.treasure
+            });
+        } catch (error) {
+            console.error('Spectator game-over broadcast failed:', error.message || error);
+        }
+
+        if (terminal.score > 0) {
+            try {
+                let displayName = null;
+                if (this.gameModeManager?.db) {
+                    const userRow = await this.gameModeManager.db.query(
+                        `SELECT COALESCE(display_name,
+                            CASE WHEN payout_address IS NOT NULL
+                                THEN LEFT(payout_address, 4) || '...' || RIGHT(payout_address, 4)
+                                ELSE 'Anon#' || id
+                            END) as name
+                        FROM users WHERE socket_id = $1`, [socketId]);
+                    displayName = userRow.rows[0]?.name || 'Unknown';
+                }
+                this.io.emit('leaderboard_update', {
+                    name: displayName || 'Unknown',
+                    score: terminal.score,
+                    treasure: terminal.treasure
+                });
+                if (terminal.status === 'won') {
+                    this.io.emit('win_feed', {
+                        name: displayName || 'Someone',
+                        treasure: terminal.treasure,
+                        score: terminal.score,
+                        paid: !!payoutInfo?.payout?.amount
+                    });
+                }
+            } catch (error) {
+                if (this.debugManager.CONSOLE_LOGGING) {
+                    console.warn('Leaderboard broadcast failed:', error.message);
+                }
             }
         }
+
+        if (this.debugManager.CONSOLE_LOGGING) {
+            console.log(`🎮 Game ${game.id} ended for ${socketId}: ${terminal.status} (${terminal.reason}), score: ${terminal.score}`);
+        }
+    }
+
+    /**
+     * Stop timers and make bounded, serialized final attempts before the DB pool closes.
+     * Returns unresolved count so the process shutdown path can log/escalate it truthfully.
+     */
+    async shutdown({ timeoutMs = 4000, retryIntervalMs = 50 } = {}) {
+        this._isShuttingDown = true;
+        for (const settlement of this._pendingSettlements.values()) {
+            if (settlement.retryTimer) clearTimeout(settlement.retryTimer);
+            settlement.retryTimer = null;
+        }
+
+        const initial = this._pendingSettlements.size;
+        const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+        do {
+            const pending = Array.from(this._pendingSettlements.values());
+            if (pending.length === 0) break;
+            await Promise.allSettled(pending.map(settlement => this._attemptSettlement(settlement)));
+            if (this._pendingSettlements.size === 0 || Date.now() >= deadline) break;
+            await new Promise(resolve => setTimeout(resolve, Math.max(1, retryIntervalMs)));
+        } while (Date.now() < deadline);
+
+        return { initial, settled: initial - this._pendingSettlements.size, pending: this._pendingSettlements.size };
     }
 
     /**
@@ -317,10 +520,36 @@ class GameManager {
 
             try {
                 const result = await db.query(`
-                    INSERT INTO games (user_id, socket_id, game_mode, status, start_block_height, dungeon_seed, created_at)
-                    VALUES ((SELECT id FROM users WHERE socket_id = $1), $2, $3, 'active', $4, $5, NOW())
+                    INSERT INTO games (
+                        user_id, socket_id, game_mode, status, start_block_height, dungeon_seed,
+                        proof_version, fairness_offer_id, fairness_offer_issued_at,
+                        proof_commitment, server_seed, client_seed, effective_seed,
+                        layout_fingerprint, layout_fingerprints, generator_version,
+                        proof_context, created_at
+                    )
+                    VALUES (
+                        (SELECT id FROM users WHERE socket_id = $1), $2, $3, 'active', $4, $5,
+                        $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW()
+                    )
                     RETURNING id, user_id
-                `, [socketId, socketId, gameMode, blockHeight, game.id]);
+                `, [
+                    socketId,
+                    socketId,
+                    gameMode,
+                    blockHeight,
+                    game.id,
+                    game.gameProof?.proofVersion || 1,
+                    game.gameProof?.offerId || null,
+                    game.gameProof?.offerIssuedAt ? new Date(game.gameProof.offerIssuedAt) : null,
+                    game.gameProof?.commitment || null,
+                    game.gameProof?.serverSeed || null,
+                    game.gameProof?.clientSeed || '',
+                    game.gameProof?.seed || null,
+                    game.gameProof?.layoutFingerprint || null,
+                    game.gameProof?.layoutFingerprints ? JSON.stringify(game.gameProof.layoutFingerprints) : null,
+                    game.gameProof?.generatorVersion || null,
+                    game.gameProof?.context ? JSON.stringify(game.gameProof.context) : null
+                ]);
                 game.dbId = result.rows[0]?.id || null;
 
                 // Stamp the stable DB users.id onto the in-memory game object so
@@ -344,6 +573,7 @@ class GameManager {
             } catch (err) {
                 console.error('Game insert failed:', err.message);
                 game.dbId = null;
+                throw err;
             }
         }
     }
@@ -364,7 +594,8 @@ class GameManager {
             try {
                 await db.query(`
                     UPDATE games SET status = $1, outcome = $2, treasure_found = $3, moves_made = $4,
-                        duration_seconds = $5, score = $8, completed_at = NOW()
+                        duration_seconds = $5, score = $8, completed_at = NOW(),
+                        proof_revealed_at = NOW()
                     WHERE dungeon_seed = $6 AND socket_id = $7
                 `, [status, outcome, game.player.hasTreasure, moves, durationSeconds, game.id, socketId, score]);
 

@@ -5,7 +5,12 @@
  */
 const { AppError, normalizeError } = require('../utils/errors');
 
-const ADDRESS_REGEX = /((?:4|8)[1-9A-HJ-NP-Za-km-z]{90,110}|(?:Wo|WO|ww|WW)[0-9A-Za-z]{88,112}|W[0-9A-Za-z]{90,112})/;
+// Candidate extraction accepts every Monero nettype; isValidAddress() then restricts XMR to the
+// configured network (mainnet 4/8, stagenet 5/7, testnet 9/B). Wallet RPC performs the final
+// checksum + nettype validation before persistence.
+const ADDRESS_REGEX = /((?:4|8|5|7|9|B)[1-9A-HJ-NP-Za-km-z]{90,110}|(?:Wo|WO|ww|WW)[0-9A-Za-z]{88,112}|W[0-9A-Za-z]{90,112})/;
+const XMR_ADDRESS_REGEX = /^(?:4|8|5|7|9|B)[1-9A-HJ-NP-Za-km-z]{90,110}$/;
+const WOW_ADDRESS_REGEX = /^(?:(?:Wo|WO|ww|WW)[0-9A-Za-z]{88,112}|W[0-9A-Za-z]{90,112})$/;
 
 class AddressManager {
   constructor({ gameModeManager, broadcastManager, io, debugManager, onConfirmed = null }) {
@@ -28,9 +33,39 @@ class AddressManager {
   isValidAddress(address) {
     const value = typeof address === 'string' ? address.trim() : '';
     if (!value) return false;
-    if (!ADDRESS_REGEX.test(value)) return false;
     // Basic length guard for sanity (allowing integrated addresses)
-    return value.length >= 80 && value.length <= 120;
+    if (value.length < 80 || value.length > 120) return false;
+
+    const currency = String(this.gameModeManager?.cryptoType || '').toUpperCase();
+    if (currency === 'XMR') {
+      if (!XMR_ADDRESS_REGEX.test(value)) return false;
+      const network = String(this.gameModeManager?.network || 'mainnet').toLowerCase();
+      const prefixes = network === 'stagenet' ? new Set(['5', '7'])
+        : (network === 'testnet' ? new Set(['9', 'B']) : new Set(['4', '8']));
+      return prefixes.has(value[0]);
+    }
+    if (currency === 'WOW') return WOW_ADDRESS_REGEX.test(value);
+    return ADDRESS_REGEX.test(value);
+  }
+
+  async _validateWithWallet(address) {
+    if (!this.gameModeManager || typeof this.gameModeManager.validatePayoutAddress !== 'function') {
+      return true; // legacy/injected managers retain syntax-only behavior
+    }
+    let result;
+    try {
+      result = await this.gameModeManager.validatePayoutAddress(address);
+    } catch (error) {
+      throw new AppError('Payout address validation failed', {
+        safeMessage: 'Could not verify that address with the configured wallet network. Try again.'
+      });
+    }
+    if (!result || result.valid !== true) {
+      throw new AppError('Payout address is invalid for the configured wallet network', {
+        safeMessage: 'That address is not valid for this server\'s configured network.'
+      });
+    }
+    return true;
   }
 
   async handleDetection(socketId, address) {
@@ -70,7 +105,8 @@ class AddressManager {
     this.pending.set(socketId, trimmed);
 
     if (autoConfirm) {
-      await this.confirm(socketId, true);
+      const saved = await this.confirm(socketId, true);
+      if (!saved) return false;
     }
 
     return trimmed;
@@ -80,7 +116,7 @@ class AddressManager {
     const pending = this.pending.get(socketId);
     if (!pending) {
       this.broadcastManager?.sendStatusUpdate(socketId, 'warning', 'No address pending. Paste an address first.');
-      return;
+      return false;
     }
     if (!accept) {
       this.pending.delete(socketId);
@@ -89,17 +125,22 @@ class AddressManager {
       if (this.onConfirmed) {
         try { this.onConfirmed(socketId, false, pending); } catch(_) {}
       }
-      return;
+      return true;
     }
     if (this.gameModeManager) {
       try {
-        await this.gameModeManager.setUserPayoutAddress(socketId, pending);
+        await this._validateWithWallet(pending);
+        const saved = await this.gameModeManager.setUserPayoutAddress(socketId, pending);
+        if (saved !== true) throw new Error('Payout address was not persisted');
         // this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address saved.'); // Removed duplicate
         this.io.to(socketId).emit('address_confirmed', { address: pending, message: 'Payout address saved.' });
       } catch (e) {
         const normalized = normalizeError?.(e, 'Failed to save address') || e;
         this.broadcastManager?.sendStatusUpdate(socketId, 'error', normalized.safeMessage || 'Failed to save address. Try again.');
-        return;
+        this.io.to(socketId).emit('address_update_error', {
+          message: normalized.safeMessage || 'Failed to save address. Try again.'
+        });
+        return false;
       } finally {
         this.pending.delete(socketId);
       }
@@ -111,11 +152,15 @@ class AddressManager {
     if (this.onConfirmed) {
       try { this.onConfirmed(socketId, true, pending); } catch(_) {}
     }
+    return true;
   }
 
   requiresPayoutAddress() {
     if (!this.gameModeManager) return false; // free mode => no requirement
     const mode = this.gameModeManager.gameMode;
+    if (typeof this.gameModeManager.requiresPayoutAddressForMode === 'function') {
+      return this.gameModeManager.requiresPayoutAddressForMode(mode);
+    }
     return (mode === 'PAID_SINGLE') || (mode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
   }
 }

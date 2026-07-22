@@ -5,80 +5,195 @@
 const express = require('express');
 const crypto = require('crypto');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, NotFoundError } = require('../utils/errors');
+const { AppError, ValidationError } = require('../utils/errors');
 const { verifyNip98Event } = require('../utils/nip98');
 
+const AUTH_WINDOW_MS = 60 * 1000;
+const AUTH_RATE_MAX_KEYS = 10000;
+
+function createIpRateLimiter({ max }) {
+  const hits = new Map();
+  let lastSweep = 0;
+
+  return (req, res, next) => {
+    const now = Date.now();
+    if (now - lastSweep >= AUTH_WINDOW_MS) {
+      for (const [key, value] of hits) {
+        if (now - value.windowStart >= AUTH_WINDOW_MS) hits.delete(key);
+      }
+      lastSweep = now;
+    }
+
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    let entry = hits.get(ip);
+    if (!entry || now - entry.windowStart >= AUTH_WINDOW_MS) {
+      if (!entry && hits.size >= AUTH_RATE_MAX_KEYS) {
+        res.setHeader('Retry-After', '60');
+        return res.status(429).json({ error: 'Too many authentication attempts' });
+      }
+      entry = { count: 0, windowStart: now };
+      hits.set(ip, entry);
+    }
+
+    entry.count += 1;
+    if (entry.count > max) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(
+        (entry.windowStart + AUTH_WINDOW_MS - now) / 1000
+      ));
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many authentication attempts' });
+    }
+    return next();
+  };
+}
+
 module.exports = function createAuthRoutes(ctx) {
-  const { db } = ctx;
+  const { db, sessionManager } = ctx;
+  if (!db || typeof db.query !== 'function' || typeof db.withTransaction !== 'function') {
+    throw new TypeError('Smirk auth requires transactional database access');
+  }
+  if (!sessionManager
+    || typeof sessionManager.generateSecureToken !== 'function'
+    || typeof sessionManager.disconnectUserSessions !== 'function') {
+    throw new TypeError('Smirk auth requires session revocation support');
+  }
   const router = express.Router();
+  const challengeRateLimit = createIpRateLimiter({ max: 10 });
+  const verifyRateLimit = createIpRateLimiter({ max: 20 });
+
+  function unauthorized(message = 'Session ownership verification failed') {
+    return new AppError(message, {
+      statusCode: 403,
+      code: 'SESSION_OWNERSHIP_REQUIRED',
+      safeMessage: 'Session ownership verification failed.'
+    });
+  }
+
+  async function resolveSessionOwner(req, socketId) {
+    const token = req.get('X-Session-Token');
+    if (!token) {
+      throw new AppError('Session token required', {
+        statusCode: 401,
+        code: 'SESSION_TOKEN_REQUIRED',
+        safeMessage: 'Session token required.'
+      });
+    }
+    if (typeof token !== 'string' || token.length > 512) throw unauthorized();
+
+    const result = await db.query(`
+      SELECT id, socket_id, anon_token
+      FROM users
+      WHERE socket_id = $1 AND anon_token = $2
+      LIMIT 1
+    `, [socketId, token]);
+    if (result.rows.length !== 1) throw unauthorized();
+    return { userId: result.rows[0].id, socketId, token };
+  }
 
   /**
-   * Atomically consume a challenge nonce, single-use, bound to a socket.
+   * Atomically consume a challenge nonce, single-use, bound to the authenticated stable user.
    * A single UPDATE ... WHERE used=FALSE ... RETURNING flips FALSE->TRUE for exactly
    * one caller, so two concurrent requests can never both pass (no SELECT/UPDATE TOCTOU).
    * Returns true iff this call is the one that consumed a fresh, unexpired challenge.
    */
-  async function consumeChallenge(challenge, socketId) {
+  async function consumeChallenge(challenge, session) {
     const consumed = await db.query(`
       UPDATE smirk_challenges
       SET used = TRUE
-      WHERE challenge = $1 AND socket_id = $2 AND used = FALSE AND expires_at > NOW()
+      WHERE challenge = $1
+        AND user_id = $2
+        AND socket_id = $3
+        AND used = FALSE
+        AND expires_at > NOW()
       RETURNING id
-    `, [challenge, socketId]);
+    `, [challenge, session.userId, session.socketId]);
     return consumed.rows.length > 0;
   }
 
   /**
-   * Link a proven wallet key to the user resolved from socketId, then send the
-   * success response shape the client expects ({ success, linked }). Shared by the
-   * NIP-98 and legacy Ed25519 paths.
+   * Link a proven wallet key to the authenticated stable user. Wallet adoption is one
+   * transaction: lock/re-check the presented session, revoke the temporary session,
+   * rotate the wallet owner's bearer token, clear the displaced row, and assign the caller
+   * socket to exactly one user. Live cached sockets are disconnected after the HTTP response.
    */
-  async function linkSmirkKey(provenKey, socketId, res) {
-    const userResult = await db.query(`
-      SELECT id FROM users WHERE socket_id = $1
-    `, [socketId]);
+  async function linkSmirkKey(provenKey, session) {
+    return db.withTransaction(async (client) => {
+      const currentResult = await client.query(`
+        SELECT id
+        FROM users
+        WHERE id = $1 AND socket_id = $2 AND anon_token = $3
+        FOR UPDATE
+      `, [session.userId, session.socketId, session.token]);
+      if (currentResult.rows.length !== 1) throw unauthorized();
 
-    if (userResult.rows.length === 0) {
-      throw new NotFoundError('User session not found', {
-        safeMessage: 'No active session found. Please connect to the game first.'
-      });
-    }
+      const existingLink = await client.query(`
+        SELECT id, socket_id, payout_address
+        FROM users
+        WHERE smirk_public_key = $1 AND id != $2
+        LIMIT 1
+        FOR UPDATE
+      `, [provenKey, session.userId]);
 
-    const userId = userResult.rows[0].id;
+      if (existingLink.rows.length > 0) {
+        const owner = existingLink.rows[0];
+        const ownerToken = sessionManager.generateSecureToken();
+        const revokedTemporaryToken = sessionManager.generateSecureToken();
 
-    // Sign-in-with-wallet: if this proven wallet already owns a DIFFERENT account, that is a
-    // LOGIN to that account, not a hijack (ownership is cryptographically proven). Adopt it —
-    // re-point that user to the current socket and hand the client its session token so the
-    // browser re-establishes as that account. (Previously this threw "already linked to another
-    // account", which blocked a returning user from signing in on a fresh browser session.)
-    const existingLink = await db.query(`
-      SELECT id, anon_token, payout_address FROM users WHERE smirk_public_key = $1 AND id != $2 LIMIT 1
-    `, [provenKey, userId]);
+        const revoked = await client.query(`
+          UPDATE users
+          SET socket_id = NULL, anon_token = $1, last_seen = NOW()
+          WHERE id = $2 AND socket_id = $3 AND anon_token = $4
+          RETURNING id
+        `, [revokedTemporaryToken, session.userId, session.socketId, session.token]);
+        if (revoked.rows.length !== 1) throw unauthorized();
 
-    if (existingLink.rows.length > 0) {
-      const owner = existingLink.rows[0];
-      await db.query(
-        `UPDATE users SET socket_id = $1, last_seen = NOW() WHERE id = $2`,
-        [socketId, owner.id]
-      );
-      return res.json({
-        success: true,
-        linked: true,
-        adopted: true,
-        sessionToken: owner.anon_token || null,
-        address: owner.payout_address || null,
-        message: 'Signed in to your wallet-linked account.'
-      });
-    }
+        const adopted = await client.query(`
+          UPDATE users
+          SET socket_id = $1, anon_token = $2, last_seen = NOW()
+          WHERE id = $3 AND smirk_public_key = $4
+          RETURNING id, payout_address
+        `, [session.socketId, ownerToken, owner.id, provenKey]);
+        if (adopted.rows.length !== 1) {
+          throw new AppError('Wallet account adoption lost its ownership lock', {
+            statusCode: 409,
+            code: 'WALLET_ADOPTION_CONFLICT',
+            safeMessage: 'Wallet sign-in conflicted with another request. Please retry.'
+          });
+        }
 
-    await db.query(`
-      UPDATE users SET smirk_public_key = $1 WHERE id = $2
-    `, [provenKey, userId]);
+        const socketOwner = await client.query(`
+          SELECT id
+          FROM users
+          WHERE socket_id = $1
+          FOR UPDATE
+        `, [session.socketId]);
+        if (socketOwner.rows.length !== 1
+          || String(socketOwner.rows[0].id) !== String(owner.id)) {
+          throw new AppError('Adopted socket ownership is ambiguous', {
+            statusCode: 409,
+            code: 'SOCKET_OWNERSHIP_CONFLICT',
+            safeMessage: 'Wallet sign-in conflicted with another session. Please retry.'
+          });
+        }
 
-    res.json({
-      success: true,
-      linked: true,
-      message: 'Smirk wallet linked successfully'
+        return {
+          adopted: true,
+          currentUserId: session.userId,
+          ownerUserId: owner.id,
+          previousOwnerSocketId: owner.socket_id || null,
+          sessionToken: ownerToken,
+          address: adopted.rows[0].payout_address || null
+        };
+      }
+
+      const linked = await client.query(`
+        UPDATE users
+        SET smirk_public_key = $1
+        WHERE id = $2 AND socket_id = $3 AND anon_token = $4
+        RETURNING id
+      `, [provenKey, session.userId, session.socketId, session.token]);
+      if (linked.rows.length !== 1) throw unauthorized();
+      return { adopted: false, currentUserId: session.userId };
     });
   }
 
@@ -87,23 +202,30 @@ module.exports = function createAuthRoutes(ctx) {
  * Generate a challenge for Smirk wallet signature verification
  * Body: { socketId: string }
  */
-router.post('/api/auth/smirk/challenge', asyncHandler(async (req, res) => {
+router.post('/api/auth/smirk/challenge', challengeRateLimit, asyncHandler(async (req, res) => {
   const { socketId } = req.body || {};
 
-  if (!socketId || typeof socketId !== 'string') {
+  if (!socketId || typeof socketId !== 'string' || socketId.length > 255) {
     throw new ValidationError('Missing socketId', {
       safeMessage: 'socketId is required to generate a challenge.'
     });
   }
 
+  const session = await resolveSessionOwner(req, socketId);
+
   // Generate a cryptographically secure challenge
   const challenge = crypto.randomBytes(32).toString('hex');
 
-  // Store challenge in database (expires in 5 minutes)
-  await db.query(`
-    INSERT INTO smirk_challenges (challenge, socket_id)
-    VALUES ($1, $2)
-  `, [challenge, socketId]);
+  // Store a stable user binding as well as the current socket. The user binding is what
+  // prevents a public Tavern/Match socket id from being used to attach an attacker's key.
+  const inserted = await db.query(`
+    INSERT INTO smirk_challenges (challenge, socket_id, user_id)
+    SELECT $1, $2, id
+    FROM users
+    WHERE id = $3 AND socket_id = $2 AND anon_token = $4
+    RETURNING id
+  `, [challenge, socketId, session.userId, session.token]);
+  if (inserted.rows.length !== 1) throw unauthorized();
 
   // Clean up old/expired challenges periodically
   await db.query(`
@@ -124,15 +246,16 @@ router.post('/api/auth/smirk/challenge', asyncHandler(async (req, res) => {
  *  - NIP-98:  { socketId, event }            -> nostr kind:27235 HTTP-auth event (preferred)
  *  - Legacy:  { socketId, challenge, publicKey, signature }  -> Ed25519 challenge signing
  */
-router.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
+router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, res) => {
   const body = req.body || {};
   const { socketId } = body;
 
-  if (!socketId || typeof socketId !== 'string') {
+  if (!socketId || typeof socketId !== 'string' || socketId.length > 255) {
     throw new ValidationError('Missing socketId', {
       safeMessage: 'socketId is required.'
     });
   }
+  const session = await resolveSessionOwner(req, socketId);
 
   // ---------------------------------------------------------------------------
   // NIP-98 path — a nostr event object is present.
@@ -152,7 +275,7 @@ router.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
     }
 
     // Atomic single-use consume (bound to this socket) — prevents replay/double-use.
-    const consumed = await consumeChallenge(challenge, socketId);
+    const consumed = await consumeChallenge(challenge, session);
     if (!consumed) {
       throw new ValidationError('Invalid or expired challenge', {
         safeMessage: 'The challenge is invalid, expired, or has already been used.'
@@ -176,7 +299,23 @@ router.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
     // NOTE: result.pubkey is a nostr x-only secp256k1 key (64-hex) — a DIFFERENT
     // key namespace than the legacy Ed25519 spend key. A NIP-98 login therefore
     // re-registers the account under the nostr key (acceptable per the cutover spec).
-    await linkSmirkKey(result.pubkey, socketId, res);
+    const outcome = await linkSmirkKey(result.pubkey, session);
+    if (outcome.adopted) {
+      res.json({
+        success: true,
+        linked: true,
+        adopted: true,
+        sessionToken: outcome.sessionToken,
+        address: outcome.address,
+        message: 'Signed in to your wallet-linked account.'
+      });
+      setImmediate(() => sessionManager.disconnectUserSessions(
+        [outcome.currentUserId, outcome.ownerUserId],
+        [socketId, outcome.previousOwnerSocketId].filter(Boolean)
+      ));
+      return;
+    }
+    res.json({ success: true, linked: true, message: 'Smirk wallet linked successfully' });
     return;
   }
 
@@ -192,7 +331,7 @@ router.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
   }
 
   // Consume the challenge single-use (atomic) before verifying the signature.
-  const consumed = await consumeChallenge(challenge, socketId);
+  const consumed = await consumeChallenge(challenge, session);
   if (!consumed) {
     throw new ValidationError('Invalid or expired challenge', {
       safeMessage: 'The challenge is invalid, expired, or has already been used.'
@@ -222,13 +361,29 @@ router.post('/api/auth/smirk/verify', asyncHandler(async (req, res) => {
     });
   }
 
-  await linkSmirkKey(publicKey, socketId, res);
+  const outcome = await linkSmirkKey(publicKey, session);
+  if (outcome.adopted) {
+    res.json({
+      success: true,
+      linked: true,
+      adopted: true,
+      sessionToken: outcome.sessionToken,
+      address: outcome.address,
+      message: 'Signed in to your wallet-linked account.'
+    });
+    setImmediate(() => sessionManager.disconnectUserSessions(
+      [outcome.currentUserId, outcome.ownerUserId],
+      [socketId, outcome.previousOwnerSocketId].filter(Boolean)
+    ));
+    return;
+  }
+  res.json({ success: true, linked: true, message: 'Smirk wallet linked successfully' });
 }));
 
 /**
  * GET /api/auth/smirk/status
  * Check if a session has a linked Smirk wallet.
- * Query: socketId=string ; Auth: X-Session-Token header (fallback ?t=).
+ * Query: socketId=string ; Auth: X-Session-Token header.
  *
  * BOLA fix: previously this disclosed { linked, hasPayoutAddress } for ANY socketId
  * with no auth, letting anyone probe another player's wallet-link state. We now
@@ -246,7 +401,7 @@ router.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
     });
   }
 
-  const token = req.get('X-Session-Token') || req.query.t;
+  const token = req.get('X-Session-Token');
   if (!token) {
     return res.status(401).json({ error: 'Session token required' });
   }

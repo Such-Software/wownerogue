@@ -59,7 +59,9 @@
             targetX: x, targetY: y,
             moveCooldown: 0,
             sitTimer: 0,
-            speechTimer: 0,
+            // Stagger the first lines so entering the room feels conversational instead of every
+            // patron opening a bubble on the same frame.
+            speechTimer: opts.speechTimer == null ? 1800 + Math.random() * 7000 : opts.speechTimer,
             speech: null, speechUntil: 0,
             color: opts.color || '#d7dbe0',
             label: opts.label || null,
@@ -334,6 +336,7 @@
     // Get the screen position of an entity for a given renderer/cell size.
     // This is renderer-agnostic: top-down uses grid coords * cell; iso uses projection.
     TavernLife.prototype._entityScreenPos = function (e, scene, cell, mode) {
+        var pos;
         if (mode === 'iso') {
             // Match IsoRenderer._project: originX = margin + rows * tileW/2 + tileW; originY = margin + imageH
             var tileW = (RK.isoAssets && RK.isoAssets.tile && RK.isoAssets.tile.w) || 84;
@@ -342,18 +345,21 @@
             var margin = 28;
             var originX = margin + scene.rows * tileW / 2 + tileW;
             var originY = margin + imageH;
-            return {
+            pos = {
                 x: originX + (e.x - e.y) * tileW / 2,
                 y: originY + (e.x + e.y) * tileH / 2
             };
-        }
-        if (mode === '3d') {
+        } else if (mode === '3d') {
             // 3D renderer uses Three.js — we can't easily get screen coords.
             // Skip speech bubbles for 3D mode.
             return null;
+        } else {
+            // top-down / ascii / fancy: grid coords * cell
+            pos = { x: e.x * cell + cell / 2, y: e.y * cell + cell / 2 };
         }
-        // top-down / ascii / fancy: grid coords * cell
-        return { x: e.x * cell + cell / 2, y: e.y * cell + cell / 2 };
+        var view = this._viewTransform;
+        if (view) return { x: view.left + pos.x * view.scaleX, y: view.top + pos.y * view.scaleY };
+        return pos;
     };
 
     TavernLife.prototype._drawBubbles = function (scene, cell, mode, now) {
@@ -369,7 +375,7 @@
             var remaining = npc.speechUntil - now;
             if (remaining < BUBBLE_FADE) alpha = remaining / BUBBLE_FADE;
             var pos = this._entityScreenPos(npc, scene, cell, mode);
-            if (pos) drawBubble(ctx, pos.x, pos.y - cell * 0.3, npc.speech, alpha);
+            if (pos) drawBubble(ctx, pos.x, pos.y - cell * 0.3 * ((this._viewTransform && this._viewTransform.scaleY) || 1), npc.speech, alpha);
         }
 
         // Real player bubbles (from chat).
@@ -386,7 +392,7 @@
             var rRemaining = bubble.until - now;
             if (rRemaining < BUBBLE_FADE) rAlpha = rRemaining / BUBBLE_FADE;
             var rPos = this._entityScreenPos(e, scene, cell, mode);
-            if (rPos) drawBubble(ctx, rPos.x, rPos.y - cell * 0.3, bubble.text, rAlpha);
+            if (rPos) drawBubble(ctx, rPos.x, rPos.y - cell * 0.3 * ((this._viewTransform && this._viewTransform.scaleY) || 1), bubble.text, rAlpha);
         }
     };
 
@@ -419,7 +425,26 @@
         // Draw speech bubbles on the overlay.
         var rendererCanvas = this.host.querySelector('.rk-canvas');
         if (rendererCanvas) {
-            this._syncOverlaySize(rendererCanvas.width, rendererCanvas.height);
+            this._syncOverlaySize(this.host.clientWidth || rendererCanvas.width, this.host.clientHeight || rendererCanvas.height);
+            // Keep the overlay at viewport scale (so chat remains readable), but project each
+            // world-space head position through the camera-transformed canvas rectangle.
+            var hostRect = this.host.getBoundingClientRect ? this.host.getBoundingClientRect() : { left: 0, top: 0 };
+            var canvasRect = rendererCanvas.getBoundingClientRect ? rendererCanvas.getBoundingClientRect() : {
+                left: 0, top: 0, width: rendererCanvas.width, height: rendererCanvas.height
+            };
+            this._viewTransform = {
+                left: canvasRect.left - hostRect.left,
+                top: canvasRect.top - hostRect.top,
+                scaleX: canvasRect.width / (rendererCanvas.width || 1),
+                scaleY: canvasRect.height / (rendererCanvas.height || 1)
+            };
+            this._overlay.style.inset = '0';
+            this._overlay.style.left = '0';
+            this._overlay.style.top = '0';
+            this._overlay.style.maxWidth = 'none';
+            this._overlay.style.maxHeight = 'none';
+            this._overlay.style.transform = '';
+            this._overlay.style.transition = '';
         }
         this._drawBubbles(scene, cell, mode, now);
     };

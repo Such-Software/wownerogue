@@ -1,6 +1,13 @@
 const { defineRuleset, WIN, ECONOMY } = require('./Ruleset');
 const { resolveWinCondition } = require('./winConditions');
-const { BUILTINS, getRuleset, listRulesets, rulesetFromMatchOpts } = require('./registry');
+const {
+    BUILTINS,
+    getRuleset,
+    listRulesets,
+    listMatchRulesets,
+    resolveMatchRuleset,
+    rulesetFromMatchOpts
+} = require('./registry');
 
 module.exports = {
     defineRuleset,
@@ -10,5 +17,7 @@ module.exports = {
     BUILTINS,
     getRuleset,
     listRulesets,
+    listMatchRulesets,
+    resolveMatchRuleset,
     rulesetFromMatchOpts
 };

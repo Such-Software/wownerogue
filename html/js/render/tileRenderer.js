@@ -41,11 +41,15 @@
     // The player/you entity that carries the torch (for the light composite + embers).
     function findPlayer(scene) {
         if (!scene || !scene.entities) return null;
+        var live = null, fallback = null;
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
-            if (e.kind === 'player' || e.you) return e;
+            if (!(e.kind === 'player' || e.you)) continue;
+            if (e.you || e.cameraTarget) return e;
+            if (!live && e.alive !== false && !e.finished) live = e;
+            if (!fallback) fallback = e;
         }
-        return null;
+        return live || fallback;
     }
 
     // Real-tile coord for a dungeon feature entity, keyed off its glyph.

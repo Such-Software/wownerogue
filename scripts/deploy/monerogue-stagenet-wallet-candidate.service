@@ -1,0 +1,54 @@
+# Manual-only, parallel Monero STAGENET wallet-RPC candidate.
+#
+# REVIEW STATUS: INERT TEMPLATE. Do not install until the bundle producer and its crash-injection
+# evidence satisfy README-monero-stagenet-parallel-candidate.md. This unit intentionally has no
+# installation stanza, so it cannot be enabled into a boot target.
+[Unit]
+Description=Monerogue parallel wallet RPC candidate (stagenet, manual only)
+After=network-online.target monerod.service
+Wants=network-online.target monerod.service
+ConditionPathExists=/var/lib/monerogue-stagenet-wallet-candidate/READY
+
+[Service]
+Type=simple
+User=monerogue-wallet-candidate
+Group=monerogue-wallet-candidate
+SupplementaryGroups=
+WorkingDirectory=/var/lib/monerogue-stagenet-wallet-candidate/wallet
+
+# The protected config fixes stagenet, wallet/password paths, daemon 127.0.0.1:38081,
+# RPC 127.0.0.1:38084, and Digest rpc-login. No secret belongs in this unit or argv.
+ExecStart=/usr/bin/monero-wallet-rpc --config-file /var/lib/monerogue-stagenet-wallet-candidate/config/wallet-rpc.conf --log-file /dev/null
+
+# A candidate must be restarted deliberately and revalidated; it is not a production dependency.
+Restart=no
+TimeoutStopSec=60
+UMask=0077
+LimitCORE=0
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateUsers=no
+RemoveIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+KeyringMode=private
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/monerogue-stagenet-wallet-candidate/wallet

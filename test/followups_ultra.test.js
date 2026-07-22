@@ -50,8 +50,8 @@ describe('Follow-up 1 — no-address match winner reconciliation', () => {
         expect(ok).toBe(true);
         const payoutUpdate = db.query.mock.calls.find(c => /UPDATE\s+payouts/i.test(c[0]));
         expect(payoutUpdate).toBeTruthy();
-        // Narrow, safe filter — only the no-address match liability, never generic needs_review.
-        expect(payoutUpdate[0]).toMatch(/reason\s*=\s*'match_winner_no_address'/);
+        // Narrow, safe filter — only explicit no-address liabilities, never generic needs_review.
+        expect(payoutUpdate[0]).toMatch(/reason\s+IN\s*\(\s*'match_winner_no_address'\s*,\s*'solo_winner_no_address'\s*\)/);
         expect(payoutUpdate[0]).toMatch(/status\s*=\s*'needs_review'/);
         expect(payoutUpdate[0]).toMatch(/PENDING_NO_ADDRESS/);
         expect(payoutUpdate[0]).toMatch(/SET payout_address = \$1, status = 'pending'/);

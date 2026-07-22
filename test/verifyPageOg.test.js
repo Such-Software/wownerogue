@@ -14,7 +14,7 @@ describe('renderVerifyPage social card meta', () => {
             ogImage: 'og-card-xmr.png'
         });
         expect(html).toContain('property="og:title"');
-        expect(html).toContain('Monero Roguelike — Provably-Fair Roguelike');
+        expect(html).toContain('Monero Roguelike — Dungeon Layout Verification');
         expect(html).toContain('<meta property="og:image" content="https://monerogue.app/og-card-xmr.png">');
         expect(html).toContain('content="summary_large_image"');
         expect(html).toContain('<meta property="og:url" content="https://monerogue.app/verify/seedABC">');
@@ -38,5 +38,18 @@ describe('renderVerifyPage social card meta', () => {
         const html = renderVerifyPage('s', null, { gameName: '"><script>x', baseUrl: 'https://h', ogImage: 'a.png' });
         expect(html).not.toContain('<script>x');
         expect(html).toContain('&quot;&gt;&lt;script&gt;x');
+    });
+
+    test('renders API verification results with text nodes, not dynamic innerHTML', () => {
+        const html = renderVerifyPage('seed-safe', null, { gameName: 'Wownerogue' });
+        expect(html).not.toMatch(/result\.innerHTML\s*=/);
+        expect(html).toMatch(/code\.textContent\s*=/);
+        expect(html).toMatch(/showFailure\(data\.message \|\| data\.error/);
+    });
+
+    test('states the proof scope without claiming to replay outcomes or payouts', () => {
+        const html = renderVerifyPage('seed-scope', null, { gameName: 'Wownerogue' });
+        expect(html).toContain('recorded dungeon layouts');
+        expect(html).toContain('does not replay player input, block timing, monster turns, the reported outcome, or payout delivery');
     });
 });

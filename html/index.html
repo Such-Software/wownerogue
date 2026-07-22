@@ -2,13 +2,14 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Wownerogue - A Wownero Roguelike</title>
     <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
+    <link rel="stylesheet" type="text/css" href="styles/commerce-consent.css">
     <link rel="icon" type="image/x-icon" href="favicon.ico" id="favicon">
 
     <!-- Socket.io -->
-    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     
     <!-- Initialize socket with resume token (for persistent anonymous session) -->
     <script>
@@ -24,8 +25,7 @@
                 if (existing) {
                     // Send the session token in the handshake `auth` payload, NOT the URL
                     // query string. Query strings leak into proxy/access/referer logs;
-                    // auth is carried in the connection body. (Server keeps a query-string
-                    // fallback for older clients during rollout.)
+                    // auth is carried in the connection body.
                     opts.auth = { resumeToken: existing };
                 }
             } catch(_) {
@@ -46,9 +46,14 @@
                         if (data.hostedBy && data.hostedBy.url) {
                             var container = document.getElementById('hosted-by-container');
                             if (container) {
-                                container.innerHTML = ' | Hosted by: <a href="' + 
-                                    data.hostedBy.url + '" target="_blank" rel="noopener" style="color:#888;">' + 
-                                    (data.hostedBy.name || data.hostedBy.url) + '</a>';
+                                container.textContent = ' | Hosted by: ';
+                                var hostedLink = document.createElement('a');
+                                hostedLink.href = data.hostedBy.url;
+                                hostedLink.target = '_blank';
+                                hostedLink.rel = 'noopener';
+                                hostedLink.style.color = '#888';
+                                hostedLink.textContent = data.hostedBy.name || data.hostedBy.url;
+                                container.appendChild(hostedLink);
                             }
                         }
                     })
@@ -58,9 +63,10 @@
     </script>
     
     <!-- Core libraries -->
-    <script src="js/lib/jquery-3.4.1.min.js"></script>
+    <script src="js/lib/jquery-3.7.1.min.js"></script>
     <script src="js/lib/rot.min.js"></script>
     <script src="js/core/escapeHtml.js"></script>
+    <script src="js/legal/commerceConsent.js"></script>
     <script src="js/core/options.js"></script>
     <script src="js/ui/teletype.js"></script>
     
@@ -81,6 +87,7 @@
     <script src="js/render/charSprites.js"></script>
     <script src="js/render/packRegistry.js"></script>
     <script src="js/render/assetPacks.js"></script>
+    <script src="/runtime-config.js"></script>
     <script src="js/render/renderModes.js"></script>
     <script src="js/render/charCustomize.js"></script>
     <script src="js/render/avatarVisuals.js"></script>
@@ -165,7 +172,7 @@
                 <button id="helpButton" class="hud-chip hud-chip--help hud-chip--push" title="How to play and payment information">❓ Help</button>
                 <button id="historyButton" class="hud-chip hud-chip--history" title="View your payment and payout history">📜 History</button>
                 <button id="leaderboardButton" class="hud-chip hud-chip--scores" title="View high scores">🏆 Scores</button>
-                <button id="manageAddressButton" class="hud-chip hud-chip--address" title="Your payout address and credits are tied to a browser session token. Clearing cookies/localStorage or using incognito mode will lose your session.">⚙️ Manage Payout Address</button>
+                <button id="manageAddressButton" class="hud-chip hud-chip--address" style="display:none;" title="Your payout address and credits are tied to a browser session token. Clearing cookies/localStorage or using incognito mode will lose your session.">⚙️ Manage Payout Address</button>
                 <span id="sessionWarning" style="display:none;" title="Private browsing or localStorage blocked - your session won't persist">⚠️ Session not saved</span>
             </div>
         </div>
@@ -181,6 +188,12 @@
             <div class="game-modes" style="margin: 15px 0;">
                 <div style="color: #888; text-align: center; padding: 20px;">Loading payment options...</div>
             </div>
+
+            <p style="font-size:11px;color:#aaa;line-height:1.45;">
+                Paid actions require a current acknowledgement. Review the <a href="/terms" target="_blank" rel="noopener">Terms</a>,
+                <a href="/privacy" target="_blank" rel="noopener">Privacy Notice</a>, and
+                <a href="/responsible-play" target="_blank" rel="noopener">Responsible Play</a> guidance.
+            </p>
             
             <div id="credits-display" style="margin: 10px 0; display: none;">
                 <strong>Credits remaining: <span id="credits-count">0</span></strong>
@@ -273,6 +286,7 @@
         <div class="footer">
             <span id="footer-title">Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move</span>
             <span id="hosted-by-container"></span>
+            <span> | <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/responsible-play">Responsible Play</a></span>
         </div>
     </div>
 
@@ -341,9 +355,9 @@
                 </div>
             </div>
 
-            <div style="margin-bottom:20px;">
-                <h3 style="color:#4ade80; font-size:1em; margin-bottom:8px;">🎁 Payouts</h3>
-                <p style="color:#ccc; font-size:0.9em; line-height:1.4;">Set your payout address using the "Manage Payout Address" button. When you escape the dungeon, your winnings will be sent automatically. Escaping with the treasure bag earns a higher multiplier!</p>
+            <div id="helpPayoutSection" style="margin-bottom:20px;">
+                <h3 id="helpPayoutTitle" style="color:#4ade80; font-size:1em; margin-bottom:8px;">🎁 Rewards</h3>
+                <p id="helpPayoutCopy" style="color:#ccc; font-size:0.9em; line-height:1.4;">Reward policy is loading…</p>
             </div>
 
             <div style="margin-bottom:15px;">
@@ -352,7 +366,7 @@
                     <span style="color:#60a5fa;">@</span><span>You (the player)</span>
                     <span style="color:#4ade80;">></span><span>Exit - escape here to win</span>
                     <span style="color:#ef4444;">~</span><span>Monster - avoid at all costs</span>
-                    <span style="color:#fbbf24;">$</span><span>Treasure - collect for bonus payout</span>
+                    <span style="color:#fbbf24;">$</span><span id="helpTreasureLegend">Treasure - collect for a score bonus</span>
                 </div>
             </div>
 

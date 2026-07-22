@@ -33,6 +33,16 @@ const HelpModal = {
     
     updateConfig: function(config) {
         this._config = config;
+        const payoutsOn = !!(config && (config.directPayoutsEnabled || config.creditsPayoutsEnabled));
+        if (payoutsOn) {
+            $('#helpPayoutTitle').text('🎁 Payouts');
+            $('#helpPayoutCopy').text('Set your payout address with “Manage Payout Address.” An escape pays the configured reward automatically, and escaping with the treasure earns the higher multiplier.');
+            $('#helpTreasureLegend').text('Treasure - collect for the higher payout and score bonus');
+        } else {
+            $('#helpPayoutTitle').text('🏅 Prestige rewards');
+            $('#helpPayoutCopy').text('This server does not pay crypto winnings. Paid entries and credits qualify scores for the Hall of Champions; free runs stay on the separate Pleb leaderboard.');
+            $('#helpTreasureLegend').text('Treasure - collect for a score bonus');
+        }
     },
     
     show: function() {
@@ -73,7 +83,7 @@ const HelpModal = {
         // discount; 1 credit = 1 run either way.
         const price = config.singleGamePriceFormatted || '1';
         const packages = config.creditPackages || [];
-        const payoutsOn = !!(config.payoutsEnabled || config.directPayoutsEnabled || config.creditsPayoutsEnabled);
+        const payoutsOn = !!(config.directPayoutsEnabled || config.creditsPayoutsEnabled);
 
         const buy = [];
         if (directOn) buy.push(`<strong>1 credit</strong> — ${price} ${currency}`);
@@ -82,16 +92,13 @@ const HelpModal = {
                 const bonus = pkg.bonus > 0 ? ` +${pkg.bonus}` : '';
                 return `${pkg.credits}${bonus} for ${pkg.priceFormatted}`;
             }).join(' · ');
-            buy.push(`<strong>Bundles</strong> — ${bundles} ${currency} <span style="color:#888;">(cheaper per run)</span>`);
+            buy.push(`<strong>Bundles</strong> — ${bundles} ${currency}`);
         }
 
         // Reward line is config-driven so it stays honest on prestige (no-payout) deployments.
         let reward;
         if (payoutsOn) {
-            const m = (config.payoutMultipliers && (config.payoutMultipliers.direct || config.payoutMultipliers.credits)) || {};
-            const esc = m.escape || 2;
-            const tre = m.escapeWithTreasure || m.treasure || 3;
-            reward = `<span style="color:#4ade80;">💰 Escape pays <strong>${esc}×</strong> · with treasure <strong>${tre}×</strong>.</span>`;
+            reward = '<span style="color:#4ade80;">💰 Exact escape and treasure rewards are shown before entry and locked for that run.</span>';
         } else {
             reward = `<span style="color:#fbbf24;">🏅 No crypto payout — escape for the win; top scores enter the <strong>Hall of Champions</strong>.</span>`;
         }

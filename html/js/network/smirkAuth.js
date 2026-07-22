@@ -52,11 +52,19 @@ const SmirkAuth = {
         }
 
         const socketId = window.socket.id;
+        let sessionToken = '';
+        try { sessionToken = localStorage.getItem('wownerogue_token') || ''; } catch (_) {}
+        if (!sessionToken) {
+            throw new Error('Your game session is still being established. Please retry in a moment.');
+        }
 
         // Step 1: Get challenge from server
         const challengeRes = await fetch('/api/auth/smirk/challenge', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Token': sessionToken
+            },
             body: JSON.stringify({ socketId })
         });
 
@@ -73,7 +81,7 @@ const SmirkAuth = {
 
         if (this._supportsNip98()) {
             try {
-                const result = await this._verifyNip98(socketId, challenge);
+                const result = await this._verifyNip98(socketId, challenge, sessionToken);
                 verifyData = result.verifyData;
                 provenPublicKey = result.pubkey;
             } catch (nip98Err) {
@@ -86,12 +94,12 @@ const SmirkAuth = {
                     || /reject|cancel|denied|declined/i.test((nip98Err && nip98Err.message) || '');
                 if (userCancelled) throw nip98Err;
                 console.warn('Smirk NIP-98 failed, trying legacy connect():', nip98Err && nip98Err.message);
-                const result = await this._verifyLegacy(socketId, challenge);
+                const result = await this._verifyLegacy(socketId, challenge, sessionToken);
                 verifyData = result.verifyData;
                 provenPublicKey = result.pubkey;
             }
         } else {
-            const result = await this._verifyLegacy(socketId, challenge);
+            const result = await this._verifyLegacy(socketId, challenge, sessionToken);
             verifyData = result.verifyData;
             provenPublicKey = result.pubkey;
         }
@@ -140,7 +148,7 @@ const SmirkAuth = {
      *
      * @returns {Promise<{verifyData: object, pubkey: string|null}>}
      */
-    async _verifyNip98(socketId, challenge) {
+    async _verifyNip98(socketId, challenge, sessionToken) {
         // Build the NIP-98 HTTP auth event. The wallet fills in pubkey/id/sig.
         const evt = {
             kind: 27235,
@@ -173,7 +181,10 @@ const SmirkAuth = {
 
         const verifyRes = await fetch('/api/auth/smirk/verify', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Token': sessionToken
+            },
             body: JSON.stringify({ socketId, event: signed })
         });
 
@@ -192,7 +203,7 @@ const SmirkAuth = {
      *
      * @returns {Promise<{verifyData: object, pubkey: string|null}>}
      */
-    async _verifyLegacy(socketId, challenge) {
+    async _verifyLegacy(socketId, challenge, sessionToken) {
         // Connect to Smirk extension
         let keys;
         try {
@@ -226,7 +237,10 @@ const SmirkAuth = {
         // Verify signature with backend
         const verifyRes = await fetch('/api/auth/smirk/verify', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Token': sessionToken
+            },
             body: JSON.stringify({
                 socketId,
                 challenge,
@@ -374,7 +388,7 @@ const SmirkAuth = {
      */
     init() {
         // Check if server has Smirk disabled (e.g., for Monero stagenet)
-        if (typeof SocketHandlers !== 'undefined' && SocketHandlers._smirkEnabled === false) {
+        if (typeof SocketHandlers === 'undefined' || SocketHandlers._smirkEnabled !== true) {
             console.log('Smirk integration disabled by server');
             return;
         }
@@ -449,12 +463,12 @@ const SmirkAuth = {
 $(document).ready(function() {
     // Wait for game_mode_info to arrive first (typically within 2 seconds)
     // SocketHandlers will call SmirkAuth.init() when it receives game_mode_info
-    // This fallback is for cases where game_mode_info doesn't include smirkEnabled
+    // Fail closed: the server must explicitly advertise smirkEnabled=true.
     setTimeout(() => {
         // Only auto-init if not already initialized by SocketHandlers
-        // and if SocketHandlers._smirkEnabled is not explicitly false
+        // and only when the server explicitly enabled it
         if (!SmirkAuth._initialized &&
-            (typeof SocketHandlers === 'undefined' || SocketHandlers._smirkEnabled !== false)) {
+            typeof SocketHandlers !== 'undefined' && SocketHandlers._smirkEnabled === true) {
             SmirkAuth.init();
         }
     }, 3000);
@@ -464,7 +478,8 @@ $(document).ready(function() {
 if (typeof window.socket !== 'undefined') {
     window.socket.on('connect', function() {
         setTimeout(() => {
-            if (SmirkAuth.isAvailable() && !SmirkAuth._isLinked) {
+            if (typeof SocketHandlers !== 'undefined' && SocketHandlers._smirkEnabled === true &&
+                SmirkAuth.isAvailable() && !SmirkAuth._isLinked) {
                 SmirkAuth.checkStatus().then(status => {
                     const btn = $('#smirkLoginBtn');
                     if (btn.length > 0 && status.linked) {

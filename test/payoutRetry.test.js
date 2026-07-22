@@ -70,18 +70,131 @@ describe('PayoutRetryService.retryPayout', () => {
       .mockResolvedValue({ rows: [] });
     const wallet = {
       checkTransactionStatus: jest.fn(),
-      processPayout: jest.fn().mockResolvedValue({ success: true, txHash: 'txNEW', fee: 10 })
+      processPayout: jest.fn().mockResolvedValue({ success: true, txHash: 'd'.repeat(64), fee: 10 })
     };
 
-    await svcWith(db, wallet).retryPayout({ id: 7, user_id: 1, amount: '100', payout_address: 'wow1addr', status: 'failed', retry_count: 0 });
+    await svcWith(db, wallet).retryPayout({
+      id: 7,
+      user_id: 1,
+      amount: '100',
+      payout_address: 'wow1addr',
+      status: 'processing',
+      retry_count: 0,
+      last_error: 'not enough unlocked money to transfer'
+    });
 
     // tx_hash + completion happen in the SAME statement (atomic).
     const completion = findCall(client.query, /UPDATE payouts[\s\S]*tx_hash[\s\S]*status = 'completed'/i);
     expect(completion).toBeDefined();
-    expect(completion[1]).toContain('txNEW');
+    expect(completion[1]).toContain('d'.repeat(64));
     // No standalone pre-transaction tx_hash write on db.query.
     expect(findCall(db.query, /UPDATE payouts SET tx_hash = \$1, fee = \$2 WHERE id/i)).toBeUndefined();
     // Stats counted once.
     expect(findCall(client.query, /UPDATE users[\s\S]*total_amount_won/i)).toBeDefined();
+  });
+
+  test('ambiguous failure without a tx hash is never sent again automatically', async () => {
+    const { db } = makeHarness();
+    const wallet = { checkTransactionStatus: jest.fn(), processPayout: jest.fn() };
+
+    await svcWith(db, wallet).retryPayout({
+      id: 8,
+      user_id: 1,
+      amount: '100',
+      payout_address: 'wow1addr',
+      status: 'processing',
+      retry_count: 1,
+      last_error: 'RPC timeout after broadcast'
+    });
+
+    expect(wallet.processPayout).not.toHaveBeenCalled();
+    const review = findCall(db.query, /SET status = 'needs_review'/i);
+    expect(review).toBeDefined();
+  });
+
+  test('a recorded transaction hash that is temporarily not found is never resent', async () => {
+    const { db } = makeHarness();
+    const wallet = {
+      checkTransactionStatus: jest.fn().mockResolvedValue({ exists: false }),
+      processPayout: jest.fn()
+    };
+
+    await svcWith(db, wallet).retryPayout({
+      id: 11,
+      user_id: 1,
+      amount: '100',
+      payout_address: 'wow1addr',
+      tx_hash: 'possibly-broadcast-tx',
+      status: 'processing',
+      retry_count: 1
+    });
+
+    expect(wallet.processPayout).not.toHaveBeenCalled();
+    expect(findCall(db.query, /SET status = 'needs_review'/i)).toBeDefined();
+  });
+});
+
+describe('PayoutRetryService.processRetries', () => {
+  test('stale processing claims are quarantined and never selected for resend', async () => {
+    const db = {
+      query: jest.fn().mockResolvedValue({ rows: [{ id: 44 }], rowCount: 1 }),
+      withTransaction: jest.fn(async (fn) => fn({
+        query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 })
+      }))
+    };
+    const wallet = { processPayout: jest.fn() };
+    const service = new PayoutRetryService({
+      db,
+      walletService: wallet,
+      staleProcessingMs: 60000,
+      debugManager: { CONSOLE_LOGGING: false }
+    });
+    service.retryPayout = jest.fn();
+
+    await service.processRetries();
+
+    const recovery = findCall(db.query, /status = 'needs_review'[\s\S]*status = 'processing'/i);
+    expect(recovery).toBeDefined();
+    expect(service.retryPayout).not.toHaveBeenCalled();
+    expect(wallet.processPayout).not.toHaveBeenCalled();
+  });
+
+  test('claims failed rows as processing in the same transaction before dispatch', async () => {
+    const candidate = {
+      id: 9,
+      user_id: 1,
+      payout_address: 'wow1addr',
+      amount: '100',
+      status: 'processing',
+      retry_count: 0,
+      last_error: 'insufficient unlocked balance'
+    };
+    const client = { query: jest.fn() };
+    client.query
+      .mockResolvedValueOnce({ rows: [{ ...candidate, status: 'failed' }] })
+      .mockResolvedValueOnce({ rows: [candidate] });
+    const db = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      withTransaction: jest.fn(async (fn) => fn(client))
+    };
+    const service = svcWith(db, { processPayout: jest.fn() });
+    service.retryPayout = jest.fn().mockResolvedValue();
+
+    await service.processRetries();
+
+    expect(findCall(client.query, /SET status = 'processing'/i)).toBeDefined();
+    expect(service.retryPayout).toHaveBeenCalledWith(expect.objectContaining({ id: 9, status: 'processing' }));
+  });
+
+  test('master predicate prevents both scan and dispatch', async () => {
+    const db = { query: jest.fn().mockResolvedValue({ rows: [] }), withTransaction: jest.fn() };
+    const wallet = { processPayout: jest.fn() };
+    const service = new PayoutRetryService({ db, walletService: wallet, isEnabled: () => false });
+
+    await service.processRetries();
+    await service.retryPayout({ id: 10 });
+
+    expect(db.withTransaction).not.toHaveBeenCalled();
+    expect(wallet.processPayout).not.toHaveBeenCalled();
   });
 });

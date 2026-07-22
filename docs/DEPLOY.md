@@ -20,7 +20,10 @@ This guide covers deploying Wownerogue to a production environment.
 - [ ] Set secure database credentials
 - [ ] Configure wallet-rpc with authentication
 - [ ] Set `ADMIN_API_KEY` for admin endpoints
-- [ ] Firewall: expose only 80/443
+- [ ] Run `npm run preflight` with the final environment
+- [ ] Keep `PAYOUTS_ENABLED=false` on real-money prestige instances
+- [ ] Complete a stagenet payment and payout before enabling a payout instance
+- [ ] Firewall: allow Node 3000/3001 only from the reverse proxy; keep wallet/daemon RPC loopback-only
 - [ ] Protect `/admin.html` with basic auth
 - [ ] Set up database backups (see [LOGS_AND_BACKUP.md](./LOGS_AND_BACKUP.md))
 - [ ] Configure log rotation
@@ -30,71 +33,35 @@ This guide covers deploying Wownerogue to a production environment.
 
 ## Create Dedicated User
 
-Create an isolated system user for security:
+Create an isolated, non-login service identity. Release directories and the `current` link remain
+root-owned; the service identity receives read/traverse access only and must never own its code:
 
 ```bash
-# Create system user with no login shell and dedicated home
-sudo useradd --system --shell /usr/sbin/nologin --home-dir /var/www/wownerogue --create-home wownerogue
-
-# Create .ssh directory for deploy key
-sudo mkdir -p /var/www/wownerogue/.ssh
-sudo chmod 700 /var/www/wownerogue/.ssh
-sudo chown wownerogue:wownerogue /var/www/wownerogue/.ssh
+sudo useradd --system --shell /usr/sbin/nologin --home-dir /var/www/wownerogue --no-create-home wownerogue
+sudo install -d -m 0750 -o root -g wownerogue /var/www/wownerogue
+sudo install -d -m 0750 -o root -g wownerogue /var/www/wownerogue/releases
+sudo install -d -m 0750 -o root -g wownerogue /etc/wownerogue
 
 # Create log directory
-sudo mkdir -p /var/log/wownerogue
-sudo chown wownerogue:wownerogue /var/log/wownerogue
+sudo install -d -m 0750 -o wownerogue -g wownerogue /var/log/wownerogue
 ```
 
 ---
 
-## Setup Deploy Key and Clone Repository
+## Stage reviewed artifacts, not a repository clone
 
-Generate an SSH deploy key for the wownerogue user:
+Build the runtime artifact from a clean, reviewed commit as described in
+[RELEASE_ARTIFACT.md](./RELEASE_ARTIFACT.md). The production host needs no Git checkout, deploy key,
+or write-capable source identity. The reviewed fleet
+`playbooks/wowngeon-stage-candidate.yml` role transfers exactly one tarball to a newly selected
+root-owned mode-0700 candidate inbox and compares its remote SHA-256 with the independently
+recorded literal digest. Follow the fleet Wowngeon runbook; the role is a one-shot custody boundary,
+not deployment.
 
-```bash
-# Generate deploy key (as root, since user has no shell)
-sudo ssh-keygen -t ed25519 -C "wownerogue-deploy" -f /var/www/wownerogue/.ssh/id_ed25519 -N ""
-
-# Set correct ownership and permissions
-sudo chown wownerogue:wownerogue /var/www/wownerogue/.ssh/id_ed25519*
-sudo chmod 600 /var/www/wownerogue/.ssh/id_ed25519
-sudo chmod 644 /var/www/wownerogue/.ssh/id_ed25519.pub
-
-# Display the public key
-sudo cat /var/www/wownerogue/.ssh/id_ed25519.pub
-```
-
-Add the deploy key to GitHub:
-1. Go to your repository → **Settings** → **Deploy keys**
-2. Click **Add deploy key**
-3. Paste the public key from the command above
-4. Leave "Allow write access" unchecked (read-only is sufficient)
-5. Click **Add key**
-
-Configure SSH for GitHub:
-
-```bash
-# Create SSH config for the wownerogue user
-sudo tee /var/www/wownerogue/.ssh/config << 'EOF'
-Host github.com
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-    StrictHostKeyChecking accept-new
-EOF
-
-sudo chown wownerogue:wownerogue /var/www/wownerogue/.ssh/config
-sudo chmod 600 /var/www/wownerogue/.ssh/config
-```
-
-Clone the repository:
-
-```bash
-# Clone as the wownerogue user (replace YOUR_USERNAME with your GitHub username)
-sudo -u wownerogue git clone git@github.com:YOUR_USERNAME/wownerogue.git /var/www/wownerogue/app
-```
+The current fleet repository deliberately has no executable extraction/activation helper yet.
+Until that helper exists, the safe host boundary is blob-only staging: do not manually
+extract beneath `releases/`, install dependencies there, change `current`, restart an application,
+or run migrations merely because the blob has arrived.
 
 ---
 
@@ -112,77 +79,62 @@ node --version
 npm --version
 ```
 
-Install dependencies and audit for vulnerabilities:
-
-```bash
-cd /var/www/wownerogue/app/src
-sudo -u wownerogue npm install
-
-# Check for known vulnerabilities
-sudo -u wownerogue npm audit
-
-# Auto-fix vulnerabilities where possible
-sudo -u wownerogue npm audit fix
-```
+The eventual reviewed extraction/activation helper installs exactly the locked production graph in its private,
+writable staging directory with `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`, verifies
+it with `npm ls --omit=dev`, and seals the finished release root-owned and non-writable before it can
+be selected. Never make a release tree writable by `wownerogue`. Online advisory lookup is a
+separate explicitly authorized source-review operation; never run `npm audit fix` in staging or on
+a live release.
 
 ---
 
 ## Set File Permissions
 
 ```bash
-# Set ownership of application files
-sudo chown -R wownerogue:wownerogue /var/www/wownerogue
-
-# Restrict permissions (owner only, no world access)
-sudo chmod 750 /var/www/wownerogue
-sudo chmod 640 /var/www/wownerogue/app/src/.env
+# Releases and selector are immutable to the service identity.
+sudo chown root:wownerogue /var/www/wownerogue /var/www/wownerogue/releases
+sudo chmod 0750 /var/www/wownerogue /var/www/wownerogue/releases
+sudo chmod 0640 /etc/wownerogue/app.env
 ```
 
-**Database permissions** - create a restricted PostgreSQL role:
+Do not use recursive ownership changes on `/var/www/wownerogue`; they can hand the service process
+write access to immutable code or the rollback selector. The reviewed extraction/activation helper must verify
+every individual release's ownership and modes before activation.
+
+**Database ownership** - the application currently runs its own migrations at startup, so its
+database role must own the database/schema (or otherwise retain DDL rights). Create it this way:
 
 ```sql
 -- Create role with minimal privileges
 CREATE USER wownerogue WITH PASSWORD 'secure-password-here';
 CREATE DATABASE wownerogue OWNER wownerogue;
-
--- Revoke dangerous permissions
-REVOKE CREATE ON SCHEMA public FROM wownerogue;
-
--- Grant only what's needed
-GRANT CONNECT ON DATABASE wownerogue TO wownerogue;
-GRANT USAGE ON SCHEMA public TO wownerogue;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO wownerogue;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO wownerogue;
 ```
 
-**Filesystem isolation** (optional, for extra hardening):
-
-```bash
-# Prevent the user from accessing other users' home directories
-sudo chmod 700 /home/*
-
-# Mount application directory with noexec for uploads (if applicable)
-# Add to /etc/fstab if using separate partition
-```
-
----
+Do not revoke schema `CREATE` from this role while application startup owns migration execution;
+that makes a fresh release fail partway through startup. A separate one-shot migrator role is the
+follow-up path if runtime DDL privileges need to be removed.
 
 ## Database Setup
 
 ### Run Migrations
 
-Database migrations run automatically on server start (via `databaseManager.runMigrations()`), but you can also run them manually:
+Database migrations run automatically, in filename order, inside one transaction per file and are
+recorded in `schema_migrations`. Do not apply migration files directly with `psql`: bypassing the
+ledger makes startup attempt them again. Before a release, take a restricted PostgreSQL backup and
+test the complete migration set against a restored copy of each production database using the
+fail-closed [disposable clone migration gate](CLONE_MIGRATIONS.md).
 
-```bash
-cd /var/www/wownerogue/app/src
+The migration ledger does not prove that rows predating a `NOT VALID` constraint are clean. Run
+the read-only historical audit and the rollback-only native validation proof described in
+[`FINANCIAL_CONSTRAINT_VALIDATION.md`](FINANCIAL_CONSTRAINT_VALIDATION.md) for each restored
+database. The native `VALIDATE CONSTRAINT` gate deliberately refuses live database names.
 
-# Source environment variables
-source .env
-
-# Run migrations manually if needed
-psql -h $DB_HOST -U $DB_USER -d $DB_NAME -f migrations/001_initial_schema.sql
-# ... repeat for each migration file in order
-```
+Install the reviewed `wowngeon-db-backup.sh`, `.service`, and `.timer` through the hash-pinned fleet
+operations change—not from the runtime artifact—and create
+`/var/backups/wowngeon/daily` as `postgres:postgres` mode `0700`, then enable the timer. Each run
+writes custom-format dumps atomically, verifies their catalogs with `pg_restore --list`, and records
+a SHA-256 sidecar. Configure retention/remote replication according to the operator's recovery
+policy; the supplied job deliberately does not delete backups.
 
 ### Database Reset (Development Only)
 
@@ -195,41 +147,21 @@ npm run db:create  # Recreate schema
 
 ## systemd Service
 
-Save to `/etc/systemd/system/wownerogue.service`:
-
-```ini
-[Unit]
-Description=Wownerogue Game Server
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=wownerogue
-Group=wownerogue
-# Adjust paths if you cloned to a different location
-WorkingDirectory=/var/www/wownerogue/app/src
-EnvironmentFile=/var/www/wownerogue/app/src/.env
-ExecStart=/usr/bin/node index.js
-Restart=on-failure
-RestartSec=10
-
-# Security hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/var/www/wownerogue /var/log/wownerogue
-
-[Install]
-WantedBy=multi-user.target
-```
+Install reviewed application/firewall templates through the hash-pinned fleet operations change;
+the runtime artifact intentionally has no service units. Wallet-RPC replacement remains subject to
+the explicit NO-GO gates in [DEPLOY_INSTANCES.md](DEPLOY_INSTANCES.md). Application units read secrets from
+`/etc/wownerogue/app.env` or `/etc/monerogue/app.env`, not from an immutable release directory.
+They run `npm run preflight` before every start and use `/var/www/<instance>/current/src` so rollback
+is an atomic symlink switch.
 
 Enable and start:
 
 ```bash
-# Create .env from example first!
-sudo -u wownerogue cp /var/www/wownerogue/app/src/.env.example /var/www/wownerogue/app/src/.env
-sudo vim /var/www/wownerogue/app/src/.env  # Edit with your settings
+# Install the correct profile outside the release and replace every placeholder.
+sudo install -d -m 0750 -o root -g wownerogue /etc/wownerogue
+# Use the separately reviewed source/fleet copy; environment examples are not in the runtime archive.
+sudo install -m 0640 -o root -g wownerogue <reviewed-source>/src/.env.mainnet.example /etc/wownerogue/app.env
+sudoedit /etc/wownerogue/app.env
 
 # Enable and start service
 sudo systemctl daemon-reload
@@ -243,7 +175,7 @@ The systemd hardening options:
 - `ProtectSystem=strict` - mounts filesystem read-only except allowed paths
 - `ProtectHome=yes` - hides /home, /root, /run/user
 - `PrivateTmp=yes` - isolates /tmp
-- `ReadWritePaths` - whitelists writable directories
+- `ReadWritePaths` - whitelists the wallet state directory in wallet-RPC units
 
 ---
 
@@ -257,6 +189,10 @@ If using Nginx Proxy Manager:
    - Forward Hostname/IP: Your server's LAN IP (e.g., `192.168.1.100`)
    - Forward Port: `3000`
    - Enable "Websockets Support" toggle
+
+Record the proxy's fixed source address in `/etc/wowngeon/firewall.env` as
+`NPM_SOURCE_IPV4=<address>`. Direct access to 3000/3001 must be rejected; this also makes the
+single-hop `TRUST_PROXY_HOPS=1` setting safe.
 
 2. **SSL Tab**
    - Request a new SSL certificate
@@ -281,13 +217,15 @@ location /socket.io/ {
 
 ## Updating the Deployment
 
-```bash
-cd /var/www/wownerogue/app
-sudo -u wownerogue git pull
-cd src && sudo -u wownerogue npm install
-sudo -u wownerogue npm audit fix
-sudo systemctl restart wownerogue
-```
+Run the full suite from the clean source commit, then build and verify the runtime artifact using
+[RELEASE_ARTIFACT.md](./RELEASE_ARTIFACT.md). Today, use the fleet blob-staging playbook and stop at
+the independently hash-verified root-owned candidate blob because the reviewed extraction/activation
+helper does not yet exist. When that helper implements the documented contract, it—not an application service identity or a
+manual shell session—will build a new immutable `/var/www/<instance>/releases/<release-id>`, install
+the locked graph, run the clone/preflight gates, seal ownership, and atomically select `current`.
+Never run `git pull`, `npm install`, or `npm audit fix` inside the active release. Keep the previous
+release and database backup until the new version has passed public health, WebSocket,
+payment-intake, and (stagenet only) payout smoke tests.
 
 ---
 
@@ -299,10 +237,11 @@ To run multiple instances (e.g., Wownero on port 3000 and Monero stagenet on por
 
 ```
 /var/www/
-├── wownerogue/        # Wownero instance (port 3000)
-│   └── app/src/.env
-└── monerogue/         # Monero instance (port 3001)
-    └── app/src/.env
+├── wownerogue/        # releases/<id> + current symlink (port 3000)
+└── monerogue/         # releases/<id> + current symlink (port 3001)
+/etc/
+├── wownerogue/app.env # root:wownerogue, 0640
+└── monerogue/app.env  # root:monerogue, 0640
 ```
 
 ### Configuration Differences
@@ -312,31 +251,15 @@ To run multiple instances (e.g., Wownero on port 3000 and Monero stagenet on por
 | `PORT` | 3000 | 3001 |
 | `CRYPTO_TYPE` | WOW | XMR |
 | `MONERO_NETWORK` | mainnet | stagenet |
-| `DB_NAME` | wownerogue | monerogue_stagenet |
-| `PRIMARY_WALLET_ENDPOINT` | http://127.0.0.1:34570 | http://127.0.0.1:38070 |
+| `DB_NAME` | wownerogue | monerogue |
+| `PRIMARY_WALLET_ENDPOINT` | http://127.0.0.1:34570 | http://127.0.0.1:38083 |
 | `PRIMARY_RPC_ENDPOINT` | http://127.0.0.1:34568 | http://127.0.0.1:38081 |
 
 ### Separate systemd Service
 
-Create `/etc/systemd/system/monerogue.service`:
-
-```ini
-[Unit]
-Description=Monerogue Game Server (Stagenet)
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=monerogue
-WorkingDirectory=/var/www/monerogue/app/src
-EnvironmentFile=/var/www/monerogue/app/src/.env
-ExecStart=/usr/bin/node index.js
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+Install the hash-pinned fleet copy of `monerogue.service`; it is intentionally absent from the
+runtime artifact. Do not hand-maintain a second, weaker unit. The reviewed template contains the
+same preflight, graceful-stop, immutable-release path, and systemd sandbox as the mainnet service.
 
 ---
 
@@ -374,10 +297,13 @@ journalctl -u wownerogue -f  # Follow logs
 ### Health Endpoint
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:3000/health/live
+curl --fail http://localhost:3000/health/ready
 ```
 
-Returns server uptime, memory usage, wallet status, and balance.
+`/health/live` checks the process. `/health/ready` returns 503 until PostgreSQL, the chain daemon,
+and (for paid instances) wallet RPC are ready. Public probes do not expose wallet balances or RPC
+endpoints; those remain in the authenticated admin dashboard.
 
 ### Admin Dashboard
 
@@ -397,8 +323,9 @@ Access `/admin.html` with your `ADMIN_API_KEY` for:
 # Check logs for errors
 journalctl -u wownerogue -n 50
 
-# Verify environment file
-sudo -u wownerogue cat /var/www/wownerogue/app/src/.env
+# Validate the protected environment without printing it
+cd /var/www/wownerogue/current/src
+sudo -u wownerogue bash -c 'set -a; . /etc/wownerogue/app.env; set +a; npm run preflight'
 
 # Test database connection
 psql -h localhost -U wownerogue -d wownerogue -c "SELECT 1;"
@@ -408,17 +335,17 @@ psql -h localhost -U wownerogue -d wownerogue -c "SELECT 1;"
 
 ```bash
 # Test wallet RPC directly
-curl -u user:password -X POST http://127.0.0.1:34570/json_rpc \
+curl --digest -u user:password -X POST http://127.0.0.1:34570/json_rpc \
   -d '{"jsonrpc":"2.0","id":"0","method":"get_balance"}' \
   -H 'Content-Type: application/json'
 ```
 
 ### Database Migrations
 
-If migrations fail, check the `migrations` table:
+If migrations fail, check the `schema_migrations` ledger:
 
 ```sql
-SELECT * FROM migrations ORDER BY id;
+SELECT filename, applied_at FROM schema_migrations ORDER BY filename;
 ```
 
 Migrations are tracked by name to prevent duplicate execution.

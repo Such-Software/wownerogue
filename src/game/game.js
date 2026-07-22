@@ -18,6 +18,11 @@ class Game {
    * @param {object} gameOptions - Optional game configuration overrides
    */
   constructor(socketId, user, gameOptions = {}) {
+    const suppliedOptions = (gameOptions && typeof gameOptions === 'object') ? gameOptions : {};
+    const fairnessProof = suppliedOptions.fairnessProof || null;
+    // Internal proof material (including the secret server seed) must never ride into dungeon
+    // options, snapshots, logs, or the persisted public generation context.
+    const { fairnessProof: _privateFairnessProof, clientSeed: optionClientSeed, ...dungeonOptions } = suppliedOptions;
     this.user = user;
     this.id = uuidv4();
     this.socketId = socketId;
@@ -28,7 +33,11 @@ class Game {
     this.startedAt = Date.now();
     
     // Provably fair: Generate game proof before anything else
-    this.gameProof = createGameProof(this.id);
+    this.gameProof = createGameProof(
+      this.id,
+      fairnessProof?.clientSeed ?? optionClientSeed ?? '',
+      fairnessProof
+    );
     // Per-game deterministic RNG derived from the committed seed. ALL game randomness
     // (dungeon generation + monster movement) flows through this so the game is
     // reproducible from the seed for provably-fair verification.
@@ -39,22 +48,30 @@ class Game {
     const dungeonConfig = DungeonGenerator.getConfig();
     
     // Determine dimensions - use provided options or defaults
-    const width = gameOptions.width || dungeonConfig.DEFAULT_WIDTH;
-    const height = gameOptions.height || dungeonConfig.DEFAULT_HEIGHT;
+    const width = dungeonOptions.width || dungeonConfig.DEFAULT_WIDTH;
+    const height = dungeonOptions.height || dungeonConfig.DEFAULT_HEIGHT;
     
     // Merge game configuration
     this.gameConfig = {
       width: width,
       height: height,
       // Dungeon generation options (can be overridden by gameOptions)
-      floorVariation: gameOptions.floorVariation !== undefined ? gameOptions.floorVariation : dungeonConfig.FLOOR_VARIATION,
-      torchEnabled: gameOptions.torchEnabled !== undefined ? gameOptions.torchEnabled : dungeonConfig.TORCH_ENABLED,
-      torchDensity: gameOptions.torchDensity !== undefined ? gameOptions.torchDensity : dungeonConfig.TORCH_DENSITY,
-      primaryFloor: gameOptions.primaryFloor || dungeonConfig.PRIMARY_FLOOR,
-      secondaryFloor: gameOptions.secondaryFloor || dungeonConfig.SECONDARY_FLOOR,
-      torchTile: gameOptions.torchTile || dungeonConfig.TORCH_TILE,
+      floorVariation: dungeonOptions.floorVariation !== undefined ? dungeonOptions.floorVariation : dungeonConfig.FLOOR_VARIATION,
+      torchEnabled: dungeonOptions.torchEnabled !== undefined ? dungeonOptions.torchEnabled : dungeonConfig.TORCH_ENABLED,
+      torchDensity: dungeonOptions.torchDensity !== undefined ? dungeonOptions.torchDensity : dungeonConfig.TORCH_DENSITY,
+      primaryFloor: dungeonOptions.primaryFloor || dungeonConfig.PRIMARY_FLOOR,
+      secondaryFloor: dungeonOptions.secondaryFloor || dungeonConfig.SECONDARY_FLOOR,
+      torchTile: dungeonOptions.torchTile || dungeonConfig.TORCH_TILE,
+      // Resolve every layout-affecting preset value now. Persisting these exact values lets an
+      // old game regenerate after operators change difficulty environment variables later.
+      roomWidthRange: dungeonOptions.roomWidthRange || dungeonConfig.ROOM_WIDTH_RANGE,
+      roomHeightRange: dungeonOptions.roomHeightRange || dungeonConfig.ROOM_HEIGHT_RANGE,
+      corridorLengthRange: dungeonOptions.corridorLengthRange || dungeonConfig.CORRIDOR_LENGTH_RANGE,
+      dugPercentage: dungeonOptions.dugPercentage ?? dungeonConfig.DUG_PERCENTAGE,
+      roomPositionRatio: dungeonOptions.roomPositionRatio ?? dungeonConfig.difficulty?.treasure?.roomPositionRatio,
+      cryptoType: dungeonOptions.cryptoType || process.env.CRYPTO_TYPE || 'WOW',
       // Other game options
-      ...gameOptions
+      ...dungeonOptions
     };
 
     if (CONSOLE_LOGGING) {
@@ -64,6 +81,56 @@ class Game {
     }
 
     this.initializeGame();
+
+    // Bind the proof to every level in the committed run. Deeper layouts are independently
+    // regenerated from their per-depth seeds now, before play, so a crash or early death still
+    // leaves a complete, immutable verification manifest for the advertised descent.
+    this.gameProof.generatorVersion = DungeonGenerator.GENERATOR_VERSION;
+    this.gameProof.context = this.getProofContext();
+    this.gameProof.layoutFingerprints = this._buildLayoutFingerprintManifest();
+    // Backward-compatible level-one alias used by older verification clients/rows.
+    this.gameProof.layoutFingerprint = this.gameProof.layoutFingerprints[0]?.fingerprint || null;
+  }
+
+  _buildLayoutFingerprintManifest() {
+    const manifest = [];
+    for (let depth = 1; depth <= this.maxDepth; depth += 1) {
+      let dungeon;
+      if (depth === 1) {
+        dungeon = this.dungeon;
+      } else {
+        dungeon = DungeonGenerator.regenerateFromSeed(
+          levelSeed(this.gameProof.seed, depth),
+          this.gameConfig.cryptoType,
+          this.gameProof.context.generationOptions
+        );
+        if (depth < this.maxDepth) dungeon.treasure = null;
+      }
+      manifest.push({
+        depth,
+        fingerprintVersion: DungeonGenerator.FINGERPRINT_VERSION,
+        generatorVersion: DungeonGenerator.GENERATOR_VERSION,
+        fingerprint: DungeonGenerator.layoutFingerprint(dungeon)
+      });
+    }
+    return manifest;
+  }
+
+  getProofContext() {
+    const keys = [
+      'width', 'height', 'floorVariation', 'torchEnabled', 'torchDensity', 'primaryFloor',
+      'secondaryFloor', 'torchTile', 'roomWidthRange', 'roomHeightRange',
+      'corridorLengthRange', 'dugPercentage', 'roomPositionRatio', 'cryptoType'
+    ];
+    const generationOptions = {};
+    for (const key of keys) generationOptions[key] = this.gameConfig[key];
+    return {
+      cryptoType: this.gameConfig.cryptoType || process.env.CRYPTO_TYPE || 'WOW',
+      maxDepth: this.maxDepth,
+      generatorVersion: DungeonGenerator.GENERATOR_VERSION,
+      fingerprintVersion: DungeonGenerator.FINGERPRINT_VERSION,
+      generationOptions
+    };
   }
 
   /**
@@ -100,7 +167,7 @@ class Game {
     this.height = this.gameConfig.height;
     
     // Get difficulty settings
-    const difficultyConfig = getDifficultyConfig(process.env.CRYPTO_TYPE || 'WOW');
+    const difficultyConfig = getDifficultyConfig(this.gameConfig.cryptoType || process.env.CRYPTO_TYPE || 'WOW');
     this.difficultyConfig = difficultyConfig;
 
     // Multi-level descent: a run spans `maxDepth` levels (a pacing knob ∝ block time, from the
@@ -150,6 +217,17 @@ class Game {
       dungeon.treasure = null;
     }
     this.dungeon = dungeon;
+
+    // Once the constructor has committed its all-level manifest, assert every actually played
+    // descent still matches it. This turns accidental generator drift within a live process into
+    // a hard failure rather than silently serving an unverifiable paid layout.
+    const expected = this.gameProof.layoutFingerprints?.find(item => item.depth === depth);
+    if (expected) {
+      const actual = DungeonGenerator.layoutFingerprint(dungeon, expected.fingerprintVersion);
+      if (actual !== expected.fingerprint) {
+        throw new Error(`Generated level ${depth} does not match its committed fingerprint`);
+      }
+    }
 
     // Place player at the entrance.
     if (dungeon.entrance) {
@@ -359,6 +437,7 @@ class Game {
    * @param {object} gameStats - Additional statistics
    */
   endGame(result, gameStats = {}) {
+    this.finalResult = result;
     if (this.user) {
       const score = gameStats.score || 0;
       this.user.endGame(result, score, gameStats);
@@ -382,7 +461,7 @@ class Game {
    */
   getProofReveal() {
     return getPostGameReveal(this.gameProof, {
-      won: this.gameState === 'won',
+      won: this.finalResult === 'won' || this.gameState === 'won',
       treasureFound: this.player?.hasTreasure ?? false,
       moves: this.moveCount,
       duration: Math.floor((Date.now() - this.startedAt) / 1000)

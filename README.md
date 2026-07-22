@@ -1,14 +1,15 @@
 # Wownerogue
 
-A browser-based roguelike synchronized with Monero (XMR) and Wownero (WOW) block timing. Built with Node.js/Express and Socket.IO for real-time play, optional crypto payments, and automated payouts.
+A browser-based roguelike synchronized with Monero (XMR) and Wownero (WOW) block timing. The same codebase runs the original solo dungeon, the social Tavern, and operator-selected PvP/race rulesets, with separate free and paid leaderboards.
 
 ## Features
 
-- **Provably fair** gaming with pre-game hash commitments
+- **Provably fair** solo runs with two-party, pre-entry commitments and per-depth fingerprints
 - **Live spectator mode** - watch active games in real-time
 - **Persistent chat** with 30-day history
 - **Transaction history** - view payment and payout records
 - **Multiple game modes**: Free play, per-game payments, or credit bundles
+- **Social Tavern** with chat, live solo spectating, and in-place race queues
 - **Real-time multiplayer races**: free, prestige-credit, or crypto winner-take-pot races every block
 - Configurable difficulty with house edge tuning
 - Automatic wallet RPC integration for payments and payouts
@@ -30,13 +31,16 @@ Open http://localhost:3000 to play.
 
 ## Game Modes
 
-| Mode | Cost | Payout | Description |
+| Mode | Cost | Payout | Leaderboard |
 |------|------|--------|-------------|
-| **FREE** | None | None | No payments required |
-| **PAID_SINGLE** | 1 WOW/game | 2× escape, 3× with treasure | Per-run payment |
-| **PAID_CREDITS** | 10 credits/5 WOW | Optional | Buy credit bundles |
+| **FREE** | None | None | Pleb |
+| **PAID_SINGLE** | Per-run chain payment | Profile-controlled | Paid prestige |
+| **PAID_CREDITS** | Purchased credit | Profile-controlled | Paid prestige |
 
-When both modes are enabled (`ALLOW_MIXED_MODE=true`), players with credits can start games instantly without the payment modal.
+The shipped mainnet profile offers free plus paid-prestige play with every payout switch off. The XMR
+stagenet profile offers the same modes with 2× escape and 3× treasure-escape test payouts. See
+`src/.env.mainnet.example` and `src/.env.stagenet.example`; payout switches are independent from
+payment intake and fail closed.
 
 ## Match Mode (Multiplayer Races)
 
@@ -50,6 +54,10 @@ crypto block as long as at least two players are queued. Supported economies:
 | **Crypto Race** | Race-entry ticket | Winner-take-pot minus house fee | Hall of Champions |
 
 See `docs/MATCH_MODE.md` for full architecture, configuration, and API details.
+
+For deterministic multi-bot playtesting and 16:9/9:16 ad footage, use the loopback-only,
+free-only capture harness documented in [`docs/PVP_CAPTURE.md`](docs/PVP_CAPTURE.md). It drives the
+real match engine over Socket.IO but cannot connect to a deployment, database, wallet, or payout path.
 
 ## Difficulty & Pacing
 
@@ -95,10 +103,11 @@ disable with `NETWORK_TUNING_DISABLED=true`. The counts are sim-derived starting
 
 ### Provably Fair Gaming
 
-1. Server generates a random seed and shows its SHA-256 hash before the game
-2. The seed deterministically generates the dungeon layout and positions
-3. After the game, the seed is revealed for verification
-4. Players can verify `hash(seed) = commitment` to prove no manipulation
+1. The server publishes a one-use, socket-bound SHA-256 commitment before paid entry.
+2. The browser adds an independent WebCrypto client seed; neither side alone selects the final seed.
+3. The effective seed deterministically generates each dungeon depth and its audit fingerprint.
+4. After completion, the server seed and depth manifest are revealed at `/verify/:gameId` and
+   `/api/verify/:gameId`; active-game server seeds remain private.
 
 ### Spectator Mode
 
@@ -127,13 +136,16 @@ A warning appears if localStorage is unavailable.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /health` | Server health, uptime, memory, wallet status |
+| `GET /health` | Redacted dependency/readiness summary |
+| `GET /health/live` | Process liveness probe |
+| `GET /health/ready` | Dependency readiness probe (503 while degraded) |
 | `GET /api/game-modes` | Current modes and pricing |
 | `GET /api/user/:socketId/credits` | User credit balance |
 | `GET /api/user/:socketId/payments` | Payment history (paginated) |
 | `GET /api/user/:socketId/payouts` | Payout history (paginated) |
 | `POST /api/user/:socketId/address` | Set payout address |
-| `GET /verify/:gameId` | Provably fair verification page |
+| `GET /verify/:gameId` | Human-readable fairness verification page |
+| `GET /api/verify/:gameId` | Machine-readable fairness proof |
 
 ### Admin Endpoints
 
@@ -141,7 +153,7 @@ Require `X-Admin-Key` header matching `ADMIN_API_KEY` env variable.
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /api/admin/refund/payment` | Refund a payment, deduct credits if applicable |
+| `POST /api/admin/refund/payment` | Request an idempotent refund; consumed grants require review |
 | `POST /api/admin/credits/adjust` | Add or remove credits from a user |
 | `GET /api/admin/users/search` | Search users by socket ID or address |
 
@@ -208,7 +220,7 @@ DIRECT_PAYOUT_TREASURE=3.0
 # Wallet RPC (required for paid modes)
 PRIMARY_WALLET_ENDPOINT=http://127.0.0.1:34570
 WALLET_RPC_USER=user
-WALLET_RPC_PASSWORD=password
+WALLET_RPC_PASSWORD=use-a-distinct-strong-rpc-secret
 
 # Database
 DB_HOST=localhost

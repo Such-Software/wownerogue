@@ -18,6 +18,74 @@ const SocketHandlers = {
 
     _directPayoutsEnabled: false,
     _paymentsEnabled: false,
+    _isSmirkExplicitlyEnabled: function(data) {
+        return !!data && data.smirkEnabled === true;
+    },
+    _fairnessOffer: null,
+    _pendingFairnessAttempt: null,
+
+    _randomClientSeed: function() {
+        try {
+            if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') return null;
+            var bytes = new Uint8Array(32);
+            window.crypto.getRandomValues(bytes);
+            return Array.prototype.map.call(bytes, function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+        } catch (e) { return null; }
+    },
+
+    /** Build a start payload only after receiving the server's commitment. */
+    fairnessAttempt: function(extra) {
+        var offer = this._fairnessOffer;
+        if (!offer || !offer.offerId || !/^[0-9a-f]{64}$/i.test(String(offer.commitment || ''))) {
+            socket.emit('fairness_offer_request');
+            $('#messages').append($('<li class="status" style="color:#ffcc00;">').text('Preparing a fairness commitment — try again in a moment.'));
+            if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
+            return null;
+        }
+        // Generate the player's contribution only AFTER selecting the published commitment.
+        var clientSeed = this._randomClientSeed();
+        if (!clientSeed) {
+            $('#messages').append($('<li class="error">').text('Secure randomness is unavailable in this browser; the game was not started.'));
+            return null;
+        }
+        var payload = Object.assign({}, extra || {}, {
+            fairnessOfferId: offer.offerId,
+            clientSeed: clientSeed
+        });
+        this._pendingFairnessAttempt = {
+            offerId: offer.offerId,
+            commitment: offer.commitment,
+            clientSeed: clientSeed
+        };
+        return payload;
+    },
+
+    emitFairGameStart: function(eventName, extra, acknowledgementReady) {
+        var paidIntent = !(extra && extra.free === true);
+        var existingAcknowledgement = paidIntent
+            && typeof CommerceConsent !== 'undefined'
+            && CommerceConsent.acknowledgement
+            ? CommerceConsent.acknowledgement()
+            : null;
+        if (paidIntent && !acknowledgementReady && !existingAcknowledgement
+            && typeof CommerceConsent !== 'undefined' && CommerceConsent.require) {
+            CommerceConsent.require(function(acknowledgement) {
+                var acknowledgedExtra = Object.assign({}, extra || {});
+                if (acknowledgement) acknowledgedExtra.legalAcknowledgement = acknowledgement;
+                if (SocketHandlers.emitFairGameStart(eventName, acknowledgedExtra, true)) {
+                    $('#entryChoiceOverlay').remove();
+                    if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) ScreenManager.drawWaitingScreen();
+                }
+            });
+            return false;
+        }
+        var acknowledgedPayload = Object.assign({}, extra || {});
+        if (existingAcknowledgement) acknowledgedPayload.legalAcknowledgement = existingAcknowledgement;
+        var payload = this.fairnessAttempt(acknowledgedPayload);
+        if (!payload) return false;
+        socket.emit(eventName, payload);
+        return true;
+    },
 
     payoutAddressRequired: function() {
         if (this._gameMode === 'PAID_SINGLE' && this._directPayoutsEnabled) return true;
@@ -114,6 +182,11 @@ const SocketHandlers = {
     registerEventHandlers: function() {
         // Connection handlers
         socket.on('connect', this.onConnect);
+        socket.on('disconnect', function() {
+            if (typeof CommerceConsent !== 'undefined' && CommerceConsent.clear) {
+                CommerceConsent.clear();
+            }
+        });
         socket.on('welcome', this.onWelcome);
         socket.on('session_token', this.onSessionToken);
         socket.on('session_resumed', this.onSessionResumed);
@@ -130,6 +203,9 @@ const SocketHandlers = {
         socket.on('game_start', this.onGameStart);
         socket.on('game_update', this.onGameUpdate);
         socket.on('game_over', this.onGameOver);
+        socket.on('game_settlement_pending', this.onGameSettlementPending);
+        socket.on('fairness_offer', this.onFairnessOffer);
+        socket.on('fairness_error', this.onFairnessError);
         // Discrete in-run events. Multi-level DESCEND is the big one — without this, taking the
         // stairs down silently dumped the player at a new entrance and read as a bug.
         socket.on('game_event', function (data) {
@@ -156,6 +232,7 @@ const SocketHandlers = {
         socket.on('address_prompt', this.onAddressPrompt);
         socket.on('game_mode_info', this.onGameModeInfo);
         socket.on('payment_created', this.onPaymentCreated);
+        socket.on('commerce_ack_required', this.onCommerceAcknowledgementRequired);
         socket.on('payment_confirmed', this.onPaymentConfirmed);
         socket.on('payment_detected', this.onPaymentDetected);
         socket.on('show_payment_options', this.onShowPaymentOptions);
@@ -208,18 +285,24 @@ const SocketHandlers = {
         } catch (e) { /* non-critical */ }
     },
 
+    onFairnessOffer: function(data) {
+        if (!data || !data.offerId || !/^[0-9a-f]{64}$/i.test(String(data.commitment || ''))) return;
+        SocketHandlers._fairnessOffer = data;
+    },
+
+    onFairnessError: function(data) {
+        SocketHandlers._pendingFairnessAttempt = null;
+        var message = (data && data.message) || 'Fairness offer could not be consumed. Please retry.';
+        $('#messages').append($('<li class="error">').text(message));
+        if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
+        socket.emit('fairness_offer_request');
+    },
+
     onConnect: function() {
         if (SocketHandlers._didConnect) return; // prevent duplicate registration emission
         SocketHandlers._didConnect = true;
-        // Include stored session token in a lightweight resume emit (if server did not get it via handshake)
-        try {
-            const existing = localStorage.getItem('wownerogue_token');
-            if (existing) {
-                // If we later decide to rely solely on query param at io() creation, this is harmless redundancy.
-                socket.io.opts.query = socket.io.opts.query || {};
-                socket.io.opts.query.resumeToken = existing;
-            }
-        } catch (e) {}
+        // The token is supplied in Socket.IO's handshake auth object by index.html. Do not copy
+        // it into a query string: reverse proxies commonly log URLs, which would leak sessions.
         socket.emit('register_client', {
             clientId: socket.id,
             userAgent: navigator.userAgent
@@ -545,14 +628,28 @@ const SocketHandlers = {
         
         // Display provably fair commitment if present
         if (data && data.proof && data.proof.commitment) {
+            var attempted = SocketHandlers._pendingFairnessAttempt;
+            var proofMatchesAttempt = !attempted || (
+                data.proof.offerId === attempted.offerId &&
+                data.proof.commitment === attempted.commitment &&
+                data.proof.clientSeed === attempted.clientSeed
+            );
             const shortHash = data.proof.commitment.substring(0, 16) + '...';
+            const shortClientSeed = data.proof.clientSeed
+                ? data.proof.clientSeed.substring(0, 16) + '...'
+                : '(legacy empty seed)';
             const $proofMsg = $('<li class="proof-commitment" style="color:#0af; font-size:11px;">').html(
                 '🔐 <strong>Provably Fair:</strong> Game hash commitment: <code style="background:#001a00; padding:2px 4px; border-radius:3px;" title="' + 
                 data.proof.commitment + '">' + shortHash + '</code> ' +
                 '<button class="copy-hash-btn" style="font-size:10px; padding:1px 4px; cursor:pointer;" data-hash="' + 
-                data.proof.commitment + '">Copy</button>'
+                data.proof.commitment + '">Copy</button><br>' +
+                '<span style="color:#888;">Accepted client seed:</span> <code>' + shortClientSeed + '</code>'
             );
             $('#messages').append($proofMsg);
+            if (!proofMatchesAttempt) {
+                $('#messages').append($('<li class="error">').text('⚠️ Fairness proof mismatch: the server did not echo the offer/client seed used for this attempt.'));
+            }
+            SocketHandlers._pendingFairnessAttempt = null;
             
             // Store for later verification display
             SocketHandlers._currentGameProof = data.proof;
@@ -609,21 +706,40 @@ const SocketHandlers = {
         UI.scrollChat();
     },
 
+    onGameSettlementPending: function() {
+        // The server withholds game_over until the authoritative completion + any payout
+        // obligation commit together. Keep the player informed without publishing a result that
+        // PostgreSQL cannot yet prove or offering another entry while retry is in progress.
+        $('#messages').find('.solo-settlement-pending').remove();
+        $('#messages').append($('<li class="status solo-settlement-pending" style="color:#ffcc00;">')
+            .text('Result pending durable settlement · retrying safely…'));
+        SocketHandlers._setBannerStatus('Saving result…', '#ffcc00');
+        UI.scrollChat();
+    },
+
     onGameOver: function(data) {
+        $('#messages').find('.solo-settlement-pending').remove();
         $('#messages').append($('<li class="game-over">').text("Game Over: " + data.message));
         
         // Display provably fair verification info if present
         if (data && data.proof && data.proof.seed) {
-            const shortSeed = data.proof.seed.substring(0, 16) + '...';
+            const serverSeed = data.proof.serverSeed || '';
+            const effectiveSeed = data.proof.effectiveSeed || data.proof.seed;
+            const clientSeed = data.proof.clientSeed || '';
+            const shortServerSeed = serverSeed ? serverSeed.substring(0, 16) + '...' : '(unavailable)';
+            const shortEffectiveSeed = effectiveSeed.substring(0, 16) + '...';
+            const shortClientSeed = clientSeed ? clientSeed.substring(0, 16) + '...' : '(legacy empty seed)';
             const shortCommitment = data.proof.commitment.substring(0, 16) + '...';
             const verifyUrl = data.proof.verificationUrl || ('/verify/' + data.proof.gameId);
             
             const $proofReveal = $('<li class="proof-reveal" style="color:#4ade80; font-size:11px; margin-top:5px; padding:8px; background:rgba(0,50,0,0.5); border-radius:4px;">').html(
-                '🔓 <strong>Game Verified:</strong><br>' +
-                '<span style="color:#888;">Seed:</span> <code style="background:#001a00; padding:2px 4px; border-radius:3px;" title="' + 
-                data.proof.seed + '">' + shortSeed + '</code> ' +
+                '🔓 <strong>Proof revealed:</strong><br>' +
+                '<span style="color:#888;">Server seed:</span> <code style="background:#001a00; padding:2px 4px; border-radius:3px;" title="' +
+                serverSeed + '">' + shortServerSeed + '</code> ' +
                 '<button class="copy-seed-btn" style="font-size:10px; padding:1px 4px; cursor:pointer;" data-seed="' + 
-                data.proof.seed + '">Copy</button><br>' +
+                serverSeed + '">Copy</button><br>' +
+                '<span style="color:#888;">Client seed:</span> <code>' + shortClientSeed + '</code><br>' +
+                '<span style="color:#888;">Effective seed:</span> <code title="' + effectiveSeed + '">' + shortEffectiveSeed + '</code><br>' +
                 '<span style="color:#888;">Hash:</span> <code style="background:#001a00; padding:2px 4px; border-radius:3px;">' + shortCommitment + '</code><br>' +
                 '<a href="' + verifyUrl + '" target="_blank" style="color:#0af;">🔗 Verify this game</a>'
             );
@@ -783,10 +899,17 @@ const SocketHandlers = {
         SocketHandlers._creditsPayoutsEnabled = !!data.creditsPayoutsEnabled;
         SocketHandlers._directPayoutsEnabled = !!data.directPayoutsEnabled;
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
-        SocketHandlers._smirkEnabled = data.smirkEnabled !== false; // Default to true if not specified
+        SocketHandlers._smirkEnabled = SocketHandlers._isSmirkExplicitlyEnabled(data);
         SocketHandlers._cryptoType = data.cryptoType || 'WOW';
         SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
+        // Do not ask prestige-only users for a payout address or imply that mainnet paid
+        // entries award crypto. Match crypto is exposed only when its economy is admitted.
+        var matchCryptoPayouts = !!(data.modes && data.modes.match && data.modes.match.economies
+            && data.modes.match.economies.crypto_race);
+        var anyPayouts = SocketHandlers._creditsPayoutsEnabled
+            || SocketHandlers._directPayoutsEnabled || matchCryptoPayouts;
+        $('#manageAddressButton').toggle(anyPayouts);
         if (data.entitlements && typeof SinglePlayerAvatar !== 'undefined') {
             SinglePlayerAvatar.applyEntitlements(data.entitlements);
         }
@@ -1054,6 +1177,24 @@ const SocketHandlers = {
         // Show the payment options modal so user can choose how to play
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.show();
+        }
+    },
+
+    onCommerceAcknowledgementRequired: function(data) {
+        var message = data && (data.message || data.error)
+            || 'Review the paid-play disclosures before continuing.';
+        $('#messages').append($('<li class="status" style="color:#fbbf24;">').text(message));
+        if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
+        if (typeof CommerceConsent !== 'undefined' && CommerceConsent.require) {
+            var refreshed = CommerceConsent.reject
+                ? CommerceConsent.reject(data)
+                : Promise.resolve();
+            refreshed.catch(function() { return null; }).then(function() {
+                CommerceConsent.require(function() {
+                    $('#messages').append($('<li class="status" style="color:#aaa;">').text('Disclosures acknowledged. Retry the paid action when ready.'));
+                    if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
+                });
+            });
         }
     },
 
@@ -1729,7 +1870,9 @@ const SocketHandlers = {
         var $btn = $('#earlyEntryButton');
         $btn.prop('disabled', true).text('⏳ Entering...');
 
-        socket.emit('early_entry');
+        if (!SocketHandlers.emitFairGameStart('early_entry')) {
+            $btn.prop('disabled', false).text('⚡ ENTER NOW (RISKY!) ⚡');
+        }
     },
     
     /**
@@ -1806,8 +1949,8 @@ const SocketHandlers = {
                 '<span style="font-size:12px;letter-spacing:1px;color:' + accent + ';">ENTER &#9656;</span></div>';
         }
         function begin(msg, emit) {
+            if (emit() === false) return;
             $('#entryChoiceOverlay').remove();
-            emit();
             // Transient "dropping in…/queued…" line — cleared in onGameStart once the game is live so
             // it doesn't linger next to a running game reading as "still starting". The queued variant
             // stays visible during the (real) block wait; only a started game removes it.
@@ -1842,13 +1985,13 @@ const SocketHandlers = {
             $('#ecNow').on('click', function () { timing = 'now'; render(); });
             $('#ecX').on('click', function () { $('#entryChoiceOverlay').remove(); });
             $('#ecFree').on('click', function () {
-                if (timing === 'now') begin('⚡ Free game — dropping in...', function () { socket.emit('auto_start', { free: true }); });
-                else begin('🛡️ Free game — queued for the next block...', function () { socket.emit('join_queue', { free: true }); });
+                if (timing === 'now') begin('⚡ Free game — dropping in...', function () { return SocketHandlers.emitFairGameStart('auto_start', { free: true }); });
+                else begin('🛡️ Free game — queued for the next block...', function () { return SocketHandlers.emitFairGameStart('join_queue', { free: true }); });
             });
             $('#ecRank').on('click', function () {
                 if (!hasCredits) { pay(); return; }
-                if (timing === 'now') begin('⚡ Ranked — dropping in now...', function () { socket.emit('auto_start'); });
-                else begin('🛡️ Ranked — queued for the next block...', function () { socket.emit('join_queue'); });
+                if (timing === 'now') begin('⚡ Ranked — dropping in now...', function () { return SocketHandlers.emitFairGameStart('auto_start'); });
+                else begin('🛡️ Ranked — queued for the next block...', function () { return SocketHandlers.emitFairGameStart('join_queue'); });
             });
             $('#ecBuy').on('click', pay);
         }

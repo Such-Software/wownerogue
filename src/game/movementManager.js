@@ -11,9 +11,11 @@ class MovementManager {
     this._lastMove = new Map(); // socketId -> timestamp
     this.postMoveHook = typeof postMoveHook === 'function' ? postMoveHook : null;
     this.spectatorManager = spectatorManager; // For broadcasting to spectators
+    this._acceptingMoves = true;
   }
 
   handleMove(socketId, moveData) {
+    if (!this._acceptingMoves) return;
     if (!moveData || typeof moveData.direction !== 'string') return;
     const now = Date.now();
     const last = this._lastMove.get(socketId) || 0;
@@ -22,6 +24,11 @@ class MovementManager {
 
     const game = this.activeGames.get(socketId);
     if (!game) return; // not in a game
+
+    // A terminal result stays in activeGames while its atomic DB completion is retried. Keeping
+    // the entry blocks replacement games; this explicit guard prevents the retained Game object
+    // from accepting moves (Game.movePlayer historically does not inspect gameState itself).
+    if (game.settlementPending || game.settlementCommitted || game.gameState === 'ended') return;
 
     const dir = moveData.direction;
     let dx = 0, dy = 0;
@@ -94,6 +101,12 @@ class MovementManager {
     if (this.spectatorManager && game.id) {
       this.spectatorManager.broadcastToSpectators(game.id, state);
     }
+  }
+
+  /** Freeze gameplay before the graceful-shutdown settlement drain takes its snapshot. */
+  shutdown() {
+    this._acceptingMoves = false;
+    this._lastMove.clear();
   }
 }
 

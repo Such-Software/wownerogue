@@ -6,7 +6,36 @@
  * - Failed payouts
  * - Wallet disconnection
  * - High pending payout queue
+ * - Manual-review and stale financial outbox rows
  */
+
+const money = require('../money/atomic');
+
+function positiveAtomic(value, fallback) {
+    try {
+        const input = value == null || value === '' ? fallback : String(value).replace(/_/g, '');
+        const exact = money.toBig(input);
+        return exact > 0n ? exact : money.toBig(fallback);
+    } catch (_) {
+        return money.toBig(fallback);
+    }
+}
+
+function formatAtomicFixed(value, decimals, digits) {
+    const exact = money.toBig(value);
+    const negative = exact < 0n;
+    const abs = negative ? -exact : exact;
+    const scale = 10n ** BigInt(decimals);
+    const whole = abs / scale;
+    const fraction = (abs % scale).toString().padStart(decimals, '0')
+        .slice(0, digits).padEnd(digits, '0');
+    return `${negative ? '-' : ''}${whole}${digits > 0 ? `.${fraction}` : ''}`;
+}
+
+function positiveInteger(value, fallback) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 class AlertService {
     constructor({ walletService, db, debugManager }) {
@@ -27,9 +56,16 @@ class AlertService {
         // Balance thresholds (atomic units)
         // BALANCE_WARN: sends email alert
         // BALANCE_CRITICAL: sends email AND halts new games
-        this.balanceWarnThreshold = parseInt(process.env.BALANCE_WARN) || parseInt(process.env.LOW_BALANCE_THRESHOLD) || 100000000000; // 0.1 XMR default
-        this.balanceCriticalThreshold = parseInt(process.env.BALANCE_CRITICAL) || 10000000000; // 0.01 XMR default
+        this.balanceWarnThreshold = positiveAtomic(
+            process.env.BALANCE_WARN || process.env.LOW_BALANCE_THRESHOLD,
+            100000000000n
+        ); // 0.1 XMR default
+        this.balanceCriticalThreshold = positiveAtomic(process.env.BALANCE_CRITICAL, 10000000000n); // 0.01 XMR default
         this.highPendingThreshold = parseInt(process.env.HIGH_PENDING_THRESHOLD) || 10;
+        this.financialReviewStaleMs = positiveInteger(
+            process.env.FINANCIAL_REVIEW_STALE_MS,
+            15 * 60 * 1000
+        );
 
         // Track critical balance state for game halt
         this.isBalanceCritical = false;
@@ -140,14 +176,12 @@ class AlertService {
 
         try {
             const balance = await this.walletService.getBalance();
-            const unlockedBalance = balance.unlocked_balance || 0;
+            const unlockedBalance = money.toBig(balance.unlocked_balance ?? 0);
             this.lastBalanceCheck = Date.now();
 
             const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
             const decimals = cryptoType === 'WOW' ? 11 : 12;
-            const divisor = Math.pow(10, decimals);
-
-            const balanceFormatted = (unlockedBalance / divisor).toFixed(6);
+            const balanceFormatted = formatAtomicFixed(unlockedBalance, decimals, 6);
 
             // Check CRITICAL threshold first (more severe)
             if (unlockedBalance < this.balanceCriticalThreshold) {
@@ -157,7 +191,7 @@ class AlertService {
                     console.warn(`🚨 CRITICAL: Wallet balance is critically low (${balanceFormatted} ${cryptoType}). New games are HALTED.`);
                 }
 
-                const thresholdFormatted = (this.balanceCriticalThreshold / divisor).toFixed(6);
+                const thresholdFormatted = formatAtomicFixed(this.balanceCriticalThreshold, decimals, 6);
 
                 await this.sendAlert('balance_critical', {
                     subject: `🚨 CRITICAL: Wallet Balance Depleted - ${balanceFormatted} ${cryptoType}`,
@@ -188,7 +222,7 @@ class AlertService {
                     console.log(`✅ Wallet balance restored above critical threshold. Games can resume.`);
                 }
 
-                const thresholdFormatted = (this.balanceWarnThreshold / divisor).toFixed(6);
+                const thresholdFormatted = formatAtomicFixed(this.balanceWarnThreshold, decimals, 6);
 
                 await this.sendAlert('balance_warn', {
                     subject: `⚠️ Wallet Balance Low - ${balanceFormatted} ${cryptoType}`,
@@ -198,7 +232,7 @@ class AlertService {
                         <ul>
                             <li><strong>Current Balance:</strong> ${balanceFormatted} ${cryptoType}</li>
                             <li><strong>Warning Threshold:</strong> ${thresholdFormatted} ${cryptoType}</li>
-                            <li><strong>Critical Threshold:</strong> ${(this.balanceCriticalThreshold / divisor).toFixed(6)} ${cryptoType}</li>
+                            <li><strong>Critical Threshold:</strong> ${formatAtomicFixed(this.balanceCriticalThreshold, decimals, 6)} ${cryptoType}</li>
                         </ul>
                         <p>Please top up the wallet soon to avoid service interruption.</p>
                         <p>If balance drops below the critical threshold, new games will be automatically halted.</p>
@@ -219,6 +253,9 @@ class AlertService {
                 this.resolveAlert('balance_warn');
             }
         } catch (error) {
+            // Unknown balance is not evidence of sufficient reserves. Admission remains
+            // closed until a later exact wallet reading proves the reserve is healthy.
+            this.isBalanceCritical = true;
             console.error('Failed to check wallet balance for alerts:', error.message);
         }
     }
@@ -242,13 +279,13 @@ class AlertService {
 
         try {
             const balance = await this.walletService.getBalance();
-            const unlockedBalance = balance.unlocked_balance || 0;
+            const unlockedBalance = money.toBig(balance.unlocked_balance ?? 0);
 
             if (unlockedBalance < this.balanceCriticalThreshold) {
                 this.isBalanceCritical = true;
                 const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
                 const decimals = cryptoType === 'WOW' ? 11 : 12;
-                const balanceFormatted = (unlockedBalance / Math.pow(10, decimals)).toFixed(4);
+                const balanceFormatted = formatAtomicFixed(unlockedBalance, decimals, 4);
                 return {
                     halted: true,
                     reason: `Sorry, the house balance is too low to initiate new games (${balanceFormatted} ${cryptoType}). Please try again later.`
@@ -259,8 +296,8 @@ class AlertService {
             return { halted: false };
         } catch (error) {
             console.error('Failed to check balance for game start:', error.message);
-            // On error, don't halt games - let them proceed
-            return { halted: false };
+            this.isBalanceCritical = true;
+            return { halted: true, reason: 'Wallet balance could not be verified. Please try again later.' };
         }
     }
 
@@ -349,12 +386,87 @@ class AlertService {
     }
 
     /**
+     * Alert on ambiguous transfer outcomes and financial outbox rows that have stopped moving.
+     * These are visibility alerts only: neither state is changed and no transfer is retried.
+     */
+    async checkFinancialReviewRows() {
+        if (!this.db) return;
+
+        try {
+            const result = await this.db.query(`
+                SELECT
+                    (SELECT COUNT(*) FROM payouts
+                     WHERE status = 'needs_review') AS payout_review_count,
+                    (SELECT COUNT(*) FROM payment_refunds
+                     WHERE status = 'needs_review') AS refund_review_count,
+                    (SELECT COUNT(*) FROM payouts
+                     WHERE status = 'processing'
+                       AND COALESCE(last_retry_at, created_at)
+                           < NOW() - ($1::bigint * INTERVAL '1 millisecond'))
+                        AS stale_payout_processing_count,
+                    (SELECT COUNT(*) FROM payment_refunds
+                     WHERE status IN ('requested', 'processing')
+                       AND COALESCE(processing_started_at, requested_at, updated_at, created_at)
+                           < NOW() - ($1::bigint * INTERVAL '1 millisecond'))
+                        AS stale_refund_nonterminal_count
+            `, [this.financialReviewStaleMs]);
+
+            const row = result.rows[0] || {};
+            const payoutReviewCount = parseInt(row.payout_review_count) || 0;
+            const refundReviewCount = parseInt(row.refund_review_count) || 0;
+            const stalePayoutCount = parseInt(row.stale_payout_processing_count) || 0;
+            const staleRefundCount = parseInt(row.stale_refund_nonterminal_count) || 0;
+            const reviewCount = payoutReviewCount + refundReviewCount;
+            const staleCount = stalePayoutCount + staleRefundCount;
+
+            if (reviewCount > 0) {
+                await this.sendAlert('financial_needs_review', {
+                    subject: `🚨 Financial transfers need review: ${reviewCount}`,
+                    level: 'crit',
+                    body: `${payoutReviewCount} payout(s) and ${refundReviewCount} refund(s) are in needs_review. Do not retry them; reconcile against wallet history and transaction evidence.`,
+                    html: `
+                        <h2>Financial transfers require manual review</h2>
+                        <ul>
+                            <li><strong>Payouts:</strong> ${payoutReviewCount}</li>
+                            <li><strong>Refunds:</strong> ${refundReviewCount}</li>
+                        </ul>
+                        <p>Do not resend these transfers. Reconcile each row against wallet history and transaction evidence.</p>
+                    `
+                });
+            } else {
+                await this.resolveAlert('financial_needs_review');
+            }
+
+            if (staleCount > 0) {
+                const staleMinutes = Math.ceil(this.financialReviewStaleMs / 60000);
+                await this.sendAlert('financial_nonterminal_stale', {
+                    subject: `🚨 Stale financial transfers: ${staleCount}`,
+                    level: 'crit',
+                    body: `${stalePayoutCount} payout processing row(s) and ${staleRefundCount} refund requested/processing row(s) have not moved for at least ${staleMinutes} minutes. Treat processing as an ambiguous wallet outcome.`,
+                    html: `
+                        <h2>Financial transfers are stale</h2>
+                        <ul>
+                            <li><strong>Processing payouts:</strong> ${stalePayoutCount}</li>
+                            <li><strong>Requested/processing refunds:</strong> ${staleRefundCount}</li>
+                            <li><strong>Age threshold:</strong> ${staleMinutes} minutes</li>
+                        </ul>
+                        <p>A processing row may represent a broadcast transfer. Do not retry it until wallet reconciliation proves no transfer occurred.</p>
+                    `
+                });
+            } else {
+                await this.resolveAlert('financial_nonterminal_stale');
+            }
+        } catch (error) {
+            console.error('Failed to check financial review rows for alerts:', error.message);
+        }
+    }
+
+    /**
      * Alert when a payout permanently fails
      */
     async alertPayoutFailed(payout) {
         const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
-        const divisor = cryptoType === 'WOW' ? 1e11 : 1e12;
-        const amountFormatted = (payout.amount / divisor).toFixed(6);
+        const amountFormatted = formatAtomicFixed(payout.amount, cryptoType === 'WOW' ? 11 : 12, 6);
 
         await this.sendAlert('payout_failed', {
             subject: `💀 Payout Permanently Failed - ${amountFormatted} ${cryptoType}`,
@@ -386,6 +498,7 @@ class AlertService {
         await this.checkWalletBalance();
         await this.checkWalletConnection();
         await this.checkPendingPayouts();
+        await this.checkFinancialReviewRows();
     }
 
     /**

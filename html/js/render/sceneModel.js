@@ -155,9 +155,67 @@ function maxDims(maps) {
     return { rows: rows, cols: cols };
 }
 
+function normalizeGameStateOpts(opts) {
+    // Older multiplayer callers passed a socket id directly. Keep that path working while the
+    // public API moves to an options object (`{ viewerId, playerAppearance, cryptoType }`).
+    if (typeof opts === 'string') return { viewerId: opts };
+    return (opts && typeof opts === 'object') ? opts : {};
+}
+
+function pickCameraPlayer(players, state, opts) {
+    if (!players || !players.length) return null;
+    var viewerId = opts.viewerId || opts.socketId || null;
+    var focusId = opts.focusPlayerId || null;
+    var i, p;
+
+    // Match ticks are broadcast once, so the client socket id is the authoritative local marker
+    // when the server cannot include a recipient-specific `you` flag.
+    if (viewerId) {
+        for (i = 0; i < players.length; i++) {
+            p = players[i];
+            if (p && p.id === viewerId) return p;
+        }
+    }
+    for (i = 0; i < players.length; i++) {
+        p = players[i];
+        if (p && p.you === true) return p;
+    }
+    for (i = 0; i < players.length; i++) {
+        p = players[i];
+        if (p && focusId && p.id === focusId) return p;
+    }
+    for (i = 0; i < players.length; i++) {
+        p = players[i];
+        if (p && state.winnerId && p.id === state.winnerId) return p;
+    }
+    // Spectators follow a live contender by default, then gracefully fall back to the first racer.
+    for (i = 0; i < players.length; i++) {
+        p = players[i];
+        if (p && p.alive !== false && !p.finished) return p;
+    }
+    return players[0] || null;
+}
+
+function pointOf(value) {
+    if (!value) return null;
+    if (Array.isArray(value)) return { x: value[0], y: value[1] };
+    if (typeof value.x === 'number' && typeof value.y === 'number') return { x: value.x, y: value.y };
+    return null;
+}
+
+function racerColor(player, index, isYou) {
+    if (isYou) return '#67e8f9';
+    if (player && player.alive === false) return '#6b7280';
+    if (player && (player.finished || player.escaped)) return '#fbbf24';
+    var palette = ['#9aa4b2', '#a78bfa', '#4ade80', '#fb7185', '#60a5fa', '#f97316'];
+    var raw = String((player && player.id) || index), hash = 0;
+    for (var i = 0; i < raw.length; i++) hash = ((hash * 31) + raw.charCodeAt(i)) >>> 0;
+    return palette[hash % palette.length];
+}
+
 function sceneFromGameState(state, opts) {
     state = state || {};
-    opts = opts || {};
+    opts = normalizeGameStateOpts(opts);
     var visible = state.visibleTiles || {};
     var explored = state.exploredTiles || {};
     var lighting = state.lighting || {};
@@ -167,8 +225,12 @@ function sceneFromGameState(state, opts) {
     var rows = state.dungeonRows || visible.length || dims.rows;
     var cols = state.dungeonCols || dims.cols;
 
-    // Player cell — explored MEMORY fades to black with distance from here (see below).
-    var _pl = state.player || {};
+    var matchPlayers = Array.isArray(state.players) ? state.players : [];
+    var cameraPlayer = pickCameraPlayer(matchPlayers, state, opts);
+
+    // Player cell — explored MEMORY fades to black with distance from here (see below). Multiplayer
+    // states use `players[]`, while the original single-player protocol uses singular `player`.
+    var _pl = state.player || cameraPlayer || {};
     var _plx = typeof _pl.x === 'number' ? _pl.x : (cols / 2);
     var _ply = typeof _pl.y === 'number' ? _pl.y : (rows / 2);
 
@@ -215,15 +277,19 @@ function sceneFromGameState(state, opts) {
     function inView(x, y) { return !!(visible[y] && visible[y][x] !== undefined); }
 
     // Entrance / exit / treasure as entities (so they layer above tiles) — only once explored.
-    if (state.entrance && seen(state.entrance[0], state.entrance[1])) {
-        entities.push({ id: 'entrance', x: state.entrance[0], y: state.entrance[1], kind: 'feature', char: '<', color: '#3fb950', label: null });
+    // Solo uses `[x,y]`; match state uses `{x,y}` for treasure, so accept both point shapes.
+    var entrance = pointOf(state.entrance);
+    var exit = pointOf(state.exit);
+    var treasure = pointOf(state.treasure);
+    if (entrance && seen(entrance.x, entrance.y)) {
+        entities.push({ id: 'entrance', x: entrance.x, y: entrance.y, kind: 'feature', char: '<', color: '#3fb950', label: null });
     }
-    if (state.exit && seen(state.exit[0], state.exit[1])) {
-        entities.push({ id: 'exit', x: state.exit[0], y: state.exit[1], kind: 'feature', char: '>', color: '#d29922', label: null });
+    if (exit && seen(exit.x, exit.y)) {
+        entities.push({ id: 'exit', x: exit.x, y: exit.y, kind: 'feature', char: '>', color: '#d29922', label: null });
     }
-    if (state.treasure && seen(state.treasure[0], state.treasure[1])) {
+    if (treasure && seen(treasure.x, treasure.y) && !(state.treasure && state.treasure.carrierId)) {
         var tChar = opts.cryptoType === 'XMR' ? '$M' : '$W';
-        entities.push({ id: 'treasure', x: state.treasure[0], y: state.treasure[1], kind: 'feature', char: tChar, color: '#fbbf24', label: null });
+        entities.push({ id: 'treasure', x: treasure.x, y: treasure.y, kind: 'feature', char: tChar, color: '#fbbf24', label: null });
     }
 
     // Items — only once explored.
@@ -246,15 +312,34 @@ function sceneFromGameState(state, opts) {
         });
     }
 
-    // Player.
-    if (state.player) {
+    // Multiplayer racers. Preserve public status fields useful to HUD/render extensions while
+    // keeping the shared entity contract identical to solo (`kind: player`, appearance, facing).
+    if (matchPlayers.length) {
+        var viewerId = opts.viewerId || opts.socketId || null;
+        for (var pi = 0; pi < matchPlayers.length; pi++) {
+            var rp = matchPlayers[pi];
+            if (!rp || typeof rp.x !== 'number' || typeof rp.y !== 'number') continue;
+            var isYou = viewerId ? rp.id === viewerId : rp.you === true;
+            var appearance = rp.appearance || (rp.avatar ? { avatar: rp.avatar } : null) || { avatar: 'default' };
+            entities.push({
+                id: rp.id || ('player:' + pi), x: rp.x, y: rp.y,
+                kind: 'player', char: '@', color: racerColor(rp, pi, isYou),
+                facing: rp.facing || null, label: rp.name || null,
+                avatar: appearance.avatar || rp.avatar || 'default', appearance: appearance,
+                you: isYou, cameraTarget: rp === cameraPlayer,
+                alive: rp.alive !== false, finished: !!rp.finished, escaped: !!rp.escaped,
+                hasTreasure: !!rp.hasTreasure, placement: rp.placement == null ? null : rp.placement
+            });
+        }
+    // Original single-player protocol.
+    } else if (state.player) {
         var playerEntity = {
             id: 'player', x: state.player.x, y: state.player.y,
             kind: 'player', char: '@', color: '#9aa4b2',
             // No bogus default: the SP server doesn't send facing, so leave it null and let the iso/3D
             // renderers INFER facing from movement. A hardcoded 'down' made them always face down/SW.
             facing: state.player.facing || null, label: null,
-            you: !state.isSpectating
+            you: !state.isSpectating, cameraTarget: true
         };
         // Attach the player's appearance if available (for render-kit character rendering).
         if (opts.playerAppearance) {

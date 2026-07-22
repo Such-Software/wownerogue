@@ -19,8 +19,8 @@ const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 function toBig(v) {
     if (typeof v === 'bigint') return v;
     if (typeof v === 'number') {
-        if (!Number.isFinite(v) || !Number.isInteger(v)) {
-            throw new Error(`Invalid atomic amount (not an integer number): ${v}`);
+        if (!Number.isFinite(v) || !Number.isSafeInteger(v)) {
+            throw new Error(`Invalid atomic amount (not an exact safe integer number): ${v}`);
         }
         return BigInt(v);
     }

@@ -143,6 +143,23 @@ const PaymentUI = {
         return `<div style="font-size:0.78em;color:#fbbf24;margin-top:4px;margin-left:${options.indent || 0}px;">Includes: ${this.escapeHtml(parts.join(' • '))}</div>`;
     },
 
+    payoutSummaryHtml: function(mode, currency) {
+        const outcomes = this.config?.payoutOutcomes?.[mode];
+        if (!outcomes?.escape || !outcomes?.escapeWithTreasure) {
+            return '<span style="color:#f87171;">Exact payout terms are unavailable. Reload before entering paid play.</span>';
+        }
+        const describe = (label, outcome) => {
+            if (!outcome.payable) {
+                const why = outcome.suppressedReason === 'below_minimum' ? ' (below configured minimum)' : '';
+                return `${label}: no payout${why}`;
+            }
+            const amount = `${this.escapeHtml(outcome.amountFormatted)} ${this.escapeHtml(currency)}`;
+            if (outcome.capApplied) return `${label}: ${amount} (configured cap applied)`;
+            return `${label}: ${this.escapeHtml(outcome.multiplier)}× = ${amount}`;
+        };
+        return `<span style="color:#4ade80;">💰 ${describe('Escape', outcomes.escape)} • ${describe('Treasure', outcomes.escapeWithTreasure)}</span>`;
+    },
+
     render: function() {
         if (!this.config) return;
 
@@ -172,15 +189,10 @@ const PaymentUI = {
         // === SECTION 1: Use existing credits (if available) ===
         if (hasCredits && this.config.creditsModeEnabled) {
             const creditsPayoutsEnabled = this.config.creditsPayoutsEnabled;
-            const creditsMultipliers = this.config.payoutMultipliers?.credits || { escape: 2, escapeWithTreasure: 3 };
-            const creditsBaseValue = this.config.creditsPayoutBaseValue || this.config.singleGamePrice;
             
             let payoutNote = '';
             if (creditsPayoutsEnabled) {
-                const baseFormatted = this.formatPrice(creditsBaseValue);
-                const escapeWin = (parseFloat(baseFormatted) * creditsMultipliers.escape).toFixed(2);
-                const treasureWin = (parseFloat(baseFormatted) * creditsMultipliers.escapeWithTreasure).toFixed(2);
-                payoutNote = `<span style="color:#4ade80;">💰 Win: ${creditsMultipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${creditsMultipliers.escapeWithTreasure}x (${treasureWin} ${currency})</span><br><span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>`;
+                payoutNote = `${this.payoutSummaryHtml('credits', currency)}<br><span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>`;
             } else {
                 payoutNote = '<span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>';
             }
@@ -204,7 +216,6 @@ const PaymentUI = {
         // === SECTION 2: Direct payment (pay per game) ===
         if (this.config.directModeEnabled) {
             const price = this.config.singleGamePriceFormatted || this.formatPrice(this.config.singleGamePrice);
-            const multipliers = this.config.payoutMultipliers?.direct || { escape: 2, escapeWithTreasure: 3 };
             // Payout-honest: only show multipliers when payouts are actually on (default off, not on).
             const directPayoutsEnabled = this.config.directPayoutsEnabled != null
                 ? !!this.config.directPayoutsEnabled
@@ -212,9 +223,7 @@ const PaymentUI = {
             
             let payoutInfo = '';
             if (directPayoutsEnabled) {
-                const escapeWin = (parseFloat(price) * multipliers.escape).toFixed(2);
-                const treasureWin = (parseFloat(price) * multipliers.escapeWithTreasure).toFixed(2);
-                payoutInfo = `<span style="color:#4ade80;">Win: ${multipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${multipliers.escapeWithTreasure}x (${treasureWin} ${currency})</span><br><span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>`;
+                payoutInfo = `${this.payoutSummaryHtml('direct', currency)}<br><span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>`;
             } else {
                 payoutInfo = '<span style="color:#fbbf24;">🏅 High scores enter the Hall of Champions</span>';
             }
@@ -241,16 +250,11 @@ const PaymentUI = {
         if (this.config.creditsModeEnabled && creditPackages.length > 0) {
             const singlePrice = this.config.singleGamePrice;
             const creditsPayoutsEnabled = this.config.creditsPayoutsEnabled;
-            const creditsMultipliers = this.config.payoutMultipliers?.credits || { escape: 2, escapeWithTreasure: 3 };
-            const creditsBaseValue = this.config.creditsPayoutBaseValue || this.config.singleGamePrice;
             
             // Build payout info for credits mode
             let creditsPayoutInfo = '';
             if (creditsPayoutsEnabled) {
-                const baseFormatted = this.formatPrice(creditsBaseValue);
-                const escapeWin = (parseFloat(baseFormatted) * creditsMultipliers.escape).toFixed(2);
-                const treasureWin = (parseFloat(baseFormatted) * creditsMultipliers.escapeWithTreasure).toFixed(2);
-                creditsPayoutInfo = `<div style="font-size:0.85em;color:#4ade80;margin-bottom:10px;">💰 Win: ${creditsMultipliers.escape}x (${escapeWin} ${currency}) • Treasure: ${creditsMultipliers.escapeWithTreasure}x (${treasureWin} ${currency})</div>`;
+                creditsPayoutInfo = `<div style="font-size:0.85em;margin-bottom:10px;">${this.payoutSummaryHtml('credits', currency)}</div>`;
             } else {
                 creditsPayoutInfo = `<div style="font-size:0.85em;color:#fbbf24;margin-bottom:10px;">🏅 High scores enter the Hall of Champions • bulk discount</div>`;
             }
@@ -283,7 +287,7 @@ const PaymentUI = {
                 packagesHtml += `
                     <label style="display:block;padding:10px;margin:5px 0;background:#252540;border:1px solid #444;border-radius:4px;cursor:pointer;"
                            class="package-option" data-package-id="${pkg.id}">
-                        <input type="radio" name="credit-package" value="${pkg.id}" ${checked} style="margin-right:10px;">
+                        <input type="radio" name="credit-package" value="${this.escapeHtml(pkg.id)}" ${checked} style="margin-right:10px;">
                         <strong>${pkg.credits} credits${bonusText}</strong>${discountBadge}
                         <span style="float:right;color:#fbbf24;font-weight:bold;">${priceFormatted} ${currency}</span>
                         <div style="font-size:0.8em;color:#888;margin-top:4px;margin-left:22px;">
@@ -298,7 +302,7 @@ const PaymentUI = {
                 <div class="payment-section" style="margin-bottom:15px;padding:12px;background:#1a1a2e;border:1px solid #444;border-radius:6px;">
                     <div style="margin-bottom:10px;">
                         <strong style="color:#f0f0f0;">🎫 Buy Credits</strong>
-                        <span style="font-size:0.85em;color:#888;margin-left:10px;">Bulk discount • Never expire</span>
+                        <span style="font-size:0.85em;color:#888;margin-left:10px;">Bulk discount • tied to this browser session</span>
                     </div>
                     ${creditsPayoutInfo}
                     <div class="packages-list">
@@ -370,24 +374,39 @@ const PaymentUI = {
         }
     },
 
-    handleModeSelection: function(mode, action, packageId) {
+    handleModeSelection: function(mode, action, packageId, acknowledgementReady, legalAcknowledgement) {
         console.log("Mode selected:", mode, "Action:", action, "Package:", packageId);
         
         if (mode === 'FREE') {
             $('#payment-ui').hide();
-            if (window.socket) {
+            if (window.socket && typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
                 // play_free records the game as FREE (Pleb leaderboard, no payout) even on
                 // an instance that also sells credits/entry.
-                window.socket.emit('play_free');
+                SocketHandlers.emitFairGameStart('play_free', { free: true });
             }
+            return;
+        }
+
+        // A checkbox in the browser is not a legal/identity verification, but requiring a fresh
+        // per-session statement prevents the UI from silently opening a value-bearing action.
+        if (!acknowledgementReady) {
+            if (typeof CommerceConsent === 'undefined' || !CommerceConsent.require) {
+                $('#payment-status').text('Paid-play disclosures are unavailable. No payment was requested.');
+                return;
+            }
+            CommerceConsent.require(function(acknowledgement) {
+                PaymentUI.handleModeSelection(mode, action, packageId, true, acknowledgement);
+            });
             return;
         }
         
         // If using existing credits, just start the game
         if (action === 'use_credit' && this.userCredits >= 1) {
             $('#payment-ui').hide();
-            if (window.socket) {
-                window.socket.emit('enter_game');
+            if (window.socket && typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
+                SocketHandlers.emitFairGameStart('auto_start', {
+                    legalAcknowledgement: legalAcknowledgement
+                }, true);
             }
             return;
         }
@@ -401,6 +420,7 @@ const PaymentUI = {
         }
         
         const requestData = { type: paymentType };
+        if (legalAcknowledgement) requestData.legalAcknowledgement = legalAcknowledgement;
         if (packageId) {
             if (paymentType === 'cosmetic_pack') {
                 requestData.productId = packageId;
@@ -410,7 +430,13 @@ const PaymentUI = {
         }
         
         if (window.socket) {
-            window.socket.emit('request_payment', requestData);
+            if (paymentType === 'single_game' && typeof SocketHandlers !== 'undefined' && SocketHandlers.fairnessAttempt) {
+                var fairRequest = SocketHandlers.fairnessAttempt(requestData);
+                if (!fairRequest) return;
+                window.socket.emit('request_payment', fairRequest);
+            } else {
+                window.socket.emit('request_payment', requestData);
+            }
             
             // Show loading state
             $('.game-modes').hide();

@@ -22,6 +22,9 @@
         this.mixers = [];
         this.entities = {};
         this.last = {};
+        this.zoom = 1;
+        this.panX = 0;
+        this.panY = 0;
         this._sizeKey = null;
         this._init();
     }
@@ -40,7 +43,13 @@
         this.camera.lookAt(0, 0, 0);
         this.renderer = new T.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
         this.renderer.domElement.className = 'rk-canvas';
+        this.canvas = this.renderer.domElement;
         this.renderer.setPixelRatio(Math.min(2, root.devicePixelRatio || 1));
+        if (T.SRGBColorSpace) this.renderer.outputColorSpace = T.SRGBColorSpace;
+        if (T.ACESFilmicToneMapping != null) {
+            this.renderer.toneMapping = T.ACESFilmicToneMapping;
+            this.renderer.toneMappingExposure = 1.08;
+        }
         this.host.appendChild(this.renderer.domElement);
 
         var hemi = new T.HemisphereLight(0xfff3d2, 0x283044, 2.1);
@@ -48,6 +57,11 @@
         var key = new T.DirectionalLight(0xffffff, 1.6);
         key.position.set(6, 10, 5);
         this.scene.add(key);
+        // A subtle player-carried torch adds depth and keeps the followed avatar readable without
+        // washing out the dungeon's black fog-of-war background.
+        this.playerLight = new T.PointLight(0xffb35c, 2.2, 8, 2);
+        this.playerLight.position.set(0, 3.2, 0);
+        this.scene.add(this.playerLight);
         this.world = new T.Group();
         this.scene.add(this.world);
         this.clock = new T.Clock();
@@ -65,12 +79,30 @@
         if (w === this._cw && h === this._ch) return;
         this._cw = w; this._ch = h;
         this.renderer.setSize(w, h, true); // updateStyle:true → the canvas CSS-fills the host
-        var aspect = w / h, span = 8; // fixed zoom = a screenful around the player
+        var aspect = w / h, span = 8 / (this.zoom || 1); // fixed screenful, user-adjustable zoom
         this.camera.left = -span * aspect;
         this.camera.right = span * aspect;
         this.camera.top = span;
         this.camera.bottom = -span;
         this.camera.updateProjectionMatrix();
+    };
+
+    ThreeRenderer.prototype.setZoom = function (zoom) {
+        var next = Math.max(0.55, Math.min(3.2, Number(zoom) || 1));
+        if (Math.abs(next - this.zoom) < 0.001) return;
+        this.zoom = next;
+        this._cw = null; // force projection update even when the host dimensions did not change
+        this._fitToHost();
+    };
+
+    // `attachCamera` reports drag pan in viewport pixels. Keep that contract for 3D and convert the
+    // offset to ground-plane world units in _animate(), where the followed player's current smoothed
+    // position is available. Bound it to one viewport so a stray gesture cannot lose the dungeon.
+    ThreeRenderer.prototype.setPan = function (x, y) {
+        var w = (this.host && (this.host.clientWidth || this.host.offsetWidth)) || 640;
+        var h = (this.host && (this.host.clientHeight || this.host.offsetHeight)) || 400;
+        this.panX = Math.max(-w, Math.min(w, Number(x) || 0));
+        this.panY = Math.max(-h, Math.min(h, Number(y) || 0));
     };
 
     ThreeRenderer.prototype._mat = function (hex) {
@@ -297,11 +329,21 @@
         var pcam = null;
         for (var pid in this.entities) {
             var pen = this.entities[pid];
-            if (pen.e && (pen.e.you || pen.e.kind === 'player')) { pcam = pen.obj; break; }
+            if (pen.e && (pen.e.you || pen.e.cameraTarget)) { pcam = pen.obj; break; }
+            if (!pcam && pen.e && pen.e.kind === 'player') pcam = pen.obj;
         }
         if (pcam) {
-            this.camera.position.set(pcam.position.x + 8, 9, pcam.position.z + 8);
-            this.camera.lookAt(pcam.position.x, 0, pcam.position.z);
+            // Dragging the viewport should move the rendered dungeon with the pointer. Translate the
+            // camera target opposite the corresponding screen-space axes while retaining the fixed
+            // isometric camera offset and player-follow smoothing.
+            var viewportHeight = (this.host && (this.host.clientHeight || this.host.offsetHeight)) || 400;
+            var unitsPerPixel = (16 / (this.zoom || 1)) / Math.max(1, viewportHeight);
+            var diagonal = unitsPerPixel / Math.sqrt(2);
+            var targetX = pcam.position.x + (-this.panX - this.panY) * diagonal;
+            var targetZ = pcam.position.z + (this.panX - this.panY) * diagonal;
+            this.camera.position.set(targetX + 8, 9, targetZ + 8);
+            this.camera.lookAt(targetX, 0, targetZ);
+            if (this.playerLight) this.playerLight.position.set(pcam.position.x, 3.2, pcam.position.z);
         }
         this.renderer.render(this.scene, this.camera);
         } catch (err) {

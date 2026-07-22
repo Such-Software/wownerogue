@@ -53,6 +53,7 @@
 
     SP.setMode = function (mode) {
         if (RK.canUseMode && !RK.canUseMode(mode)) return false;
+        if (SP._mode !== mode) SP._zoom = null; // let the new projection use its legible default
         SP._mode = mode;
         if (RK.saveMode) RK.saveMode(mode);
         SP._destroyRenderer();
@@ -69,6 +70,42 @@
     SP._destroyRenderer = function () {
         if (SP._renderer && SP._renderer.destroy) { try { SP._renderer.destroy(); } catch (_) {} }
         SP._renderer = null;
+    };
+
+    SP._setZoom = function (next) {
+        SP._zoom = Math.max(0.4, Math.min(4, Number(next) || SP._defaultZoom()));
+        var readout = doc() && doc().getElementById('rk-sp-camera-zoom');
+        if (readout) readout.textContent = Math.round(SP._zoom * 100) + '%';
+        SP._applyCamera();
+    };
+
+    SP._mountCameraControls = function (host) {
+        if (!host || host._rkCameraControls || !doc()) return;
+        var controls = doc().createElement('div');
+        controls.id = 'rk-sp-camera-controls';
+        controls.className = 'rk-camera-controls';
+        controls.setAttribute('aria-label', 'Dungeon camera controls');
+        controls.style.cssText = 'position:absolute;right:10px;bottom:10px;z-index:20;display:flex;' +
+            'align-items:center;gap:4px;padding:4px;background:rgba(4,7,10,.82);border:1px solid rgba(255,255,255,.2);' +
+            'border-radius:7px;box-shadow:0 4px 18px rgba(0,0,0,.45);font:12px monospace;';
+        function addButton(label, title, action) {
+            var b = doc().createElement('button');
+            b.type = 'button'; b.textContent = label; b.title = title; b.setAttribute('aria-label', title);
+            b.style.cssText = 'min-width:30px;height:28px;padding:0 7px;background:#151b22;color:#e5e7eb;' +
+                'border:1px solid #3b4552;border-radius:4px;cursor:pointer;font:inherit;';
+            b.addEventListener('click', function (e) { e.stopPropagation(); action(); });
+            controls.appendChild(b);
+        }
+        addButton('−', 'Zoom out', function () { SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) / 1.18); });
+        var readout = doc().createElement('span');
+        readout.id = 'rk-sp-camera-zoom';
+        readout.style.cssText = 'min-width:42px;text-align:center;color:#a7f3d0;';
+        controls.appendChild(readout);
+        addButton('+', 'Zoom in', function () { SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) * 1.18); });
+        addButton('⌂', 'Reset camera', function () { SP._zoom = null; SP._camX = null; SP._setZoom(SP._defaultZoom()); });
+        host.appendChild(controls);
+        host._rkCameraControls = controls;
+        readout.textContent = Math.round(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) * 100) + '%';
     };
 
     SP._ensureRenderer = function () {
@@ -116,17 +153,42 @@
                 // NOT a hardcoded 1.7 — otherwise the first scroll on iso (default 1.0) jumped up to
                 // 1.7 and BOTH directions read as "zoom in".
                 var base = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
-                SP._zoom = Math.max(0.4, Math.min(4, base * Math.exp(-ev.deltaY * 0.0015)));
-                SP._applyCamera();
+                SP._setZoom(base * Math.exp(-ev.deltaY * 0.0015));
             }, { passive: false });
+            host.addEventListener('dblclick', function (ev) {
+                if (ev.target && ev.target.closest && ev.target.closest('.rk-camera-controls')) return;
+                SP._zoom = null; SP._camX = null; SP._setZoom(SP._defaultZoom());
+            });
+            var points = {}, pinchDistance = null;
+            host.addEventListener('pointerdown', function (ev) {
+                if (ev.target && ev.target.closest && ev.target.closest('.rk-camera-controls')) return;
+                points[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+                try { host.setPointerCapture(ev.pointerId); } catch (_) {}
+            });
+            host.addEventListener('pointermove', function (ev) {
+                if (!points[ev.pointerId]) return;
+                points[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+                var ids = Object.keys(points);
+                if (ids.length < 2) return;
+                var a = points[ids[0]], b = points[ids[1]];
+                var distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (pinchDistance) SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) * (distance / pinchDistance));
+                pinchDistance = distance;
+            });
+            function release(ev) { delete points[ev.pointerId]; pinchDistance = null; }
+            host.addEventListener('pointerup', release);
+            host.addEventListener('pointercancel', release);
         }
+        SP._mountCameraControls(host);
         return SP._renderer;
     };
 
     // Mode-aware default zoom: iso tiles are large (84px) so they want less magnification than the
     // small tiled/ascii cells (~24px).
     SP._defaultZoom = function () {
-        return (SP._renderer && SP._renderer.name === 'iso') ? 1.0 : 1.7;
+        if (SP._renderer && SP._renderer.name === 'iso') return 1.0;
+        if (SP._renderer && SP._renderer.name === '3d') return 1.05;
+        return 1.7;
     };
 
     // Centre the (whole-scene) canvas on the player via a CSS transform, clipped to the host —
@@ -138,6 +200,7 @@
         // The 3D renderer fills the host itself (setSize) and its OWN THREE camera follows the
         // player — so DON'T apply a CSS transform (it would double-transform the WebGL view).
         if (r.name === '3d') {
+            if (r.setZoom) r.setZoom((SP._zoom != null) ? SP._zoom : SP._defaultZoom());
             r.canvas.style.transform = 'none';
             r.canvas.style.left = '0';
             r.canvas.style.top = '0';

@@ -11,32 +11,37 @@ const BUILTINS = {
         id: 'solo-classic', label: 'Classic Escape', mode: 'solo',
         players: { min: 1, max: 1 },
         winCondition: { type: WIN.FIRST_TO_EXIT },
-        economy: { model: ECONOMY.FREE }
+        economy: { model: ECONOMY.FREE },
+        metadata: { description: 'The original single-player escape dungeon.' }
     }),
     'race': defineRuleset({
         id: 'race', label: 'Escape Race', mode: 'race',
         world: { difficultyPreset: 'race' }, // matches DEFAULT_MATCH_PRESET (falls through difficultyConfig, preserved)
         players: { min: 2, max: 8 },
         winCondition: { type: WIN.FIRST_TO_EXIT },
-        economy: { model: ECONOMY.CRYPTO_RACE }
+        economy: { model: ECONOMY.CRYPTO_RACE },
+        metadata: { description: 'First player to reach the exit wins.' }
     }),
     'last-alive': defineRuleset({
         id: 'last-alive', label: 'Last Alive', mode: 'pvp',
         world: { difficultyPreset: 'normal' },
         entities: { monster: true, pvpCombat: true }, // step onto a rival to strike them down
         players: { min: 2, max: 8 },
-        winCondition: { type: WIN.LAST_ALIVE }
+        winCondition: { type: WIN.LAST_ALIVE },
+        metadata: { description: 'Outlast rivals or strike them down by moving into their tile.' }
     }),
     'score-attack': defineRuleset({
         id: 'score-attack', label: 'Score Attack', mode: 'race',
         players: { min: 1, max: 8 },
-        winCondition: { type: WIN.HIGH_SCORE }
+        winCondition: { type: WIN.HIGH_SCORE },
+        metadata: { description: 'Highest score at the deadline wins; escaping does not end the match.' }
     }),
     'coop-escape': defineRuleset({
         id: 'coop-escape', label: 'Co-op Escape', mode: 'coop',
         entities: { pvpCombat: false },
         players: { min: 2, max: 8 },
-        winCondition: { type: WIN.ALL_ESCAPE }
+        winCondition: { type: WIN.ALL_ESCAPE },
+        metadata: { description: 'Work together until every surviving player escapes.' }
     })
 };
 
@@ -49,8 +54,28 @@ function getRuleset(id, overrides = null) {
 function listRulesets() {
     return Object.values(BUILTINS).map(r => ({
         id: r.id, label: r.label, mode: r.mode,
+        description: r.metadata.description || '',
         players: r.players, winCondition: r.winCondition.type, pvpCombat: r.entities.pvpCombat
     }));
+}
+
+/**
+ * Match-mode catalog. `solo-classic` describes the separate solo engine and must never be
+ * selected for a multiplayer queue. Keeping this filter beside the registry gives the server,
+ * scheduler, and clients one stable allowlist.
+ */
+function listMatchRulesets() {
+    return listRulesets().filter(r => r.mode !== 'solo');
+}
+
+/**
+ * Resolve an operator-selected multiplayer ruleset. Unknown/solo ids fail closed to the classic
+ * race, preserving the historical behavior and preventing arbitrary client-authored specs.
+ */
+function resolveMatchRuleset(id) {
+    const key = typeof id === 'string' ? id.trim() : '';
+    const candidate = BUILTINS[key];
+    return candidate && candidate.mode !== 'solo' ? candidate : BUILTINS.race;
 }
 
 /**
@@ -71,4 +96,11 @@ function rulesetFromMatchOpts(opts = {}) {
     });
 }
 
-module.exports = { BUILTINS, getRuleset, listRulesets, rulesetFromMatchOpts };
+module.exports = {
+    BUILTINS,
+    getRuleset,
+    listRulesets,
+    listMatchRulesets,
+    resolveMatchRuleset,
+    rulesetFromMatchOpts
+};

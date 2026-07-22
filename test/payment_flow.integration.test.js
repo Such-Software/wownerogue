@@ -1,5 +1,17 @@
 const QueueManager = require('../src/network/queueManager');
 const PaymentHandlers = require('../src/network/paymentHandlers');
+const { buildCommerceDisclosure } = require('../src/config/commerceDisclosurePolicy');
+
+function legalAcknowledgement(gameModeManager) {
+  const disclosure = buildCommerceDisclosure(gameModeManager, process.env);
+  return {
+    policyVersion: disclosure.policyVersion,
+    ageEligible: true,
+    termsRead: true,
+    riskAccepted: true,
+    testnetUnderstood: disclosure.service.isTestNetwork === true
+  };
+}
 
 /**
  * Integration-style tests for the payment confirmation flow.
@@ -88,16 +100,18 @@ function buildHarness() {
   const fakeSocket = { id: socketId, emit: (event, data) => events.push({ event, data }) };
 
   return {
-    events, queueManager, paymentHandlers, fakeSocket,
+    events, queueManager, paymentHandlers, fakeSocket, gameModeManager,
     getMonitorCallback: () => monitorCallback
   };
 }
 
 describe('Payment flow integration: confirm-after-block immediate start', () => {
   test('unconfirmed at block tick then confirmed triggers immediate game', async () => {
-    const { events, queueManager, paymentHandlers, fakeSocket, getMonitorCallback } = buildHarness();
+    const { events, queueManager, paymentHandlers, fakeSocket, gameModeManager, getMonitorCallback } = buildHarness();
 
-    await paymentHandlers.createAndShowPaymentRequest(fakeSocket);
+    await paymentHandlers.createAndShowPaymentRequest(fakeSocket, {
+      legalAcknowledgement: legalAcknowledgement(gameModeManager)
+    });
     const monitorCallback = getMonitorCallback();
     expect(monitorCallback).toBeDefined();
 
@@ -122,9 +136,11 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
   });
 
   test('confirmed but UNDERPAID does not start a game or grant anything', async () => {
-    const { events, queueManager, paymentHandlers, fakeSocket, getMonitorCallback } = buildHarness();
+    const { events, queueManager, paymentHandlers, fakeSocket, gameModeManager, getMonitorCallback } = buildHarness();
 
-    await paymentHandlers.createAndShowPaymentRequest(fakeSocket);
+    await paymentHandlers.createAndShowPaymentRequest(fakeSocket, {
+      legalAcknowledgement: legalAcknowledgement(gameModeManager)
+    });
     const monitorCallback = getMonitorCallback();
     expect(monitorCallback).toBeDefined();
 

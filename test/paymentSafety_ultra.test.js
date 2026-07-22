@@ -69,7 +69,8 @@ describe('M1 — single payout ambiguous failure', () => {
 
         const reviewCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'needs_review');
         expect(reviewCall).toBeDefined();
-        expect(reviewCall[1][2]).toBe(42); // payout id
+        expect(reviewCall[1][2]).toBeNull(); // no valid transaction hash was observed
+        expect(reviewCall[1][3]).toBe(42); // payout id
         const failedCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'failed');
         expect(failedCall).toBeUndefined();
         expect(gmm.alertService.sendAlert).toHaveBeenCalledWith('single_payout_failed', expect.any(Object));
@@ -88,7 +89,7 @@ describe('M1 — single payout ambiguous failure', () => {
 
         await gmm._processPendingPayouts();
 
-        const pendingCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'pending' && /id = \$3/i.test(c[0]));
+        const pendingCall = db.query.mock.calls.find(c => Array.isArray(c[1]) && c[1][0] === 'pending' && /id = \$4/i.test(c[0]));
         expect(pendingCall).toBeDefined();
         expect(gmm.alertService.sendAlert).not.toHaveBeenCalled();
     });
@@ -124,25 +125,30 @@ describe('M3 — atomic single_game payment claim', () => {
     });
 });
 
-describe('M4 — completeGame never inserts an unattached payout', () => {
-    test('refuses payout when the paying user cannot be resolved from the game row', async () => {
+describe('M4 — completeGame durably records every committed liability', () => {
+    test('quarantines a liability when the paying identity cannot be resolved', async () => {
         const { gmm, db } = buildGmm();
+        db.withTransaction.mockImplementation(async (cb) => cb(db));
         db.query
             .mockResolvedValueOnce({ rows: [{ id: 1, /* no user_id */ game_mode: 'PAID_SINGLE', payout_address: 'addr' }] }) // game record
-            .mockResolvedValue({ rows: [] }); // completion UPDATE + existing-payout check
+            .mockResolvedValueOnce({ rows: [] }) // completion UPDATE
+            .mockResolvedValueOnce({ rows: [] }) // existing-payout check
+            .mockResolvedValueOnce({ rows: [{ id: 88 }], rowCount: 1 }); // needs_review liability
 
         const result = await gmm.completeGame('sockX', 'game-xyz', true, false, {});
 
-        expect(result.reason).toBe('Paying user not resolved');
+        expect(result.payout).toEqual(expect.objectContaining({ payoutId: 88, status: 'needs_review' }));
         const inserted = db.query.mock.calls.find(c => /INSERT INTO payouts/i.test(c[0]));
-        expect(inserted).toBeUndefined();
-        expect(gmm.alertService.sendAlert).toHaveBeenCalledWith('payout_unresolved_user', expect.any(Object));
+        expect(inserted).toBeDefined();
+        expect(inserted[1]).toContain('solo_winner_identity_review');
+        expect(gmm.alertService.sendAlert).toHaveBeenCalledWith('payout_liability_needs_review', expect.any(Object));
     });
 });
 
 describe('M5 — payout amount is clamped to configured bounds', () => {
     test('caps an over-max payout and alerts', async () => {
         const { gmm, db } = buildGmm();
+        db.withTransaction.mockImplementation(async (cb) => cb(db));
         db.query
             .mockResolvedValueOnce({ rows: [{
                 id: 1, user_id: 1, game_mode: 'PAID_SINGLE', payout_address: 'addr',
@@ -164,6 +170,7 @@ describe('M5 — payout amount is clamped to configured bounds', () => {
 
     test('skips a below-min payout entirely (no insert)', async () => {
         const { gmm, db } = buildGmm();
+        db.withTransaction.mockImplementation(async (cb) => cb(db));
         db.query
             .mockResolvedValueOnce({ rows: [{
                 id: 1, user_id: 1, game_mode: 'PAID_SINGLE', payout_address: 'addr',

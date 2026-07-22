@@ -96,6 +96,16 @@ describe('BTCPayProvider (Greenfield)', () => {
             expect(st.amount).toBe(150000000000); // 1.5 * 1e11
         });
 
+        test('gateway atomic amounts above Number.MAX_SAFE_INTEGER remain exact strings', async () => {
+            const st = await mk('Settled', [{
+                cryptoCode: 'XMR',
+                totalPaid: '10000.000000000001',
+                amount: '10000.000000000001'
+            }], ['XMR']).getWalletStatus('inv1');
+            expect(st.amount).toBe('10000000000000001');
+            expect(st.required).toBe('10000000000000001');
+        });
+
         test('Processing -> in_mempool, not confirmed', async () => {
             const st = await mk('Processing', [{ cryptoCode: 'XMR', totalPaid: '0.5', amount: '1.5' }], ['XMR']).getWalletStatus('inv1');
             expect(st.in_mempool).toBe(true);

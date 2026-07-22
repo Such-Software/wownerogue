@@ -67,31 +67,48 @@ class TavernMatchBridge {
     }
 
     _publicSnapshot(room) {
+        // Use the same renderer contract as a player match tick, but copy only explicitly public
+        // fields. In particular, the committed seed hash is public while the unrevealed seed and
+        // internal event/input state never cross into the tavern feed.
+        const renderState = typeof room.toGameState === 'function' ? room.toGameState() : null;
+        const fallbackMap = room.dungeon?.map || [];
+        const players = renderState?.players || Array.from(room.occupants.values()).map(o => {
+            const s = room.playerStates.get(o.id);
+            return {
+                id: o.id,
+                x: o.x,
+                y: o.y,
+                name: o.name || null,
+                avatar: o.avatar,
+                appearance: o.appearance,
+                facing: o.facing,
+                alive: s ? s.alive : true,
+                finished: s ? s.finished : false,
+                escaped: s ? s.escaped : false,
+                hasTreasure: s ? s.hasTreasure : false,
+                placement: s ? s.placement : null
+            };
+        });
         return {
             matchId: room.id,
             economy: room.economy,
+            variant: room.variant || renderState?.variant || 'race',
+            rulesetId: room.ruleset?.id || room.variant || 'race',
+            ruleset: renderState?.ruleset || (room._rulesetSummary?.() || null),
             status: room.status,
             tick: room.tickCount,
-            players: Array.from(room.occupants.values()).map(o => {
-                const s = room.playerStates.get(o.id);
-                return {
-                    id: o.id,
-                    x: o.x,
-                    y: o.y,
-                    name: o.name || null,
-                    avatar: o.avatar,
-                    facing: o.facing,
-                    alive: s ? s.alive : true,
-                    finished: s ? s.finished : false,
-                    escaped: s ? s.escaped : false,
-                    hasTreasure: s ? s.hasTreasure : false,
-                    placement: s ? s.placement : null
-                };
-            }),
-            monster: room.monster ? { x: room.monster.x, y: room.monster.y } : null,
-            treasure: room.treasure,
-            exit: room.dungeon.exit,
+            visibleTiles: renderState?.visibleTiles || fallbackMap,
+            exploredTiles: renderState?.exploredTiles || fallbackMap,
+            lighting: renderState?.lighting || {},
+            dungeonRows: renderState?.dungeonRows || room.rows || fallbackMap.length,
+            dungeonCols: renderState?.dungeonCols || room.cols || fallbackMap[0]?.length || 0,
+            players,
+            monster: renderState?.monster || (room.monster ? { x: room.monster.x, y: room.monster.y } : null),
+            treasure: renderState?.treasure || room.treasure,
+            entrance: renderState?.entrance || room.dungeon?.entrance || null,
+            exit: renderState?.exit || room.dungeon?.exit || null,
             winnerId: room.winnerId,
+            endReason: room.endReason || null,
             seedHash: room.seedHash
         };
     }

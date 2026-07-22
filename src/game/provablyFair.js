@@ -1,7 +1,7 @@
 /**
  * Provably Fair Gaming System
  * 
- * This module implements cryptographic verification for fair game generation.
+ * This module implements cryptographic verification for committed dungeon generation.
  * 
  * How it works:
  * 1. Server generates a random seed before game starts
@@ -17,10 +17,13 @@
  * 6. Player can verify: hash(seed) === pre-game commitment
  * 7. Player can regenerate the dungeon using the seed to verify fairness
  * 
- * This prevents the server from:
+ * This lets a player detect the server:
  * - Generating impossible dungeons after seeing player's payment
- * - Changing dungeon mid-game
- * - Claiming different game outcomes
+ * - Substituting a different recorded dungeon layout after the run
+ *
+ * Outcome execution is a separate server-authoritative concern. Without a signed input/event
+ * transcript, this proof does not independently replay block timing, player moves, monster turns,
+ * the declared result, or payout delivery.
  */
 
 const crypto = require('crypto');
@@ -40,6 +43,16 @@ function generateSeed() {
  */
 function hashSeed(seed) {
     return crypto.createHash('sha256').update(seed).digest('hex');
+}
+
+/**
+ * Normalize a client contribution. Empty is a supported legacy value; non-empty values must be
+ * short hex so they are unambiguous across browser/server implementations. `null` means invalid.
+ */
+function normalizeClientSeed(value) {
+    if (value === undefined || value === null || String(value).trim() === '') return '';
+    const seed = String(value).trim();
+    return /^[0-9a-fA-F]{1,64}$/.test(seed) ? seed.toLowerCase() : null;
 }
 
 /**
@@ -156,17 +169,26 @@ function seededShuffle(rng, array) {
  * @param {string} [clientSeed=''] - Optional client-supplied seed (non-breaking)
  * @returns {object} Proof object with seeds, commitment, and creation time
  */
-function createGameProof(gameId, clientSeed = '') {
-    const serverSeed = generateSeed();
+function createGameProof(gameId, clientSeed = '', precommit = null) {
+    const normalizedClientSeed = normalizeClientSeed(clientSeed);
+    if (normalizedClientSeed === null) throw new Error('Invalid client seed');
+
+    const serverSeed = precommit?.serverSeed || generateSeed();
     const commitment = hashSeed(serverSeed);        // commits to serverSeed only
+    if (precommit?.commitment && precommit.commitment !== commitment) {
+        throw new Error('Fairness offer commitment does not match its server seed');
+    }
     // Effective RNG seed folds in the client seed so neither party controls it.
-    const seed = deriveSeed(serverSeed, clientSeed);
+    const seed = deriveSeed(serverSeed, normalizedClientSeed);
     const timestamp = Date.now();
 
     return {
         gameId,
+        proofVersion: precommit?.proofVersion || 1,
+        offerId: precommit?.offerId || null,
+        offerIssuedAt: precommit?.offerIssuedAt || null,
         serverSeed,     // Keep secret until game ends
-        clientSeed,     // Client contribution (may be '')
+        clientSeed: normalizedClientSeed, // Client contribution (may be '')
         seed,           // Derived effective seed used to generate the dungeon
         commitment,     // Show to player before game starts
         timestamp,
@@ -183,6 +205,10 @@ function createGameProof(gameId, clientSeed = '') {
 function getPreGameCommitment(proof) {
     return {
         gameId: proof.gameId,
+        proofVersion: proof.proofVersion || 1,
+        offerId: proof.offerId || null,
+        offerIssuedAt: proof.offerIssuedAt || null,
+        clientSeed: proof.clientSeed ?? '',
         commitment: proof.commitment,
         timestamp: proof.timestamp,
         message: "This hash commits to your game's layout. After the game, you'll receive the seed to verify fairness."
@@ -203,10 +229,18 @@ function getPostGameReveal(proof, gameResult = {}) {
     const effectiveSeed = proof.seed ?? deriveSeed(serverSeed, clientSeed);
     return {
         gameId: proof.gameId,
+        proofVersion: proof.proofVersion || 1,
+        offerId: proof.offerId || null,
+        offerIssuedAt: proof.offerIssuedAt || null,
         serverSeed,
         clientSeed,
-        seed: effectiveSeed,
+        seed: effectiveSeed, // backward-compatible alias
+        effectiveSeed,
         commitment: proof.commitment,
+        layoutFingerprint: proof.layoutFingerprint || null,
+        layoutFingerprints: proof.layoutFingerprints || null,
+        generatorVersion: proof.generatorVersion || proof.context?.generatorVersion || null,
+        context: proof.context || null,
         timestamp: proof.timestamp,
         gameResult: {
             won: gameResult.won ?? false,
@@ -214,14 +248,47 @@ function getPostGameReveal(proof, gameResult = {}) {
             moves: gameResult.moves ?? 0,
             duration: gameResult.duration ?? 0
         },
-        verificationUrl: `/verify/${effectiveSeed}`,
+        verificationUrl: `/verify/${proof.gameId}`,
         instructions: [
-            "To verify this game was fair:",
+            "To verify this game's committed dungeon generation:",
             `1. Compute SHA-256 of the serverSeed and confirm it equals the commitment: ${proof.commitment}`,
             "2. Compute HMAC-SHA256(key=serverSeed, msg=clientSeed) to derive the effective seed",
-            "3. The effective seed deterministically generates the dungeon layout, treasure, and monster behaviour",
-            `4. Open ${`/verify/${effectiveSeed}`} to regenerate the dungeon from the effective seed and compare its layout fingerprint`
+            "3. The effective seed deterministically generates every dungeon depth and its recorded placements",
+            `4. Open ${`/verify/${proof.gameId}`} to regenerate every depth and compare the versioned layout fingerprints`,
+            "5. This layout proof does not replay player input, block timing, monster turns, the result, or payout delivery"
         ]
+    };
+}
+
+/** Verify both halves of a v2 proof: the published server commitment and derived RNG seed. */
+function verifyGameProof({ serverSeed, clientSeed = '', effectiveSeed, seed, commitment } = {}) {
+    const normalizedClientSeed = normalizeClientSeed(clientSeed);
+    const revealedServerSeed = String(serverSeed || '');
+    const claimedEffectiveSeed = String(effectiveSeed || seed || '');
+    const expectedCommitment = String(commitment || '');
+    const shapeValid = /^[0-9a-f]{64}$/i.test(revealedServerSeed)
+        && /^[0-9a-f]{64}$/i.test(claimedEffectiveSeed)
+        && /^[0-9a-f]{64}$/i.test(expectedCommitment)
+        && normalizedClientSeed !== null;
+    const computedCommitment = shapeValid ? hashSeed(revealedServerSeed) : '';
+    const computedEffectiveSeed = shapeValid ? deriveSeed(revealedServerSeed, normalizedClientSeed) : '';
+    const commitmentValid = shapeValid && computedCommitment === expectedCommitment;
+    const effectiveSeedValid = shapeValid && computedEffectiveSeed === claimedEffectiveSeed;
+    const valid = commitmentValid && effectiveSeedValid;
+
+    return {
+        valid,
+        commitmentValid,
+        effectiveSeedValid,
+        serverSeed: revealedServerSeed,
+        clientSeed: normalizedClientSeed === null ? String(clientSeed || '') : normalizedClientSeed,
+        effectiveSeed: claimedEffectiveSeed,
+        expectedCommitment,
+        computedCommitment,
+        computedEffectiveSeed,
+        message: valid
+            ? '✅ Game proof verified: the server commitment and client-derived dungeon seed both match.'
+            : '❌ Game proof verification failed.'
     };
 }
 
@@ -250,6 +317,7 @@ function verifyGame(seed, expectedCommitment) {
 module.exports = {
     generateSeed,
     hashSeed,
+    normalizeClientSeed,
     verifySeed,
     deriveSeed,
     createSeededRNG,
@@ -260,5 +328,6 @@ module.exports = {
     createGameProof,
     getPreGameCommitment,
     getPostGameReveal,
-    verifyGame
+    verifyGame,
+    verifyGameProof
 };

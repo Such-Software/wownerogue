@@ -624,12 +624,16 @@
 
         function modeLockedTitle(mode) {
             var label = mode && mode.label ? mode.label : 'Mode';
+            if (mode && RK.isModeRuntimeAvailable && !RK.isModeRuntimeAvailable(mode.id)) {
+                return label + ' is unavailable on this server because its optional renderer dependency is disabled.';
+            }
             if (mode && mode.pack) return label + ' is locked. Buy any credits or unlock ' + packLabel(mode.pack) + '.';
             return label + ' is locked. Buy any credits to unlock premium modes.';
         }
 
         function modeStatus(mode, unlocked) {
             if (!mode || !mode.premium) return 'Included';
+            if (RK.isModeRuntimeAvailable && !RK.isModeRuntimeAvailable(mode.id)) return 'Unavailable';
             if (unlocked && RK.renderModeTestUnlocks && RK.renderModeTestUnlocks()) return 'Test';
             return unlocked ? 'Unlocked' : 'Locked';
         }

@@ -14,12 +14,14 @@
 const MatchState = require('../multiplayer/MatchState');
 const MatchPayoutService = require('./matchPayoutService');
 const MatchLeaderboard = require('./matchLeaderboard');
+const { createFinancialRecoveryError } = require('../utils/financialRecoveryError');
 
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
 
 const RECONNECT_GRACE_MS = 30000; // 30s to reconnect during an active match before AFK-kill
 const DEFAULT_COUNTDOWN_MS = 3000;
 const FINALIZE_CLEANUP_MS = 30000; // keep mappings this long after finish for late reconnects
+const FINALIZE_RETRY_MS = 5000; // retry a nondurable finish without publishing a winner
 
 class MatchManager {
     constructor({ io, db, debugManager, identityService = null, gameModeManager = null, chatProvider = null } = {}) {
@@ -37,6 +39,9 @@ class MatchManager {
         this.userToMatch = new Map();   // userId  -> matchId
         this.disconnectTimeouts = new Map(); // `${matchId}:${socketId}` -> timeout id
         this._pendingCleanups = new Set();   // grace-cleanup timers awaiting fire
+        this.financialRecoveryReady = false;
+        this._liabilityReconcileTimer = null;
+        this._liabilityReconcileRunning = false;
 
         this.matchLeaderboard = new MatchLeaderboard({ db: this.db, io: this.io, debugManager: this.debugManager });
         this.matchPayoutService = new MatchPayoutService({
@@ -60,7 +65,107 @@ class MatchManager {
      * state is empty on boot; abandoned in-flight matches are recovered and refunded by
      * MatchQueue.initialize() (the money authority), so there is nothing to rebuild here.
      */
-    initialize() { /* no-op: boot recovery lives in MatchQueue.initialize() */ }
+    async initialize() {
+        // Queue recovery resolves abandoned in-flight escrow first. Finished matches already
+        // have a durable winner + accepted liability snapshot, so reconstruct any payout row
+        // that a crash/transient DB error prevented us from inserting after completion.
+        // MATCH_ENABLED controls new rooms only. Reconciliation must run even when operators
+        // disable the entire match surface, because an already-finished accepted liability is
+        // still owed and may have crashed before its payout row was inserted.
+        if (!this.db || !this.matchPayoutService) {
+            throw createFinancialRecoveryError('finished_match_liabilities', {
+                scanFailed: true,
+                scanned: 0,
+                resolved: 0,
+                unresolved: []
+            });
+        }
+        await this._reconcileFinishedLiabilities({ failClosed: true });
+
+        // A payout insert can fail after a match finish has already committed. Re-scan in
+        // bounded batches so a transient runtime failure is retried without duplicating payout
+        // rows (the database's match_id uniqueness remains the exactly-once anchor).
+        const configuredMs = Number(process.env.MATCH_LIABILITY_RECONCILE_MS);
+        const intervalMs = Math.max(5000, Math.min(
+            300000,
+            Number.isFinite(configuredMs) && configuredMs > 0 ? configuredMs : 30000
+        ));
+        this._liabilityReconcileTimer = setInterval(() => {
+            this._reconcileFinishedLiabilities({ failClosed: false }).catch(error => {
+                this._log('[MatchManager] liability reconciliation timer error', error.message);
+            });
+        }, intervalMs);
+        this._liabilityReconcileTimer.unref?.();
+    }
+
+    async _reconcileFinishedLiabilities({ failClosed = false, batchSize = 100, maxBatches = 100 } = {}) {
+        if (this._liabilityReconcileRunning) {
+            if (failClosed) {
+                throw createFinancialRecoveryError('finished_match_liabilities', {
+                    scanned: 0,
+                    resolved: 0,
+                    unresolved: [{ type: 'reconciliation', id: 'already_running' }]
+                });
+            }
+            return { ok: false, skipped: true, scanned: 0, created: 0, failed: 0, unresolved: [] };
+        }
+
+        const limit = Math.max(1, Math.min(1000, parseInt(batchSize, 10) || 100));
+        const batchLimit = Math.max(1, Math.min(1000, parseInt(maxBatches, 10) || 100));
+        const total = { ok: true, scanned: 0, created: 0, failed: 0, unresolved: [] };
+        this._liabilityReconcileRunning = true;
+        try {
+            for (let batch = 0; batch < batchLimit; batch += 1) {
+                let result;
+                try {
+                    result = await this.matchPayoutService.reconcileFinishedLiabilities({ limit });
+                } catch (error) {
+                    throw createFinancialRecoveryError('finished_match_liabilities', {
+                        scanFailed: true,
+                        scanned: total.scanned,
+                        resolved: total.created,
+                        unresolved: total.unresolved
+                    }, error);
+                }
+                total.scanned += Number(result.scanned) || 0;
+                total.created += Number(result.created) || 0;
+                total.failed += Number(result.failed) || 0;
+                if (Array.isArray(result.unresolved)) total.unresolved.push(...result.unresolved);
+
+                if (total.failed > 0 || result.ok === false) {
+                    if (total.unresolved.length === 0) {
+                        total.unresolved.push({ type: 'match_liability', id: 'unknown' });
+                    }
+                    throw createFinancialRecoveryError('finished_match_liabilities', {
+                        scanned: total.scanned,
+                        resolved: total.created,
+                        unresolved: total.unresolved
+                    });
+                }
+                if ((Number(result.scanned) || 0) < limit) {
+                    this.financialRecoveryReady = true;
+                    if (total.created > 0) {
+                        this._log(`[MatchManager] liability reconciliation: ${total.created} created, 0 failed`);
+                    }
+                    return total;
+                }
+            }
+
+            throw createFinancialRecoveryError('finished_match_liabilities', {
+                scanned: total.scanned,
+                resolved: total.created,
+                unresolved: [{ type: 'reconciliation_backlog', id: `>${limit * batchLimit}` }]
+            });
+        } catch (error) {
+            this.financialRecoveryReady = false;
+            total.ok = false;
+            if (failClosed) throw error;
+            this._log('[MatchManager] liability reconciliation incomplete', error.message);
+            return total;
+        } finally {
+            this._liabilityReconcileRunning = false;
+        }
+    }
 
     /**
      * Attach a MatchRoom that MatchScheduler just created and (for crypto) already collected
@@ -78,6 +183,10 @@ class MatchManager {
             if (this.gameModeManager) this.matchPayoutService.gameModeManager = this.gameModeManager;
         }
         if (this.matchLeaderboard && this.db) this.matchLeaderboard.db = this.db;
+
+        room.minDurationMs = Math.max(0, Number(minDurationMs) || 0);
+        room.hardCeilingMs = Math.max(1, Number(hardCeilingMs) || 1);
+        room._minDurationMet = room.minDurationMs === 0;
 
         this.rooms.set(room.id, room);
         for (const e of (entrants || [])) {
@@ -98,7 +207,9 @@ class MatchManager {
                 socket.emit('match_joined', {
                     matchId: room.id,
                     economy: room.economy,
+                    ruleset: room._rulesetSummary?.() || null,
                     seedHash: room.seedHash,
+                    fairness: room.fairnessProof?.(false) || null,
                     players: Array.from(room.occupants.values()).map(o => o.getState()),
                     countdownMs
                 });
@@ -124,18 +235,32 @@ class MatchManager {
                     [room.id]
                 ).catch(err => this._log('[MatchManager] mark-active error', err.message));
             }
-            this._broadcast(room.id, 'match_start', { matchId: room.id, tickMs, seedHash: r.seedHash });
-        }, countdownMs);
+            this._broadcast(room.id, 'match_start', {
+                matchId: room.id,
+                tickMs,
+                seedHash: r.seedHash,
+                fairness: r.fairnessProof?.(false) || null,
+                ruleset: r._rulesetSummary?.() || null
+            });
 
-        // Minimum-duration watchdog: prevents a next-block expiry before the floor.
-        const floorTimeout = setTimeout(() => { const r = this.rooms.get(room.id); if (r) r._minDurationMet = true; }, minDurationMs);
+            // The floor is active-play time, not queue/countdown time. The block handler also
+            // checks startedAt directly, avoiding a timer-order race when a block arrives exactly
+            // as the floor elapses.
+            if (!r._minDurationMet) {
+                const floorTimeout = setTimeout(() => {
+                    const live = this.rooms.get(room.id);
+                    if (live) live._minDurationMet = true;
+                }, r.minDurationMs);
+                if (Array.isArray(r._watchdogs)) r._watchdogs.push(floorTimeout);
+            }
+        }, countdownMs);
 
         // Hard-ceiling watchdog: absolute max match length. Single owner (the scheduler no
         // longer sets its own ceiling timer), cleared by _finalize so it never fires on a
         // finished/removed room.
-        const ceilingTimeout = setTimeout(() => this.expire(room.id, 'hard_ceiling'), hardCeilingMs);
+        const ceilingTimeout = setTimeout(() => this.expire(room.id, 'hard_ceiling'), room.hardCeilingMs);
 
-        room._watchdogs = [startTimer, floorTimeout, ceilingTimeout];
+        room._watchdogs = [startTimer, ceilingTimeout];
     }
 
     async _hydrateEntrants(room, entrants) {
@@ -190,6 +315,35 @@ class MatchManager {
     }
 
     /**
+     * End active block-bounded rooms on the first advancing header after their active-play floor.
+     * Rooms created by the same header are protected by the strict height comparison.
+     * @returns {number} number of rooms expired
+     */
+    expireBlockDeadlines(blockHeight) {
+        const height = Number(blockHeight);
+        if (!Number.isSafeInteger(height) || height < 0) return 0;
+
+        let expired = 0;
+        for (const room of Array.from(this.rooms.values())) {
+            if (!room || room.status !== 'active' || room._finalized) continue;
+            if (room.ruleset?.timing?.blockDeadline !== true) continue;
+            const startHeight = Number(room.startBlockHeight);
+            if (!Number.isSafeInteger(startHeight) || height <= startHeight) continue;
+
+            const floorMs = Math.max(0, Number(room.minDurationMs) || 0);
+            const activeForMs = Number.isFinite(room.startedAt) ? Date.now() - room.startedAt : -1;
+            const floorMet = room._minDurationMet === true || activeForMs >= floorMs;
+            if (!floorMet) continue;
+
+            room._minDurationMet = true;
+            room.endBlockHeight = height;
+            this.expire(room.id, 'block_deadline');
+            expired += 1;
+        }
+        return expired;
+    }
+
+    /**
      * Called when a match ends naturally (engine detected finished).
      */
     async onFinish(room) {
@@ -227,7 +381,19 @@ class MatchManager {
 
     async _finalize(room) {
         if (!room || room._finalized) return;
-        room._finalized = true;
+        // Engine callbacks, watchdogs, and disconnect handling can converge here together. Share
+        // one attempt so persistence/payout/leaderboard work never runs concurrently.
+        if (room._finalizePromise) return room._finalizePromise;
+        const attempt = this._finalizeAttempt(room);
+        room._finalizePromise = attempt;
+        try {
+            return await attempt;
+        } finally {
+            if (room._finalizePromise === attempt) room._finalizePromise = null;
+        }
+    }
+
+    async _finalizeAttempt(room) {
 
         // Clear lifecycle watchdogs (countdown, floor, hard ceiling) so none fire post-finish.
         if (room._watchdogs) { room._watchdogs.forEach(id => clearTimeout(id)); room._watchdogs = null; }
@@ -237,43 +403,64 @@ class MatchManager {
         const engine = this.engines.get(room.id);
         if (engine) { try { engine.stop(); } catch (_) {} }
 
-        // Each step is isolated in its OWN try/catch so a failure in one NEVER prevents the
-        // winner payout or the match_end broadcast. The winner PAYOUT runs FIRST.
-        // 1. Winner payout (crypto only).
-        if (room.economy === 'crypto_race') {
-            try { await this.matchPayoutService.payoutWinner(room); }
-            catch (err) { this._log('[MatchManager] payout error', err.message); }
-        }
-        // 2. Persist match + entrant results.
+        // Persist the winner first. Once that transaction commits, the accepted liability is
+        // fully reconstructable from SQL even if payout insertion fails or the process crashes.
+        let finishPersisted = !this.db;
         if (this.db) {
-            try { await this._persistFinish(room); }
+            try {
+                await this._persistFinish(room);
+                finishPersisted = true;
+            }
             catch (err) { this._log('[MatchManager] persist error', err.message); }
         }
-        // 3. Leaderboard integration.
-        try { await this.matchLeaderboard.postMatch(room); }
-        catch (err) { this._log('[MatchManager] leaderboard error', err.message); }
-        // 4. Broadcast the result (always attempted).
+        if (!finishPersisted) {
+            // This is deliberately not `match_end`: clients must not publish a winner which the
+            // authoritative database cannot prove. Keep the room mapped and retry the idempotent
+            // finish transaction; boot recovery remains the final fallback if the process exits.
+            try {
+                this._broadcast(room.id, 'match_settlement_pending', {
+                    matchId: room.id,
+                    code: 'MATCH_FINISH_NOT_DURABLE',
+                    retrying: true
+                });
+            } catch (err) { this._log('[MatchManager] pending broadcast error', err.message); }
+            this._scheduleFinalizeRetry(room);
+            return;
+        }
+
+        room._finalized = true;
+        if (room._finalizeRetryTimer) {
+            clearTimeout(room._finalizeRetryTimer);
+            this._pendingCleanups.delete(room._finalizeRetryTimer);
+            room._finalizeRetryTimer = null;
+        }
+        // Insert from the immutable admission snapshot, not current MATCH_PAYOUTS_ENABLED. A
+        // failure is retried by initialize() reconciliation because the finished winner is now
+        // durable. Never create a payout when the finish itself did not persist.
+        if (room.economy === 'crypto_race' && finishPersisted) {
+            try { await this.matchPayoutService.payoutWinner(room); }
+            catch (err) {
+                // The match result and accepted liability are already durable. Close every paid
+                // admission surface immediately, then attempt the idempotent SQL reconstruction;
+                // the bounded timer remains the fallback if this immediate pass also fails.
+                this.financialRecoveryReady = false;
+                this._log('[MatchManager] payout error', err.message);
+                await this._reconcileFinishedLiabilities({ failClosed: false });
+            }
+        }
+        // Leaderboard rows are derived from the durable match result. Never create synthetic
+        // `games` rows (or announce a prestige refresh) when the finish transaction failed: that
+        // would publish a result which the authoritative matches tables do not contain.
+        if (finishPersisted) {
+            try { await this.matchLeaderboard.postMatch(room); }
+            catch (err) { this._log('[MatchManager] leaderboard error', err.message); }
+        }
+        // Only a durable result is announced as final.
         try {
-            this._broadcast(room.id, 'match_end', {
-                matchId: room.id,
-                reason: room.endReason,
-                winnerId: room.winnerId,
-                players: Array.from(room.playerStates.entries()).map(([id, state]) => {
-                    const occ = room.occupants.get(id);
-                    return {
-                        id,
-                        name: occ?.name || null,
-                        placement: state.placement,
-                        escaped: state.escaped,
-                        hasTreasure: state.hasTreasure,
-                        score: state.score,
-                        killedBy: state.killedBy
-                    };
-                })
-            });
+            this._broadcast(room.id, 'match_end', this._terminalPayload(room));
         } catch (err) { this._log('[MatchManager] broadcast error', err.message); }
 
-        // 5. Drop all mappings after a grace period so late reconnects still resolve the result.
+        // Drop all mappings after a grace period so late reconnects still resolve the result.
         const cleanupTimer = setTimeout(() => {
             this._pendingCleanups.delete(cleanupTimer);
             this._cleanup(room.id);
@@ -281,9 +468,52 @@ class MatchManager {
         this._pendingCleanups.add(cleanupTimer);
     }
 
+    _scheduleFinalizeRetry(room) {
+        if (!room || room._finalized || room._finalizeRetryTimer) return;
+        const retryTimer = setTimeout(() => {
+            this._pendingCleanups.delete(retryTimer);
+            if (room._finalizeRetryTimer === retryTimer) room._finalizeRetryTimer = null;
+            if (!this.rooms.has(room.id) || room._finalized) return;
+            this._finalize(room).catch(err => this._log('[MatchManager] finalize retry error', err.message));
+        }, FINALIZE_RETRY_MS);
+        room._finalizeRetryTimer = retryTimer;
+        this._pendingCleanups.add(retryTimer);
+    }
+
+    _terminalPayload(room) {
+        return {
+            matchId: room.id,
+            reason: room.endReason,
+            winnerId: room.winnerId,
+            ruleset: room._rulesetSummary?.() || null,
+            fairness: room.fairnessProof?.(true) || null,
+            players: Array.from(room.playerStates.entries()).map(([id, state]) => {
+                const occ = room.occupants.get(id);
+                return {
+                    id,
+                    name: occ?.name || null,
+                    placement: state.placement,
+                    escaped: state.escaped,
+                    hasTreasure: state.hasTreasure,
+                    score: state.score,
+                    killedBy: state.killedBy
+                };
+            })
+        };
+    }
+
+    _emitTerminalToReconnect(socket, room) {
+        if (!socket || !room?._finalized) return false;
+        if (!room._terminalDeliveredSocketIds) room._terminalDeliveredSocketIds = new Set();
+        if (room._terminalDeliveredSocketIds.has(socket.id)) return false;
+        socket.emit('match_end', this._terminalPayload(room));
+        room._terminalDeliveredSocketIds.add(socket.id);
+        return true;
+    }
+
     async _persistFinish(room) {
         await this.db.withTransaction(async (client) => {
-            await client.query(`
+            const finished = await client.query(`
                 UPDATE matches
                 SET status = 'finished',
                     seed = $1,
@@ -299,6 +529,9 @@ class MatchManager {
                 room.winnerId ? room.playerStates.get(room.winnerId)?.userId : null,
                 room.id
             ]);
+            if (finished.rowCount !== 1) {
+                throw new Error(`Match finish persistence missed row ${room.id}`);
+            }
 
             for (const [socketId, state] of room.playerStates.entries()) {
                 await client.query(`
@@ -526,6 +759,20 @@ class MatchManager {
             state: room.toGameState(newId)
         });
 
+        // A finalized room is retained briefly precisely so a reconnecting player can recover its
+        // result. Deliver the same terminal payload immediately, once per socket. If persistence
+        // is still retrying, withhold the winner and tell this socket settlement is pending.
+        if (room.status === 'finished') {
+            if (room._finalized) this._emitTerminalToReconnect(socket, room);
+            else {
+                socket.emit('match_settlement_pending', {
+                    matchId: room.id,
+                    code: 'MATCH_FINISH_NOT_DURABLE',
+                    retrying: true
+                });
+            }
+        }
+
         return true;
     }
 
@@ -549,6 +796,11 @@ class MatchManager {
     }
 
     shutdown() {
+        this.financialRecoveryReady = false;
+        if (this._liabilityReconcileTimer) {
+            clearInterval(this._liabilityReconcileTimer);
+            this._liabilityReconcileTimer = null;
+        }
         for (const [, timeout] of this.disconnectTimeouts.entries()) clearTimeout(timeout);
         this.disconnectTimeouts.clear();
         for (const t of this._pendingCleanups) clearTimeout(t);

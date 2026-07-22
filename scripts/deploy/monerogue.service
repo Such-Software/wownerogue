@@ -5,18 +5,45 @@
 # two are fully independent. NPM (Nginx Proxy Manager) already forwards monerogue.app -> :3001.
 [Unit]
 Description=Monerogue Game Server (Monero Stagenet)
-After=network.target postgresql.service monero-wallet-rpc.service
+After=network-online.target postgresql.service monero-wallet-rpc.service
+Wants=network-online.target
 Wants=monero-wallet-rpc.service
 
 [Service]
 Type=simple
 User=monerogue
 Group=monerogue
-WorkingDirectory=/var/www/monerogue/app/src
-EnvironmentFile=/var/www/monerogue/app/src/.env
+WorkingDirectory=/var/www/monerogue/current/src
+EnvironmentFile=/etc/monerogue/app.env
+EnvironmentFile=/etc/monerogue/wallet-rpc.env
+ExecStartPre=/usr/bin/node scripts/preflight.js
 ExecStart=/usr/bin/node index.js
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+
+# Process/filesystem hardening. Application state lives in PostgreSQL, so the checkout is
+# intentionally read-only; PrivateTmp provides the only disposable writable filesystem.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

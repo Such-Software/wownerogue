@@ -4,6 +4,19 @@
 
 const RateLimiter = require('../src/network/rateLimiter');
 const { clientIp, stableId } = require('../src/network/rateLimitContext');
+const SocketHandlers = require('../src/network/socketHandlers');
+const { buildCommerceDisclosure } = require('../src/config/commerceDisclosurePolicy');
+
+function legalAcknowledgement(gameModeManager = null) {
+  const disclosure = buildCommerceDisclosure(gameModeManager, process.env);
+  return {
+    policyVersion: disclosure.policyVersion,
+    ageEligible: true,
+    termsRead: true,
+    riskAccepted: true,
+    testnetUnderstood: disclosure.service.isTestNetwork === true
+  };
+}
 
 describe('rateLimitContext.stableId', () => {
   test('prefers the session stable user id over the socket id', () => {
@@ -59,5 +72,85 @@ describe('reconnect cannot bypass the limit (stable-id keyed)', () => {
     const other = await rl.checkLimit('u:2', 'game:start', '5.5.5.5');
     expect(other.allowed).toBe(false); // IP bucket already exhausted
     rl.shutdown();
+  });
+});
+
+describe('payment creation limit is enforced at the socket boundary', () => {
+  test('blocks the fourth request before wallet or database work', async () => {
+    const rateLimiter = new RateLimiter({
+      limits: { 'payment:create': { window: 60000, max: 3 } }
+    });
+    const downstream = jest.fn().mockResolvedValue(undefined);
+    const socket = {
+      id: 'payment-socket',
+      handshake: { address: '192.0.2.20', headers: {} },
+      emit: jest.fn()
+    };
+    const context = {
+      rateLimiter,
+      sessionManager: { sessions: new Map([[socket.id, { id: 91 }]]) },
+      paymentHandlers: { handlePaymentRequest: downstream }
+    };
+
+    for (let i = 0; i < 4; i += 1) {
+      await SocketHandlers.prototype.handlePaymentRequest.call(
+        context,
+        socket,
+        {
+          type: 'credits_package',
+          packageId: 'small',
+          legalAcknowledgement: legalAcknowledgement()
+        }
+      );
+    }
+
+    expect(downstream).toHaveBeenCalledTimes(3);
+    expect(socket.emit).toHaveBeenCalledWith('payment_error', expect.objectContaining({
+      code: 'RATE_LIMITED'
+    }));
+    rateLimiter.shutdown();
+  });
+});
+
+describe('match queue join throttling', () => {
+  test('bounds joins but never blocks an escrow-releasing leave', async () => {
+    const rateLimiter = new RateLimiter({
+      limits: { 'game:queue': { window: 60000, max: 1 } }
+    });
+    const socket = {
+      id: 'match-socket',
+      handshake: { address: '192.0.2.30', headers: {} },
+      emit: jest.fn()
+    };
+    const enqueue = jest.fn().mockResolvedValue({ success: true });
+    const leave = jest.fn().mockResolvedValue({ success: true });
+    const context = {
+      rateLimiter,
+      sessionManager: { sessions: new Map([[socket.id, { id: 92 }]]) },
+      matchQueue: { isEnabled: () => true, enqueue, leave },
+      _resolveMatchSession: jest.fn().mockResolvedValue({
+        userId: 92,
+        socketId: socket.id,
+        sessionToken: 'test-token'
+      }),
+      debugManager: { CONSOLE_LOGGING: false }
+    };
+
+    await SocketHandlers.prototype._handleMatchQueue.call(context, socket, {
+      action: 'join', economy: 'free'
+    });
+    await SocketHandlers.prototype._handleMatchQueue.call(context, socket, {
+      action: 'join', economy: 'free'
+    });
+    await SocketHandlers.prototype._handleMatchQueue.call(context, socket, {
+      action: 'leave', economy: 'free'
+    });
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(leave).toHaveBeenCalledTimes(1);
+    expect(socket.emit).toHaveBeenCalledWith('match_error', expect.objectContaining({
+      code: 'RATE_LIMITED'
+    }));
+    rateLimiter.shutdown();
   });
 });

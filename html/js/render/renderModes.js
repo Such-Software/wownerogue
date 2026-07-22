@@ -2,6 +2,16 @@
 (function (root) {
     'use strict';
     var RK = root.RK = root.RK || {};
+    RK.externalRenderersEnabled = function () {
+        return !!(root.WOWNGEON_RUNTIME && root.WOWNGEON_RUNTIME.rendererCdnEnabled === true);
+    };
+    RK.isModeRuntimeAvailable = function (id) {
+        if (!RK.modeMeta || !RK.modeMeta(id)) return false;
+        if (id === '3d') {
+            return !!(RK.THREE && RK.THREE.THREE) || RK.externalRenderersEnabled();
+        }
+        return true;
+    };
 
     // Render tiers. `premium` marks modes intended to be unlocked with credits — a cosmetic
     // entitlement gated by Operator Policy, the same pattern as avatar unlocks. NOTE: rendering
@@ -39,12 +49,23 @@
     RK.canUseMode = function (id) {
         var m = RK.modeMeta(id);
         if (!m) return false;
+        if (!RK.isModeRuntimeAvailable(id)) return false;
         if (RK.renderModeTestUnlocks && RK.renderModeTestUnlocks()) return true;
         if (!m.premium) return true;
         // A premium mode is available once the user has ANY unlocked pack for its projection.
         if (m.projection && RK.unlockedPacks) return RK.unlockedPacks(m.projection).length > 0;
         if (m.pack && RK.canUsePack) return RK.canUsePack(m.pack);
         return !!RK.entitlements.premium;
+    };
+
+    RK.modeAvailability = function (id) {
+        var runtimeAvailable = RK.isModeRuntimeAvailable(id);
+        var usable = runtimeAvailable && RK.canUseMode(id);
+        return {
+            usable: usable,
+            runtimeAvailable: runtimeAvailable,
+            reason: !runtimeAvailable ? 'runtime_unavailable' : (usable ? null : 'entitlement_locked')
+        };
     };
 
     RK.createRenderer = function (mode, host, opts) {
@@ -76,6 +97,7 @@
     RK.pixiReady = function () { return typeof PIXI !== 'undefined'; };
     RK.ensurePixi = function (cb) {
         if (RK.pixiReady()) { cb(true); return; }
+        if (!RK.externalRenderersEnabled()) { cb(false); return; }
         pixiCbs.push(cb);
         if (pixiLoading) return;
         pixiLoading = true;
@@ -96,6 +118,7 @@
     RK.threeReady = function () { return !!(RK.THREE && RK.THREE.THREE); };
     RK.ensureThree = function (cb) {
         if (RK.threeReady()) { cb(true); return; }
+        if (!RK.externalRenderersEnabled()) { cb(false); return; }
         threeCbs.push(cb);
         if (threeLoading) return;
         threeLoading = true;

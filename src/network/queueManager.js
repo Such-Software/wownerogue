@@ -22,9 +22,9 @@ class QueueManager {
         this._waitingPlayers = []; // internal queue
     }
 
-    addPlayer({ serverId, clientId, userId = null, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true, free = false }) {
+    addPlayer({ serverId, clientId, userId = null, entryTime = Date.now(), paymentId = null, requiresConfirmation = false, confirmed = true, free = false, fairnessProof = null }) {
         if (this.getPlayerIndex(serverId) !== -1) return; // already queued
-        this._waitingPlayers.push({ serverId, clientId, userId, entryTime, paymentId, requiresConfirmation, confirmed, free });
+        this._waitingPlayers.push({ serverId, clientId, userId, entryTime, paymentId, requiresConfirmation, confirmed, free, fairnessProof });
         if (this.CONSOLE_LOGGING) {
             console.log(`[QueueManager] Added player ${serverId} (userId=${userId}, confirmed=${confirmed}, requiresConfirmation=${requiresConfirmation}). Queue length: ${this._waitingPlayers.length}`);
         }
@@ -109,7 +109,9 @@ class QueueManager {
                 console.log(`[QueueManager] Player ${serverId} enters on block ${blockHeight} (dies after ${blockHeight + 1})`);
             }
             try {
-                const game = await this.createGameForUser(currentUser, 'standard');
+                const game = await this.createGameForUser(currentUser, 'standard', {
+                    fairnessProof: entry.fairnessProof || null
+                });
                 const gameState = game.getState();
                 gameState.blockHeight = blockHeight;
                 // Include provably fair commitment
@@ -124,7 +126,7 @@ class QueueManager {
                     if (!startRes.success) {
                         // Abort game + clean up orphaned DB record
                         if (this.activeGames) this.activeGames.delete(serverId);
-                        this._cleanupOrphanedGame(game);
+                        await this._cleanupOrphanedGame(game);
                         this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
                         continue;
                     }
@@ -180,7 +182,9 @@ class QueueManager {
         if (!currentUser) return false;
         currentUser.blockRec = blockHeight; // lifetime until next block
         try {
-            const game = await this.createGameForUser(currentUser, 'standard');
+            const game = await this.createGameForUser(currentUser, 'standard', {
+                fairnessProof: entry.fairnessProof || null
+            });
             const gameState = game.getState();
             gameState.blockHeight = blockHeight;
             // Include provably fair commitment
@@ -195,7 +199,7 @@ class QueueManager {
                 if (!startRes.success) {
                     // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);
-                    this._cleanupOrphanedGame(game);
+                    await this._cleanupOrphanedGame(game);
                     this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
                     return false;
                 }
@@ -224,7 +228,7 @@ class QueueManager {
      * @param {number} blockHeight - Current block height
      * @returns {Object} { success: boolean, reason?: string }
      */
-    async startEarlyGame(serverId, currentUser, blockHeight) {
+    async startEarlyGame(serverId, currentUser, blockHeight, options = {}) {
         if (!currentUser) {
             return { success: false, reason: 'User not found' };
         }
@@ -239,7 +243,10 @@ class QueueManager {
         currentUser.isEarlyEntry = true; // Mark as early entry for potential special handling
 
         try {
-            const game = await this.createGameForUser(currentUser, 'standard', { earlyEntry: true });
+            const game = await this.createGameForUser(currentUser, 'standard', {
+                earlyEntry: true,
+                fairnessProof: options.fairnessProof || null
+            });
             const gameState = game.getState();
             gameState.blockHeight = blockHeight;
             gameState.isEarlyEntry = true;
@@ -256,7 +263,7 @@ class QueueManager {
                 if (!startRes.success) {
                     // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);
-                    this._cleanupOrphanedGame(game);
+                    await this._cleanupOrphanedGame(game);
                     return { success: false, reason: startRes.reason || 'Payment processing failed' };
                 }
                 // Emit credits_update if credits were spent
@@ -284,10 +291,12 @@ class QueueManager {
      * Clean up a game record from the DB when processGameStart fails.
      * Prevents orphaned "active" records that never complete.
      */
-    _cleanupOrphanedGame(game) {
+    async _cleanupOrphanedGame(game) {
         if (game && game.dbId && this.gameModeManager && this.gameModeManager.db) {
-            this.gameModeManager.db.query(
-                `UPDATE games SET status = 'expired', outcome = 'aborted', completed_at = NOW() WHERE id = $1`,
+            await this.gameModeManager.db.query(
+                `UPDATE games
+                 SET status = 'expired', outcome = 'aborted', completed_at = NOW()
+                 WHERE id = $1 AND entry_consumed_at IS NULL AND status = 'active'`,
                 [game.dbId]
             ).catch(err => console.error('[QueueManager] Failed to clean up orphaned game:', err.message));
         }
@@ -323,7 +332,7 @@ class QueueManager {
             userId: entry.userId || null,
             requiresConfirmation: !!entry.requiresConfirmation,
             confirmed: !!entry.confirmed,
-            isValuable: this._isValuableEntry(entry)
+            isValuable: !!(entry.paymentId || entry.userId)
         }));
     }
 }

@@ -24,7 +24,32 @@ const TavernManager = require('./tavernManager');
 const IdentityService = require('./identityService');
 const SuspendedGameManager = require('./suspendedGameManager');
 const MemoryManager = require('../utils/memoryManager');
+const FairnessOfferManager = require('../game/fairnessOfferManager');
 const { normalizeError } = require('../utils/errors');
+const money = require('../money/atomic');
+const {
+    buildCommerceDisclosure,
+    validatePaidAcknowledgement
+} = require('../config/commerceDisclosurePolicy');
+
+function requirePaidActionAcknowledgement(context, socket, raw, errorEvent = null) {
+    const disclosure = buildCommerceDisclosure(context.gameModeManager, process.env);
+    // Every call site represents a value-bearing action. This action-level requirement must not
+    // disappear when invoice intake is paused: already-owned credits and race tickets still have
+    // value and may still be consumed.
+    const result = validatePaidAcknowledgement(raw, disclosure, { required: true });
+    if (result.ok) return true;
+    const payload = {
+        message: result.message,
+        error: result.message,
+        code: result.code,
+        policyVersion: disclosure.policyVersion
+    };
+    socket.emit('commerce_ack_required', payload);
+    if (errorEvent) socket.emit(errorEvent, payload);
+    context.broadcastManager?.sendStatusUpdate?.(socket.id, 'warning', result.message);
+    return false;
+}
 
 class SocketHandlers {
     constructor(io, activeGames, broadcastManager, debugManager, gameModeManager = null, walletService = null) {
@@ -35,6 +60,8 @@ class SocketHandlers {
         this.gameModeManager = gameModeManager;
         this.walletService = walletService;
         this.MOVE_COOLDOWN = 100; // Minimum 100ms between moves
+        this.fairnessOffers = new FairnessOfferManager();
+        this._isShuttingDown = false;
 
         // Initialize rate limiter with debug mode matching debugManager
         this.rateLimiter = new RateLimiter({
@@ -72,7 +99,8 @@ class SocketHandlers {
             this.sessionManager = new SessionManager({
                 db: this.gameModeManager.db,
                 debugManager: this.debugManager,
-                gameModeManager: this.gameModeManager
+                gameModeManager: this.gameModeManager,
+                io: this.io
             });
             // IDENTITY (Phase 2.1): give GameModeManager the session manager so getOrCreateUser
             // resolves through the stable anon_token identity instead of the mutable socket_id.
@@ -224,7 +252,8 @@ class SocketHandlers {
         this.matchQueue = new MatchQueue({
             db: this.gameModeManager?.db || null,
             gameModeManager: this.gameModeManager,
-            debugManager: this.debugManager
+            debugManager: this.debugManager,
+            isFinancialRecoveryReady: () => this.matchManager?.financialRecoveryReady === true
         });
         this.matchManager = new MatchManager({
             io: this.io,
@@ -238,16 +267,10 @@ class SocketHandlers {
             matchManager: this.matchManager,
             debugManager: this.debugManager
         });
-        this.matchQueue.initialize().then(() => {
-            this.matchManager.initialize?.();
-            this.tavernMatchBridge = new TavernMatchBridge({
-                matchManager: this.matchManager,
-                tavernManager: this.tavernManager,
-                io: this.io,
-                debugManager: this.debugManager
-            });
-            this.tavernMatchBridge.initialize();
-        }).catch(err => console.error('[SocketHandlers] Match queue init failed:', err));
+        // Database connection + migrations happen later in startServer(). Initializing the
+        // durable queue here raced that lifecycle and silently left production match mode dead.
+        // initializeMatchMode() is awaited after DatabaseManager.initialize() instead.
+        this._matchInitializePromise = null;
 
 
 
@@ -257,6 +280,7 @@ class SocketHandlers {
             activeGames: this.activeGames,
             cleanupTimeoutMs: 300000 // 5 minutes to reconnect before game is lost
         });
+        this.gameManager.setSuspendedGameManager(this.suspendedGameManager);
 
         // Movement manager abstraction (owns its own move-cooldown state)
         this.movementManager = new MovementManager({
@@ -270,6 +294,40 @@ class SocketHandlers {
 
         // Register memory cleanup functions
         this._registerMemoryCleanups();
+    }
+
+    /** Initialize durable match state only after the database is connected and migrated. */
+    async initializeMatchMode() {
+        if (this._matchInitializePromise) return this._matchInitializePromise;
+        this._matchInitializePromise = (async () => {
+            await this.matchQueue.initialize();
+            await this.matchManager.initialize?.();
+            this.tavernMatchBridge = new TavernMatchBridge({
+                matchManager: this.matchManager,
+                tavernManager: this.tavernManager,
+                io: this.io,
+                debugManager: this.debugManager
+            });
+            this.tavernMatchBridge.initialize();
+        })();
+        try {
+            await this._matchInitializePromise;
+        } catch (error) {
+            this._matchInitializePromise = null;
+            throw error;
+        }
+    }
+
+    /** Stop new solo movement before taking the graceful-shutdown settlement snapshot. */
+    beginShutdown() {
+        this._isShuttingDown = true;
+        this.movementManager?.shutdown?.();
+    }
+
+    /** Dynamic financial-recovery gate used by readiness and paid admission. */
+    isFinancialRecoveryReady() {
+        return this.matchQueue?.initialized === true
+            && this.matchManager?.financialRecoveryReady === true;
     }
 
     /**
@@ -339,12 +397,47 @@ class SocketHandlers {
         }
     }
 
+    _emitFairnessOffer(socket) {
+        if (!socket || !this.fairnessOffers) return null;
+        const offer = this.fairnessOffers.ensureOffer(socket.id);
+        socket.emit('fairness_offer', offer);
+        return offer;
+    }
+
+    /**
+     * Atomically consume the precommit echoed by a start request. The replacement offer is
+     * published immediately for the next attempt, but the returned private proof input remains
+     * bound to the consumed commitment and is the only value passed into Game.
+     */
+    _consumeFairnessAttempt(socket, opts = {}) {
+        const result = this.fairnessOffers.consume(socket.id, {
+            offerId: typeof opts.fairnessOfferId === 'string' ? opts.fairnessOfferId : null,
+            clientSeed: typeof opts.clientSeed === 'string' ? opts.clientSeed : ''
+        });
+        if (!result.success) {
+            socket.emit('fairness_error', { code: result.code, message: result.reason });
+            this._emitFairnessOffer(socket);
+            return null;
+        }
+        this._emitFairnessOffer(socket);
+        return result.proofInput;
+    }
+
+    /** Refuse value-bearing actions unless the player echoed the current public disclosures. */
+    _requirePaidActionAcknowledgement(socket, raw, errorEvent = null) {
+        return requirePaidActionAcknowledgement(this, socket, raw, errorEvent);
+    }
+
     /**
      * Initialize socket event handlers for a new connection
      */
     async handleConnection(socket) {
         const connectionResult = await this.connectionHandler.handleConnection(socket);
         if (!connectionResult) return; // Connection was rejected or failed
+
+        // Publish the server commitment before the client can submit a client seed. register_client
+        // re-emits this same offer (never swaps it) in case the browser attached listeners late.
+        this._emitFairnessOffer(socket);
 
         const { sessionInfo } = connectionResult;
         const dbUserId = sessionInfo?.user?.id;
@@ -375,22 +468,34 @@ class SocketHandlers {
                         console.log(`🔄 [handleConnection] Restored game ${restoredGame.id} for user ${dbUserId}`);
                     }
                     
-                    // Re-emit the game state to the reconnecting client
-                    const gameState = restoredGame.getState();
-                    gameState.restored = true;
-                    gameState.restoredMessage = 'Game restored! Continue playing.';
-                    
-                    // Include provably fair commitment
-                    if (restoredGame.getProofCommitment) {
-                        gameState.proof = restoredGame.getProofCommitment();
+                    if (restoredGame.settlementPending) {
+                        // A terminal run is retained solely to retry its atomic DB completion. Do
+                        // not render it as playable after reconnect or reveal a second result.
+                        socket.emit('game_settlement_pending', {
+                            gameId: restoredGame.id,
+                            code: 'GAME_FINISH_NOT_DURABLE',
+                            retrying: true
+                        });
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
+                            'Your finished game is being saved. A new game will be available when settlement completes.');
+                    } else {
+                        // Re-emit the game state to the reconnecting client
+                        const gameState = restoredGame.getState();
+                        gameState.restored = true;
+                        gameState.restoredMessage = 'Game restored! Continue playing.';
+
+                        // Include provably fair commitment
+                        if (restoredGame.getProofCommitment) {
+                            gameState.proof = restoredGame.getProofCommitment();
+                        }
+
+                        // Send game_start to resume the game on client
+                        socket.emit('game_start', gameState);
+
+                        // Also send a status message
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'info',
+                            'Welcome back! Your game has been restored.');
                     }
-                    
-                    // Send game_start to resume the game on client
-                    socket.emit('game_start', gameState);
-                    
-                    // Also send a status message
-                    this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
-                        'Welcome back! Your game has been restored.');
                     
                     // Restore payment monitoring if it was active
                     if (suspendedState.paymentMonitoringActive && this.paymentHandlers) {
@@ -446,7 +551,9 @@ class SocketHandlers {
 
         // Register event handlers
         socket.on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
-            handleGameQueue: (socket) => this.queueHandler.handleGameQueue(socket, (socketId) => this.connectionHandler.getUserBySocket(socketId)),
+            // Legacy text command has no client contribution, but still consumes the already
+            // published one-time server offer with an empty clientSeed.
+            handleGameQueue: (socket) => this.handleJoinQueue(socket, {}),
             handleCancelEntry: (socket) => this.queueHandler.handleCancelEntry(socket),
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
@@ -457,6 +564,7 @@ class SocketHandlers {
         socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
         socket.on('register_client', async (data) => {
             this.connectionHandler.handleRegisterClient(socket, data);
+            this._emitFairnessOffer(socket);
             // Re-send game mode info after client registers handlers (fixes race condition)
             if (this.gameModeManager) {
                 socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
@@ -481,11 +589,12 @@ class SocketHandlers {
         socket.on('auto_start', (data) => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {})); // New handler for start button
         socket.on('play_free', (data) => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true })); // Explicit free-play choice
         socket.on('join_queue', (data) => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {})); // Queue instead of auto-start ({ free: true } for Pleb-board free play)
-        socket.on('early_entry', () => this.handleEarlyEntry(socket)); // Early entry without waiting for block
+        socket.on('early_entry', (data) => this.handleEarlyEntry(socket, (data && typeof data === 'object') ? data : {})); // Early entry without waiting for block
+        socket.on('fairness_offer_request', () => this._emitFairnessOffer(socket));
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
         // Payment system handlers
-        socket.on('request_payment', (data) => this.paymentHandlers.handlePaymentRequest(socket, data));
+        socket.on('request_payment', (data) => this.handlePaymentRequest(socket, data));
         socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
         socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
         socket.on('address:update', (data) => this.handleAddressUpdate(socket, data));
@@ -538,6 +647,48 @@ class SocketHandlers {
 
     }
 
+    async handlePaymentRequest(socket, data = {}) {
+        const request = (data && typeof data === 'object') ? data : {};
+        const rlId = stableId(socket, this.sessionManager);
+        const rlIp = clientIp(socket);
+        const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'payment:create', rlIp);
+        if (!rateLimitResult.allowed) {
+            socket.emit('payment_error', {
+                error: 'Too many payment requests. Please wait and try again.',
+                code: 'RATE_LIMITED',
+                retryAfterMs: rateLimitResult.retryAfter
+            });
+            return;
+        }
+        // Count every accepted attempt before any wallet/DB work so invalid product ids or
+        // fairness payloads cannot be used to bypass the IP + stable-user bucket.
+        await this.rateLimiter.recordAttempt(rlId, 'payment:create', rlIp);
+
+        // Check before consuming a one-time fairness offer or touching wallet/DB state.
+        if (!requirePaidActionAcknowledgement(
+            this,
+            socket,
+            request.legalAcknowledgement,
+            'payment_error'
+        )) return;
+
+        const paymentType = request.type || request.gameMode || 'single_game';
+        if (typeof this.gameModeManager?.isPaymentIntakeEnabled === 'function'
+            && !this.gameModeManager.isPaymentIntakeEnabled(paymentType)) {
+            socket.emit('payment_error', {
+                error: 'That paid product is not available on this server.',
+                code: 'PAYMENT_INTAKE_DISABLED'
+            });
+            return;
+        }
+        if (paymentType !== 'single_game') {
+            return this.paymentHandlers.handlePaymentRequest(socket, request);
+        }
+        const fairnessProof = this._consumeFairnessAttempt(socket, request);
+        if (!fairnessProof) return;
+        return this.paymentHandlers.handlePaymentRequest(socket, { ...request, fairnessProof });
+    }
+
     /**
      * Handle immediate start button (auto_start)
      * Applies payment eligibility + payout address gating (for payout-eligible modes)
@@ -545,16 +696,16 @@ class SocketHandlers {
      */
     async handleAutoStart(socket, opts = {}) {
         try {
+            const wantsExplicitFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
+            if (!wantsExplicitFree
+                && !requirePaidActionAcknowledgement(this, socket, opts.legalAcknowledgement)) return;
+            const fairnessProof = this._consumeFairnessAttempt(socket, opts);
+            if (!fairnessProof) return;
+            let gameFairnessProof = fairnessProof;
+
             // The player explicitly chose FREE play (Pleb board, no payment/payout). Only
             // honoured when the instance allows free play; otherwise fall through to paid.
-            const wantsFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
-
-            // C7: optional client-supplied entropy for provably-fair seed derivation. Must be
-            // hex (≤64 chars); anything malformed is silently ignored (falls back to ''). This
-            // is purely additive — existing clients that send no seed are unaffected.
-            const clientSeed = (typeof opts.clientSeed === 'string' && /^[a-fA-F0-9]{0,64}$/.test(opts.clientSeed))
-                ? opts.clientSeed
-                : undefined;
+            const wantsFree = wantsExplicitFree;
 
             // Rate limiting for game starts — keyed on stable identity + IP so reconnecting
             // (new socket.id) can't reset the limit.
@@ -582,9 +733,47 @@ class SocketHandlers {
             let canStart = { allowed: true, reason: 'Free mode' };
             // Free play skips all payment/credits/payout-address gating below.
             if (this.gameModeManager && !wantsFree) {
-                // Payout address gating for modes that can payout
-                const payoutEligible = (this.gameModeManager.gameMode === 'PAID_SINGLE') || (this.gameModeManager.gameMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled);
-                if (payoutEligible) {
+                try {
+                    canStart = await this.gameModeManager.canUserStartGame(socket.id);
+                } catch (e) {
+                    console.error('Eligibility check failed:', e.message);
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Eligibility check failed.');
+                    return;
+                }
+
+                if (!canStart.allowed) {
+                    // Trigger payment request automatically for any payment-related action
+                    if (canStart.action === 'make_payment' || canStart.action === 'purchase_credits' || canStart.action === 'choose_payment') {
+                        await this.paymentHandlers.createAndShowPaymentRequest(socket, {
+                            fairnessProof,
+                            legalAcknowledgement: opts.legalAcknowledgement
+                        });
+                        return;
+                    }
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', canStart.reason || 'Not allowed to start');
+                    return;
+                }
+
+                // Address-gate the effective entry mode, not the instance's legacy/global mode.
+                // This matters on mixed direct+credits servers and when the master payout switch
+                // is off (no payout means no address should be required).
+                const effectiveMode = canStart.effectiveMode || this.gameModeManager.gameMode;
+                if (effectiveMode === 'PAID_SINGLE' && canStart.paymentId) {
+                    // A direct invoice is already bound to the offer that was published before
+                    // its address was shown. Never replace it with the fresh socket offer chosen
+                    // after payment/reconnect.
+                    gameFairnessProof = canStart.fairnessProof || null;
+                    if (this.gameModeManager._requiresPaidFairnessV2?.() && !gameFairnessProof) {
+                        this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                            'This paid entry has no durable fairness binding and requires support review.');
+                        return;
+                    }
+                }
+                const needsAddress = typeof this.gameModeManager.requiresPayoutAddressForMode === 'function'
+                    ? this.gameModeManager.requiresPayoutAddressForMode(effectiveMode)
+                    : ((effectiveMode === 'PAID_SINGLE')
+                        || (effectiveMode === 'PAID_CREDITS' && this.gameModeManager.creditsPayoutEnabled));
+                if (needsAddress) {
                     try {
                         // Always do fresh DB lookup for payout address (cache may be stale after address update)
                         const dbUser = await this.gameModeManager.getOrCreateUser(socket.id);
@@ -598,24 +787,6 @@ class SocketHandlers {
                         return;
                     }
                 }
-
-                try {
-                    canStart = await this.gameModeManager.canUserStartGame(socket.id);
-                } catch (e) {
-                    console.error('Eligibility check failed:', e.message);
-                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Eligibility check failed.');
-                    return;
-                }
-
-                if (!canStart.allowed) {
-                    // Trigger payment request automatically for any payment-related action
-                    if (canStart.action === 'make_payment' || canStart.action === 'purchase_credits' || canStart.action === 'choose_payment') {
-                        await this.paymentHandlers.createAndShowPaymentRequest(socket);
-                        return;
-                    }
-                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', canStart.reason || 'Not allowed to start');
-                    return;
-                }
             }
 
             // Record the game start attempt (same stable id + IP as the check above)
@@ -624,7 +795,9 @@ class SocketHandlers {
             // Create game immediately
             const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
             memUser.blockRec = blockHeight; // keep legacy timeout logic consistent
-            const game = await this.gameManager.createGameForUser(memUser, 'standard');
+            const game = await this.gameManager.createGameForUser(memUser, 'standard', {
+                fairnessProof: gameFairnessProof
+            });
             const state = game.getState();
             state.blockHeight = blockHeight;
             
@@ -635,10 +808,17 @@ class SocketHandlers {
 
             // Process start (free / credits deduction / payment link)
             if (this.gameModeManager) {
-                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id, { forceFree: wantsFree, clientSeed });
+                const startRes = await this.gameModeManager.processGameStart(socket.id, game.id, { forceFree: wantsFree });
                 if (!startRes.success) {
                     // Abort game
                     this.activeGames.delete(socket.id);
+                    if (game.dbId && this.gameModeManager?.db) {
+                        await this.gameModeManager.db.query(`
+                            UPDATE games
+                            SET status = 'expired', outcome = 'aborted', completed_at = NOW()
+                            WHERE id = $1 AND entry_consumed_at IS NULL AND status = 'active'
+                        `, [game.dbId]);
+                    }
                     this.broadcastManager.sendStatusUpdate(socket.id, 'error', startRes.reason || 'Failed to start game.');
                     return;
                 }
@@ -664,10 +844,29 @@ class SocketHandlers {
      */
     async handleJoinQueue(socket, opts = {}) {
         try {
+            const rlId = stableId(socket, this.sessionManager);
+            const rlIp = clientIp(socket);
+            const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'game:queue', rlIp);
+            if (!rateLimitResult.allowed) {
+                socket.emit('queue_error', {
+                    message: 'Too many queue attempts. Please wait and try again.',
+                    code: 'RATE_LIMITED',
+                    retryAfterMs: rateLimitResult.retryAfter
+                });
+                return;
+            }
+            await this.rateLimiter.recordAttempt(rlId, 'game:queue', rlIp);
+
+            const wantsExplicitFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
+            if (!wantsExplicitFree
+                && !requirePaidActionAcknowledgement(this, socket, opts.legalAcknowledgement)) return;
+
+            const fairnessProof = this._consumeFairnessAttempt(socket, opts);
+            if (!fairnessProof) return;
             await this.queueHandler.handleGameQueue(
                 socket,
                 this.connectionHandler.getUserBySocket.bind(this.connectionHandler),
-                opts
+                { ...opts, fairnessProof }
             );
             // queueHandler already emits queue status and adds to queue
             // Client receives queue_joined event from broadcastManager
@@ -690,11 +889,18 @@ class SocketHandlers {
      * Handle early entry request - start game immediately without waiting for block
      * Only available for free mode and credits mode (not direct payment mode)
      */
-    async handleEarlyEntry(socket) {
+    async handleEarlyEntry(socket, opts = {}) {
         try {
+            // Early entry is free only on a free-only instance. Mixed/credits entry may consume a
+            // credit, so treat ambiguous mixed-mode requests as paid and fail closed.
+            if (this.gameModeManager?.gameMode !== 'FREE'
+                && !requirePaidActionAcknowledgement(this, socket, opts.legalAcknowledgement, 'early_entry_error')) return;
+            const fairnessProof = this._consumeFairnessAttempt(socket, opts);
+            if (!fairnessProof) return;
             const result = await this.queueHandler.handleEarlyEntry(
-                socket, 
-                this.connectionHandler.getUserBySocket.bind(this.connectionHandler)
+                socket,
+                this.connectionHandler.getUserBySocket.bind(this.connectionHandler),
+                { fairnessProof }
             );
             
             if (result.success) {
@@ -806,6 +1012,34 @@ class SocketHandlers {
                 return;
             }
 
+            const action = (data && data.action === 'leave') ? 'leave' : 'join';
+            if (action === 'join' && this.activeGames?.has(socket.id)) {
+                const soloGame = this.activeGames.get(socket.id);
+                socket.emit('match_error', {
+                    message: soloGame?.settlementPending
+                        ? 'Your finished solo game is still being saved. Wait for settlement before joining a match.'
+                        : 'Finish your solo game before joining a match.',
+                    code: soloGame?.settlementPending ? 'SOLO_SETTLEMENT_PENDING' : 'SOLO_GAME_ACTIVE'
+                });
+                return;
+            }
+            // A leave is never throttled: users must always be able to release queued escrow.
+            // Joins share the reconnect-proof solo/match queue bucket to bound DB churn.
+            if (action === 'join') {
+                const rlId = stableId(socket, this.sessionManager);
+                const rlIp = clientIp(socket);
+                const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'game:queue', rlIp);
+                if (!rateLimitResult.allowed) {
+                    socket.emit('match_error', {
+                        message: 'Too many queue attempts. Please wait and try again.',
+                        code: 'RATE_LIMITED',
+                        retryAfterMs: rateLimitResult.retryAfter
+                    });
+                    return;
+                }
+                await this.rateLimiter.recordAttempt(rlId, 'game:queue', rlIp);
+            }
+
             const session = await this._resolveMatchSession(socket);
             if (!session) {
                 socket.emit('match_error', { message: 'Please reconnect before joining a match.' });
@@ -813,16 +1047,18 @@ class SocketHandlers {
             }
 
             const economy = (data && typeof data.economy === 'string') ? data.economy : undefined;
-            const action = (data && data.action === 'leave') ? 'leave' : 'join';
-
             // Carry economy on the session too, so a leave(session) that keys on economy and
             // an enqueue(session,{economy}) that keys on the explicit arg both stay correct.
             const matchSession = { ...session, economy };
 
             if (action === 'leave') {
-                await this.matchQueue.leave(matchSession);
+                const result = await this.matchQueue.leave(matchSession);
+                socket.emit('match_queue_left', { ...(result || { success: false }), economy });
             } else {
-                await this.matchQueue.enqueue(matchSession, { economy });
+                if ((economy === 'credits_prestige' || economy === 'crypto_race')
+                    && !requirePaidActionAcknowledgement(this, socket, data.legalAcknowledgement, 'match_error')) return;
+                const result = await this.matchQueue.enqueue(matchSession, { economy });
+                socket.emit('match_queue_joined', { ...(result || { success: false }), economy });
             }
         } catch (err) {
             if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] _handleMatchQueue error:', err.message);
@@ -911,6 +1147,13 @@ class SocketHandlers {
      * Preserves game state for reconnection when user has a valid session
      */
     handleDisconnect(socket) {
+        if (this.fairnessOffers) this.fairnessOffers.discardSocket(socket.id);
+        if (this.paymentHandlers?.clearPendingCommerceAcknowledgement) {
+            this.paymentHandlers.clearPendingCommerceAcknowledgement(socket.id);
+        }
+        if (this.paymentHandlers?.pendingEntryFairness) {
+            this.paymentHandlers.pendingEntryFairness.delete(socket.id);
+        }
         // Use connection handler for main disconnect logic
         this.connectionHandler.handleDisconnect(socket, async (socket) => {
             const socketId = socket.id;
@@ -932,7 +1175,12 @@ class SocketHandlers {
                 }
             }
 
-            if (activeGame && dbUserId && this.suspendedGameManager) {
+            // A retry can commit while the async identity lookup above is in flight. Re-check the
+            // retained object immediately before suspension so a completed terminal game cannot
+            // be resurrected as a reconnectable/"playable" game.
+            if (activeGame?.settlementCommitted) {
+                this.activeGames.delete(socketId);
+            } else if (activeGame && dbUserId && this.suspendedGameManager) {
                 // Suspend the game so it can be restored on reconnect (keyed by dbUserId).
                 const suspended = this.suspendedGameManager.suspendGame(dbUserId, socketId, activeGame, {
                     paymentMonitoringActive: this.paymentHandlers?.hasActiveMonitoring?.(socketId) || false
@@ -1081,7 +1329,10 @@ class SocketHandlers {
         try {
             // Query for pending (unpaid) payment requests for this user
             const pendingResult = await this.gameModeManager.db.query(`
-                SELECT id, subaddress, expected_amount, payment_type, description, expires_at, address_index
+                SELECT id, subaddress, expected_amount, payment_type, description, expires_at, address_index,
+                       fairness_proof_version, fairness_offer_id, fairness_offer_issued_at,
+                       fairness_commitment, fairness_server_seed, fairness_client_seed,
+                       fairness_bound_at, fairness_consumed_at
                 FROM payments
                 WHERE user_id = $1
                   AND status = 'pending'
@@ -1099,6 +1350,19 @@ class SocketHandlers {
             }
 
             const payment = pendingResult.rows[0];
+            const fairnessProof = payment.payment_type === 'single_game'
+                && typeof this.gameModeManager._paymentFairnessProofFromRow === 'function'
+                ? this.gameModeManager._paymentFairnessProofFromRow(payment)
+                : null;
+            if (payment.payment_type === 'single_game'
+                && typeof this.gameModeManager._requiresPaidFairnessV2 === 'function'
+                && this.gameModeManager._requiresPaidFairnessV2()
+                && (!fairnessProof || payment.fairness_consumed_at != null)) {
+                console.error(`[RestorePayment] Refusing to monitor unbound paid entry ${payment.id}`);
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error',
+                    'This paid entry has no durable fairness binding and requires support review.');
+                return;
+            }
             const cryptoType = this.gameModeManager.cryptoType;
             const formattedAmount = this.gameModeManager.formatAtomicHuman 
                 ? this.gameModeManager.formatAtomicHuman(payment.expected_amount, 3)
@@ -1131,7 +1395,14 @@ class SocketHandlers {
                 description: payment.description,
                 expiresAt: payment.expires_at,
                 qr: qrDataUrl,
-                restored: true
+                restored: true,
+                fairness: fairnessProof ? {
+                    proofVersion: fairnessProof.proofVersion,
+                    offerId: fairnessProof.offerId,
+                    offerIssuedAt: fairnessProof.offerIssuedAt,
+                    commitment: fairnessProof.commitment,
+                    clientSeed: fairnessProof.clientSeed
+                } : null
             });
 
             // Get current user object for queue operations
@@ -1143,7 +1414,8 @@ class SocketHandlers {
                 address: payment.subaddress,
                 amount: payment.expected_amount,
                 amountFormatted: formattedAmount,
-                package: null
+                package: null,
+                fairnessProof
             };
 
             // Re-register address in wallet service so checkPaymentStatus() can query the wallet RPC.
@@ -1152,7 +1424,7 @@ class SocketHandlers {
                 this.walletService.addressToUser.set(payment.subaddress, {
                     userId: String(dbUserId),
                     socketId: socket.id,
-                    amount: Number(payment.expected_amount),
+                    amount: money.toSafe(money.toBig(payment.expected_amount)),
                     addressIndex: payment.address_index ?? 0,
                     accountIndex: 0,
                     detected: false,
@@ -1173,7 +1445,8 @@ class SocketHandlers {
                     payment.expected_amount, 
                     cryptoType, 
                     currentUser, 
-                    payment.payment_type
+                    payment.payment_type,
+                    fairnessProof
                 );
             }
 
@@ -1262,6 +1535,9 @@ class SocketHandlers {
             // was concurrently won or otherwise ended (removed from activeGames on another
             // async path), never re-end it here as a loss/timeout.
             if (!this.activeGames.has(socketId)) continue;
+            // Terminal games deliberately remain mapped until their DB transaction succeeds.
+            // Never race that frozen result with a later block-timeout loss.
+            if (game?.settlementPending || game?.settlementCommitted || game?.gameState === 'ended') continue;
 
             const user = this.connectionHandler.getUserBySocket(socketId);
             if (!user) continue;
@@ -1405,22 +1681,32 @@ class SocketHandlers {
      * Shutdown method to clean up all resources and prevent memory leaks
      */
     async shutdown() {
+        this.beginShutdown();
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log('🛑 SocketHandlers shutting down...');
+        }
+
+        // Settle terminal solo runs while the DB pool is still open. This is idempotent if the
+        // top-level graceful-shutdown path already drained them.
+        if (this.gameManager?.shutdown) {
+            const soloDrain = await this.gameManager.shutdown();
+            if (soloDrain.pending > 0) {
+                console.error(`[SocketHandlers] ${soloDrain.pending} solo settlement(s) remain pending at shutdown.`);
+            }
         }
 
         // Shutdown components in reverse order of initialization
         if (this.tavernManager) {
             this.tavernManager.shutdown();
         }
-        if (this.matchManager) {
-            this.matchManager.shutdown();
+        if (this.matchScheduler) {
+            await this.matchScheduler.shutdown();
         }
         if (this.matchQueue) {
-            this.matchQueue.shutdown().catch(() => {});
+            await this.matchQueue.shutdown().catch(() => {});
         }
-        if (this.matchScheduler) {
-            this.matchScheduler.shutdown();
+        if (this.matchManager) {
+            this.matchManager.shutdown();
         }
 
         if (this.spectatorManager) {

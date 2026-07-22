@@ -1,0 +1,10 @@
+# Install as /etc/wownerogue/wallet-rpc.conf, owned root:wownerogue-wallet, mode 0640.
+# Replace CHANGE_ME with an independently generated password. Configure the same credentials
+# as WALLET_RPC_USER/WALLET_RPC_PASSWORD in the app's protected .env file.
+wallet-file=/var/lib/wownerogue-wallet/mainnet
+password-file=/etc/wownerogue/wallet-password
+rpc-bind-port=34570
+rpc-bind-ip=127.0.0.1
+daemon-address=127.0.0.1:34568
+rpc-login=wownerogue:CHANGE_ME_STRONG_RPC_PASSWORD
+non-interactive=1

@@ -12,23 +12,58 @@
  */
 
 const { normalizeError } = require('../utils/errors');
+const { PG_BIGINT_MAX, matchPayoutAdmissionPolicy } = require('./matchEconomyPolicy');
+const { reservePayoutCapacity } = require('../services/payoutAdmissionService');
 
 // Sentinel address for a winner who has not set a payout address yet. The payout row is stored
 // as 'needs_review' so the pot is a durable, queryable liability the winner can claim once they
 // provide an address — the house never silently keeps it, and the batcher never sends to this.
 const NO_ADDRESS_SENTINEL = 'PENDING_NO_ADDRESS';
-const DEFAULT_ENTRY_FEE_ATOMIC = 5000000000n; // 0.05 WOW at 11 decimals; only a last-resort default
 
 class MatchPayoutService {
-    constructor({ db, walletService, gameModeManager, debugManager } = {}) {
+    constructor({ db, walletService, gameModeManager, debugManager, env = process.env } = {}) {
         this.db = db;
         this.walletService = walletService;
         this.gameModeManager = gameModeManager;
         this.debugManager = debugManager;
+        this.env = env;
     }
 
     _log(...args) {
         if (this.debugManager?.CONSOLE_LOGGING) console.log(...args);
+    }
+
+    _admissionPolicy(room) {
+        return matchPayoutAdmissionPolicy({
+            env: this.env,
+            gameModeManager: this.gameModeManager,
+            ruleset: room?.ruleset,
+            requestedMaxPlayers: room?.maxPlayers
+        });
+    }
+
+    _admissionError(reason) {
+        const error = new Error(`Crypto match payout admission rejected: ${reason}`);
+        error.code = String(reason || 'match_payout_admission_rejected').toUpperCase();
+        return error;
+    }
+
+    _validateEntrants(room, entrants, policy) {
+        const list = Array.isArray(entrants) ? entrants : [];
+        if (list.length < policy.minPlayers || list.length > policy.maxPlayers) {
+            throw this._admissionError('invalid_player_count');
+        }
+        const userIds = list.map(entrant => entrant?.userId);
+        if (userIds.some(userId => userId == null) || new Set(userIds.map(String)).size !== userIds.length) {
+            throw this._admissionError('invalid_entrants');
+        }
+        const queueEntryIds = list.map(entrant => entrant?.queueEntryId);
+        if (queueEntryIds.some(id => id == null) || new Set(queueEntryIds.map(String)).size !== queueEntryIds.length) {
+            throw this._admissionError('invalid_queue_entries');
+        }
+        if (room?.playerStates && room.playerStates.size !== list.length) {
+            throw this._admissionError('entrant_state_mismatch');
+        }
     }
 
     /**
@@ -40,14 +75,99 @@ class MatchPayoutService {
     async collectEntryTickets(room, entrants) {
         if (!this.db || !room || room.economy !== 'crypto_race') return;
 
-        const entryFee = this._entryFeeAtomic();          // BigInt atomic units per entry
-        const houseFeeBp = this._houseFeeBasisPoints();     // integer basis points (0..10000)
+        const policy = this._admissionPolicy(room);
+        if (!policy.enabled) throw this._admissionError(policy.reason);
+        this._validateEntrants(room, entrants, policy);
+
+        const entryFee = policy.entryFee;                   // required funded value per ticket
+        const houseFeeBp = policy.houseFeeBasisPoints;      // integer basis points (0..9999)
         const count = BigInt((entrants && entrants.length) || 0);
-        const pot = entryFee * count;                       // ACTUAL collected pot (BigInt)
-        const houseFee = (pot * BigInt(houseFeeBp)) / 10000n; // floor via integer math — no float
         const housePercent = houseFeeBp / 100;              // for the DECIMAL(5,2) audit column
 
-        await this.db.withTransaction(async (client) => {
+        // Fast outer-bound check before opening the commitment transaction. The authoritative
+        // amount below is summed from locked paid ticket lots, never fabricated from this config.
+        const configuredPot = entryFee * count;
+        const configuredFee = (configuredPot * BigInt(houseFeeBp)) / 10000n;
+        const configuredLiability = configuredPot - configuredFee;
+        if (configuredPot > PG_BIGINT_MAX) {
+            throw this._admissionError('pot_overflow');
+        }
+        if (configuredPot - configuredFee <= 0n || configuredPot - configuredFee > policy.payoutCap) {
+            throw this._admissionError('payout_cap_exceeded');
+        }
+
+        const acceptedSnapshot = await this.db.withTransaction(async (client) => {
+            // Acquire the shared bankroll-admission lock before any per-match row lock. This
+            // preserves one lock order across solo and match starts and prevents concurrent
+            // commitments from all passing against the same unlocked wallet snapshot.
+            await reservePayoutCapacity({
+                client,
+                walletService: this.walletService,
+                newLiability: configuredLiability,
+                gameModeManager: this.gameModeManager,
+                env: this.env
+            });
+            const queueEntryIds = entrants.map(entrant => entrant.queueEntryId);
+            const backingResult = await client.query(`
+                SELECT id, user_id, race_entry_lot_id, escrow_amount, escrow_value_atomic
+                FROM match_queue_entries
+                WHERE id = ANY($1::bigint[])
+                  AND match_id = $2
+                  AND economy = 'crypto_race'
+                  AND status = 'matched'
+                ORDER BY id ASC
+                FOR UPDATE
+            `, [queueEntryIds, room.id]);
+            if (backingResult.rowCount !== queueEntryIds.length) {
+                throw this._admissionError('queue_backing_mismatch');
+            }
+
+            const backingById = new Map(backingResult.rows.map(row => [String(row.id), row]));
+            let pot = 0n;
+            const ticketBacking = [];
+            for (const entrant of entrants) {
+                const backing = backingById.get(String(entrant.queueEntryId));
+                let value;
+                try { value = BigInt(backing?.escrow_value_atomic); }
+                catch (_) { throw this._admissionError('invalid_ticket_backing'); }
+                if (!backing
+                    || String(backing.user_id) !== String(entrant.userId)
+                    || Number(backing.escrow_amount) !== 1
+                    || backing.race_entry_lot_id == null
+                    || value !== entryFee) {
+                    throw this._admissionError('invalid_ticket_backing');
+                }
+                pot += value;
+                ticketBacking.push({
+                    queueEntryId: String(backing.id),
+                    raceEntryLotId: String(backing.race_entry_lot_id),
+                    valueAtomic: value.toString()
+                });
+            }
+            const houseFee = (pot * BigInt(houseFeeBp)) / 10000n;
+            const liabilityAmount = pot - houseFee;
+            if (liabilityAmount <= 0n || liabilityAmount > policy.payoutCap) {
+                throw this._admissionError('payout_cap_exceeded');
+            }
+
+            const terms = {
+                version: 2,
+                model: 'winner-takes-funded-ticket-pool-minus-house-fee',
+                funding: 'confirmed-payment-ticket-lots',
+                rulesetId: room.ruleset?.id || 'race',
+                winCondition: room.ruleset?.winCondition?.type || 'first-to-exit',
+                playerCount: Number(count),
+                ticketBacking,
+                entryFeeAtomic: entryFee.toString(),
+                potAtomic: pot.toString(),
+                houseFeeAtomic: houseFee.toString(),
+                houseFeeBasisPoints: houseFeeBp,
+                payoutAmountAtomic: liabilityAmount.toString(),
+                payoutCapAtomic: policy.payoutCap.toString(),
+                cryptoType: String(room.cryptoType || this.env.CRYPTO_TYPE || 'WOW').toUpperCase(),
+                network: String(this.env.MONERO_NETWORK || 'mainnet').toLowerCase()
+            };
+
             for (const entrant of (entrants || [])) {
                 // Commit the held ticket to this match (delta 0 — it was already deducted at
                 // queue-join; this row records the commitment for the audit trail).
@@ -58,33 +178,106 @@ class MatchPayoutService {
                     ), 'match_start', $2)
                 `, [entrant.userId, room.id]);
 
-                await client.query(`
+                const consumed = await client.query(`
                     UPDATE match_entrants
                     SET entry_consumed = TRUE
-                    WHERE match_id = $1 AND user_id = $2
+                    WHERE match_id = $1 AND user_id = $2 AND entry_consumed = FALSE
+                    RETURNING id
                 `, [room.id, entrant.userId]);
+                if (consumed.rowCount !== 1) {
+                    throw this._admissionError('entrant_commit_mismatch');
+                }
+
+                const queueConsumed = await client.query(`
+                    UPDATE match_queue_entries
+                    SET status = 'consumed', consumed_at = NOW()
+                    WHERE id = $1 AND match_id = $2 AND user_id = $3
+                      AND economy = 'crypto_race' AND status = 'matched'
+                    RETURNING id
+                `, [entrant.queueEntryId, room.id, entrant.userId]);
+                if (queueConsumed.rowCount !== 1) {
+                    throw this._admissionError('queue_commit_mismatch');
+                }
             }
 
-            // Lock the true pot / house fee on the match row (BigInt passed as strings so the
-            // BIGINT columns are exact).
-            await client.query(`
+            // Lock the true pot, fee, cap, and accepted liability in the SAME transaction as
+            // ticket commitment. The migration makes this snapshot immutable after acceptance.
+            const accepted = await client.query(`
                 UPDATE matches
                 SET entry_fee_atomic = $1,
                     pot_atomic = $2,
                     house_fee_atomic = $3,
-                    house_fee_percent = $4
-                WHERE id = $5
-            `, [entryFee.toString(), pot.toString(), houseFee.toString(), housePercent, room.id]);
+                    house_fee_percent = $4,
+                    payout_liability_amount_atomic = $5,
+                    payout_liability_cap_atomic = $6,
+                    payout_liability_terms = $7::jsonb,
+                    payout_liability_accepted_at = NOW()
+                WHERE id = $8
+                  AND economy = 'crypto_race'
+                  AND status = 'starting'
+                  AND payout_liability_accepted_at IS NULL
+                RETURNING id, payout_liability_accepted_at
+            `, [
+                entryFee.toString(),
+                pot.toString(),
+                houseFee.toString(),
+                housePercent,
+                liabilityAmount.toString(),
+                policy.payoutCap.toString(),
+                JSON.stringify(terms),
+                room.id
+            ]);
+            if (accepted.rowCount !== 1) {
+                throw this._admissionError('liability_snapshot_failed');
+            }
+            return { pot, houseFee, liabilityAmount, terms };
         });
 
-        // In-memory bookkeeping (informational). The authoritative amounts live on the match
-        // row and are re-read (as BigInt) at payout time.
-        room.entryFeeAtomic = Number(entryFee);
-        room.potAtomic = Number(pot);
-        room.houseFeeAtomic = Number(houseFee);
+        // Atomic amounts stay decimal strings in memory so persistence/debug snapshots never
+        // round values above Number.MAX_SAFE_INTEGER. The authoritative values live in SQL.
+        room.entryFeeAtomic = entryFee.toString();
+        room.potAtomic = acceptedSnapshot.pot.toString();
+        room.houseFeeAtomic = acceptedSnapshot.houseFee.toString();
         room.houseFeePercent = housePercent;
+        room.payoutLiabilityAmountAtomic = acceptedSnapshot.liabilityAmount.toString();
+        room.payoutLiabilityCapAtomic = policy.payoutCap.toString();
+        room.payoutLiabilityTerms = acceptedSnapshot.terms;
 
-        this._log(`[MatchPayoutService] locked pot ${pot} (house fee ${houseFee}, ${housePercent}%) for match ${room.id}`);
+        this._log(`[MatchPayoutService] accepted liability ${acceptedSnapshot.liabilityAmount} from funded pool ${acceptedSnapshot.pot} (house fee ${acceptedSnapshot.houseFee}, ${housePercent}%) for match ${room.id}`);
+    }
+
+    /**
+     * Resolve an ambiguous transaction acknowledgement. A database connection can fail while
+     * COMMIT is being acknowledged; the caller must inspect the durable snapshot before deciding
+     * to refund/abort, otherwise it could cancel a committed liability without returning tickets.
+     */
+    async getAcceptedLiability(matchId) {
+        if (!this.db || !matchId) return null;
+        const result = await this.db.query(`
+            SELECT entry_fee_atomic, pot_atomic, house_fee_atomic, house_fee_percent,
+                   payout_liability_amount_atomic, payout_liability_cap_atomic,
+                   payout_liability_terms, payout_liability_accepted_at
+            FROM matches
+            WHERE id = $1
+              AND economy = 'crypto_race'
+              AND status IN ('starting', 'active')
+              AND payout_liability_accepted_at IS NOT NULL
+            LIMIT 1
+        `, [matchId]);
+        const row = result.rows?.[0];
+        if (!row) return null;
+        try {
+            const amount = BigInt(row.payout_liability_amount_atomic);
+            const cap = BigInt(row.payout_liability_cap_atomic);
+            const pot = BigInt(row.pot_atomic);
+            const fee = BigInt(row.house_fee_atomic);
+            if (amount <= 0n || cap <= 0n || amount > cap || pot <= 0n || fee < 0n || amount !== pot - fee) {
+                return null;
+            }
+        } catch (_) {
+            return null;
+        }
+        return row;
     }
 
     /**
@@ -94,114 +287,132 @@ class MatchPayoutService {
      */
     async payoutWinner(room) {
         if (!this.db || !room || room.economy !== 'crypto_race' || !room.winnerId) return;
+        try {
+            const result = await this.db.withTransaction(client => this._createPayoutForMatch(client, room.id));
+            if (result.created && result.status === 'pending') {
+                // Trigger the existing batch payout processor (5s debounce).
+                if (this.gameModeManager && typeof this.gameModeManager._scheduleBatchPayout === 'function') {
+                    this.gameModeManager._scheduleBatchPayout();
+                }
+            }
+            return result;
+        } catch (err) {
+            const normalized = normalizeError(err, 'Failed to queue match payout');
+            this._log('[MatchPayoutService] payout error:', normalized.message);
+            throw normalized;
+        }
+    }
 
-        const winnerState = room.playerStates.get(room.winnerId);
-        if (!winnerState || winnerState.userId == null) return;
-
-        // Authoritative pot / fee from the match row (locked at collectEntryTickets).
-        const matchRow = await this.db.query(`
-            SELECT pot_atomic, house_fee_atomic
+    /**
+     * Create the payout promised by an accepted snapshot. No current admission flag is read:
+     * MATCH_PAYOUTS_ENABLED can stop new matches, but cannot erase an existing liability.
+     * The match's finished winner and immutable amount are authoritative, not in-memory values.
+     */
+    async _createPayoutForMatch(client, matchId) {
+        const matchResult = await client.query(`
+            SELECT id, economy, status, winner_user_id,
+                   payout_liability_amount_atomic, payout_liability_cap_atomic,
+                   payout_liability_accepted_at
             FROM matches
             WHERE id = $1
-        `, [room.id]);
-        if (!matchRow.rows || matchRow.rows.length === 0) return;
+            FOR UPDATE
+        `, [matchId]);
+        const match = matchResult.rows?.[0];
+        if (!match || match.economy !== 'crypto_race' || match.status !== 'finished' || match.winner_user_id == null) {
+            return { created: false, reason: 'match_not_settleable' };
+        }
+        // OFF -> ON must never create a retroactive liability: only the durable admission
+        // snapshot, written while tickets were committed, authorizes a payout.
+        if (!match.payout_liability_accepted_at) {
+            return { created: false, reason: 'liability_not_accepted' };
+        }
 
-        let pot, houseFee;
+        let amount, cap;
         try {
-            pot = BigInt(matchRow.rows[0].pot_atomic ?? 0);
-            houseFee = BigInt(matchRow.rows[0].house_fee_atomic ?? 0);
+            amount = BigInt(match.payout_liability_amount_atomic);
+            cap = BigInt(match.payout_liability_cap_atomic);
         } catch (_) {
-            return;
+            throw this._admissionError('invalid_liability_snapshot');
         }
-        if (houseFee < 0n) houseFee = 0n;
-        if (houseFee > pot) houseFee = pot;                 // never pay a negative amount
-        const winnerAmount = pot - houseFee;                // capped at true collected pot − fee
-
-        if (winnerAmount <= 0n) {
-            this._log(`[MatchPayoutService] no winner payout for match ${room.id} (pot=${pot} fee=${houseFee})`);
-            return;
+        if (amount <= 0n || cap <= 0n || amount > cap) {
+            throw this._admissionError('invalid_liability_snapshot');
         }
 
-        // Resolve payout address from the user record (may be absent).
-        const userResult = await this.db.query(`
-            SELECT id, payout_address
-            FROM users
-            WHERE id = $1
-            LIMIT 1
-        `, [winnerState.userId]);
-        const user = userResult.rows[0];
-        if (!user) return;
+        const existing = await client.query(`
+            SELECT id, status FROM payouts WHERE match_id = $1 LIMIT 1
+        `, [match.id]);
+        if (existing.rows?.length) {
+            return { created: false, reason: 'payout_exists', payoutId: existing.rows[0].id };
+        }
+
+        const userResult = await client.query(`
+            SELECT id, payout_address FROM users WHERE id = $1 LIMIT 1
+        `, [match.winner_user_id]);
+        const user = userResult.rows?.[0];
+        if (!user) throw this._admissionError('winner_not_found');
 
         const hasAddress = typeof user.payout_address === 'string' && user.payout_address.trim().length > 0;
         const address = hasAddress ? user.payout_address.trim() : NO_ADDRESS_SENTINEL;
         const status = hasAddress ? 'pending' : 'needs_review';
         const reason = hasAddress ? 'match_winner' : 'match_winner_no_address';
+        const inserted = await client.query(`
+            INSERT INTO payouts (user_id, match_id, payout_address, amount, multiplier, reason, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            ON CONFLICT DO NOTHING
+            RETURNING id
+        `, [user.id, match.id, address, amount.toString(), 0, reason, status]);
+        if (inserted.rowCount !== 1) {
+            return { created: false, reason: 'payout_exists' };
+        }
 
-        try {
-            await this.db.withTransaction(async (client) => {
-                // Guard against a double payout for this match (includes the deferred
-                // no-address row so we never insert two).
-                const existing = await client.query(`
-                    SELECT id FROM payouts
-                    WHERE match_id = $1 AND status IN ('pending', 'processing', 'completed', 'needs_review')
-                    FOR UPDATE
-                `, [room.id]);
-                if (existing.rows.length > 0) {
-                    throw Object.assign(new Error('Payout already exists for this match'), { code: 'PAYOUT_EXISTS' });
+        this._log(`[MatchPayoutService] recorded ${status} liability ${amount} for match ${match.id}`);
+        return { created: true, status, amount: amount.toString(), payoutId: inserted.rows?.[0]?.id };
+    }
+
+    /** Reconcile durable finished liabilities after a crash or transient payout-insert failure. */
+    async reconcileFinishedLiabilities({ limit = 100 } = {}) {
+        if (!this.db) return { ok: true, scanned: 0, created: 0, failed: 0, unresolved: [] };
+        const candidates = await this.db.query(`
+            SELECT m.id
+            FROM matches m
+            WHERE m.economy = 'crypto_race'
+              AND m.status = 'finished'
+              AND m.winner_user_id IS NOT NULL
+              AND m.payout_liability_accepted_at IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM payouts p WHERE p.match_id = m.id)
+            ORDER BY m.ended_at ASC NULLS LAST, m.id ASC
+            LIMIT $1
+        `, [Math.max(1, Math.min(1000, parseInt(limit, 10) || 100))]);
+
+        let created = 0;
+        let failed = 0;
+        const unresolved = [];
+        let pendingCreated = false;
+        for (const candidate of candidates.rows || []) {
+            try {
+                const result = await this.db.withTransaction(client => this._createPayoutForMatch(client, candidate.id));
+                if (result.created) {
+                    created += 1;
+                    if (result.status === 'pending') pendingCreated = true;
                 }
-
-                await client.query(`
-                    INSERT INTO payouts (user_id, match_id, payout_address, amount, multiplier, reason, status, created_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                `, [user.id, room.id, address, winnerAmount.toString(), 0, reason, status]);
-            });
-
-            if (hasAddress) {
-                // Trigger the existing batch payout processor (5s debounce).
-                if (this.gameModeManager && typeof this.gameModeManager._scheduleBatchPayout === 'function') {
-                    this.gameModeManager._scheduleBatchPayout();
-                }
-                this._log(`[MatchPayoutService] queued winner payout ${winnerAmount} for match ${room.id}`);
-            } else {
-                this._log(`[MatchPayoutService] winner ${user.id} has no payout address; recorded ${winnerAmount} as a claimable 'needs_review' payout for match ${room.id}`);
+            } catch (err) {
+                failed += 1;
+                unresolved.push({ type: 'match_liability', id: candidate.id });
+                this._log(`[MatchPayoutService] reconciliation failed for ${candidate.id}:`, err.message);
             }
-        } catch (err) {
-            const normalized = normalizeError(err, 'Failed to queue match payout');
-            this._log('[MatchPayoutService] payout error:', normalized.message);
         }
+        if (pendingCreated && this.gameModeManager && typeof this.gameModeManager._scheduleBatchPayout === 'function') {
+            this.gameModeManager._scheduleBatchPayout();
+        }
+        return {
+            ok: failed === 0,
+            scanned: candidates.rows?.length || 0,
+            created,
+            failed,
+            unresolved
+        };
     }
 
-    /**
-     * Entry fee (atomic units, BigInt). Does NOT assume entryFee == singleGamePrice: an explicit
-     * MATCH_ENTRY_FEE_ATOMIC (or a gameModeManager.matchEntryFeeAtomic) wins; singleGamePrice is
-     * only a fallback, then a hard default.
-     */
-    _entryFeeAtomic() {
-        const raw = (process.env.MATCH_ENTRY_FEE_ATOMIC != null && process.env.MATCH_ENTRY_FEE_ATOMIC !== '')
-            ? process.env.MATCH_ENTRY_FEE_ATOMIC
-            : (this.gameModeManager?.matchEntryFeeAtomic
-                ?? this.gameModeManager?.singleGamePrice
-                ?? null);
-        if (raw == null) return DEFAULT_ENTRY_FEE_ATOMIC;
-        try {
-            // Atomic units are integers; strip any fractional part defensively before BigInt.
-            const s = String(raw).trim().split('.')[0];
-            const b = BigInt(s);
-            return b > 0n ? b : DEFAULT_ENTRY_FEE_ATOMIC;
-        } catch (_) {
-            return DEFAULT_ENTRY_FEE_ATOMIC;
-        }
-    }
-
-    /**
-     * House fee as integer basis points (percent × 100), so a fractional percent like 5.5%
-     * survives with no float precision loss in the pot math.
-     */
-    _houseFeeBasisPoints() {
-        const pct = parseFloat(process.env.MATCH_HOUSE_FEE_PERCENT);
-        const p = Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : 5;
-        return Math.round(p * 100);
-    }
 }
 
 module.exports = MatchPayoutService;

@@ -5,13 +5,20 @@
   "main": "index.js",
   "scripts": {
     "start": "NODE_ENV=production node index.js",
+    "preflight": "NODE_ENV=production node scripts/preflight.js",
     "dev": "NODE_ENV=development node index.js",
     "debug": "NODE_ENV=debug node index.js",
     "test": "jest --runInBand",
+    "capture:pvp": "node scripts/pvp-capture.js",
+    "canary:stagenet": "node scripts/stagenet-financial-canary.js",
+    "db:migrate:clone": "node scripts/migrate-disposable-clone.js",
     "db:create": "node scripts/setup_db.js",
     "db:drop": "node scripts/setup_db.js drop",
-    "db:reset": "npm run db:drop && npm run db:create",
-    "docs:api": "jsdoc2md --files game/**/*.js network/**/*.js payments/**/*.js multiplayer/*.js chain/*.js utils/*.js money/*.js services/*.js config/*.js > ../docs/API.md"
+    "db:reset": "npm run db:drop && npm run db:create"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
   },
   "config": {
     "debug": {
@@ -45,7 +52,6 @@
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "jsdoc-to-markdown": "^9.1.1",
     "playwright-core": "^1.61.1"
   }
 }

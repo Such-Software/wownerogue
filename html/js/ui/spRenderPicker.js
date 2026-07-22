@@ -46,11 +46,17 @@
         var modeRow = doc().createElement('div');
         modeRow.className = 'rp-row';
         RK.RENDER_MODES.forEach(function (m) {
-            var usable = !RK.canUseMode || RK.canUseMode(m.id);
+            var availability = RK.modeAvailability
+                ? RK.modeAvailability(m.id)
+                : { usable: !RK.canUseMode || RK.canUseMode(m.id), runtimeAvailable: true };
+            var usable = availability.usable;
             var b = doc().createElement('button');
             b.className = 'rp-btn' + (m.id === current ? ' active' : '') + (usable ? '' : ' locked');
-            b.textContent = m.label + (m.premium && !usable ? ' 🔒' : '');
-            b.title = usable ? m.label : (m.label + ' — unlock with credits');
+            b.textContent = m.label + (!availability.runtimeAvailable ? ' ⛔' : (m.premium && !usable ? ' 🔒' : ''));
+            b.title = !availability.runtimeAvailable
+                ? (m.label + ' — unavailable on this server (optional renderer dependency disabled)')
+                : (usable ? m.label : (m.label + ' — unlock with credits'));
+            b.setAttribute('aria-disabled', usable ? 'false' : 'true');
             b.onclick = function () {
                 if (!usable) return;
                 if (RK.SPGame.setMode(m.id)) build();

@@ -32,6 +32,7 @@
         this.cell = opts.cell || 26;
         this.app = new PIXI.Application({ backgroundColor: 0x0a0c0f, antialias: true });
         this.app.view.className = 'rk-canvas';
+        this.canvas = this.app.view;
         host.appendChild(this.app.view);
 
         this.tileLayer = new PIXI.Container();
@@ -288,7 +289,7 @@
     };
 
     FancyRenderer.prototype._syncEntities = function (scene) {
-        var cell = this.cell, seen = {}, RKr = window.RK;
+        var cell = this.cell, seen = {}, RKr = window.RK, focusFallback = null;
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
             seen[e.id] = true;
@@ -315,6 +316,14 @@
                 s = this.sprites[e.id] = { c: c, kind: kind, renderKey: renderKey };
             }
             s.tx = e.x; s.ty = e.y; s.e = e;
+            if (e.kind === 'player' && !focusFallback) focusFallback = e;
+            if (e.you || e.cameraTarget) {
+                this.focusPoint = { x: e.x * cell + cell / 2, y: e.y * cell + cell / 2 };
+                focusFallback = null;
+            }
+        }
+        if (!this.focusPoint && focusFallback) {
+            this.focusPoint = { x: focusFallback.x * cell + cell / 2, y: focusFallback.y * cell + cell / 2 };
         }
         for (var id in this.sprites) {
             if (!seen[id]) {

@@ -1,4 +1,5 @@
 const MatchScheduler = require('../src/network/matchScheduler');
+const { deriveBlockMatchSeed } = MatchScheduler;
 const MatchQueue = require('../src/network/matchQueue');
 
 describe('MatchScheduler', () => {
@@ -6,10 +7,7 @@ describe('MatchScheduler', () => {
     let manager = null;
 
     afterEach(() => {
-        // The scheduler starts long-lived timers when it drains a queue: a hard-ceiling
-        // setTimeout (owned by the scheduler) and, per match, an engine tick interval (owned
-        // by the manager via setEngine). Stop both so Jest can exit instead of leaking handles
-        // (an unstopped ceiling timer later fires manager.expire() and crashes the process).
+        // Stop the scheduler tail and every handed-off engine so Jest cannot leak handles.
         if (scheduler) scheduler.shutdown();
         if (manager) for (const engine of manager.engines.values()) engine.stop();
         scheduler = null;
@@ -50,6 +48,7 @@ describe('MatchScheduler', () => {
                 this.attached.push({ room, entrants, opts });
             },
             setEngine(id, engine) { engines.set(id, engine); },
+            expireBlockDeadlines: jest.fn(),
             onTick() {},
             onFinish() {},
             expire() {}
@@ -105,5 +104,75 @@ describe('MatchScheduler', () => {
         // manager's countdown elapses, so honest and modified clients always start together.
         expect(manager.engines.size).toBe(1);
         expect(room.status).toBe('starting');
+    });
+
+    test('operator-selected last-alive ruleset creates a real PvP match', async () => {
+        process.env.MATCH_ENABLED = 'true';
+        const queue = makeQueue();
+        manager = makeManager();
+        scheduler = new MatchScheduler({ matchQueue: queue, matchManager: manager, rulesetId: 'last-alive' });
+        await queue.join({ userId: 1, socketId: 's1', sessionToken: 't1', economy: 'free' });
+        await queue.join({ userId: 2, socketId: 's2', sessionToken: 't2', economy: 'free' });
+
+        await scheduler.onBlock(100);
+
+        const { room } = manager.attached[0];
+        expect(room.ruleset.id).toBe('last-alive');
+        expect(room.pvpCombat).toBe(true);
+        expect(room.variant).toBe('pvp');
+        expect(room.snapshot().ruleset).toEqual(expect.objectContaining({
+            id: 'last-alive',
+            winCondition: 'last-alive'
+        }));
+    });
+
+    test('block-derived match seeds are reproducible and lock the durable entrant set', () => {
+        const input = {
+            blockHash: 'ab'.repeat(32),
+            blockHeight: 123,
+            economy: 'crypto_race',
+            rulesetId: 'race',
+            queueEntryIds: [12, 3]
+        };
+        const first = deriveBlockMatchSeed(input);
+        const reordered = deriveBlockMatchSeed({ ...input, queueEntryIds: [3, 12] });
+        const changedEntrant = deriveBlockMatchSeed({ ...input, queueEntryIds: [3, 13] });
+
+        expect(first).toEqual(reordered);
+        expect(first.seed).toMatch(/^[0-9a-f]{64}$/);
+        expect(first.derivation.queueEntryIds).toEqual(['3', '12']);
+        expect(changedEntrant.seed).not.toBe(first.seed);
+    });
+
+    test('production paid queues do not drain without a canonical block hash', async () => {
+        const oldNodeEnv = process.env.NODE_ENV;
+        process.env.NODE_ENV = 'production';
+        process.env.MATCH_ENABLED = 'true';
+        const queue = makeQueue();
+        const drain = jest.spyOn(queue, 'drain');
+        manager = makeManager();
+        scheduler = new MatchScheduler({ matchQueue: queue, matchManager: manager });
+        try {
+            await scheduler._drainEconomy('credits_prestige', 100, null);
+            expect(drain).not.toHaveBeenCalled();
+            expect(manager.attached).toHaveLength(0);
+        } finally {
+            if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = oldNodeEnv;
+        }
+    });
+
+    test('each advancing block is offered once to active-room deadline processing', async () => {
+        process.env.MATCH_ENABLED = 'true';
+        const queue = makeQueue();
+        manager = makeManager();
+        scheduler = new MatchScheduler({ matchQueue: queue, matchManager: manager });
+
+        await scheduler.onBlock(100);
+        await scheduler.onBlock(100);
+        await scheduler.onBlock(101);
+
+        // getblockcount is normalized to its zero-based canonical header exactly once.
+        expect(manager.expireBlockDeadlines.mock.calls).toEqual([[99], [100]]);
     });
 });

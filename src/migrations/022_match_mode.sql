@@ -6,7 +6,8 @@
 -- Design notes:
 -- - One fact, one table: matches, entrants, events, queue, and ticket ledger are separate.
 -- - All money movement uses DatabaseManager.withTransaction() at the application layer.
--- - Provably fair: seed_hash stored at creation, seed revealed on finish (like solo games).
+-- - Verifiable commitment: seed_hash stored at creation and seed revealed on finish. Production
+--   paid matches additionally persist chain-block derivation metadata inside dungeon JSON.
 -- - Tickets (race_entries) are non-refundable crypto-race entry tokens; they avoid the
 --   need for on-chain refunds when a player leaves the queue before a match starts.
 
