@@ -17,6 +17,8 @@ describe('deployment financial-audit contract', () => {
         expect(audit).toContain("payouts WHERE status IS DISTINCT FROM 'completed'");
         expect(audit).toContain("games WHERE status IS NULL OR status NOT IN ('won', 'lost', 'expired')");
         expect(audit).toContain("MAX(filename) = '042_immutable_financial_event_snapshots.sql'");
+        expect(audit.match(/status IS NULL OR status NOT IN \('recorded', 'completed'\)/g))
+            .toHaveLength(2);
         expect(audit).toContain('COUNT(*) = 42');
     });
 });
