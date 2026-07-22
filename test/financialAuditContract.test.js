@@ -15,6 +15,10 @@ describe('deployment financial-audit contract', () => {
 
     test('nullable or unknown money/game states and a stale schema ledger fail closed', () => {
         expect(audit).toContain("payouts WHERE status IS DISTINCT FROM 'completed'");
+        expect(audit).toMatch(/FROM payouts\s+WHERE status IS DISTINCT FROM 'completed'/);
+        expect(audit).not.toMatch(
+            /FROM payouts\s+WHERE status IS NULL OR status NOT IN \('recorded', 'completed'\)/
+        );
         expect(audit).toContain("games WHERE status IS NULL OR status NOT IN ('won', 'lost', 'expired')");
         expect(audit).toContain("MAX(filename) = '042_immutable_financial_event_snapshots.sql'");
         expect(audit.match(/status IS NULL OR status NOT IN \('recorded', 'completed'\)/g))

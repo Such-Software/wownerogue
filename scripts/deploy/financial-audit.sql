@@ -11,7 +11,7 @@ FROM schema_migrations;
 WITH audit(category, row_count, atomic_amount) AS (
     SELECT 'payout_nonterminal', COUNT(*), COALESCE(SUM(amount), 0)::numeric
       FROM payouts
-     WHERE status IS NULL OR status NOT IN ('recorded', 'completed')
+     WHERE status IS DISTINCT FROM 'completed'
     UNION ALL
     SELECT 'payout_completed_missing_tx', COUNT(*), COALESCE(SUM(amount), 0)::numeric
       FROM payouts
@@ -71,7 +71,7 @@ WITH ledger AS (
      WHERE status = 'completed' AND NULLIF(BTRIM(COALESCE(tx_hash, '')), '') IS NULL
     UNION ALL
     SELECT COUNT(*) FROM payment_refunds
-     WHERE status IS DISTINCT FROM 'completed'
+     WHERE status IS NULL OR status NOT IN ('recorded', 'completed')
     UNION ALL
     SELECT COUNT(*) FROM games WHERE status IS NULL OR status NOT IN ('won', 'lost', 'expired')
     UNION ALL
