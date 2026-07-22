@@ -458,7 +458,7 @@ app.post('/api/user/:socketId/address', requireSessionOwnership(403), asyncHandl
 
 function publicHealthSnapshot() {
   const walletHealth = walletRPCService.getHealthStatus();
-  return HealthService.buildPublicHealth({
+  const health = HealthService.buildPublicHealth({
     databaseReady: databaseManager.isHealthy(),
     blockHeight: debugManager.getCurrentBlockHeight(),
     simulatedBlocks: debugManager.SIMULATED_BLOCKS,
@@ -478,6 +478,10 @@ function publicHealthSnapshot() {
     gameMode: gameModeManager.gameMode,
     uptime: process.uptime()
   });
+  // Informational only: an optional accounting sink must not make gameplay readiness fail.
+  // The exporter exposes a deliberately sanitized view with no endpoint/token/error/event data.
+  health.financialEvents = financialEventExporter.getPublicHealth();
+  return health;
 }
 
 // Public probes intentionally omit balances, RPC addresses, secrets, memory details, and abuse

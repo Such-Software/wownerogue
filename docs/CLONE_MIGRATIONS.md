@@ -25,13 +25,13 @@ the same `DatabaseManager.runMigrations()` used by application startup: lexical 
 the `schema_migrations` ledger, and one transaction per newly applied file. Finally, it requires the
 ledger to equal the complete repository migration manifest, in order, with no missing or extra
 entry. The manifest is discovered from the candidate release and must be contiguous from 001; the
-current floor is migration 040. A successful current release reports:
+current floor is migration 042. A successful current release reports:
 
 ```text
 clone_migration_status=ok
 database=monerogue_restore_20260721t220048z_28d513b29b36
-migration_count=40
-latest_migration=040_paid_match_entropy_precommit.sql
+migration_count=42
+latest_migration=042_immutable_financial_event_snapshots.sql
 ```
 
 ## Invocation

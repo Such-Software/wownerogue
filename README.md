@@ -2,6 +2,20 @@
 
 A browser-based roguelike synchronized with Monero (XMR) and Wownero (WOW) block timing. The same codebase runs the original solo dungeon, the social Tavern, and operator-selected PvP/race rulesets, with separate free and paid leaderboards.
 
+## Such Software-operated products
+
+Such Software (`apps@such.software`) operates only these two public products:
+
+| Service | Operated scope |
+|---|---|
+| `play.wowne.ro` | Wownero mainnet free play and pay-for-credits leaderboard/prestige play. Credits are non-redeemable; there are no prizes, cash-out, or payouts, and the service is not offered or marketed as gambling. Legal classification depends on applicable law. |
+| `monerogue.app` | Monero **stagenet only**. Single-player 2×/3× outcomes are test gambling mechanics using test coins with **NO REAL VALUE**. Never send mainnet XMR. Crypto-match payouts remain off. |
+
+The repository remains generally self-hostable under the MIT License. A third-party operator is
+solely responsible for its deployment, product, legal compliance, funds, players, claims, and
+support. Such Software does not operate, supervise, endorse, or accept responsibility for a
+third-party deployment.
+
 ## Features
 
 - **Provably fair** solo runs with two-party, pre-entry commitments and per-depth fingerprints
@@ -37,10 +51,10 @@ Open http://localhost:3000 to play.
 | **PAID_SINGLE** | Per-run chain payment | Profile-controlled | Paid prestige |
 | **PAID_CREDITS** | Purchased credit | Profile-controlled | Paid prestige |
 
-The shipped mainnet profile offers free plus paid-prestige play with every payout switch off. The XMR
-stagenet profile offers the same modes with 2× escape and 3× treasure-escape test payouts. See
-`src/.env.mainnet.example` and `src/.env.stagenet.example`; payout switches are independent from
-payment intake and fail closed.
+The exact Such Software production profiles are `src/.env.mainnet.example` (credits only, every
+payout path off) and `src/.env.stagenet.example` (stagenet 2×/3× solo test payouts, crypto-match
+payouts off). Each opts into a startup contract with `OPERATED_PRODUCT_PROFILE`; preflight refuses
+network, operator-identity, or economic-scope drift. Generic self-hosts leave that variable unset.
 
 ## Match Mode (Multiplayer Races)
 
@@ -199,7 +213,8 @@ curl -X POST http://localhost:3000/api/admin/credits/adjust \
 
 ## Configuration
 
-Key environment variables (see `.env.example` for full list):
+Key environment variables for a generic self-host (not an operated production profile; see
+`.env.example` for the full list):
 
 ```bash
 # Core
@@ -292,4 +307,12 @@ test/
 
 ## License
 
-See LICENSE file for details.
+The source is available under the [MIT License](LICENSE). MIT permission to use, copy, modify,
+merge, publish, distribute, sublicense, and/or sell copies is subject to including the copyright
+and permission notice in all copies or substantial portions. The software is provided “AS IS”,
+without warranty of any kind as stated in the License.
+
+The code, documentation, examples, and disclosures are not legal advice, a licence, or a compliance
+approval. Such Software operates only the two products and scopes listed above. Any other operator
+is solely responsible for its service, and receives no endorsement or assumption of responsibility
+from Such Software.

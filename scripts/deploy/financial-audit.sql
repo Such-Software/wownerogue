@@ -61,8 +61,8 @@ FROM audit
 ORDER BY category;
 
 WITH ledger AS (
-    SELECT COUNT(*) = 40
-       AND MAX(filename) = '040_paid_match_entropy_precommit.sql' AS valid
+    SELECT COUNT(*) = 42
+       AND MAX(filename) = '042_immutable_financial_event_snapshots.sql' AS valid
       FROM schema_migrations
 ), audit(row_count) AS (
     SELECT COUNT(*) FROM payouts WHERE status IS DISTINCT FROM 'completed'

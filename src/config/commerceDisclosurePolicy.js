@@ -6,7 +6,12 @@
  * actions unless the browser echoes the current policy version and every required acknowledgement.
  */
 
-const DEFAULT_POLICY_VERSION = '2026-07-21';
+const {
+    SOURCE_SOFTWARE,
+    getOperatedProductProfile
+} = require('./operatedProductProfiles');
+
+const DEFAULT_POLICY_VERSION = '2026-07-22';
 const DEFAULT_MINIMUM_AGE = 18;
 const ALLOWED_CONTACT_PROTOCOLS = new Set(['https:', 'http:', 'mailto:']);
 const ACKNOWLEDGEMENT_KEYS = new Set([
@@ -73,6 +78,7 @@ function paidAcknowledgementRequired(env, gameModeManager) {
 }
 
 function buildCommerceDisclosure(gameModeManager, env = process.env) {
+    const operatedProduct = getOperatedProductProfile(env);
     const cryptoType = String(gameModeManager?.cryptoType || env.CRYPTO_TYPE || 'WOW').toUpperCase();
     const network = String(gameModeManager?.network || env.MONERO_NETWORK || 'mainnet').toLowerCase();
     const isTestNetwork = Boolean(gameModeManager?.isTestNetwork)
@@ -92,7 +98,17 @@ function buildCommerceDisclosure(gameModeManager, env = process.env) {
         && Boolean(gameModeManager?.payoutsEnabled);
     const anyPayouts = directPayouts || creditsPayouts || cryptoMatchPayouts;
     const currencyLabel = String(gameModeManager?.currencyLabel || (isTestNetwork ? `s${cryptoType}` : cryptoType));
-    const operatorContactUrl = safeContactUrl(env.OPERATOR_CONTACT_URL);
+    const operatorContactUrl = safeContactUrl(
+        operatedProduct?.operatorContactUrl || env.OPERATOR_CONTACT_URL
+    );
+    const operatorName = operatedProduct?.operatorName
+        || String(env.OPERATOR_NAME || '').trim()
+        || 'Site operator (identity not configured)';
+    const operatorContactLabel = operatedProduct?.operatorContactLabel
+        || String(env.OPERATOR_CONTACT_LABEL || '').trim()
+        || (operatorContactUrl
+            ? operatorContactUrl.replace(/^mailto:/, '')
+            : 'Operator contact is not configured');
 
     return Object.freeze({
         policyVersion: String(env.LEGAL_POLICY_VERSION || DEFAULT_POLICY_VERSION).trim(),
@@ -100,11 +116,12 @@ function buildCommerceDisclosure(gameModeManager, env = process.env) {
         minimumAge: minimumAge(env),
         paidAcknowledgementRequired: paidAcknowledgementRequired(env, gameModeManager),
         operator: Object.freeze({
-            name: String(env.OPERATOR_NAME || '').trim() || 'Site operator (identity not configured)',
+            name: operatorName,
             contactUrl: operatorContactUrl,
-            contactLabel: String(env.OPERATOR_CONTACT_LABEL || '').trim()
-                || (operatorContactUrl ? operatorContactUrl.replace(/^mailto:/, '') : 'Operator contact is not configured')
+            contactLabel: operatorContactLabel
         }),
+        operatedProduct,
+        software: SOURCE_SOFTWARE,
         service: Object.freeze({
             gameName: String(gameModeManager?.gameName || 'Wowngeon'),
             cryptoType,

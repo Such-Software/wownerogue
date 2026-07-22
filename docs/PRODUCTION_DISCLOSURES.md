@@ -4,6 +4,32 @@ This implementation makes the running server describe its actual free, paid-pres
 test-network, and PvP switches. It does **not** claim that the product is licensed or lawful in a
 particular place. Obtain jurisdiction-specific advice before accepting assets with real value.
 
+## Operated-product boundary
+
+Such Software (`apps@such.software`) operates only:
+
+| Profile | Public service | Exact scope |
+|---|---|---|
+| `such-play-wow-prestige` | `play.wowne.ro` | Wownero mainnet free play and pay-for-credits leaderboard/prestige. Credits are non-redeemable; there are no prizes, payouts, cash-out, or crypto racing, and the service is not offered/marketed as gambling. Legal classification depends on applicable law. |
+| `such-monerogue-stagenet` | `monerogue.app` | Monero stagenet only. Single-player 2×/3× test gambling mechanics using test coins with **NO REAL VALUE**. Never mainnet XMR and no crypto-match payouts. |
+
+The corresponding `.env.mainnet.example` and `.env.stagenet.example` files opt into a fail-closed
+startup contract with `OPERATED_PRODUCT_PROFILE`. Preflight and normal startup reject any drift in
+host, operator identity, chain/network, paid modes, multipliers, or payout gates. Independent MIT
+self-hosts leave this setting unset and configure a truthful operator identity of their own.
+
+## Open-source and operator disclaimer
+
+MIT permission to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies is
+subject to retaining the copyright and permission notice in all copies or substantial portions.
+The software is provided “AS IS”, without warranty of any kind, as stated in `LICENSE`. The code,
+documentation, examples, and disclosure copy are not legal advice, a licence, or a compliance
+approval.
+
+A third-party or self-hosted operator is solely responsible for its deployment, product design,
+legal compliance, funds, players, representations, and support. Such Software does not operate,
+supervise, endorse, or accept responsibility for third-party deployments.
+
 ## Required production settings
 
 Every production instance with `PAYMENTS_ENABLED=true` fails preflight/startup unless all of these
@@ -13,8 +39,8 @@ are explicit and valid:
 OPERATOR_NAME=Truthful responsible operator name
 OPERATOR_CONTACT_URL=mailto:support@example.com
 OPERATOR_CONTACT_LABEL=Support
-LEGAL_POLICY_VERSION=2026-07-21-v1
-TERMS_EFFECTIVE_DATE=2026-07-21
+LEGAL_POLICY_VERSION=2026-07-22-v1
+TERMS_EFFECTIVE_DATE=2026-07-22
 MINIMUM_AGE=18
 PAID_ACKNOWLEDGEMENT_REQUIRED=true
 ```
@@ -59,6 +85,10 @@ The acknowledgement is a player statement, not proof of identity, age, capacity,
 | Paid, solo payouts on | Full entry can be lost; only pre-entry recorded outcomes/amounts qualify |
 | Crypto PvP on | Paid ticket escrow and configured winner/fee contract; separate from free/prestige PvP |
 | XMR stagenet/testnet | Valueless test currency; explicit warning never to send mainnet XMR |
+
+For the operated products, the generic rows narrow further: `play.wowne.ro` exposes purchased
+credits only, offers no payout/cash-out, and is not marketed as gambling; `monerogue.app` labels its 2×/3× stagenet mechanics as
+**NO REAL VALUE** and keeps crypto-match payouts disabled.
 
 ## Unresolved launch decisions
 

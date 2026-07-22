@@ -2,6 +2,21 @@
 
 This guide covers deploying Wownerogue to a production environment.
 
+## Operated profiles versus independent deployments
+
+Such Software (`apps@such.software`) operates only `play.wowne.ro` (Wownero mainnet
+pay-for-credits leaderboard/prestige, no prize/payout/cash-out and not marketed as gambling) and `monerogue.app` (Monero
+stagenet **NO REAL VALUE** 2×/3× solo test gambling mechanics, with crypto-match payouts off).
+Classification of any product under applicable law requires jurisdiction-specific advice.
+Their reviewed environment templates set `OPERATED_PRODUCT_PROFILE`, so preflight/startup rejects
+scope drift. Independent MIT deployments must leave that variable unset and identify their actual
+operator.
+
+MIT rights are subject to retaining the copyright and permission notice. The software is provided
+“AS IS”, without warranty, and the code/docs are not legal advice or compliance approval. Each
+third-party operator is solely responsible for its deployment, legal obligations, funds, players,
+claims, and support; Such Software neither endorses nor accepts responsibility for it.
+
 ---
 
 ## Prerequisites
@@ -129,6 +144,10 @@ the read-only historical audit and the rollback-only native validation proof des
 [`FINANCIAL_CONSTRAINT_VALIDATION.md`](FINANCIAL_CONSTRAINT_VALIDATION.md) for each restored
 database. The native `VALIDATE CONSTRAINT` gate deliberately refuses live database names.
 
+If the Wownero mainnet service will export accounting events, review and configure the durable
+[financial-event outbox](FINANCIAL_EVENT_EXPORT.md) before cutover. Monero stagenet export must
+remain unset: those no-value test events are marked ignored locally.
+
 Install the reviewed `wowngeon-db-backup.sh`, `.service`, and `.timer` through the hash-pinned fleet
 operations change—not from the runtime artifact—and create
 `/var/backups/wowngeon/daily` as `postgres:postgres` mode `0700`, then enable the timer. Each run
@@ -147,28 +166,18 @@ npm run db:create  # Recreate schema
 
 ## systemd Service
 
-Install reviewed application/firewall templates through the hash-pinned fleet operations change;
-the runtime artifact intentionally has no service units. Wallet-RPC replacement remains subject to
-the explicit NO-GO gates in [DEPLOY_INSTANCES.md](DEPLOY_INSTANCES.md). Application units read secrets from
-`/etc/wownerogue/app.env` or `/etc/monerogue/app.env`, not from an immutable release directory.
-They run `npm run preflight` before every start and use `/var/www/<instance>/current/src` so rollback
-is an atomic symlink switch.
+Install reviewed application, wallet, backup, and firewall artifacts only through the hash-pinned
+fleet operations change; the runtime artifact intentionally has no service units. Application
+units read secrets from `/etc/wownerogue/app.env` or `/etc/monerogue/app.env` plus the narrow
+wallet-RPC environment, never from an immutable release directory. They run `npm run preflight`
+before every start and use `/var/www/<instance>/current/src` so rollback is an atomic symlink
+switch.
 
-Enable and start:
-
-```bash
-# Install the correct profile outside the release and replace every placeholder.
-sudo install -d -m 0750 -o root -g wownerogue /etc/wownerogue
-# Use the separately reviewed source/fleet copy; environment examples are not in the runtime archive.
-sudo install -m 0640 -o root -g wownerogue <reviewed-source>/src/.env.mainnet.example /etc/wownerogue/app.env
-sudoedit /etc/wownerogue/app.env
-
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable wownerogue
-sudo systemctl start wownerogue
-sudo systemctl status wownerogue
-```
+For the two Such Software services, do not replace this boundary with manual `install`, `systemctl`,
+or symlink commands. Follow the default-closed wallet candidate/promotion, candidate validation,
+and one-instance activation procedures in [DEPLOY_INSTANCES.md](DEPLOY_INSTANCES.md) and the
+hash-pinned `~/src/such-fleet/RUNBOOK-wowngeon.md`. Independent MIT operators must design and review
+their own equivalent control plane.
 
 The systemd hardening options:
 - `NoNewPrivileges` - prevents privilege escalation

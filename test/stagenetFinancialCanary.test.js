@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
     LIVE_CONFIRM,
+    REQUIRED_MIGRATIONS,
     SAFE_PROFILE_CONFIRM,
     SCENARIOS,
     addVisible,
@@ -172,7 +173,7 @@ describe('XMR stagenet financial canary safety contract', () => {
         const row = {
             users: 1,
             seed_admins: 1,
-            required_migrations: 5,
+            required_migrations: REQUIRED_MIGRATIONS.length,
             payments: 0,
             games: 0,
             payouts: 0,

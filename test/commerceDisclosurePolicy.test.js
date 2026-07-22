@@ -53,6 +53,64 @@ describe('commerce disclosure and paid-action policy', () => {
         }));
     });
 
+    test('publishes the immutable play.wowne.ro scope and Such Software identity', () => {
+        const disclosure = buildCommerceDisclosure(manager({
+            cryptoType: 'WOW',
+            currencyLabel: 'WOW',
+            network: 'mainnet',
+            isTestNetwork: false,
+            directModeEnabled: false,
+            creditsModeEnabled: true,
+            payoutsEnabled: false,
+            isPayoutEnabledForMode: () => false
+        }), env({
+            OPERATED_PRODUCT_PROFILE: 'such-play-wow-prestige',
+            OPERATOR_NAME: 'untrusted override',
+            OPERATOR_CONTACT_URL: 'mailto:untrusted@example.invalid'
+        }));
+
+        expect(disclosure.operator).toEqual({
+            name: 'Such Software',
+            contactUrl: 'mailto:apps@such.software',
+            contactLabel: 'apps@such.software'
+        });
+        expect(disclosure.operatedProduct).toEqual(expect.objectContaining({
+            id: 'such-play-wow-prestige',
+            hostname: 'play.wowne.ro',
+            noRealValueNotice: null
+        }));
+        expect(disclosure.operatedProduct.scopeNotice).toContain('pay-for-credits leaderboard/prestige');
+        expect(disclosure.operatedProduct.scopeNotice).toContain('offers no prizes, winnings, cash-out, or payouts');
+        expect(disclosure.operatedProduct.scopeNotice).toContain('not offered or marketed as gambling');
+        expect(disclosure.operatedProduct.scopeNotice).toContain('legal classification depends on applicable law');
+    });
+
+    test('publishes conspicuous no-real-value monerogue.app scope and MIT operator boundary', () => {
+        const disclosure = buildCommerceDisclosure(manager(), env({
+            OPERATED_PRODUCT_PROFILE: 'such-monerogue-stagenet'
+        }));
+
+        expect(disclosure.operatedProduct.scopeNotice).toContain('single-player 2×/3× outcomes are test gambling mechanics');
+        expect(disclosure.operatedProduct.noRealValueNotice).toContain('NO REAL VALUE');
+        expect(disclosure.operatedProduct.commerceSummary).toContain('never send mainnet XMR');
+        expect(disclosure.software).toEqual(expect.objectContaining({
+            license: 'MIT',
+            publisherName: 'Such Software'
+        }));
+        expect(disclosure.software.rightsNotice).toContain('copyright and permission notice');
+        expect(disclosure.software.warrantyNotice).toContain('AS IS');
+        expect(disclosure.software.legalAdviceNotice).toContain('not legal advice');
+        expect(disclosure.software.thirdPartyNotice).toContain('solely responsible');
+        expect(disclosure.software.thirdPartyNotice).toContain('does not operate, supervise, endorse, or accept responsibility');
+    });
+
+    test('an unprofiled deployment remains generic and is not represented as Such-operated', () => {
+        const disclosure = buildCommerceDisclosure(manager(), env());
+        expect(disclosure.operatedProduct).toBeNull();
+        expect(disclosure.operator.name).toBe('Test Operator');
+        expect(disclosure.software.operatedBoundaryNotice).toContain('operates only play.wowne.ro and monerogue.app');
+    });
+
     test('describes paid prestige separately when every payout path is off', () => {
         const disclosure = buildCommerceDisclosure(manager({
             cryptoType: 'WOW', currencyLabel: 'WOW', network: 'mainnet', isTestNetwork: false,

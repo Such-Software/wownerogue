@@ -107,6 +107,291 @@ describe('EnvironmentValidator production launch gate', () => {
         }));
     });
 
+    test('accepts a complete HTTPS mainnet financial-event sink without exposing its token', () => {
+        const token = 'A1b2C3d4E5f6G7h8J9k0L1m2N3p4Q5r6';
+        const result = new EnvironmentValidator({
+            env: productionEnv({
+                MONERO_NETWORK: 'mainnet',
+                FINANCIAL_EVENT_SINK_URL: 'https://ledger.operator.invalid/v1/events',
+                FINANCIAL_EVENT_SINK_TOKEN: token,
+                FINANCIAL_EVENT_ACCOUNT_REF: 'wowngeon:receipts'
+            }),
+            logger: silentLogger
+        }).validate(config());
+
+        expect(result.errors).toEqual([]);
+        expect(JSON.stringify(result)).not.toContain(token);
+    });
+
+    test('rejects partial, insecure, weak, credential-bearing, or testnet accounting export', () => {
+        const token = 'A1b2C3d4E5f6G7h8J9k0L1m2N3p4Q5r6';
+        const cases = [
+            [
+                { FINANCIAL_EVENT_SINK_URL: 'https://ledger.operator.invalid/events' },
+                'must be configured together'
+            ],
+            [
+                {
+                    FINANCIAL_EVENT_SINK_URL: 'http://ledger.operator.invalid/events',
+                    FINANCIAL_EVENT_SINK_TOKEN: token,
+                    MONERO_NETWORK: 'mainnet'
+                },
+                'must use https:// in production'
+            ],
+            [
+                {
+                    FINANCIAL_EVENT_SINK_URL: 'https://user:pass@ledger.operator.invalid/events',
+                    FINANCIAL_EVENT_SINK_TOKEN: token,
+                    MONERO_NETWORK: 'mainnet'
+                },
+                'must not embed credentials'
+            ],
+            [
+                {
+                    FINANCIAL_EVENT_SINK_URL: 'https://ledger.operator.invalid/events',
+                    FINANCIAL_EVENT_SINK_TOKEN: 'change-me'
+                },
+                'strong non-placeholder secret'
+            ],
+            [
+                {
+                    FINANCIAL_EVENT_SINK_URL: 'https://ledger.operator.invalid/events',
+                    FINANCIAL_EVENT_SINK_TOKEN: token
+                },
+                'must be unset on non-mainnet networks'
+            ],
+            [
+                {
+                    FINANCIAL_EVENT_SINK_URL: 'https://ledger.operator.invalid/events',
+                    FINANCIAL_EVENT_SINK_TOKEN: token,
+                    FINANCIAL_EVENT_ACCOUNT_REF: 'customer@example.invalid',
+                    MONERO_NETWORK: 'mainnet'
+                },
+                'must be a non-PII identifier'
+            ]
+        ];
+
+        for (const [overrides, expected] of cases) {
+            const result = new EnvironmentValidator({
+                env: productionEnv(overrides), logger: silentLogger
+            }).validate(config());
+            expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining(expected)]));
+            expect(JSON.stringify(result)).not.toContain(token);
+        }
+    });
+
+    test('accepts the exact Such Software play.wowne.ro operated-product contract', () => {
+        const env = productionEnv({
+            OPERATED_PRODUCT_PROFILE: 'such-play-wow-prestige',
+            HOSTED_BY: 'https://play.wowne.ro',
+            OPERATOR_NAME: 'Such Software',
+            OPERATOR_CONTACT_URL: 'mailto:apps@such.software',
+            OPERATOR_CONTACT_LABEL: 'apps@such.software',
+            CRYPTO_TYPE: 'WOW',
+            MONERO_NETWORK: 'mainnet',
+            FREE_PLAY_ENABLED: 'true',
+            PAYMENT_MODES: 'credits',
+            DIRECT_PAYMENT_ENABLED: 'false',
+            CREDITS_ENABLED: 'true',
+            PAYOUTS_ENABLED: 'false',
+            DIRECT_PAYOUTS_ENABLED: 'false',
+            CREDITS_PAYOUTS_ENABLED: 'false',
+            ALLOW_MAINNET_PAYOUTS: 'false',
+            MATCH_CRYPTO_RACE_ENABLED: 'false',
+            MATCH_PAYOUTS_ENABLED: 'false'
+        });
+        const operatedConfig = config({
+            currency: { symbol: 'WOW' },
+            modes: {
+                direct: { enabled: false, price: 10000n },
+                credits: {
+                    enabled: true,
+                    packages: [{ id: 'small', credits: 10, price: 90000000000n }]
+                }
+            }
+        });
+
+        expect(new EnvironmentValidator({ env, logger: silentLogger })
+            .assertValid(operatedConfig).errors).toEqual([]);
+
+        expect(new EnvironmentValidator({ env, logger: silentLogger }).validate({
+            ...operatedConfig,
+            products: { cosmetic: [{ id: 'unrelated-pack', price: 1n }] }
+        }).errors).toContain(
+            'OPERATED_PRODUCT_PROFILE=such-play-wow-prestige requires no standalone products or bundled entitlement grants; credit packages may grant only their top-level credits and bonus.'
+        );
+    });
+
+    test('accepts the exact Such Software monerogue.app stagenet 2x/3x contract', () => {
+        const env = productionEnv({
+            OPERATED_PRODUCT_PROFILE: 'such-monerogue-stagenet',
+            HOSTED_BY: 'https://monerogue.app',
+            OPERATOR_NAME: 'Such Software',
+            OPERATOR_CONTACT_URL: 'mailto:apps@such.software',
+            OPERATOR_CONTACT_LABEL: 'apps@such.software',
+            FREE_PLAY_ENABLED: 'true',
+            PAYMENT_MODES: 'direct,credits',
+            DIRECT_PAYMENT_ENABLED: 'true',
+            CREDITS_ENABLED: 'true',
+            PAYOUTS_ENABLED: 'true',
+            DIRECT_PAYOUTS_ENABLED: 'true',
+            CREDITS_PAYOUTS_ENABLED: 'true',
+            DIRECT_PAYOUT_ESCAPE: '2.0',
+            DIRECT_PAYOUT_TREASURE: '3.0',
+            CREDITS_PAYOUT_ESCAPE: '2.0',
+            CREDITS_PAYOUT_TREASURE: '3.0',
+            ALLOW_MAINNET_PAYOUTS: 'false',
+            MATCH_CRYPTO_RACE_ENABLED: 'false',
+            MATCH_PAYOUTS_ENABLED: 'false'
+        });
+        const operatedConfig = config({
+            payouts: {
+                enabled: true,
+                rules: {
+                    direct: { enabled: true },
+                    credits: { enabled: true }
+                }
+            }
+        });
+
+        expect(new EnvironmentValidator({ env, logger: silentLogger })
+            .assertValid(operatedConfig).errors).toEqual([]);
+
+        const outOfScopeCatalogs = [
+            {
+                ...operatedConfig,
+                products: { cosmetic: [{ id: 'pack', price: 20000n }] }
+            },
+            ...[
+                { packs: ['kenney-3d-characters'] },
+                { premiumLevel: 'supporter' },
+                { race_entries: 2, race_entry_value_atomic: '10000' },
+                { future_entitlement: true },
+                { credits: 10 }
+            ].map(grants => ({
+                ...operatedConfig,
+                modes: {
+                    ...operatedConfig.modes,
+                    credits: {
+                        ...operatedConfig.modes.credits,
+                        packages: [{ id: 'small', credits: 10, price: 90000000000n, grants }]
+                    }
+                }
+            }))
+        ];
+        for (const widenedCatalog of outOfScopeCatalogs) {
+            expect(new EnvironmentValidator({ env, logger: silentLogger })
+                .validate(widenedCatalog).errors).toContain(
+                    'OPERATED_PRODUCT_PROFILE=such-monerogue-stagenet requires no standalone products or bundled entitlement grants; credit packages may grant only their top-level credits and bonus.'
+                );
+        }
+    });
+
+    test('play.wowne.ro profile rejects direct entry or any payout activation', () => {
+        const env = productionEnv({
+            OPERATED_PRODUCT_PROFILE: 'such-play-wow-prestige',
+            HOSTED_BY: 'https://play.wowne.ro',
+            OPERATOR_NAME: 'Such Software',
+            OPERATOR_CONTACT_URL: 'mailto:apps@such.software',
+            OPERATOR_CONTACT_LABEL: 'apps@such.software',
+            CRYPTO_TYPE: 'WOW',
+            MONERO_NETWORK: 'mainnet',
+            FREE_PLAY_ENABLED: 'true',
+            PAYMENT_MODES: 'direct,credits',
+            DIRECT_PAYMENT_ENABLED: 'true',
+            CREDITS_ENABLED: 'true',
+            PAYOUTS_ENABLED: 'true',
+            DIRECT_PAYOUTS_ENABLED: 'true',
+            CREDITS_PAYOUTS_ENABLED: 'false',
+            ALLOW_MAINNET_PAYOUTS: 'false',
+            MATCH_CRYPTO_RACE_ENABLED: 'false',
+            MATCH_PAYOUTS_ENABLED: 'false'
+        });
+        const result = new EnvironmentValidator({ env, logger: silentLogger }).validate(config({
+            currency: { symbol: 'WOW' },
+            payouts: { enabled: true, rules: { direct: { enabled: true } } }
+        }));
+
+        expect(result.errors).toEqual(expect.arrayContaining([
+            expect.stringContaining('requires PAYMENT_MODES=credits'),
+            expect.stringContaining('requires DIRECT_PAYMENT_ENABLED=false'),
+            expect.stringContaining('requires PAYOUTS_ENABLED=false'),
+            expect.stringContaining('requires DIRECT_PAYOUTS_ENABLED=false')
+        ]));
+    });
+
+    test('operated profiles fail closed on identity, network, mode, multiplier, or payout drift', () => {
+        const env = productionEnv({
+            OPERATED_PRODUCT_PROFILE: 'such-monerogue-stagenet',
+            HOSTED_BY: 'https://play.wowne.ro',
+            OPERATOR_NAME: 'Someone Else',
+            OPERATOR_CONTACT_URL: 'mailto:other@example.invalid',
+            OPERATOR_CONTACT_LABEL: 'Other',
+            CRYPTO_TYPE: 'XMR',
+            MONERO_NETWORK: 'mainnet',
+            FREE_PLAY_ENABLED: 'true',
+            PAYMENT_MODES: 'direct,credits',
+            DIRECT_PAYMENT_ENABLED: 'true',
+            CREDITS_ENABLED: 'true',
+            PAYOUTS_ENABLED: 'true',
+            DIRECT_PAYOUTS_ENABLED: 'true',
+            CREDITS_PAYOUTS_ENABLED: 'true',
+            DIRECT_PAYOUT_ESCAPE: '4',
+            DIRECT_PAYOUT_TREASURE: '3',
+            CREDITS_PAYOUT_ESCAPE: '2',
+            CREDITS_PAYOUT_TREASURE: '3',
+            ALLOW_MAINNET_PAYOUTS: 'true',
+            MATCH_CRYPTO_RACE_ENABLED: 'true',
+            MATCH_PAYOUTS_ENABLED: 'true'
+        });
+        const result = new EnvironmentValidator({ env, logger: silentLogger }).validate(config({
+            payouts: {
+                enabled: true,
+                rules: { direct: { enabled: true }, credits: { enabled: true } }
+            }
+        }));
+
+        expect(result.errors).toEqual(expect.arrayContaining([
+            expect.stringContaining('requires HOSTED_BY=https://monerogue.app'),
+            expect.stringContaining('requires OPERATOR_NAME=Such Software'),
+            expect.stringContaining('requires OPERATOR_CONTACT_URL=mailto:apps@such.software'),
+            expect.stringContaining('requires MONERO_NETWORK=stagenet'),
+            expect.stringContaining('requires DIRECT_PAYOUT_ESCAPE=2'),
+            expect.stringContaining('requires MATCH_CRYPTO_RACE_ENABLED=false'),
+            expect.stringContaining('requires MATCH_PAYOUTS_ENABLED=false'),
+            expect.stringContaining('requires ALLOW_MAINNET_PAYOUTS=false')
+        ]));
+    });
+
+    test('unknown operated profile is rejected while an omitted profile preserves generic MIT hosting', () => {
+        expect(new EnvironmentValidator({ env: productionEnv(), logger: silentLogger })
+            .validate(config()).errors).toEqual([]);
+
+        const result = new EnvironmentValidator({
+            env: productionEnv({ OPERATED_PRODUCT_PROFILE: 'third-party-claim' }),
+            logger: silentLogger
+        }).validate(config());
+        expect(result.errors).toContain(
+            'OPERATED_PRODUCT_PROFILE=third-party-claim is unknown. Remove it for an independent MIT deployment or use a reviewed Such Software profile.'
+        );
+    });
+
+    test('operated identity cannot bypass its exact contract outside production', () => {
+        const env = productionEnv({
+            NODE_ENV: 'development',
+            OPERATED_PRODUCT_PROFILE: 'such-play-wow-prestige',
+            HOSTED_BY: 'http://localhost:3000',
+            OPERATOR_NAME: 'Such Software'
+        });
+
+        const result = new EnvironmentValidator({ env, logger: silentLogger }).validate(config());
+        expect(result.errors).toEqual(expect.arrayContaining([
+            expect.stringContaining('requires HOSTED_BY=https://play.wowne.ro'),
+            expect.stringContaining('requires CRYPTO_TYPE=WOW'),
+            expect.stringContaining('requires PAYMENT_MODES=credits')
+        ]));
+    });
+
     test('accepts explicitly capped stagenet crypto match payouts', () => {
         const env = productionEnv({
             PAYOUTS_ENABLED: 'true',

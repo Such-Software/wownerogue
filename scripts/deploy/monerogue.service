@@ -1,4 +1,5 @@
-# monerogue.app game instance (Monero STAGENET, pay-to-play WITH payouts).
+# monerogue.app: Such Software operated Monero STAGENET test mechanics.
+# NO REAL VALUE; 2x/3x solo test-coin outcomes only; never mainnet or crypto-match payouts.
 # Install to /etc/systemd/system/monerogue.service
 #
 # Separate code checkout + user + DB + .env from the wownerogue (mainnet) instance, so the

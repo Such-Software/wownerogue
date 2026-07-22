@@ -2,6 +2,7 @@
 .commerce-consent-dialog { width:min(620px,100%); max-height:calc(100vh - 32px); overflow:auto; padding:20px; border:1px solid #9a6b25; border-radius:10px; background:#11161b; color:#d7dde5; box-shadow:0 24px 80px #000; font:14px/1.45 system-ui,-apple-system,sans-serif; }
 .commerce-consent-dialog h2 { margin:0 0 10px; color:#fff; font-size:1.4rem; }
 .commerce-summary { padding:10px 12px; border-left:3px solid #efb64b; background:#211a0f; }
+.commerce-summary.no-real-value { border:2px solid #efb64b; color:#ffe2a4; font-weight:700; }
 .commerce-check { display:flex; align-items:flex-start; gap:10px; margin:10px 0; padding:10px; border:1px solid #303944; border-radius:6px; background:#171d24; cursor:pointer; }
 .commerce-check input { flex:0 0 auto; width:18px; height:18px; margin-top:1px; }
 .commerce-links,.commerce-links a { color:#99e9a8; }

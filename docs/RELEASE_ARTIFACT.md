@@ -77,14 +77,17 @@ activation boundary must then:
 4. restore each fresh pre-deploy dump into a separately named clone database, run
    `npm run db:migrate:clone` under the exact disposable-target contract in
    [CLONE_MIGRATIONS.md](./CLONE_MIGRATIONS.md), require its exact manifest proof (currently through
-   migration 040), and run the separately reviewed and hash-pinned fleet copy of
+   migration 042), and run the separately reviewed and hash-pinned fleet copy of
    `financial-audit.sql` there—the SQL is intentionally not inside the runtime artifact;
 5. run `npm run preflight` from the candidate with each final protected environment. Preflight is
    intentionally non-mutating and does not replace database, daemon, or wallet health checks.
 
-The clone runner is deliberately non-activating; there is still no reviewed activation script. Do
-not point `current` at a candidate until the clone proof and the complete
-drain/audit/symlink/health/rollback sequence in `~/src/such-fleet/RUNBOOK-wowngeon.md` are satisfied.
+The clone runner is deliberately non-activating. Such Software production activation must use the
+separately reviewed, default-closed `wowngeon_release_activate` role in `~/src/such-fleet`; do not
+substitute manual extraction, dependency installation, service commands, or a hand-written
+`current` switch. The role still refuses activation until the matching clone-validation receipt,
+wallet-promotion receipt, drain/audit gates, literal hashes, and rollback target satisfy the
+complete contract in `~/src/such-fleet/RUNBOOK-wowngeon.md`.
 
 ## Source and operations boundary
 

@@ -1,6 +1,8 @@
 # Parallel Monero stagenet wallet candidate
 
-> **STATUS: DESIGN / NO-GO FOR HOST MUTATION OR PRODUCTION DEPLOYMENT.**
+> **STATUS: HISTORICAL NON-MUTATING DESIGN RECORD.** It is not an installation procedure. Such
+> Software production wallet preparation/promotion is owned by the separately reviewed,
+> default-closed roles in `~/src/such-fleet`; this document and its sample unit authorize nothing.
 >
 > The read-only preflight and disposable fixture test in this change are executable. The candidate
 > unit is an inert, manual-only template. There is intentionally no password-capture, wallet-copy,

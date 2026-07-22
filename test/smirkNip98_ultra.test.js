@@ -14,6 +14,7 @@
 // nostr-tools' self-contained pre-bundled build (an esbuild IIFE with deps inlined).
 const fs = require('fs');
 const path = require('path');
+const appRequire = require('./helpers/appRequire');
 function loadNostrTools() {
   const cjsIndex = require.resolve('nostr-tools', { paths: [path.join(__dirname, '..', 'src')] });
   try {
@@ -225,7 +226,7 @@ describe('verifyNip98Event — adversarial round-trip', () => {
 });
 
 describe('(ix) route layer — single-use challenge consume rejects replay', () => {
-  const express = require('express');
+  const express = appRequire('express');
   const http = require('http');
   const createAuthRoutes = require('../src/routes/auth');
 

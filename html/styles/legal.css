@@ -13,6 +13,7 @@ h2 { color:#fff; font-size:1.15rem; }
 header>p:last-child,footer { color:var(--muted); }
 section { margin:12px 0; padding:18px clamp(16px,4vw,24px); border:1px solid var(--line); border-radius:10px; background:rgba(20,25,31,.96); }
 .notice { border-color:#7a5c28; background:rgba(78,55,16,.24); }
+.no-real-value { padding:12px 14px; border:2px solid var(--gold); border-radius:7px; background:#2e2009; color:#ffe2a4; letter-spacing:.015em; }
 li+li { margin-top:.45rem; }
 footer { padding:12px 4px; }
 strong { color:#fff; }

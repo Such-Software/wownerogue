@@ -1,6 +1,7 @@
-const express = require('express');
+const appRequire = require('./helpers/appRequire');
+const express = appRequire('express');
 const http = require('http');
-const nacl = require('../src/node_modules/tweetnacl');
+const nacl = appRequire('tweetnacl');
 const createAuthRoutes = require('../src/routes/auth');
 
 function normalized(sql) {

@@ -150,7 +150,9 @@
 
         var service = resolvedPolicy.service;
         var summary;
-        if (service.isTestNetwork) {
+        if (resolvedPolicy.operatedProduct && resolvedPolicy.operatedProduct.commerceSummary) {
+            summary = resolvedPolicy.operatedProduct.commerceSummary;
+        } else if (service.isTestNetwork) {
             summary = service.currencyLabel + ' is valueless test-network currency. Never send mainnet ' + service.cryptoType + '.';
         } else if (service.paidPrestigeOnly) {
             summary = 'This paid mode purchases entry, credits, or products; this server currently offers no cryptocurrency prize.';
@@ -159,7 +161,7 @@
         } else {
             summary = 'Blockchain payments may be irreversible. Verify the asset, network, amount, and address before sending.';
         }
-        dialog.appendChild(el('p', 'commerce-summary', summary));
+        dialog.appendChild(el('p', 'commerce-summary' + (resolvedPolicy.operatedProduct && resolvedPolicy.operatedProduct.noRealValueNotice ? ' no-real-value' : ''), summary));
 
         var age = checkbox('commerceAge', 'I confirm I am at least ' + resolvedPolicy.minimumAge + ' and may lawfully use this paid mode where I am located.');
         var terms = checkbox('commerceTerms', 'I have read the Terms of Use and Privacy Notice, including the anonymous-session and blockchain risks.');

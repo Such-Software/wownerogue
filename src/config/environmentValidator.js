@@ -9,6 +9,7 @@
 const { isSupported, familyFor } = require('../chain/chainProfile');
 const { resolveMatchRuleset } = require('../game/rulesets');
 const money = require('../money/atomic');
+const { validateOperatedProductProfile } = require('./operatedProductProfiles');
 const {
     PG_BIGINT_MAX,
     cryptoRulesetSupported,
@@ -129,6 +130,8 @@ class EnvironmentValidator {
         const walletRequired = paymentsEnabled || payoutMasterEnabled;
         const cryptoType = String(env.CRYPTO_TYPE || config?.currency?.symbol || 'WOW').trim().toUpperCase();
         const network = String(env.MONERO_NETWORK || 'mainnet').trim().toLowerCase();
+        const financialSinkUrl = String(env.FINANCIAL_EVENT_SINK_URL || '').trim();
+        const financialSinkToken = String(env.FINANCIAL_EVENT_SINK_TOKEN || '').trim();
 
         if (env.GAME_MODE && env.PAYMENT_MODES) {
             warnings.push('Both GAME_MODE and PAYMENT_MODES are set. PAYMENT_MODES takes precedence.');
@@ -229,6 +232,41 @@ class EnvironmentValidator {
         this._pushEndpointTransportWarning(warnings, 'PRIMARY_WALLET_ENDPOINT', env.PRIMARY_WALLET_ENDPOINT);
         this._pushEndpointTransportWarning(warnings, 'PRIMARY_RPC_ENDPOINT', env.PRIMARY_RPC_ENDPOINT);
 
+        // Accounting export is optional, but a partial or misleading configuration is not. The
+        // stagenet product intentionally suppresses its no-value test events instead of sending
+        // them to a real accounting sink.
+        if (Boolean(financialSinkUrl) !== Boolean(financialSinkToken)) {
+            errors.push('FINANCIAL_EVENT_SINK_URL and FINANCIAL_EVENT_SINK_TOKEN must be configured together.');
+        }
+        if (financialSinkUrl && financialSinkToken) {
+            try {
+                const endpoint = new URL(financialSinkUrl);
+                if (!['http:', 'https:'].includes(endpoint.protocol)) {
+                    errors.push('FINANCIAL_EVENT_SINK_URL must use http:// or https://.');
+                }
+                if (endpoint.username || endpoint.password) {
+                    errors.push('FINANCIAL_EVENT_SINK_URL must not embed credentials.');
+                }
+                if (production && endpoint.protocol !== 'https:') {
+                    errors.push('FINANCIAL_EVENT_SINK_URL must use https:// in production.');
+                }
+            } catch (_) {
+                errors.push('FINANCIAL_EVENT_SINK_URL must be a valid URL.');
+            }
+            if (financialSinkToken.length < 32
+                || PLACEHOLDER_SECRET.test(financialSinkToken)
+                || new Set(financialSinkToken).size < 8) {
+                errors.push('FINANCIAL_EVENT_SINK_TOKEN must be a strong non-placeholder secret of at least 32 characters.');
+            }
+            if (network !== 'mainnet') {
+                errors.push('Financial event export must be unset on non-mainnet networks; test-network events are suppressed locally.');
+            }
+            const accountRef = String(env.FINANCIAL_EVENT_ACCOUNT_REF || 'wowngeon:receipts').trim();
+            if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(accountRef)) {
+                errors.push('FINANCIAL_EVENT_ACCOUNT_REF must be a non-PII identifier using only letters, digits, dot, underscore, colon, slash, or hyphen.');
+            }
+        }
+
         if (config?.modes?.direct?.enabled && config.modes.direct.price <= 0n) {
             errors.push('Direct payment mode is enabled but its price is not positive.');
         }
@@ -271,6 +309,11 @@ class EnvironmentValidator {
             && (Boolean(config?.payouts?.rules?.direct?.enabled) || Boolean(config?.payouts?.rules?.credits?.enabled))) {
             warnings.push('Payout rules are enabled but PAYOUTS_ENABLED is off; the master switch suppresses all payout creation and dispatch.');
         }
+
+        // A Such Software operated-product identifier is an exact public claim in every
+        // environment. Never let a development or preview process impersonate that identity
+        // while bypassing the host/network/economic contract.
+        errors.push(...validateOperatedProductProfile(env, config));
 
         if (production) {
             for (const key of BOOLEAN_ENV_KEYS) {

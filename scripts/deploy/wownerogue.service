@@ -1,4 +1,5 @@
-# play.wowne.ro game instance (Wownero mainnet, free + paid prestige, no payouts).
+# play.wowne.ro: Such Software operated Wownero mainnet free + pay-for-credits prestige.
+# No direct paid entry, payouts, cash-out, or crypto racing; not marketed as gambling.
 # Install to /etc/systemd/system/wownerogue.service.
 [Unit]
 Description=Wownerogue Game Server (Wownero Mainnet)

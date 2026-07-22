@@ -31,9 +31,22 @@ function modeSummary(disclosure) {
         items.push('<li><strong>Reward-enabled PvP:</strong> the configured race may award the collected pot after the displayed operator fee. Other PvP economies remain separate.</li>');
     }
     if (service.isTestNetwork) {
-        items.push(`<li><strong>Test network:</strong> ${escapeHtml(service.currencyLabel)} is test currency with no intended monetary value. Never send ${escapeHtml(service.cryptoType)} mainnet funds to a test-network address.</li>`);
+        const testNetworkNotice = disclosure.operatedProduct?.noRealValueNotice
+            || `${service.currencyLabel} is test currency with no intended monetary value. Never send ${service.cryptoType} mainnet funds to a test-network address.`;
+        items.push(`<li><strong>Test network:</strong> ${escapeHtml(testNetworkNotice)}</li>`);
     }
     return items.length ? `<ul>${items.join('')}</ul>` : '<p>This instance currently exposes no paid play.</p>';
+}
+
+function operatorAndSoftwareStatus(disclosure) {
+    const operated = disclosure.operatedProduct;
+    const software = disclosure.software || {};
+    const relationship = operated
+        ? `<p><strong>Operated-product scope:</strong> ${escapeHtml(operated.scopeNotice)}</p>${operated.noRealValueNotice
+            ? `<p class="no-real-value"><strong>${escapeHtml(operated.noRealValueNotice)}</strong></p>`
+            : ''}<p>${escapeHtml(software.operatedBoundaryNotice)}</p><p>${escapeHtml(software.thirdPartyNotice)}</p>`
+        : `<p><strong>Independent deployment:</strong> ${escapeHtml(software.thirdPartyNotice)}</p><p>${escapeHtml(software.operatedBoundaryNotice)}</p>`;
+    return `<section class="notice"><h2>Operator and open-source status</h2>${relationship}<p><strong>${escapeHtml(software.license || 'MIT')} licence:</strong> ${escapeHtml(software.rightsNotice)}</p><p>${escapeHtml(software.warrantyNotice)}</p><p>${escapeHtml(software.legalAdviceNotice)}</p></section>`;
 }
 
 function shell({ title, disclosure, body }) {
@@ -54,6 +67,7 @@ function shell({ title, disclosure, body }) {
   <main>
     <nav aria-label="Legal and service navigation"><a href="/">Game</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/responsible-play">Responsible play</a></nav>
     <header><p class="eyebrow">${operator}</p><h1>${escapeHtml(title)}</h1><p>${effective} · policy ${escapeHtml(disclosure.policyVersion)}</p></header>
+    ${operatorAndSoftwareStatus(disclosure)}
     ${body}
     <section class="notice"><h2>Important status</h2><p>${escapeHtml(disclosure.notices?.legalReview)}</p><p>${escapeHtml(disclosure.notices?.identityControl)}</p></section>
     <footer><p>Operator contact: ${contactMarkup(disclosure)}</p></footer>
@@ -95,7 +109,7 @@ function renderPrivacy(disclosure) {
 
 function renderResponsiblePlay(disclosure) {
     const network = disclosure.service?.isTestNetwork
-        ? `<p class="notice"><strong>Test-network reminder:</strong> ${escapeHtml(disclosure.service.currencyLabel)} is for testing and has no intended monetary value. Never substitute mainnet funds.</p>`
+        ? `<p class="no-real-value"><strong>Test-network reminder:</strong> ${escapeHtml(disclosure.operatedProduct?.noRealValueNotice || `${disclosure.service.currencyLabel} is for testing and has no intended monetary value. Never substitute mainnet funds.`)}</p>`
         : '';
     return shell({
         title: 'Responsible Play',
