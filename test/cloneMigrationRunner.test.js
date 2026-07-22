@@ -161,11 +161,11 @@ describe('disposable clone migration execution', () => {
         logSpy.mockRestore();
     });
 
-    test('discovers the contiguous repository manifest through migration 40 dynamically', () => {
+    test('discovers the contiguous repository manifest through migration 41 dynamically', () => {
         const manifest = discoverMigrationManifest();
         expect(manifest.latestOrdinal).toBeGreaterThanOrEqual(MINIMUM_RELEASE_MIGRATION);
-        expect(manifest.latestFilename).toBe('040_paid_match_entropy_precommit.sql');
-        expect(manifest.files).toHaveLength(40);
+        expect(manifest.latestFilename).toBe('041_financial_event_outbox.sql');
+        expect(manifest.files).toHaveLength(41);
     });
 
     test('runs the normal ordered migration implementation and proves the exact ledger', async () => {
@@ -185,9 +185,9 @@ describe('disposable clone migration execution', () => {
         });
 
         expect(pool.transactions).toEqual(result.files);
-        expect(result.latestFilename).toBe('040_paid_match_entropy_precommit.sql');
+        expect(result.latestFilename).toBe('041_financial_event_outbox.sql');
         expect(output).toContain('clone_migration_status=ok');
-        expect(output).toContain('latest_migration=040_paid_match_entropy_precommit.sql');
+        expect(output).toContain('latest_migration=041_financial_event_outbox.sql');
         expect(output.join('\n')).not.toContain(secret);
         expect(pool.config).toEqual(expect.objectContaining({
             database: env.DB_NAME,

@@ -29,6 +29,7 @@ const PayoutRetryService = require('./payments/payoutRetryService');
 const AlertService = require('./services/alertService');
 const HealthService = require('./services/healthService');
 const LatePaymentReconciler = require('./services/latePaymentReconciler');
+const FinancialEventExporter = require('./services/financialEventExporter');
 const GameModeManager = require('./game/gameModeManager');
 const PaymentConfigManager = require('./config/paymentConfig');
 const EnvironmentValidator = require('./config/environmentValidator');
@@ -76,6 +77,7 @@ broadcastManager.setDebugManager(debugManager);
 // Initialize payment system components (debugManager is now available)
 const databaseManager = new DatabaseManager();
 const db = databaseManager; // Alias for convenience in API endpoints
+const financialEventExporter = new FinancialEventExporter({ db: databaseManager });
 const walletRPCService = new WalletRPCService(debugManager, {
     minConfirmations: paymentConfigManager.getConfig().payouts.processing.confirmations
 });
@@ -1138,6 +1140,7 @@ async function startServer() {
         await socketHandlers.initializeMatchMode();
         financialRecoveryReady = true;
         payoutDispatchReady = financialRuntime.walletReady && isPayoutProcessingEnabled();
+        financialEventExporter.start();
 
         // Socket.io connection handler - ONLY after payment system is ready
         io.on('connection', function(socket) {
@@ -1301,6 +1304,7 @@ async function gracefulShutdown(signal, exitCode = 0) {
     if (paymentExpiryInterval) clearInterval(paymentExpiryInterval);
     if (walletHealthInterval) clearInterval(walletHealthInterval);
     if (databaseHealthInterval) clearInterval(databaseHealthInterval);
+    financialEventExporter.stop();
 
     // Terminal solo games are held in a serialized settlement-pending state when their atomic
     // completion transaction fails. Drain those retries before disabling GameModeManager or
