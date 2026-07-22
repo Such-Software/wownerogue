@@ -6,14 +6,14 @@ function makeDb(initialGames, initialCredits = 0) {
     const refundReasons = new Set();
 
     const query = jest.fn(async (sql, params = []) => {
-        if (/SELECT id FROM games WHERE status = 'active'/i.test(sql)) {
+        if (/SELECT g\.id[\s\S]*FROM games g[\s\S]*g\.status = 'active'/i.test(sql)) {
             return {
                 rows: Array.from(games.values())
                     .filter(game => game.status === 'active')
                     .map(game => ({ id: game.id }))
             };
         }
-        if (/FROM games WHERE id = \$1 FOR UPDATE/i.test(sql)) {
+        if (/FROM games g[\s\S]*g\.id = \$1[\s\S]*FOR UPDATE/i.test(sql)) {
             const game = games.get(params[0]);
             return { rows: game ? [{ ...game }] : [] };
         }

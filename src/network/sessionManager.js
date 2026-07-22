@@ -460,7 +460,13 @@ class SessionManager {
     let orphans;
     try {
       orphans = await this.db.query(
-        `SELECT id FROM games WHERE status = 'active' ORDER BY id ASC`,
+        `SELECT g.id
+         FROM games g
+         WHERE g.status = 'active'
+           AND NOT EXISTS (
+             SELECT 1 FROM solo_restart_snapshots s WHERE s.game_id = g.id
+           )
+         ORDER BY g.id ASC`,
         []
       );
     } catch (error) {
@@ -480,9 +486,14 @@ class SessionManager {
             // Lock the game row and re-check under the lock: another instance (or a prior
             // run) may already have finalized it.
             const lock = await client.query(
-              `SELECT id, user_id, game_mode, payment_id, status,
-                      entry_consumed_at, entry_credits_spent
-               FROM games WHERE id = $1 FOR UPDATE`,
+              `SELECT g.id, g.user_id, g.game_mode, g.payment_id, g.status,
+                      g.entry_consumed_at, g.entry_credits_spent
+               FROM games g
+               WHERE g.id = $1
+                 AND NOT EXISTS (
+                   SELECT 1 FROM solo_restart_snapshots s WHERE s.game_id = g.id
+                 )
+               FOR UPDATE`,
               [orphan.id]
             );
             const game = lock.rows[0];

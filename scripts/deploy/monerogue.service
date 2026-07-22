@@ -1,14 +1,8 @@
-# monerogue.app: Such Software operated Monero STAGENET test mechanics.
-# NO REAL VALUE; 2x/3x solo test-coin outcomes only; never mainnet or crypto-match payouts.
-# Install to /etc/systemd/system/monerogue.service
-#
-# Separate code checkout + user + DB + .env from the wownerogue (mainnet) instance, so the
-# two are fully independent. NPM (Nginx Proxy Manager) already forwards monerogue.app -> :3001.
 [Unit]
 Description=Monerogue Game Server (Monero Stagenet)
-After=network-online.target postgresql.service monero-wallet-rpc.service
+After=network-online.target postgresql.service monerogue-wallet.service
 Wants=network-online.target
-Wants=monero-wallet-rpc.service
+Requires=monerogue-wallet.service
 
 [Service]
 Type=simple
@@ -17,6 +11,7 @@ Group=monerogue
 WorkingDirectory=/var/www/monerogue/current/src
 EnvironmentFile=/etc/monerogue/app.env
 EnvironmentFile=/etc/monerogue/wallet-rpc.env
+UnsetEnvironment=BASH_ENV ENV IFS PATH SHELL HOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT GLIBC_TUNABLES NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS PYTHONHOME PYTHONPATH OPENSSL_CONF SSL_CERT_FILE SSL_CERT_DIR DOTENV_CONFIG_PATH DOTENV_KEY DATABASE_URL HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE PGOPTIONS PGSSLMODE PGSSLROOTCERT PGSSLCRL PGSSLCERT PGSSLKEY PGCHANNELBINDING PGTARGETSESSIONATTRS PGCONNECT_TIMEOUT NPM_CONFIG_PREFIX NPM_CONFIG_CACHE NPM_CONFIG_USERCONFIG NPM_CONFIG_GLOBALCONFIG NPM_CONFIG_REGISTRY NPM_CONFIG_NODE_OPTIONS NPM_CONFIG_SCRIPT_SHELL NPM_CONFIG_SHELL NPM_CONFIG_PROXY NPM_CONFIG_HTTPS_PROXY NPM_CONFIG_CAFILE NPM_CONFIG_CERT NPM_CONFIG_KEY npm_config_prefix npm_config_cache npm_config_userconfig npm_config_globalconfig npm_config_registry npm_config_node_options npm_config_script_shell npm_config_shell npm_config_proxy npm_config_https_proxy npm_config_cafile npm_config_cert npm_config_key
 ExecStartPre=/usr/bin/node scripts/preflight.js
 ExecStart=/usr/bin/node index.js
 Restart=on-failure
@@ -24,9 +19,7 @@ RestartSec=10
 TimeoutStopSec=30
 KillSignal=SIGTERM
 UMask=0077
-
-# Process/filesystem hardening. Application state lives in PostgreSQL, so the checkout is
-# intentionally read-only; PrivateTmp provides the only disposable writable filesystem.
+LimitCORE=0
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

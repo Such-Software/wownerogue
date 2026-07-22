@@ -46,8 +46,9 @@ describe('parallel Monero stagenet wallet candidate boundary', () => {
         expect(unit).not.toContain('mainnet');
     });
 
-    test('runbook keeps host mutation and production deployment at NO-GO', () => {
-        expect(runbook).toContain('STATUS: DESIGN / NO-GO FOR HOST MUTATION OR PRODUCTION DEPLOYMENT');
+    test('historical design record remains non-authorizing and fail-closed', () => {
+        expect(runbook).toContain('STATUS: HISTORICAL NON-MUTATING DESIGN RECORD');
+        expect(runbook).toContain('this document and its sample unit authorize nothing');
         expect(runbook).toContain('never alters the legacy artifacts');
         expect(runbook).toContain('renameat2(RENAME_NOREPLACE)');
         expect(runbook).toContain('write `READY` **last**');

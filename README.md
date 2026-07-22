@@ -312,7 +312,8 @@ merge, publish, distribute, sublicense, and/or sell copies is subject to includi
 and permission notice in all copies or substantial portions. The software is provided “AS IS”,
 without warranty of any kind as stated in the License.
 
-The code, documentation, examples, and disclosures are not legal advice, a licence, or a compliance
-approval. Such Software operates only the two products and scopes listed above. Any other operator
-is solely responsible for its service, and receives no endorsement or assumption of responsibility
-from Such Software.
+The MIT License governs rights in the source. Documentation, examples, and product disclosures are
+informational only; they are not legal advice or a determination that a deployment complies with
+applicable law. Such Software operates only the two products and scopes listed above. The MIT
+License does not make an independent deployment a Such Software service or authorize it to claim
+Such Software sponsorship or endorsement; its operator remains solely responsible for the service.

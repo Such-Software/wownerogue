@@ -9,6 +9,10 @@ const { createGameProof, getPreGameCommitment, getPostGameReveal, createSeededRN
 
 // Environment-based console logging control
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
+// Only this module can mint the option that selects a historical generator. Public/client game
+// options may contain a same-named string, but the constructor deliberately discards it. Durable
+// restart restoration supplies the database-validated version through the symbol-backed factory.
+const TRUSTED_GENERATOR_VERSION = Symbol('trustedGeneratorVersion');
 
 class Game {
   /**
@@ -22,7 +26,17 @@ class Game {
     const fairnessProof = suppliedOptions.fairnessProof || null;
     // Internal proof material (including the secret server seed) must never ride into dungeon
     // options, snapshots, logs, or the persisted public generation context.
-    const { fairnessProof: _privateFairnessProof, clientSeed: optionClientSeed, ...dungeonOptions } = suppliedOptions;
+    const {
+      fairnessProof: _privateFairnessProof,
+      clientSeed: optionClientSeed,
+      generatorVersion: _untrustedGeneratorVersion,
+      [TRUSTED_GENERATOR_VERSION]: trustedGeneratorVersion,
+      ...dungeonOptions
+    } = suppliedOptions;
+    this.generatorVersion = trustedGeneratorVersion || DungeonGenerator.GENERATOR_VERSION;
+    if (!DungeonGenerator.SUPPORTED_GENERATOR_VERSIONS.includes(this.generatorVersion)) {
+      throw new Error(`Unsupported trusted dungeon generator version: ${this.generatorVersion}`);
+    }
     this.user = user;
     this.id = uuidv4();
     this.socketId = socketId;
@@ -85,7 +99,7 @@ class Game {
     // Bind the proof to every level in the committed run. Deeper layouts are independently
     // regenerated from their per-depth seeds now, before play, so a crash or early death still
     // leaves a complete, immutable verification manifest for the advertised descent.
-    this.gameProof.generatorVersion = DungeonGenerator.GENERATOR_VERSION;
+    this.gameProof.generatorVersion = this.generatorVersion;
     this.gameProof.context = this.getProofContext();
     this.gameProof.layoutFingerprints = this._buildLayoutFingerprintManifest();
     // Backward-compatible level-one alias used by older verification clients/rows.
@@ -102,14 +116,17 @@ class Game {
         dungeon = DungeonGenerator.regenerateFromSeed(
           levelSeed(this.gameProof.seed, depth),
           this.gameConfig.cryptoType,
-          this.gameProof.context.generationOptions
+          {
+            ...this.gameProof.context.generationOptions,
+            generatorVersion: this.generatorVersion
+          }
         );
         if (depth < this.maxDepth) dungeon.treasure = null;
       }
       manifest.push({
         depth,
         fingerprintVersion: DungeonGenerator.FINGERPRINT_VERSION,
-        generatorVersion: DungeonGenerator.GENERATOR_VERSION,
+        generatorVersion: this.generatorVersion,
         fingerprint: DungeonGenerator.layoutFingerprint(dungeon)
       });
     }
@@ -127,7 +144,7 @@ class Game {
     return {
       cryptoType: this.gameConfig.cryptoType || process.env.CRYPTO_TYPE || 'WOW',
       maxDepth: this.maxDepth,
-      generatorVersion: DungeonGenerator.GENERATOR_VERSION,
+      generatorVersion: this.generatorVersion,
       fingerprintVersion: DungeonGenerator.FINGERPRINT_VERSION,
       generationOptions
     };
@@ -138,6 +155,14 @@ class Game {
    */
   static createStandardGame(socketId, user, options = {}) {
     return new Game(socketId, user, options);
+  }
+
+  /** @internal Rebuild a run using the generator version already trusted from PostgreSQL. */
+  static createRestoredStandardGame(socketId, user, options = {}, generatorVersion) {
+    return new Game(socketId, user, {
+      ...options,
+      [TRUSTED_GENERATOR_VERSION]: generatorVersion
+    });
   }
 
   /**
@@ -208,6 +233,7 @@ class Game {
     const seed = levelSeed(this.gameProof.seed, depth);
     const dungeon = DungeonGenerator.generate(this.gameConfig.width, this.gameConfig.height, {
       ...this.gameConfig,
+      generatorVersion: this.generatorVersion,
       rng: isFirst ? this.seededRNG : createSeededRNG(seed),
       seedInt: isFirst ? this.seedInt : seedToInt(seed)
     });
@@ -241,6 +267,41 @@ class Game {
       const idx = getMonsterSpawnRoomIndex(dungeon.rooms, this.difficultyConfig.monster.startDistanceFromPlayer);
       const center = dungeon.rooms[idx].getCenter();
       this.monster.moveTo(center[0], center[1]);
+    }
+    // ROT.Digger can legitimately produce <=2 rooms on the 30x15 easy profile. The old branch
+    // then left the monster at its constructor default (0,0), normally a wall, producing an
+    // effectively monsterless run. Also defend against a malformed room center. Choose the
+    // farthest passable non-objective tile deterministically; this consumes no RNG and dungeon
+    // generation/layout fingerprints remain byte-identical (monster execution is explicitly
+    // outside the published layout proof).
+    const primaryFloor = this.gameConfig.primaryFloor || "'1";
+    const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
+    const monsterTilePassable = (x, y) => {
+      const tile = dungeon.map?.[y]?.[x];
+      return tile === primaryFloor || tile === secondaryFloor || tile === 0 || tile === '>' || tile === '$M';
+    };
+    const monsterSpawnValid = monsterTilePassable(this.monster.x, this.monster.y)
+      && (this.monster.x !== this.player.x || this.monster.y !== this.player.y)
+      && (!dungeon.exit || this.monster.x !== dungeon.exit[0] || this.monster.y !== dungeon.exit[1])
+      && (!dungeon.treasure || this.monster.x !== dungeon.treasure[0] || this.monster.y !== dungeon.treasure[1]);
+    if (!monsterSpawnValid) {
+      let fallback = null;
+      let fallbackDistance = -1;
+      for (let y = 0; y < dungeon.map.length; y += 1) {
+        for (let x = 0; x < dungeon.map[y].length; x += 1) {
+          if (!monsterTilePassable(x, y)) continue;
+          if (x === this.player.x && y === this.player.y) continue;
+          if (dungeon.exit && x === dungeon.exit[0] && y === dungeon.exit[1]) continue;
+          if (dungeon.treasure && x === dungeon.treasure[0] && y === dungeon.treasure[1]) continue;
+          const distance = Math.abs(x - this.player.x) + Math.abs(y - this.player.y);
+          if (distance > fallbackDistance) {
+            fallback = [x, y];
+            fallbackDistance = distance;
+          }
+        }
+      }
+      if (!fallback) throw new Error('Dungeon has no valid monster spawn tile');
+      this.monster.moveTo(fallback[0], fallback[1]);
     }
 
     // Reset lighting + FOV for the new level (a fresh descent is unexplored).

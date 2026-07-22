@@ -20,9 +20,9 @@ describe('deployment financial-audit contract', () => {
             /FROM payouts\s+WHERE status IS NULL OR status NOT IN \('recorded', 'completed'\)/
         );
         expect(audit).toContain("games WHERE status IS NULL OR status NOT IN ('won', 'lost', 'expired')");
-        expect(audit).toContain("MAX(filename) = '042_immutable_financial_event_snapshots.sql'");
+        expect(audit).toContain("MAX(filename) = '043_durable_solo_restart_snapshots.sql'");
         expect(audit.match(/status IS NULL OR status NOT IN \('recorded', 'completed'\)/g))
             .toHaveLength(2);
-        expect(audit).toContain('COUNT(*) = 42');
+        expect(audit).toContain('COUNT(*) = 43');
     });
 });

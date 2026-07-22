@@ -1,7 +1,7 @@
 [Unit]
 Description=Wowngeon application and wallet RPC firewall
 After=network.target
-Before=wownerogue.service monerogue.service wownero-wallet-rpc.service monero-wallet-rpc.service
+Before=wownerogue.service monerogue.service wownerogue-wallet.service monerogue-wallet.service wownero-wallet-rpc.service monero-wallet-rpc.service
 
 [Service]
 Type=oneshot

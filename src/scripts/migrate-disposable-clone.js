@@ -15,7 +15,7 @@ const { Pool } = require('pg');
 const DatabaseManager = require('../db/databaseManager');
 
 const CONFIRM_PREFIX = 'MIGRATE_DISPOSABLE_CLONE:';
-const MINIMUM_RELEASE_MIGRATION = 42;
+const MINIMUM_RELEASE_MIGRATION = 43;
 const MIGRATIONS_PATH = path.join(__dirname, '..', 'migrations');
 const DATABASE_NAME = /^[a-z][a-z0-9_]{2,62}$/;
 const DATABASE_USER = /^[a-z_][a-z0-9_]{0,62}$/;

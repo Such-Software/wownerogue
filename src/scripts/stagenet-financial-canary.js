@@ -34,7 +34,8 @@ const REQUIRED_MIGRATIONS = Object.freeze([
     '039_unresolved_solo_payout_review.sql',
     '040_paid_match_entropy_precommit.sql',
     '041_financial_event_outbox.sql',
-    '042_immutable_financial_event_snapshots.sql'
+    '042_immutable_financial_event_snapshots.sql',
+    '043_durable_solo_restart_snapshots.sql'
 ]);
 
 const SCENARIOS = Object.freeze({

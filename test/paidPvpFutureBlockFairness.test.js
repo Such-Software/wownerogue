@@ -619,6 +619,7 @@ describe('MatchQueue durable freeze/refund transactions', () => {
         const order = [];
         const context = {
             beginShutdown: jest.fn(),
+            drainShutdownProducers: jest.fn(async () => { order.push('producers'); }),
             debugManager: { CONSOLE_LOGGING: false },
             tavernManager: null,
             matchScheduler: { shutdown: jest.fn(async () => { order.push('scheduler'); }) },
@@ -637,6 +638,6 @@ describe('MatchQueue durable freeze/refund transactions', () => {
 
         await SocketHandlers.prototype.shutdown.call(context);
 
-        expect(order).toEqual(['scheduler', 'queue', 'manager']);
+        expect(order).toEqual(['producers', 'scheduler', 'queue', 'manager']);
     });
 });

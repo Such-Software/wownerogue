@@ -45,6 +45,7 @@ describe('production disclosure pages', () => {
         const html = renderTerms(disclosure());
         expect(html).toContain('Independent deployment');
         expect(html).toContain('solely responsible for its deployment');
+        expect(html).toContain('does not make that deployment a Such Software service');
         expect(html).toContain('does not operate, supervise, endorse, or accept responsibility');
         expect(html).toContain('copyright and permission notice');
         expect(html).toContain('AS IS');

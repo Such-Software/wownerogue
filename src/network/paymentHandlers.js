@@ -47,6 +47,9 @@ class PaymentHandlers {
         this._confirmedRetentionMs = 6 * 60 * 60 * 1000; // 6 hours
         // Track expiry timeouts so they can be cleared / unref'd to avoid keeping process open
         this._expiryTimeouts = new Map(); // socketId -> timeout
+        this._isShuttingDown = false;
+        this._statusUpdatesInFlight = new Set();
+        this._invoiceCreationsInFlight = new Set();
         // Keep reference so tests can dispose / and unref so it doesn't keep event loop alive
         this._cleanupInterval = setInterval(() => {
             const now = Date.now();
@@ -208,7 +211,29 @@ class PaymentHandlers {
         }
     }
 
+    _runInvoiceCreation(socket, task) {
+        if (this._isShuttingDown) {
+            this.io?.to?.(socket.id)?.emit?.('payment_error', {
+                error: 'The server is restarting; new payment requests are temporarily closed.',
+                code: 'SERVER_SHUTTING_DOWN'
+            });
+            return Promise.resolve(null);
+        }
+        let work;
+        try {
+            work = Promise.resolve(task());
+        } catch (error) {
+            work = Promise.reject(error);
+        }
+        this._invoiceCreationsInFlight.add(work);
+        return work.finally(() => this._invoiceCreationsInFlight.delete(work));
+    }
+
     async handlePaymentRequest(socket, data) {
+        return this._runInvoiceCreation(socket, () => this._handlePaymentRequestActive(socket, data));
+    }
+
+    async _handlePaymentRequestActive(socket, data) {
         if (!this.gameModeManager) {
             this.clearPendingCommerceAcknowledgement(socket.id);
             this.io.to(socket.id).emit('payment_error', { error: 'Payment system not available' });
@@ -325,6 +350,11 @@ class PaymentHandlers {
     }
 
     async createAndShowPaymentRequest(socket, options = {}) {
+        return this._runInvoiceCreation(socket,
+            () => this._createAndShowPaymentRequestActive(socket, options));
+    }
+
+    async _createAndShowPaymentRequestActive(socket, options = {}) {
         if (!this.gameModeManager) {
             this.clearPendingCommerceAcknowledgement(socket.id);
             this.pendingEntryFairness.delete(socket.id);
@@ -559,10 +589,37 @@ class PaymentHandlers {
         }
     }
 
+    /** Stop new monitor callbacks from creating queue/game/entitlement work. */
+    beginShutdown() {
+        this._isShuttingDown = true;
+    }
+
+    async drainShutdownWork() {
+        while (this._statusUpdatesInFlight.size > 0 || this._invoiceCreationsInFlight.size > 0) {
+            await Promise.allSettled([
+                ...this._statusUpdatesInFlight,
+                ...this._invoiceCreationsInFlight
+            ]);
+        }
+        return { pending: 0 };
+    }
+
     // Handle one payment status update (raw wallet-style shape: in_mempool/confirmed/complete/
-    // amount/required/confirmations). Extracted verbatim from the monitor callback so native and
-    // gateway providers share the exact same confirmation logic.
+    // amount/required/confirmations). A callback that began before the synchronous shutdown gate
+    // is tracked to completion; later callbacks do no admission work and startup recovery observes
+    // the underlying durable payment state.
     async _handlePaymentStatus(socket, paymentRequest, currentUser, status) {
+        if (this._isShuttingDown) return;
+        const update = this._handlePaymentStatusActive(socket, paymentRequest, currentUser, status);
+        this._statusUpdatesInFlight.add(update);
+        try {
+            return await update;
+        } finally {
+            this._statusUpdatesInFlight.delete(update);
+        }
+    }
+
+    async _handlePaymentStatusActive(socket, paymentRequest, currentUser, status) {
             if (status.in_mempool && !status.confirmed) {
                 if (this.mempoolNotified.has(paymentRequest.address)) return;
                 this.mempoolNotified.set(paymentRequest.address, Date.now());
@@ -897,6 +954,7 @@ class PaymentHandlers {
      * Dispose resources (intervals, monitors) - useful for tests / graceful shutdown.
      */
     dispose() {
+        this.beginShutdown();
         if (this._cleanupInterval) {
             clearInterval(this._cleanupInterval);
             this._cleanupInterval = null;

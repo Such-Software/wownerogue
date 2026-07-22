@@ -94,6 +94,8 @@ class GameModeManager {
         this._batchPayoutTimer = null;
         this._isBatchProcessing = false;
         this._isShuttingDown = false;
+        this._gameAdmissionClosed = false;
+        this._gameStartAdmissions = new Set();
         // The composition root replaces this with the dynamic startup/runtime financial
         // reconciliation gate. Default-open keeps isolated free/test instances compatible.
         this.financialAdmissionAllowed = () => true;
@@ -1502,7 +1504,32 @@ class GameModeManager {
      * SocketHandlers and passed into Game before its dungeon is generated.
      */
     async processGameStart(socketId, gameId, options = {}) {
-        return this._dispatchGameStart(socketId, gameId, options);
+        if (this._gameAdmissionClosed) {
+            return {
+                success: false,
+                code: 'SERVER_SHUTTING_DOWN',
+                reason: 'Game admission is temporarily closed while the server restarts.'
+            };
+        }
+        const admission = this._dispatchGameStart(socketId, gameId, options);
+        this._gameStartAdmissions.add(admission);
+        try {
+            return await admission;
+        } finally {
+            this._gameStartAdmissions.delete(admission);
+        }
+    }
+
+    /** Close new solo entry consumption synchronously at the restart boundary. */
+    beginGameAdmissionShutdown() {
+        this._gameAdmissionClosed = true;
+    }
+
+    async drainGameStartAdmissions() {
+        while (this._gameStartAdmissions.size > 0) {
+            await Promise.allSettled(Array.from(this._gameStartAdmissions));
+        }
+        return { pending: 0 };
     }
 
     async _dispatchGameStart(socketId, gameId, options = {}) {
@@ -2768,6 +2795,7 @@ class GameModeManager {
     /** Stop accepting scheduled payout work and cancel any debounce that has not fired yet. */
     shutdown() {
         this._isShuttingDown = true;
+        this.beginGameAdmissionShutdown();
         if (this._batchPayoutTimer) {
             clearTimeout(this._batchPayoutTimer);
             this._batchPayoutTimer = null;

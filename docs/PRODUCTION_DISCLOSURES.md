@@ -22,13 +22,16 @@ self-hosts leave this setting unset and configure a truthful operator identity o
 
 MIT permission to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies is
 subject to retaining the copyright and permission notice in all copies or substantial portions.
-The software is provided “AS IS”, without warranty of any kind, as stated in `LICENSE`. The code,
-documentation, examples, and disclosure copy are not legal advice, a licence, or a compliance
-approval.
+The software is provided “AS IS”, without warranty of any kind, as stated in `LICENSE`. The MIT
+License governs rights in the source. Documentation, examples, and disclosure copy are
+informational only; they are not legal advice or a determination that a deployment complies with
+applicable law.
 
 A third-party or self-hosted operator is solely responsible for its deployment, product design,
-legal compliance, funds, players, representations, and support. Such Software does not operate,
-supervise, endorse, or accept responsibility for third-party deployments.
+legal compliance, funds, players, representations, and support. The MIT License does not make that
+deployment a Such Software service or authorize it to claim Such Software sponsorship or
+endorsement. Such Software does not operate, supervise, endorse, or accept responsibility for
+third-party deployments.
 
 ## Required production settings
 

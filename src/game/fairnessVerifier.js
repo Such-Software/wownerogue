@@ -26,7 +26,7 @@ function attachDungeonVerification(result, {
             ? context.generationOptions
             : {};
         const recordedGenerator = generatorVersion || context.generatorVersion || DungeonGenerator.GENERATOR_VERSION;
-        if (recordedGenerator !== DungeonGenerator.GENERATOR_VERSION) {
+        if (!DungeonGenerator.SUPPORTED_GENERATOR_VERSIONS.includes(recordedGenerator)) {
             throw Object.assign(new Error('unsupported_generator_version'), { code: 'UNSUPPORTED_GENERATOR' });
         }
 
@@ -53,14 +53,14 @@ function attachDungeonVerification(result, {
         const levels = manifest.map((entry) => {
             const depth = Number(entry.depth);
             const entryGenerator = entry.generatorVersion || recordedGenerator;
-            if (entryGenerator !== DungeonGenerator.GENERATOR_VERSION) {
+            if (!DungeonGenerator.SUPPORTED_GENERATOR_VERSIONS.includes(entryGenerator)) {
                 throw Object.assign(new Error('unsupported_generator_version'), { code: 'UNSUPPORTED_GENERATOR' });
             }
             const fingerprintVersion = Number(entry.fingerprintVersion || context.fingerprintVersion || 1);
             const dungeon = DungeonGenerator.regenerateFromSeed(
                 levelSeed(effectiveSeed, depth),
                 context.cryptoType || process.env.CRYPTO_TYPE || 'WOW',
-                options
+                { ...options, generatorVersion: entryGenerator }
             );
             if (depth < maxDepth) dungeon.treasure = null;
             const fingerprint = DungeonGenerator.layoutFingerprint(dungeon, fingerprintVersion);

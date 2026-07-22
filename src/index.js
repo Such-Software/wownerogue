@@ -1137,6 +1137,13 @@ async function startServer() {
         if (!sm || typeof sm.recoverOrphanedGames !== 'function') {
             throw new Error('Orphaned solo-game financial recovery is unavailable.');
         }
+        // A graceful predecessor may have frozen exact nonterminal solo runtime state. Rebuild
+        // those games into the reconnect cache before orphan recovery scans active rows; invalid
+        // or drifted snapshots abort startup before a listener or financial dispatcher exists.
+        const restartRestore = await socketHandlers.rehydrateSoloRestartSnapshots();
+        if (restartRestore.restored > 0) {
+            console.log(`🔄 Rehydrated ${restartRestore.restored} durable solo restart snapshot(s)`);
+        }
         await sm.recoverOrphanedGames();
 
         // Match queue recovery and payout-liability reconciliation require the migrations that
@@ -1310,6 +1317,13 @@ async function gracefulShutdown(signal, exitCode = 0) {
     if (databaseHealthInterval) clearInterval(databaseHealthInterval);
     financialEventExporter.stop();
 
+    // Work that crossed the synchronous shutdown gate may still be completing a game start or a
+    // sequential block-timeout pass. Drain every such producer before GameManager snapshots its
+    // terminal settlement set; otherwise a paused timeout pass could add a later result behind it.
+    if (socketHandlers?.drainShutdownProducers) {
+        await socketHandlers.drainShutdownProducers();
+    }
+
     // Terminal solo games are held in a serialized settlement-pending state when their atomic
     // completion transaction fails. Drain those retries before disabling GameModeManager or
     // closing PostgreSQL so a normal deploy/restart cannot turn a known result into an orphan.
@@ -1317,10 +1331,27 @@ async function gracefulShutdown(signal, exitCode = 0) {
         const soloDrain = await socketHandlers.gameManager.shutdown({ timeoutMs: 4000 });
         if (soloDrain.pending > 0) {
             console.error(`  ${soloDrain.pending} solo settlement(s) remain unresolved after shutdown drain`);
+            const error = new Error('Refusing graceful restart with unresolved solo settlements');
+            error.code = 'SOLO_SETTLEMENT_DRAIN_INCOMPLETE';
+            throw error;
         } else if (soloDrain.initial > 0) {
             console.log(`  Settled ${soloDrain.settled} terminal solo game(s) during shutdown drain`);
         }
     }
+
+    // Only controlled termination signals may serialize live runtime objects. After an uncaught
+    // exception/rejection process state is not trustworthy; startup's orphan recovery remains the
+    // explicit economic fallback for those crash paths.
+    if (signal === 'SIGTERM' || signal === 'SIGINT') {
+        const restartSnapshots = await socketHandlers.persistSoloRestartSnapshots();
+        if (restartSnapshots.captured > 0) {
+            console.log(`  Persisted ${restartSnapshots.captured} active solo game(s) for restart`);
+        }
+    }
+    // Snapshot ownership is now durable. Close Socket.IO transports so no existing connection
+    // survives into DB teardown; disconnect cleanup may adjust in-memory maps but cannot erase the
+    // PostgreSQL restart snapshots.
+    await new Promise((resolve) => io.close(() => resolve()));
     gameModeManager.shutdown();
     if (payoutRetryService) payoutRetryService.stop();
     if (alertService) alertService.stopPeriodicChecks?.();
@@ -1373,5 +1404,11 @@ process.on('unhandledRejection', (reason) => {
     gracefulShutdown('unhandledRejection', 1).catch(() => process.exit(1));
 });
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM', 0));
-process.on('SIGINT', () => gracefulShutdown('SIGINT', 0));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM', 0).catch((error) => {
+    console.error('Graceful SIGTERM failed:', error?.message || error);
+    process.exit(1);
+}));
+process.on('SIGINT', () => gracefulShutdown('SIGINT', 0).catch((error) => {
+    console.error('Graceful SIGINT failed:', error?.message || error);
+    process.exit(1);
+}));

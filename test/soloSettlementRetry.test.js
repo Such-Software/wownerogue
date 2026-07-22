@@ -164,7 +164,7 @@ describe('solo terminal settlement retry', () => {
         expect(harness.activeGames.has('socket-2')).toBe(false);
     });
 
-    test('reconnect restores a pending terminal lock without re-counting it as a playable game', () => {
+    test('reconnect restores a pending terminal lock without re-counting it as a playable game', async () => {
         jest.useFakeTimers();
         const activeGames = new Map();
         const suspended = new SuspendedGameManager({
@@ -181,7 +181,7 @@ describe('solo terminal settlement retry', () => {
         const newUser = { joinGame: jest.fn() };
 
         suspended.suspendGame(44, 'socket-old', game);
-        const restored = suspended.restoreGame(44, 'socket-new', newUser);
+        const restored = await suspended.restoreGame(44, 'socket-new', newUser);
 
         expect(restored.game).toBe(game);
         expect(activeGames.get('socket-new')).toBe(game);

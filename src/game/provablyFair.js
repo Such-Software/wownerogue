@@ -97,7 +97,7 @@ function createSeededRNG(seed) {
     let state = seed;
     let counter = 0;
     
-    return function() {
+    const rng = function() {
         // Generate next state by hashing current state + counter
         const hash = crypto.createHash('sha256')
             .update(state + counter.toString())
@@ -109,6 +109,28 @@ function createSeededRNG(seed) {
         const num = hash.readUInt32BE(0);
         return num / 0x100000000;
     };
+
+    // A graceful restart must resume at the exact next draw; resetting the generator would make
+    // post-restart monster behaviour diverge from the committed run. These deliberately narrow
+    // accessors keep the normal callable-RNG API intact while allowing a validated runtime
+    // snapshot to preserve/restore only the monotonically increasing counter.
+    Object.defineProperties(rng, {
+        getCounter: {
+            value: () => counter,
+            enumerable: false
+        },
+        setCounter: {
+            value: (nextCounter) => {
+                if (!Number.isSafeInteger(nextCounter) || nextCounter < 0) {
+                    throw new Error('Invalid seeded RNG counter');
+                }
+                counter = nextCounter;
+            },
+            enumerable: false
+        }
+    });
+
+    return rng;
 }
 
 /**

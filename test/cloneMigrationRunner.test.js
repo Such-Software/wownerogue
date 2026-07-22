@@ -161,11 +161,11 @@ describe('disposable clone migration execution', () => {
         logSpy.mockRestore();
     });
 
-    test('discovers the contiguous repository manifest through migration 42 dynamically', () => {
+    test('discovers the contiguous repository manifest through migration 43 dynamically', () => {
         const manifest = discoverMigrationManifest();
         expect(manifest.latestOrdinal).toBeGreaterThanOrEqual(MINIMUM_RELEASE_MIGRATION);
-        expect(manifest.latestFilename).toBe('042_immutable_financial_event_snapshots.sql');
-        expect(manifest.files).toHaveLength(42);
+        expect(manifest.latestFilename).toBe('043_durable_solo_restart_snapshots.sql');
+        expect(manifest.files).toHaveLength(43);
     });
 
     test('runs the normal ordered migration implementation and proves the exact ledger', async () => {
@@ -185,9 +185,9 @@ describe('disposable clone migration execution', () => {
         });
 
         expect(pool.transactions).toEqual(result.files);
-        expect(result.latestFilename).toBe('042_immutable_financial_event_snapshots.sql');
+        expect(result.latestFilename).toBe('043_durable_solo_restart_snapshots.sql');
         expect(output).toContain('clone_migration_status=ok');
-        expect(output).toContain('latest_migration=042_immutable_financial_event_snapshots.sql');
+        expect(output).toContain('latest_migration=043_durable_solo_restart_snapshots.sql');
         expect(output.join('\n')).not.toContain(secret);
         expect(pool.config).toEqual(expect.objectContaining({
             database: env.DB_NAME,

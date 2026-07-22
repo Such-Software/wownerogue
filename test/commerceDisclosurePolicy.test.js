@@ -101,6 +101,7 @@ describe('commerce disclosure and paid-action policy', () => {
         expect(disclosure.software.warrantyNotice).toContain('AS IS');
         expect(disclosure.software.legalAdviceNotice).toContain('not legal advice');
         expect(disclosure.software.thirdPartyNotice).toContain('solely responsible');
+        expect(disclosure.software.thirdPartyNotice).toContain('does not make that deployment a Such Software service');
         expect(disclosure.software.thirdPartyNotice).toContain('does not operate, supervise, endorse, or accept responsibility');
     });
 

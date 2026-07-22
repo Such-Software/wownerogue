@@ -10,8 +10,6 @@
  * to seamlessly resume their session when they reconnect.
  */
 
-const { normalizeError } = require('../utils/errors');
-
 class SuspendedGameManager {
     constructor({ debugManager, activeGames, cleanupTimeoutMs = 300000 }) {
         this.debugManager = debugManager;
@@ -70,8 +68,14 @@ class SuspendedGameManager {
         this.suspendedGames.set(dbUserId, suspendedState);
         this.stats.gamesSuspended++;
 
-        // Set cleanup timer
-        this._scheduleCleanup(dbUserId);
+        // Ordinary network disconnects retain the existing bounded in-memory grace period.
+        // A durable restart snapshot is different: PostgreSQL is the authority and the process
+        // must keep the reconstructed object available until its owner reconnects (or an operator
+        // explicitly resolves the active row). Expiring only the Map entry would strand the
+        // durable active game and silently make it unresumable.
+        if (additionalState.durableRestartSnapshot !== true) {
+            this._scheduleCleanup(dbUserId);
+        }
 
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`🔄 [SuspendedGameManager] Suspended game ${game.id} for user ${dbUserId}`);
@@ -106,16 +110,13 @@ class SuspendedGameManager {
      * @param {number} dbUserId - Database user ID
      * @param {string} newSocketId - The new socket ID
      * @param {Object} newUser - The new User object
-     * @returns {Object|null} The restored game or null if no suspended game
+     * @returns {Promise<Object|null>} The restored game or null if no suspended game
      */
-    restoreGame(dbUserId, newSocketId, newUser) {
+    async restoreGame(dbUserId, newSocketId, newUser) {
         const suspended = this.suspendedGames.get(dbUserId);
         if (!suspended) {
             return null;
         }
-
-        // Cancel cleanup timer
-        this._cancelCleanup(dbUserId);
 
         const game = suspended.game;
 
@@ -126,6 +127,55 @@ class SuspendedGameManager {
             return null;
         }
 
+        // Claim a durable restart snapshot and realign the socket in one PostgreSQL statement
+        // before exposing the game as playable. If the row is no longer exactly active for this
+        // game/user/seed, no snapshot is consumed and no in-memory state is revived.
+        const db = game.db || suspended.db || null;
+        if (suspended.durableRestartSnapshot === true) {
+            if (!db || !game.dbId || !game.id) {
+                throw new Error('Durable solo restart snapshot is missing its database identity');
+            }
+            const claimed = await db.query(`
+                WITH valid_game AS MATERIALIZED (
+                    SELECT id
+                    FROM games
+                    WHERE id = $1 AND user_id = $2 AND dungeon_seed = $3
+                      AND status = 'active' AND completed_at IS NULL
+                    FOR UPDATE
+                ), consumed AS (
+                    DELETE FROM solo_restart_snapshots s
+                    USING valid_game g
+                    WHERE s.game_id = g.id AND s.user_id = $2 AND s.snapshot_version = $4
+                    RETURNING s.game_id
+                )
+                UPDATE games
+                SET socket_id = $5
+                WHERE id = $1 AND EXISTS (SELECT 1 FROM consumed)
+                RETURNING id
+            `, [game.dbId, dbUserId, game.id, suspended.snapshotVersion, newSocketId]);
+            if (claimed.rowCount !== 1) {
+                const error = new Error('Durable solo restart snapshot could not be claimed');
+                error.code = 'SOLO_RESTART_SNAPSHOT_CLAIM_FAILED';
+                throw error;
+            }
+        } else if (db && game.id) {
+            const aligned = await db.query(
+                `UPDATE games SET socket_id = $1
+                 WHERE dungeon_seed = $2 AND status = 'active' AND completed_at IS NULL
+                 RETURNING id`,
+                [newSocketId, game.id]
+            );
+            if (aligned.rowCount !== 1) {
+                const error = new Error('Suspended solo game is no longer active');
+                error.code = 'SUSPENDED_GAME_REALIGN_FAILED';
+                throw error;
+            }
+        }
+
+        // Only mutate the cache/object after the durable claim succeeds. A transient database
+        // failure therefore leaves the suspended entry intact for a later reconnect attempt.
+        this._cancelCleanup(dbUserId);
+
         // Update game with new socket ID
         game.socketId = newSocketId;
 
@@ -134,26 +184,6 @@ class SuspendedGameManager {
         // from the alias just in case an older game object only carries one of them.
         if (game.userId == null && game.dbUserId != null) game.userId = game.dbUserId;
         if (game.dbUserId == null && game.userId != null) game.dbUserId = game.userId;
-
-        // Align the persisted game row's socket_id to the reconnecting socket so
-        // downstream row-matching (game-over UPDATE, completion) stays consistent.
-        // Fire-and-forget so restoreGame remains synchronous for its callers.
-        try {
-            const db = game.db || suspended.db || null;
-            if (db && game.id) {
-                Promise.resolve(
-                    db.query('UPDATE games SET socket_id = $1 WHERE dungeon_seed = $2', [newSocketId, game.id])
-                ).catch((err) => {
-                    if (this.debugManager?.CONSOLE_LOGGING) {
-                        console.warn(`[SuspendedGameManager] socket_id realign failed for game ${game.id}: ${err.message}`);
-                    }
-                });
-            }
-        } catch (err) {
-            if (this.debugManager?.CONSOLE_LOGGING) {
-                console.warn(`[SuspendedGameManager] socket_id realign threw for game ${game.id}: ${normalizeError(err).message}`);
-            }
-        }
 
         // Update the user reference if provided
         if (newUser) {

@@ -20,8 +20,8 @@ const SOURCE_SOFTWARE = Object.freeze({
     license: 'MIT',
     rightsNotice: 'Permission to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies is granted under the MIT License only if the copyright and permission notice is included in all copies or substantial portions.',
     warrantyNotice: 'The software is provided “AS IS”, without warranty of any kind, express or implied, to the fullest extent stated in the MIT License.',
-    legalAdviceNotice: 'The software, documentation, examples, and disclosures are not legal advice, a licence, or a compliance approval.',
-    thirdPartyNotice: 'A third-party or self-hosted operator is solely responsible for its deployment, product design, legal compliance, funds, players, claims, and support. Such Software does not operate, supervise, endorse, or accept responsibility for third-party deployments.',
+    legalAdviceNotice: 'Documentation, examples, and product disclosures are informational only; they are not legal advice or a determination that any deployment complies with applicable law.',
+    thirdPartyNotice: 'A third-party or self-hosted operator is solely responsible for its deployment, product design, legal compliance, funds, players, claims, and support. The MIT License does not make that deployment a Such Software service or authorize it to claim Such Software sponsorship or endorsement. Such Software does not operate, supervise, endorse, or accept responsibility for third-party deployments.',
     operatedBoundaryNotice: 'Such Software operates only play.wowne.ro and monerogue.app, and only within the product scopes stated for those services. It does not operate or endorse deployments made from this source by anyone else.'
 });
 

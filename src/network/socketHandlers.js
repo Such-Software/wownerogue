@@ -25,6 +25,11 @@ const IdentityService = require('./identityService');
 const SuspendedGameManager = require('./suspendedGameManager');
 const MemoryManager = require('../utils/memoryManager');
 const FairnessOfferManager = require('../game/fairnessOfferManager');
+const {
+    SNAPSHOT_VERSION: SOLO_RESTART_SNAPSHOT_VERSION,
+    captureSoloRestartSnapshot,
+    restoreSoloRestartSnapshot
+} = require('../game/soloRestartSnapshot');
 const { normalizeError } = require('../utils/errors');
 const money = require('../money/atomic');
 const {
@@ -62,6 +67,7 @@ class SocketHandlers {
         this.MOVE_COOLDOWN = 100; // Minimum 100ms between moves
         this.fairnessOffers = new FairnessOfferManager();
         this._isShuttingDown = false;
+        this._admissionsInFlight = new Set();
 
         // Initialize rate limiter with debug mode matching debugManager
         this.rateLimiter = new RateLimiter({
@@ -320,8 +326,192 @@ class SocketHandlers {
 
     /** Stop new solo movement before taking the graceful-shutdown settlement snapshot. */
     beginShutdown() {
+        // This flag is the synchronous boundary: every admission wrapper and lower-level game
+        // creator observes it before any shutdown await can yield back to a client callback.
         this._isShuttingDown = true;
+        this.gameManager?.beginShutdown?.();
+        this.gameModeManager?.beginGameAdmissionShutdown?.();
+        this.paymentHandlers?.beginShutdown?.();
         this.movementManager?.shutdown?.();
+    }
+
+    _emitShutdownAdmissionRefusal(socket, kind = 'admission') {
+        const payload = {
+            code: 'SERVER_SHUTTING_DOWN',
+            message: 'The server is restarting; new entries are temporarily closed.'
+        };
+        try { socket?.emit?.('server_restarting', { ...payload, kind }); } catch (_) {}
+        try { this.broadcastManager?.sendStatusUpdate?.(socket?.id, 'warning', payload.message); } catch (_) {}
+        return payload;
+    }
+
+    _rejectAdmissionDuringShutdown(socket, kind) {
+        if (!this._isShuttingDown) return false;
+        this._emitShutdownAdmissionRefusal(socket, kind);
+        return true;
+    }
+
+    _runAdmission(socket, kind, task) {
+        if (this._rejectAdmissionDuringShutdown(socket, kind)) return Promise.resolve(null);
+        const token = {};
+        this._admissionsInFlight.add(token);
+        let work;
+        try {
+            work = Promise.resolve(task());
+        } catch (error) {
+            work = Promise.reject(error);
+        }
+        token.work = work;
+        return work.finally(() => this._admissionsInFlight.delete(token));
+    }
+
+    async drainAdmissionHandlers() {
+        while (this._admissionsInFlight.size > 0) {
+            await Promise.allSettled(Array.from(this._admissionsInFlight, token => token.work));
+        }
+        return { pending: 0 };
+    }
+
+    /**
+     * Drain every operation that could still create a game or install a terminal solo result.
+     * This must finish before GameManager.shutdown() snapshots/retries its settlement map: an
+     * already-running block timeout pass is itself an admission producer and can otherwise resume
+     * after an await and add a new settlement behind the drain.
+     */
+    async drainShutdownProducers() {
+        await this.drainAdmissionHandlers();
+        await this.paymentHandlers?.drainShutdownWork?.();
+        await this.gameModeManager?.drainGameStartAdmissions?.();
+        await this.gameManager?.drainAdmissions?.();
+        return { pending: 0 };
+    }
+
+    /**
+     * Persist every nonterminal solo run that currently exists only as a live Game object.
+     * Movement is already frozen by beginShutdown(), and the caller drains terminal settlement
+     * intents before invoking this method. One transaction prevents a partial restart boundary:
+     * either every eligible run has a guarded snapshot or none of the new snapshots commit.
+     */
+    async persistSoloRestartSnapshots() {
+        const db = this.gameModeManager?.db;
+        if (!db || typeof db.withTransaction !== 'function') {
+            throw new Error('Solo restart snapshots require a transactional database handle');
+        }
+
+        // Work that crossed the synchronous gate is allowed to reach a stable DB/in-memory state;
+        // nothing new can enter behind it. Only then enumerate the complete snapshot set.
+        await this.drainShutdownProducers();
+
+        const captures = new Map();
+        const addGame = (game, socketId, paymentMonitoringActive) => {
+            if (!game) return;
+            if (game.settlementPending || game.settlementCommitted || game.gameState === 'ended') {
+                throw new Error(`Refusing to snapshot terminal solo game ${game.id || 'unknown'}`);
+            }
+            // A snapshot rehydrated earlier in this same process remains durable until its owner
+            // claims it; it does not need (and must not receive) a second write on shutdown.
+            const captured = captureSoloRestartSnapshot(game, { paymentMonitoringActive });
+            const previous = captures.get(captured.gameId);
+            if (previous && previous.dungeonSeed !== captured.dungeonSeed) {
+                throw new Error(`Conflicting restart snapshot identity for game row ${captured.gameId}`);
+            }
+            captures.set(captured.gameId, captured);
+        };
+
+        for (const [socketId, game] of this.activeGames.entries()) {
+            addGame(game, socketId, this.paymentHandlers?.hasActiveMonitoring?.(socketId) === true);
+        }
+        for (const suspended of this.suspendedGameManager?.suspendedGames?.values?.() || []) {
+            if (suspended?.durableRestartSnapshot === true) continue;
+            addGame(suspended?.game, suspended?.originalSocketId,
+                suspended?.paymentMonitoringActive === true);
+        }
+
+        if (captures.size === 0) return { captured: 0 };
+
+        await db.withTransaction(async (client) => {
+            for (const snapshot of captures.values()) {
+                const result = await client.query(`
+                    INSERT INTO solo_restart_snapshots (
+                        game_id, user_id, dungeon_seed, snapshot_version, original_socket_id,
+                        payment_monitoring_active, state, created_at
+                    )
+                    SELECT g.id, g.user_id, g.dungeon_seed, $4, $5, $6, $7::jsonb, NOW()
+                    FROM games g
+                    WHERE g.id = $1 AND g.user_id = $2 AND g.dungeon_seed = $3
+                      AND g.status = 'active' AND g.completed_at IS NULL
+                    ON CONFLICT (game_id) DO UPDATE SET
+                        snapshot_version = EXCLUDED.snapshot_version,
+                        original_socket_id = EXCLUDED.original_socket_id,
+                        payment_monitoring_active = EXCLUDED.payment_monitoring_active,
+                        state = EXCLUDED.state,
+                        created_at = EXCLUDED.created_at
+                    WHERE solo_restart_snapshots.user_id = EXCLUDED.user_id
+                      AND solo_restart_snapshots.dungeon_seed = EXCLUDED.dungeon_seed
+                    RETURNING game_id
+                `, [
+                    snapshot.gameId,
+                    snapshot.userId,
+                    snapshot.dungeonSeed,
+                    snapshot.snapshotVersion,
+                    snapshot.originalSocketId,
+                    snapshot.paymentMonitoringActive,
+                    JSON.stringify(snapshot.state)
+                ]);
+                if (result.rowCount !== 1) {
+                    throw new Error(`Active solo game ${snapshot.gameId} changed during restart snapshot`);
+                }
+            }
+        });
+
+        return { captured: captures.size };
+    }
+
+    /** Reconstruct durable graceful-restart snapshots before orphan recovery or admission. */
+    async rehydrateSoloRestartSnapshots() {
+        const db = this.gameModeManager?.db;
+        if (!db || typeof db.query !== 'function') {
+            throw new Error('Solo restart rehydration requires a database handle');
+        }
+        const result = await db.query(`
+            SELECT s.game_id, s.user_id, s.dungeon_seed, s.snapshot_version,
+                   s.original_socket_id, s.payment_monitoring_active, s.state, s.created_at,
+                   g.id AS joined_game_id, g.user_id AS game_user_id,
+                   g.dungeon_seed AS game_dungeon_seed,
+                   g.status, g.completed_at, g.game_mode, g.start_block_height,
+                   g.proof_version, g.fairness_offer_id, g.fairness_offer_issued_at,
+                   g.proof_commitment, g.server_seed, g.client_seed, g.effective_seed,
+                   g.layout_fingerprint, g.layout_fingerprints, g.generator_version,
+                   g.proof_context
+            FROM solo_restart_snapshots s
+            LEFT JOIN games g
+              ON g.id = s.game_id
+             AND g.user_id = s.user_id
+             AND g.dungeon_seed = s.dungeon_seed
+            ORDER BY s.game_id ASC
+        `, []);
+
+        let restored = 0;
+        for (const row of result.rows || []) {
+            const state = restoreSoloRestartSnapshot(row, { db });
+            if (this.suspendedGameManager.hasSuspendedGame(state.userId)) {
+                throw new Error(`Duplicate suspended solo identity ${state.userId}`);
+            }
+            const accepted = this.suspendedGameManager.suspendGame(
+                state.userId,
+                state.originalSocketId,
+                state.game,
+                {
+                    paymentMonitoringActive: state.paymentMonitoringActive,
+                    durableRestartSnapshot: true,
+                    snapshotVersion: SOLO_RESTART_SNAPSHOT_VERSION,
+                    blockRec: state.game.blockRec
+                }
+            );
+            if (!accepted) throw new Error(`Failed to rehydrate solo game ${state.game.id}`);
+            restored += 1;
+        }
+        return { restored };
     }
 
     /** Dynamic financial-recovery gate used by readiness and paid admission. */
@@ -432,8 +622,20 @@ class SocketHandlers {
      * Initialize socket event handlers for a new connection
      */
     async handleConnection(socket) {
+        if (this._isShuttingDown) {
+            this._emitShutdownAdmissionRefusal(socket, 'connection');
+            socket.disconnect(true);
+            return;
+        }
         const connectionResult = await this.connectionHandler.handleConnection(socket);
         if (!connectionResult) return; // Connection was rejected or failed
+        // A connection may have entered just before beginShutdown() and awaited its DB session.
+        // Recheck before restoring state or registering any mutating event handlers.
+        if (this._isShuttingDown) {
+            this._emitShutdownAdmissionRefusal(socket, 'connection');
+            socket.disconnect(true);
+            return;
+        }
 
         // Publish the server commitment before the client can submit a client seed. register_client
         // re-emits this same offer (never swaps it) in case the browser attached listeners late.
@@ -447,7 +649,22 @@ class SocketHandlers {
         if (sessionInfo && sessionInfo.resumed && dbUserId && this.suspendedGameManager) {
             if (this.suspendedGameManager.hasSuspendedGame(dbUserId)) {
                 const memUser = this.connectionHandler.getUserBySocket(socket.id);
-                const restored = this.suspendedGameManager.restoreGame(dbUserId, socket.id, memUser);
+                let restored;
+                try {
+                    restored = await this.suspendedGameManager.restoreGame(dbUserId, socket.id, memUser);
+                } catch (error) {
+                    // Never let a failed durable claim fall through to queue/new-game admission:
+                    // the database still owns an active run for this identity. A reconnect can
+                    // retry after the transient fault or an operator can resolve the snapshot.
+                    console.error(`[handleConnection] Suspended game restore failed for user ${dbUserId}:`,
+                        normalizeError(error).message);
+                    socket.emit('session_restore_failed', {
+                        code: 'ACTIVE_GAME_RESTORE_FAILED',
+                        message: 'Your active game could not be restored safely. Please reconnect shortly.'
+                    });
+                    socket.disconnect(true);
+                    return;
+                }
                 
                 if (restored) {
                     restoredGame = restored.game;
@@ -549,11 +766,14 @@ class SocketHandlers {
             socket.emit('active_games', gameList);
         }
 
-        // Register event handlers
+        // Register event handlers. Admission wrappers remain live for the life of this socket and
+        // consult the dynamic shutdown flag, so existing connections cannot race the snapshot.
+        const runAdmission = (kind, task) => this._runAdmission(socket, kind, task);
         socket.on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
             // Legacy text command has no client contribution, but still consumes the already
             // published one-time server offer with an empty clientSeed.
-            handleGameQueue: (socket) => this.handleJoinQueue(socket, {}),
+            handleGameQueue: (commandSocket) => runAdmission('chat_game_queue',
+                () => this.handleJoinQueue(commandSocket, {})),
             handleCancelEntry: (socket) => this.queueHandler.handleCancelEntry(socket),
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
@@ -586,15 +806,20 @@ class SocketHandlers {
                 if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to re-send identity snapshot:', err.message);
             });
         });
-        socket.on('auto_start', (data) => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {})); // New handler for start button
-        socket.on('play_free', (data) => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true })); // Explicit free-play choice
-        socket.on('join_queue', (data) => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {})); // Queue instead of auto-start ({ free: true } for Pleb-board free play)
-        socket.on('early_entry', (data) => this.handleEarlyEntry(socket, (data && typeof data === 'object') ? data : {})); // Early entry without waiting for block
+        socket.on('auto_start', (data) => runAdmission('auto_start',
+            () => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {}))); // New handler for start button
+        socket.on('play_free', (data) => runAdmission('play_free',
+            () => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true }))); // Explicit free-play choice
+        socket.on('join_queue', (data) => runAdmission('join_queue',
+            () => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {}))); // Queue instead of auto-start ({ free: true } for Pleb-board free play)
+        socket.on('early_entry', (data) => runAdmission('early_entry',
+            () => this.handleEarlyEntry(socket, (data && typeof data === 'object') ? data : {}))); // Early entry without waiting for block
         socket.on('fairness_offer_request', () => this._emitFairnessOffer(socket));
         socket.on('address:prompt', () => this.handleAddressPrompt(socket));
         
         // Payment system handlers
-        socket.on('request_payment', (data) => this.handlePaymentRequest(socket, data));
+        socket.on('request_payment', (data) => runAdmission('request_payment',
+            () => this.handlePaymentRequest(socket, data)));
         socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
         socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
         socket.on('address:update', (data) => this.handleAddressUpdate(socket, data));
@@ -620,7 +845,8 @@ class SocketHandlers {
         // never crash the connection or leak a stack to the client — it logs and emits a
         // benign 'match_error' instead (C5). Identity is always resolved from the CONNECTION,
         // never from the client payload.
-        socket.on('match_queue', (data) => this._handleMatchQueue(socket, data));
+        socket.on('match_queue', (data) => runAdmission('match_queue',
+            () => this._handleMatchQueue(socket, data)));
         socket.on('match_move', (data) => {
             try {
                 this.matchManager.move(socket, data);
@@ -648,6 +874,10 @@ class SocketHandlers {
     }
 
     async handlePaymentRequest(socket, data = {}) {
+        if (this._isShuttingDown === true) {
+            this._rejectAdmissionDuringShutdown?.(socket, 'request_payment');
+            return;
+        }
         const request = (data && typeof data === 'object') ? data : {};
         const rlId = stableId(socket, this.sessionManager);
         const rlIp = clientIp(socket);
@@ -695,6 +925,10 @@ class SocketHandlers {
      * If eligible, starts game immediately (bypassing block queue) and processes game start (credit deduction / payment linkage)
      */
     async handleAutoStart(socket, opts = {}) {
+        if (this._isShuttingDown === true) {
+            this._rejectAdmissionDuringShutdown?.(socket, 'solo_start');
+            return;
+        }
         try {
             const wantsExplicitFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
             if (!wantsExplicitFree
@@ -843,6 +1077,10 @@ class SocketHandlers {
      * Handle join_queue request — adds player to block queue instead of starting immediately
      */
     async handleJoinQueue(socket, opts = {}) {
+        if (this._isShuttingDown === true) {
+            this._rejectAdmissionDuringShutdown?.(socket, 'solo_queue');
+            return;
+        }
         try {
             const rlId = stableId(socket, this.sessionManager);
             const rlIp = clientIp(socket);
@@ -890,6 +1128,10 @@ class SocketHandlers {
      * Only available for free mode and credits mode (not direct payment mode)
      */
     async handleEarlyEntry(socket, opts = {}) {
+        if (this._isShuttingDown === true) {
+            this._rejectAdmissionDuringShutdown?.(socket, 'early_entry');
+            return;
+        }
         try {
             // Early entry is free only on a free-only instance. Mixed/credits entry may consume a
             // credit, so treat ambiguous mixed-mode requests as paid and fail closed.
@@ -1013,6 +1255,10 @@ class SocketHandlers {
             }
 
             const action = (data && data.action === 'leave') ? 'leave' : 'join';
+            if (action === 'join' && this._isShuttingDown === true) {
+                this._rejectAdmissionDuringShutdown?.(socket, 'match_queue');
+                return;
+            }
             if (action === 'join' && this.activeGames?.has(socket.id)) {
                 const soloGame = this.activeGames.get(socket.id);
                 socket.emit('match_error', {
@@ -1503,68 +1749,85 @@ class SocketHandlers {
      * Start games for waiting players when a new block is found
      */
     async startGamesForWaiting(blockHeight) {
-        // Start queued single-player games first and capture the result to return.
-        const result = await this.queueHandler.startGamesForWaiting(blockHeight);
-        // Then drain match-mode queues on the same block, fire-and-forget so a match-layer
-        // error can never block or fail single-player block processing (MP-C3).
-        if (this.matchScheduler) {
-            this.matchScheduler.onBlock(blockHeight).catch(err => {
-                if (this.debugManager.CONSOLE_LOGGING) console.error('[SocketHandlers] Match scheduler block error:', err);
-            });
-        }
-        return result;
+        if (this._isShuttingDown) return null;
+        return this._runAdmission(null, 'block_queue_start', async () => {
+            // Start queued single-player games first and capture the result to return.
+            const result = await this.queueHandler.startGamesForWaiting(blockHeight);
+            // Keep scheduler work inside the tracked admission boundary. A match-layer fault still
+            // cannot fail solo processing, but shutdown now knows when the pre-barrier block tick
+            // has reached a stable state.
+            if (this.matchScheduler) {
+                await this.matchScheduler.onBlock(blockHeight).catch(err => {
+                    if (this.debugManager.CONSOLE_LOGGING) console.error('[SocketHandlers] Match scheduler block error:', err);
+                });
+            }
+            return result;
+        });
     }
 
     /**
      * Check for game timeouts based on block height
      */
     async checkGamesTimeout(currentHeight) {
-        // Snapshot the entries first: handleGameOver mutates activeGames (it deletes the
-        // entry), so iterating the live Map could skip games. Process sequentially and
-        // await each game-over rather than firing them all off concurrently on one tick.
-        // Anti-instant-death guard ONLY (default 2s, set 0 to disable). Random block timing
-        // is the game's core mechanic and is deliberately preserved — this is not a fairness
-        // floor. It only avoids the degenerate case where a block lands in the same instant
-        // the game starts and the player dies before the dungeon even renders / before their
-        // first move is possible (100ms move cooldown).
-        const graceMs = (() => { const v = parseInt(process.env.GAME_START_GRACE_MS, 10); return Number.isFinite(v) ? v : 2000; })();
-        const now = Date.now();
-        const snapshot = Array.from(this.activeGames.entries());
-        for (const [socketId, game] of snapshot) {
-            // G3: the snapshot can go stale while we await a previous game-over. If this game
-            // was concurrently won or otherwise ended (removed from activeGames on another
-            // async path), never re-end it here as a loss/timeout.
-            if (!this.activeGames.has(socketId)) continue;
-            // Terminal games deliberately remain mapped until their DB transaction succeeds.
-            // Never race that frozen result with a later block-timeout loss.
-            if (game?.settlementPending || game?.settlementCommitted || game?.gameState === 'ended') continue;
+        if (this._isShuttingDown) return;
+        return this._runAdmission(null, 'block_game_timeout', async () => {
+            // Snapshot the entries first: handleGameOver mutates activeGames (it deletes the
+            // entry), so iterating the live Map could skip games. Process sequentially and
+            // await each game-over rather than firing them all off concurrently on one tick.
+            // Anti-instant-death guard ONLY (default 2s, set 0 to disable). Random block timing
+            // is the game's core mechanic and is deliberately preserved — this is not a fairness
+            // floor. It only avoids the degenerate case where a block lands in the same instant
+            // the game starts and the player dies before the dungeon even renders / before their
+            // first move is possible (100ms move cooldown).
+            const graceMs = (() => {
+                const value = parseInt(process.env.GAME_START_GRACE_MS, 10);
+                return Number.isFinite(value) ? value : 2000;
+            })();
+            const now = Date.now();
+            const snapshot = Array.from(this.activeGames.entries());
+            for (const [socketId, game] of snapshot) {
+                // A pass can have crossed the admission gate before shutdown and then yielded
+                // while settling an earlier game. Never let it install a later terminal intent
+                // after the shutdown producer drain has begun.
+                if (this._isShuttingDown) break;
+                // G3: the snapshot can go stale while we await a previous game-over. If this game
+                // was concurrently won or otherwise ended (removed from activeGames on another
+                // async path), never re-end it here as a loss/timeout.
+                if (!this.activeGames.has(socketId)) continue;
+                // Terminal games deliberately remain mapped until their DB transaction succeeds.
+                // Never race that frozen result with a later block-timeout loss.
+                if (game?.settlementPending || game?.settlementCommitted || game?.gameState === 'ended') continue;
 
-            const user = this.connectionHandler.getUserBySocket(socketId);
-            if (!user) continue;
+                const user = this.connectionHandler.getUserBySocket(socketId);
+                if (!user) continue;
 
-            // G1/C3: only end when the entry block is DEFINED and a later block has arrived.
-            // If we've never recorded an entry block for this player, record the current
-            // height as the first observation instead of treating a missing value as either
-            // immortal (never times out) or instant-death (times out on the first tick).
-            if (user.blockRec == null) {
-                user.blockRec = currentHeight;
-                continue;
-            }
-
-            const elapsedMs = now - (game.startedAt || now);
-            if (currentHeight > user.blockRec && elapsedMs >= graceMs) {
-                if (this.debugManager.CONSOLE_LOGGING) {
-                    console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
+                // G1/C3: only end when the entry block is DEFINED and a later block has arrived.
+                // If we've never recorded an entry block for this player, record the current
+                // height as the first observation instead of treating a missing value as either
+                // immortal (never times out) or instant-death (times out on the first tick).
+                if (user.blockRec == null) {
+                    user.blockRec = currentHeight;
+                    continue;
                 }
-                game.gameState = 'lost';
-                const fakeSocket = { id: socketId };
-                try {
-                    await this.handleGameOver(fakeSocket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
-                } catch (e) {
-                    console.error(`checkGamesTimeout: handleGameOver failed for ${socketId}:`, e.message);
+
+                const elapsedMs = now - (game.startedAt || now);
+                if (currentHeight > user.blockRec && elapsedMs >= graceMs) {
+                    // Keep this check immediately adjacent to terminal mutation. The synchronous
+                    // beginShutdown flag is the authoritative cut between snapshot/restart work.
+                    if (this._isShuttingDown) break;
+                    if (this.debugManager.CONSOLE_LOGGING) {
+                        console.log(`💀 GAME TIMEOUT for player ${socketId}: entered on block ${user.blockRec}, died on block ${currentHeight}`);
+                    }
+                    game.gameState = 'lost';
+                    const fakeSocket = { id: socketId };
+                    try {
+                        await this.handleGameOver(fakeSocket, game, 'lost', 'timeout', 'You didn\'t escape before the block time limit!');
+                    } catch (e) {
+                        console.error(`checkGamesTimeout: handleGameOver failed for ${socketId}:`, e.message);
+                    }
                 }
             }
-        }
+        });
     }
 
     // Payment system handlers (placeholder for compatibility)
@@ -1685,6 +1948,11 @@ class SocketHandlers {
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log('🛑 SocketHandlers shutting down...');
         }
+
+        // Let work that crossed the synchronous admission boundary reach a stable state before
+        // freezing the settlement set. This includes a block-timeout pass paused on an earlier
+        // game's durable completion.
+        await this.drainShutdownProducers();
 
         // Settle terminal solo runs while the DB pool is still open. This is idempotent if the
         // top-level graceful-shutdown path already drained them.

@@ -42,7 +42,10 @@ const DUNGEON_CONFIGS = {
  * Dungeon generation utilities
  */
 class DungeonGenerator {
-    static get GENERATOR_VERSION() { return 'dungeon-generator-v1'; }
+    static get GENERATOR_VERSION() { return 'dungeon-generator-v2'; }
+    static get SUPPORTED_GENERATOR_VERSIONS() {
+        return Object.freeze(['dungeon-generator-v1', 'dungeon-generator-v2']);
+    }
     static get FINGERPRINT_VERSION() { return 1; }
 
     // Get the configuration object with difficulty settings applied
@@ -137,6 +140,10 @@ class DungeonGenerator {
         };
 
         const config = { ...defaultOptions, ...options };
+        const generatorVersion = config.generatorVersion || this.GENERATOR_VERSION;
+        if (!this.SUPPORTED_GENERATOR_VERSIONS.includes(generatorVersion)) {
+            throw new Error(`Unsupported dungeon generator version: ${generatorVersion}`);
+        }
         if (CONSOLE_LOGGING) {
             console.log(`[DungeonGenerator] Generating dungeon with effective torchDensity: ${config.torchDensity}`);
         }
@@ -157,15 +164,22 @@ class DungeonGenerator {
             const attemptSeed = (baseSeedInt != null) ? baseSeedInt + attempt : null;
             const dungeon = this._generateOnce(width, height, config, rng, attemptSeed);
             last = dungeon;
-            if (this.isReachable(dungeon.map, dungeon.entrance, dungeon.exit, config)) {
+            const reachable = this.isReachable(dungeon.map, dungeon.entrance, dungeon.exit, config);
+            const objectivesValid = generatorVersion === 'dungeon-generator-v1'
+                || this.hasDistinctReachableObjectives(dungeon, config);
+            if (reachable && objectivesValid) {
                 return dungeon;
             }
             if (CONSOLE_LOGGING) {
-                console.warn(`[DungeonGenerator] attempt ${attempt}: exit unreachable from entrance, regenerating`);
+                console.warn(`[DungeonGenerator] attempt ${attempt}: invalid reachability/objectives, regenerating`);
             }
         }
-        console.error(`[DungeonGenerator] Could not generate a reachable dungeon after ${MAX_ATTEMPTS} attempts; returning last candidate.`);
-        return last;
+        if (generatorVersion === 'dungeon-generator-v1') {
+            // Exact historical behavior for already-recorded v1 proofs.
+            console.error(`[DungeonGenerator] Could not generate a reachable dungeon after ${MAX_ATTEMPTS} attempts; returning last candidate.`);
+            return last;
+        }
+        throw new Error(`Could not generate a playable dungeon after ${MAX_ATTEMPTS} deterministic attempts`);
     }
 
     /**
@@ -277,6 +291,17 @@ class DungeonGenerator {
             }
         }
         return false;
+    }
+
+    /** V2 requires three distinct, reachable objectives so a run cannot start already won/looted. */
+    static hasDistinctReachableObjectives(dungeon, config) {
+        const points = [dungeon?.entrance, dungeon?.exit, dungeon?.treasure];
+        if (points.some(point => !Array.isArray(point) || point.length !== 2
+            || !Number.isInteger(point[0]) || !Number.isInteger(point[1]))) return false;
+        const keys = points.map(([x, y]) => `${x},${y}`);
+        if (new Set(keys).size !== points.length) return false;
+        return this.isReachable(dungeon.map, dungeon.entrance, dungeon.exit, config)
+            && this.isReachable(dungeon.map, dungeon.entrance, dungeon.treasure, config);
     }
     
     // Enhanced map creation with floor variations and torch placement

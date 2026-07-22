@@ -30,6 +30,8 @@ class GameManager {
             Number(settlementRetryMaxMs) || 30000
         );
         this._isShuttingDown = false;
+        this._admissionClosed = false;
+        this._creationsInFlight = new Set();
     }
 
     /**
@@ -53,6 +55,21 @@ class GameManager {
      * @returns {Object} Created game instance
      */
     async createGameForUser(user, gameType = 'standard', options = {}) {
+        if (this._admissionClosed) {
+            const error = new Error('Game admission is closed for server shutdown');
+            error.code = 'SERVER_SHUTTING_DOWN';
+            throw error;
+        }
+        const creation = this._createGameForUser(user, gameType, options);
+        this._creationsInFlight.add(creation);
+        try {
+            return await creation;
+        } finally {
+            this._creationsInFlight.delete(creation);
+        }
+    }
+
+    async _createGameForUser(user, gameType = 'standard', options = {}) {
         // Settlement-pending games intentionally remain in activeGames. This is the last-line
         // guard against starting/charging a replacement run while the previous terminal result
         // is not yet durable (and also closes ordinary double-start races between handlers).
@@ -84,6 +101,20 @@ class GameManager {
             console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id} (dbId: ${game.dbId || 'none'})`);
         }
         return game;
+    }
+
+    /** Synchronously close the lowest-level solo creation gate. */
+    beginShutdown() {
+        this._admissionClosed = true;
+        this._isShuttingDown = true;
+    }
+
+    /** Wait for creations that crossed the gate before beginShutdown(). */
+    async drainAdmissions() {
+        while (this._creationsInFlight.size > 0) {
+            await Promise.allSettled(Array.from(this._creationsInFlight));
+        }
+        return { pending: 0 };
     }
 
     /**
@@ -371,7 +402,7 @@ class GameManager {
      * Returns unresolved count so the process shutdown path can log/escalate it truthfully.
      */
     async shutdown({ timeoutMs = 4000, retryIntervalMs = 50 } = {}) {
-        this._isShuttingDown = true;
+        this.beginShutdown();
         for (const settlement of this._pendingSettlements.values()) {
             if (settlement.retryTimer) clearTimeout(settlement.retryTimer);
             settlement.retryTimer = null;
