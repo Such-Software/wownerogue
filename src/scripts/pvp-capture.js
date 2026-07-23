@@ -451,7 +451,7 @@ function captureResultSummary(room, players = capturePlayerSnapshot(room)) {
     const winner = players.find(player => player.id === room.winnerId) || null;
     const winnerName = String(winner?.name || winner?.id || 'NO ONE').toUpperCase();
     const ticks = Number(room.tickCount) || 0;
-    const detail = `FREE EXHIBITION • ${ticks} TICK${ticks === 1 ? '' : 'S'}`;
+    const detail = `FREE EXHIBITION • NO CASH PRIZES • ${ticks} TICK${ticks === 1 ? '' : 'S'}`;
 
     switch (room.ruleset?.id) {
     case 'last-alive': {
@@ -527,18 +527,19 @@ function capturePageHtml() {
 body{background:radial-gradient(circle at 50% -20%,rgba(52,123,70,.32),transparent 46%),linear-gradient(#0b0e12,#05070a 62%)}
 #frame{height:100%;display:grid;grid-template-rows:82px 1fr 52px;padding:18px 26px 16px;gap:10px}
 header,footer{display:flex;align-items:center;justify-content:space-between;gap:20px}
-.eyebrow{color:var(--green);font-size:12px;letter-spacing:.22em}.title{font-size:31px;font-weight:700;letter-spacing:.035em}.title b{color:var(--green)}
-#hud{display:flex;gap:7px;align-items:center}#hud span,.badge{border:1px solid #34404d;background:rgba(16,21,27,.9);border-radius:5px;padding:7px 10px;font-size:12px}
+.eyebrow{color:var(--green);font-size:13px;letter-spacing:.22em}.title{font-size:34px;font-weight:700;letter-spacing:.035em}.title b{color:var(--green)}
+#hud{display:flex;gap:7px;align-items:center}#hud span,.badge{border:1px solid #34404d;background:rgba(16,21,27,.9);border-radius:5px;padding:8px 11px;font-size:14px}
 .badge{color:#b8f8c2;border-color:#397348}.gold{color:var(--gold)!important}
-#stage{position:relative;min-height:0;overflow:hidden;background:#000;border:1px solid #35404c;border-radius:10px;box-shadow:0 24px 80px #000,inset 0 0 70px rgba(0,0,0,.65)}
-#stage:after{content:"";position:absolute;inset:0;pointer-events:none;z-index:10;box-shadow:inset 0 0 80px rgba(0,0,0,.58)}#stage canvas{display:block}
-#status{color:#d4dbe3}#seed{color:var(--muted);font-size:12px}.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);margin-right:7px}
-#roster{position:absolute;z-index:20;right:12px;top:12px;width:184px;display:grid;gap:5px;pointer-events:none}
-.roster-row{display:grid;grid-template-columns:7px 1fr auto;align-items:center;gap:7px;min-height:29px;padding:5px 7px;border:1px solid rgba(102,116,134,.58);border-radius:5px;background:rgba(7,10,14,.84);box-shadow:0 3px 14px rgba(0,0,0,.42);font-size:11px;letter-spacing:.04em}
-.roster-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px rgba(98,232,117,.7)}.roster-name{overflow:hidden;text-overflow:ellipsis}.roster-state{color:#a9b5c3;font-size:9px;letter-spacing:.09em}.roster-row.out{opacity:.48}.roster-row.done .roster-dot{background:var(--gold);box-shadow:0 0 6px rgba(244,196,93,.7)}
-#result{position:absolute;z-index:30;left:50%;top:50%;transform:translate(-50%,-50%);min-width:360px;max-width:82%;padding:22px;text-align:center;border:1px solid var(--gold);border-radius:9px;background:rgba(7,9,12,.94);box-shadow:0 22px 80px #000;opacity:0;transition:opacity .35s}#result.show{opacity:1}
-#result-headline{font-size:25px;color:var(--gold);letter-spacing:.04em}#result-detail{margin-top:7px;color:#cbd5df;font-size:13px;letter-spacing:.07em}
-@media(max-aspect-ratio:3/4){#frame{grid-template-rows:110px 1fr 70px;padding:24px 18px 22px}.title{font-size:28px}header{align-items:flex-start;flex-direction:column;gap:7px}#hud{width:100%;justify-content:space-between}#roster{width:160px;right:9px;top:9px}.roster-row{min-height:27px;padding:4px 6px}footer{align-items:flex-start;flex-direction:column;justify-content:center;gap:5px}#result{min-width:310px}}
+#stage{position:relative;min-height:0;overflow:hidden;background:#000;border:1px solid #43505e;border-radius:10px;box-shadow:0 24px 80px #000,inset 0 0 70px rgba(0,0,0,.65)}
+#stage:before{content:"";position:absolute;inset:0;pointer-events:none;z-index:9;background:linear-gradient(180deg,rgba(4,8,12,.04) 45%,rgba(4,7,10,.25))}
+#stage:after{content:"";position:absolute;inset:0;pointer-events:none;z-index:10;box-shadow:inset 0 0 70px rgba(0,0,0,.52)}#stage canvas{display:block;filter:brightness(.9) contrast(1.09) saturate(1.12)}
+#status{color:#d4dbe3;font-size:14px}#seed{color:var(--muted);font-size:13px}.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);margin-right:7px}
+#roster{position:absolute;z-index:20;right:14px;top:14px;width:242px;display:grid;gap:6px;pointer-events:none;transition:opacity .3s}
+.roster-row{display:grid;grid-template-columns:8px 1fr auto;align-items:center;gap:8px;min-height:36px;padding:7px 9px;border:1px solid rgba(115,132,151,.62);border-radius:6px;background:rgba(7,10,14,.86);box-shadow:0 3px 16px rgba(0,0,0,.46);font-size:14px;letter-spacing:.04em}
+.roster-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 7px rgba(98,232,117,.72)}.roster-name{overflow:hidden;text-overflow:ellipsis}.roster-state{color:#bdc7d2;font-size:11px;letter-spacing:.08em}.roster-row.out{opacity:.48}.roster-row.done .roster-dot{background:var(--gold);box-shadow:0 0 7px rgba(244,196,93,.72)}.roster-row.winner{opacity:1;border-color:var(--gold);background:rgba(28,23,10,.92);box-shadow:0 0 24px rgba(244,196,93,.22)}
+#result{position:absolute;z-index:30;left:20px;right:20px;bottom:18px;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:18px;padding:14px 18px;border:1px solid rgba(244,196,93,.88);border-radius:9px;background:linear-gradient(90deg,rgba(7,9,12,.96),rgba(7,9,12,.86));box-shadow:0 16px 54px rgba(0,0,0,.82);opacity:0;transform:translateY(14px);transition:opacity .35s,transform .35s;pointer-events:none}#result.show{opacity:1;transform:translateY(0)}
+#result-headline{font-size:30px;color:var(--gold);letter-spacing:.04em;white-space:nowrap}#result-detail{padding-left:18px;border-left:1px solid rgba(244,196,93,.34);color:#d4dce5;font-size:15px;letter-spacing:.07em}.finale #roster .roster-row:not(.winner){opacity:.24}
+@media(max-aspect-ratio:3/4){#frame{grid-template-rows:110px 1fr 70px;padding:24px 18px 22px}.title{font-size:32px}header{align-items:flex-start;flex-direction:column;gap:7px}#hud{width:100%;justify-content:space-between}#hud span,.badge{font-size:13px}#roster{width:230px;right:10px;top:10px}.roster-row{min-height:34px;padding:6px 8px;font-size:13px}.roster-state{font-size:11px}footer{align-items:flex-start;flex-direction:column;justify-content:center;gap:5px}#status{font-size:13px}#seed{font-size:12px}#result{left:14px;right:14px;bottom:14px;display:block;padding:16px 14px;text-align:center}#result-headline{font-size:28px;white-space:normal}#result-detail{margin-top:8px;padding-left:0;border-left:0;font-size:14px}}
 </style>
 <script src="/js/render/sceneModel.js"></script><script src="/js/render/fxLayer.js"></script>
 <script src="/js/render/skins.js"></script><script src="/js/render/charCustomize.js"></script>
@@ -549,8 +550,8 @@ header,footer{display:flex;align-items:center;justify-content:space-between;gap:
 <script src="/js/render/isoRenderer.js"></script><script>window.WOWNGEON_RUNTIME={rendererCdnEnabled:false};</script>
 <script src="/js/render/renderModes.js"></script>
 </head>
-<body><main id="frame"><header><div><div class="eyebrow" id="eyebrow">LIVE DUNGEON SPORT</div><div class="title">WOWNERO<b>GUE</b> <span id="mode-title">PVP</span></div></div><div id="hud"><span class="badge">FREE EXHIBITION</span><span id="tick">TICK 000</span><span id="participants" class="gold">CONNECTING</span></div></header>
-<section id="stage" aria-label="Deterministic multiplayer capture"><div id="roster" aria-label="Player status"></div><div id="result"><div id="result-headline"></div><div id="result-detail"></div></div></section>
+<body><main id="frame"><header><div><div class="eyebrow" id="eyebrow">LIVE DUNGEON SPORT</div><div class="title">WOWNERO<b>GUE</b> <span id="mode-title">PVP</span></div></div><div id="hud"><span class="badge">FREE EXHIBITION • NO CASH PRIZES</span><span id="tick">TICK 000</span><span id="participants" class="gold">CONNECTING</span></div></header>
+<section id="stage" aria-label="Deterministic multiplayer capture"><div id="roster" role="list" aria-label="Player status"></div><div id="result" role="status" aria-live="polite" aria-atomic="true"><div id="result-headline"></div><div id="result-detail"></div></div></section>
 <footer><div id="status"><i class="live"></i><span id="status-copy">DETERMINISTIC SERVER-AUTHORITATIVE PVP</span></div><div id="seed"></div></footer></main>
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -560,7 +561,7 @@ var stage=document.getElementById('stage'),RK=window.RK||{};RK.entitlements={pre
 // A landscape dungeon letterboxes badly inside a 9:16 ad. Use a tighter follow shot in portrait
 // while retaining the wider tactical composition for landscape captures.
 var portrait=stage.clientHeight>stage.clientWidth*1.15;
-var renderer=RK.createRenderer(mode,stage,{cell:30}),camera=RK.attachCamera(stage,{zoom:portrait?2.75:1.55,min:.6,max:portrait?4.5:2.8,controls:false}),presentation=null,actionFocus=null,actionFocusUntil=-1,finalWinnerId=null,finalWinnerStatus='WINNER';
+var renderer=RK.createRenderer(mode,stage,{cell:30}),camera=RK.attachCamera(stage,{zoom:portrait?2.8:1.6,min:.6,max:portrait?4.5:3.4,controls:false}),presentation=null,actionFocus=null,actionFocusUntil=-1,finalWinnerId=null,finalWinnerStatus='WINNER',lastPayload=null,previousFocus=null;
 var socket=io({auth:{role:'spectator',token:token},transports:['websocket'],reconnection:false});
 function byId(id){return document.getElementById(id);}
 function applyPresentation(next){
@@ -577,8 +578,10 @@ function playerState(player){
 function renderRoster(players){
  var roster=byId('roster');while(roster.firstChild)roster.removeChild(roster.firstChild);
  (players||[]).forEach(function(player){
-  var row=document.createElement('div'),dot=document.createElement('i'),name=document.createElement('span'),state=document.createElement('span');
-  row.className='roster-row'+(player.alive===false?' out':((player.finished||player.escaped)?' done':''));dot.className='roster-dot';name.className='roster-name';state.className='roster-state';
+  var row=document.createElement('div'),dot=document.createElement('i'),name=document.createElement('span'),state=document.createElement('span'),classes=['roster-row'];
+  if(player.alive===false)classes.push('out');else if(player.finished||player.escaped)classes.push('done');
+  if(finalWinnerId&&player.id===finalWinnerId)classes.push('winner');
+  row.className=classes.join(' ');row.setAttribute('role','listitem');dot.className='roster-dot';dot.setAttribute('aria-hidden','true');name.className='roster-name';state.className='roster-state';
   name.textContent=String(player.name||player.id||'PLAYER').toUpperCase();state.textContent=playerState(player);row.appendChild(dot);row.appendChild(name);row.appendChild(state);roster.appendChild(row);
  });
 }
@@ -592,29 +595,50 @@ function actionActor(events,tick){
 }
 function chooseFocus(state){
  var players=state.players||[],active=players.filter(function(player){return player.alive!==false&&!player.finished;});
+ if(finalWinnerId&&players.some(function(player){return player.id===finalWinnerId;}))return finalWinnerId;
  if(actionFocus&&Number(state.tick)<=actionFocusUntil&&players.some(function(player){return player.id===actionFocus;}))return actionFocus;
  if(active.some(function(player){return player.id===focus;}))return focus;
  return active[0]?active[0].id:focus;
 }
 function cameraZoom(state,focusId){
- var players=(state.players||[]).filter(function(player){return player.alive!==false&&!player.finished;}),chosen=players.find(function(player){return player.id===focusId;});
- var close=portrait?3.05:1.9,wide=portrait?2.15:1.18;if(!chosen||players.length<2)return close;
- var spread=0;players.forEach(function(player){spread=Math.max(spread,Math.abs(player.x-chosen.x)+Math.abs(player.y-chosen.y));});
- if(spread<=6)return close;if(spread>=18)return wide;return close-(close-wide)*((spread-6)/12);
+ var all=state.players||[],active=all.filter(function(player){return player.alive!==false&&!player.finished;}),chosen=all.find(function(player){return player.id===focusId;});
+ var canvas=renderer.canvas||{},cover=Math.max(stage.clientWidth/(canvas.width||stage.clientWidth),stage.clientHeight/(canvas.height||stage.clientHeight))*1.015;
+ var finale=document.body.classList.contains('finale'),close=Math.max(portrait?3.05:1.88,cover),wide=Math.max(portrait?2.05:1.14,cover);
+ if(renderer.name==='iso')return Math.max(cover,finale?(portrait?3.15:2.02):(portrait?2.05:1.14));
+ if(finale)return Math.max(portrait?3.15:2.02,cover);
+ if(!chosen)return close;
+ var field=(active.length?active:all).slice().sort(function(a,b){
+  var ad=Math.abs(a.x-chosen.x)+Math.abs(a.y-chosen.y),bd=Math.abs(b.x-chosen.x)+Math.abs(b.y-chosen.y);return ad-bd||String(a.id).localeCompare(String(b.id));
+ }).slice(0,portrait?3:4);
+ if(field.length<2)return close;
+ var xs=field.map(function(player){return player.x;}),ys=field.map(function(player){return player.y;});
+ var spanX=Math.max.apply(Math,xs)-Math.min.apply(Math,xs),spanY=Math.max.apply(Math,ys)-Math.min.apply(Math,ys),cell=Number(renderer.cell)||30;
+ var fitX=(stage.clientWidth*(portrait ? .72 : .7))/((spanX+(portrait?4:6))*cell),fitY=(stage.clientHeight*.68)/((spanY+(portrait?6:5))*cell);
+ return Math.max(wide,Math.min(close,fitX,fitY));
 }
-socket.on('connect',function(){socket.emit('capture_spectate');});
-socket.on('capture_state',function(payload){
- var state=payload&&payload.state;if(!state)return;applyPresentation(payload.presentation||state.ruleset);actionActor(payload.events,state.tick||0);var cameraFocus=chooseFocus(state),scene=RK.sceneFromGameState(state,{focusPlayerId:cameraFocus,cryptoType:'WOW'});
+function composeCamera(focusId,zoom){
+ if(!renderer.focusPoint)return;
+ var baseFocus={x:Number(renderer.focusPoint.x)||0,y:Number(renderer.focusPoint.y)||0};
+ var same=previousFocus&&previousFocus.id===focusId,limitX=Math.max(Number(renderer.cell)||0,(Number(renderer.tileW)||0)/2,30),limitY=Math.max(Number(renderer.cell)||0,(Number(renderer.tileH)||0)/2,30);
+ var dx=same?Math.max(-limitX,Math.min(limitX,baseFocus.x-previousFocus.x)):0,dy=same?Math.max(-limitY,Math.min(limitY,baseFocus.y-previousFocus.y)):0;
+ previousFocus={id:focusId,x:baseFocus.x,y:baseFocus.y};
+ var lead=portrait?1.25:1.7,verticalBias=portrait?(stage.clientHeight*.09)/zoom:(stage.clientHeight*.02)/zoom;
+ renderer.focusPoint={x:baseFocus.x+dx*lead,y:baseFocus.y+dy*lead+verticalBias};
+}
+function renderCaptureState(payload,forcedFocus){
+ var state=payload&&payload.state;if(!state)return;lastPayload=payload;applyPresentation(payload.presentation||state.ruleset);actionActor(payload.events,state.tick||0);var cameraFocus=forcedFocus||chooseFocus(state),scene=RK.sceneFromGameState(state,{focusPlayerId:cameraFocus,cryptoType:'WOW'});
  // The fixed screen-space roster is the capture label layer. Suppress world-space name text so a
  // melee pile-up stays readable instead of drawing six names on the same dungeon cell.
  (scene.entities||[]).forEach(function(entity){if(entity.kind==='player')entity.label=null;});
- renderer.render(scene);camera.setZoom(cameraZoom(state,cameraFocus));camera.update(renderer);byId('tick').textContent='TICK '+String(state.tick||0).padStart(3,'0');
+ renderer.render(scene);var zoom=cameraZoom(state,cameraFocus);composeCamera(cameraFocus,zoom);camera.setZoom(zoom);camera.update(renderer);byId('tick').textContent='TICK '+String(state.tick||0).padStart(3,'0');
  var active=(state.players||[]).filter(function(p){return p.alive!==false&&!p.finished;}).length;byId('participants').textContent=active+' '+(presentation?presentation.activeNoun:'ACTIVE');
- byId('seed').textContent='SEED '+String(payload.seedHash||'').slice(0,16).toUpperCase();renderRoster(state.players||[]);
+ byId('seed').textContent='DETERMINISTIC REPLAY ID • '+String(payload.seedHash||'').slice(0,10).toUpperCase();renderRoster(state.players||[]);
  window.__PVP_CAPTURE_LAST_STATE__=state;
-});
+}
+socket.on('connect',function(){socket.emit('capture_spectate');});
+socket.on('capture_state',function(payload){renderCaptureState(payload);});
 socket.on('capture_ready',function(){window.__PVP_CAPTURE_READY__=true;});
-socket.on('capture_end',function(payload){applyPresentation(payload.presentation);var outcome=payload.outcome||{};finalWinnerId=payload.winnerId||null;finalWinnerStatus=outcome.winnerStatus||'WINNER';renderRoster(payload.players||[]);byId('result-headline').textContent=outcome.headline||'MATCH COMPLETE';byId('result-detail').textContent=outcome.detail||'FREE EXHIBITION';byId('result').classList.add('show');window.__PVP_CAPTURE_DONE__=true;});
+socket.on('capture_end',function(payload){applyPresentation(payload.presentation);var outcome=payload.outcome||{};finalWinnerId=outcome.cooperative?null:(payload.winnerId||null);finalWinnerStatus=outcome.winnerStatus||'WINNER';if(finalWinnerId)document.body.classList.add('finale');else document.body.classList.remove('finale');if(lastPayload)renderCaptureState(lastPayload,finalWinnerId||null);renderRoster(payload.players||[]);byId('result-headline').textContent=outcome.headline||'MATCH COMPLETE';byId('result-detail').textContent=outcome.detail||'FREE EXHIBITION • NO CASH PRIZES';byId('result').classList.add('show');window.__PVP_CAPTURE_DONE__=true;});
 socket.on('connect_error',function(error){window.__PVP_CAPTURE_ERROR__=error&&error.message;});
 }());
 </script></body></html>`;

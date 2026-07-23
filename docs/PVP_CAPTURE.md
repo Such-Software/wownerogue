@@ -59,10 +59,27 @@ are `tiles`, `ascii`, and `iso`. Every ruleset accepts 2–8 bots in this harnes
 The default 1280×720 spectator camera anchors on `bot-1`; choose another player with `--focus
 bot-N`. In the default `--camera action` mode, deaths, treasure pickups, and exits temporarily take
 focus before the camera returns to that anchor. `--camera focus` disables those cuts. Camera zoom
-adjusts to the active pack: it pushes in for close action and pulls back as players spread out.
-Portrait viewports begin with a tighter follow crop so 9:16 footage fills the frame. A separate
-screen-space roster keeps all 2–8 player names and states legible without stacking labels on one
-dungeon tile.
+in the tiled and ASCII renderers adjusts to the nearest action cluster around the anchor: it keeps
+the closest three players in a portrait composition or four in landscape, then pushes in or pulls
+back as that cluster changes. The isometric renderer uses a stable, cover-clamped zoom because its
+diagonal projection needs different fit geometry. A short renderer-space movement lead shows where
+the focused player is heading, while an upper-frame bias keeps portrait action clear of the
+result lower third. The tested 1080×1920 and 1920×1080 tiled frames fill the stage. At match end, a
+competitive camera returns to the authoritative winner for a restrained push-in instead of hiding
+the playfield behind a centered modal.
+
+The capture-only grade slightly lowers brightness while restoring contrast and saturation, which
+reduces torch and character washout. A separate screen-space roster
+keeps all 2–8 player names and states legible without stacking labels on one dungeon tile; the
+winner remains highlighted while other rows recede on a competitive final frame, while cooperative
+team rows remain equally visible. The footer displays a short deterministic replay ID, not a
+signature or independent verification claim. The complete seed and every state hash remain in the
+JSON trace.
+
+`FREE EXHIBITION • NO CASH PRIZES` describes this isolated footage only. It is not a substitute for
+campaign review or campaign-level disclosures. Paid-credit, no-cash-out/no-prize, age, jurisdiction,
+certification, and platform-required disclosures remain outside the harness output and must be
+added and reviewed for each operated product and advertising channel.
 
 ## Capture each built-in mode
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const vm = require('vm');
+
 const {
     CAPTURE_RULESET_IDS,
     DEFAULT_SEED,
@@ -142,7 +144,8 @@ describe('deterministic PvP capture harness', () => {
         expect(captureResultSummary({
             ruleset: { id: 'score-attack' }, winnerId: 'bot-2', tickCount: 55
         }, [{ id: 'bot-2', name: 'Nyx', score: 912 }])).toEqual(expect.objectContaining({
-            headline: 'NYX TOPS THE BOARD', detail: expect.stringContaining('912 POINTS')
+            headline: 'NYX TOPS THE BOARD',
+            detail: expect.stringMatching(/912 POINTS.*FREE EXHIBITION.*NO CASH PRIZES/)
         }));
         expect(captureResultSummary({
             ruleset: { id: 'coop-escape' }, winnerId: 'bot-1', tickCount: 40
@@ -176,12 +179,36 @@ describe('deterministic PvP capture harness', () => {
         expect(html).toContain("cameraMode=query.get('camera')||'action'");
         expect(html).toContain('id="roster"');
         expect(html).toContain('actionFocusUntil');
+        expect(html).toContain('function composeCamera');
+        expect(html).toContain("if(finalWinnerId&&player.id===finalWinnerId)classes.push('winner')");
+        expect(html).toContain("finalWinnerId=outcome.cooperative?null:(payload.winnerId||null)");
+        expect(html).toContain("if(finalWinnerId)document.body.classList.add('finale');else document.body.classList.remove('finale')");
+        expect(html).toContain("if(renderer.name==='iso')return Math.max(cover");
+        expect(html).toContain('baseFocus.x-previousFocus.x');
+        expect(html).not.toContain('chosen.x-previousFocus.x');
+        expect(html).toContain('DETERMINISTIC REPLAY ID');
+        expect(html).not.toContain('VERIFIED REPLAY');
+        expect(html).toContain('FREE EXHIBITION • NO CASH PRIZES');
+        expect(html).toContain('id="roster" role="list"');
+        expect(html).toContain('id="result" role="status" aria-live="polite" aria-atomic="true"');
+        expect(html).toContain("slice(0,portrait?3:4)");
+        expect(html).toContain("cover=Math.max(stage.clientWidth/(canvas.width||stage.clientWidth)");
+        expect(html).toContain('#result{position:absolute;z-index:30;left:20px;right:20px;bottom:18px');
         expect(html).toContain("if(entity.kind==='player')entity.label=null");
         expect(html).toContain('controls:false');
         expect(html).toContain('/socket.io/socket.io.js');
         expect(html).not.toMatch(/https?:\/\/(?!127\.0\.0\.1)/);
         expect(html).not.toContain('crypto_race');
         expect(html).not.toContain('payment');
+
+        const inlineScripts = Array.from(
+            html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi),
+            match => match[1]
+        );
+        expect(inlineScripts.length).toBeGreaterThanOrEqual(2);
+        for (const source of inlineScripts) {
+            expect(() => new vm.Script(source)).not.toThrow();
+        }
     });
 
     test('parses the camera viewport as replay provenance', () => {
