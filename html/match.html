@@ -44,7 +44,7 @@
         button:hover:not(:disabled), button:focus-visible { border-color:#718095; filter:brightness(1.1); }
         button.primary { background:linear-gradient(#67e17a,#42b957); color:#061108; border-color:#7af08b; font-weight:700; box-shadow:0 0 18px rgba(85,217,107,.14); }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .economies { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:14px 0; }
+        .economies { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin:14px 0; }
         .economy { min-height:92px; padding:12px; text-align:left; border:1px solid var(--line); border-radius:8px; background:var(--panel2); cursor:pointer; }
         .economy strong, .economy small { display:block; }
         .economy strong { color:#fff; margin-bottom:5px; font-size:14px; }
@@ -126,7 +126,7 @@
         <div id="panel">
             <div id="queuePanel">
                 <h2 class="section-title">Choose your entry mode</h2>
-                <div id="economyHelp" class="muted">Free, Prestige, and Champions results remain on separate boards.</div>
+                <div id="economyHelp" class="muted">Each available entry mode keeps its results on a separate leaderboard.</div>
                 <div id="economies" class="economies" role="group" aria-label="Match entry mode"></div>
                 <div id="status" role="status" aria-live="polite">Connecting to the arena…</div>
 

@@ -52,11 +52,8 @@ const { renderPrivacy, renderResponsiblePlay, renderTerms } = require('./views/l
 const { buildCommerceDisclosure } = require('./config/commerceDisclosurePolicy');
 const createAdminRoutes = require('./routes/admin');
 const createAuthRoutes = require('./routes/auth');
+const { createLeaderboardHandler } = require('./routes/leaderboard');
 const { isSmirkEnabled } = require('./auth/smirkPolicy');
-const {
-  normalizeLeaderboardPeriod,
-  queryPrestigeLeaderboard
-} = require('./network/prestigeLeaderboard');
 
 // Initialize payment configuration
 const paymentConfigManager = new PaymentConfigManager({ logger: console });
@@ -701,54 +698,10 @@ app.use(createAdminRoutes(adminRouteCtx));
 // =============================================================================
 // LEADERBOARD
 // =============================================================================
-app.get('/api/leaderboard', asyncHandler(async (req, res) => {
-  const period = normalizeLeaderboardPeriod(req.query.period);
-  const requestedLimit = Number.parseInt(req.query.limit, 10);
-  const limit = Number.isFinite(requestedLimit)
-    ? Math.max(1, Math.min(requestedLimit, 50))
-    : 20;
-
-  let timeFilter = '';
-  if (period === 'week') timeFilter = "AND g.completed_at > NOW() - INTERVAL '7 days'";
-  else if (period === 'month') timeFilter = "AND g.completed_at > NOW() - INTERVAL '30 days'";
-
-  // Per-game leaderboard split (whitelisted -> safe to interpolate):
-  //   champions = games played with credits/entry-fee (Hall of Champions)
-  //   pleb      = free games (Pleb board)
-  //   prestige  = credit-prestige match races
-  //   all       = everyone (default, backward compatible)
-  const board = req.query.board || 'all';
-  let boardFilter = '';
-  if (board === 'champions') boardFilter = "AND g.game_mode IN ('PAID_SINGLE','PAID_CREDITS')";
-  else if (board === 'pleb') boardFilter = "AND g.game_mode = 'FREE'";
-
-  if (board === 'prestige') {
-    const result = await queryPrestigeLeaderboard(db, { period, limit });
-    return res.json({ leaderboard: result.rows, period, board });
-  }
-
-  const result = await db.query(`
-    SELECT
-      u.id,
-      COALESCE(u.display_name,
-        CASE WHEN u.payout_address IS NOT NULL
-          THEN LEFT(u.payout_address, 4) || '...' || RIGHT(u.payout_address, 4)
-          ELSE 'Anon#' || u.id
-        END
-      ) as name,
-      MAX(g.score) as best_score,
-      COUNT(*) FILTER (WHERE g.status = 'won') as wins,
-      COUNT(*) as games_played
-    FROM games g
-    JOIN users u ON g.user_id = u.id
-    WHERE g.status IN ('won', 'lost') AND g.score > 0 ${timeFilter} ${boardFilter}
-    GROUP BY u.id, u.display_name, u.payout_address
-    ORDER BY best_score DESC
-    LIMIT $1
-  `, [limit]);
-
-  res.json({ leaderboard: result.rows, period, board });
-}));
+app.get('/api/leaderboard', asyncHandler(createLeaderboardHandler({
+  db,
+  getOperatedProductProfileId: () => currentCommerceDisclosure().operatedProduct?.id || null
+})));
 
 // Public "social proof" stats strip: players online, games + escapes in the last 24h, and
 // total paid out. Cached in-memory for 10s so a public, unauthenticated endpoint can't hammer
@@ -798,6 +751,8 @@ app.get('/api/stats', asyncHandler(async (req, res) => {
 
 app.get('/api/game-modes', (req, res) => {
   const config = paymentConfigManager.getConfig();
+  const disclosure = currentCommerceDisclosure();
+  const publicModeInfo = gameModeManager.getGameModeInfo();
   const decimals = Number(config.currency?.decimals ?? 12);
   const toDisplay = (value) => {
     if (value === null || value === undefined) {
@@ -830,6 +785,9 @@ app.get('/api/game-modes', (req, res) => {
   }
 
   res.json({
+    operatedProductProfileId: disclosure.operatedProduct?.id || null,
+    cryptoMatchPayoutsEnabled: disclosure.service.cryptoMatchPayoutsEnabled,
+    soloEnabled: publicModeInfo.modes?.solo === true,
     // Free play is available when the instance is free-only OR when free play is offered
     // as a choice alongside paid options (FREE_PLAY_ENABLED).
     freePlayEnabled: !!gameModeManager.freePlayEnabled,
@@ -855,6 +813,10 @@ app.get('/api/game-modes', (req, res) => {
       payoutMultiplier: isPayoutProcessingEnabled() && creditsMode.enabled && config.payouts.rules.credits.enabled
         ? gameModeManager.getImplementedPayoutMultipliersForMode('PAID_CREDITS')
         : 0
+    },
+    match: {
+      enabled: publicModeInfo.modes?.match?.enabled === true,
+      economies: publicModeInfo.modes?.match?.economies || {}
     },
     rendererCdnEnabled,
     hostedBy

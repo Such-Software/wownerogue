@@ -214,6 +214,20 @@ describe('GameModeManager', () => {
             }
         });
 
+        test('game mode info publishes only a recognized operated product profile id', () => {
+            const old = process.env.OPERATED_PRODUCT_PROFILE;
+            try {
+                process.env.OPERATED_PRODUCT_PROFILE = 'such-play-wow-prestige';
+                expect(gmm.getGameModeInfo().operatedProductProfileId)
+                    .toBe('such-play-wow-prestige');
+                process.env.OPERATED_PRODUCT_PROFILE = 'unreviewed-profile';
+                expect(gmm.getGameModeInfo().operatedProductProfileId).toBeNull();
+            } finally {
+                if (old === undefined) delete process.env.OPERATED_PRODUCT_PROFILE;
+                else process.env.OPERATED_PRODUCT_PROFILE = old;
+            }
+        });
+
         test('crypto race economy is hidden when the payout master switch is off', () => {
             const keys = [
                 'MATCH_ENABLED', 'MATCH_CRYPTO_RACE_ENABLED', 'MATCH_PAYOUTS_ENABLED',

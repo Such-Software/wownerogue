@@ -197,6 +197,9 @@ describe('EnvironmentValidator production launch gate', () => {
             DIRECT_PAYOUTS_ENABLED: 'false',
             CREDITS_PAYOUTS_ENABLED: 'false',
             ALLOW_MAINNET_PAYOUTS: 'false',
+            SOLO_ENABLED: 'true',
+            TAVERN_ENABLED: 'true',
+            MATCH_ENABLED: 'true',
             MATCH_CRYPTO_RACE_ENABLED: 'false',
             MATCH_PAYOUTS_ENABLED: 'false'
         });
@@ -241,6 +244,9 @@ describe('EnvironmentValidator production launch gate', () => {
             CREDITS_PAYOUT_ESCAPE: '2.0',
             CREDITS_PAYOUT_TREASURE: '3.0',
             ALLOW_MAINNET_PAYOUTS: 'false',
+            SOLO_ENABLED: 'true',
+            TAVERN_ENABLED: 'true',
+            MATCH_ENABLED: 'true',
             MATCH_CRYPTO_RACE_ENABLED: 'false',
             MATCH_PAYOUTS_ENABLED: 'false'
         });
@@ -341,6 +347,9 @@ describe('EnvironmentValidator production launch gate', () => {
             CREDITS_PAYOUT_ESCAPE: '2',
             CREDITS_PAYOUT_TREASURE: '3',
             ALLOW_MAINNET_PAYOUTS: 'true',
+            SOLO_ENABLED: 'false',
+            TAVERN_ENABLED: 'false',
+            MATCH_ENABLED: 'false',
             MATCH_CRYPTO_RACE_ENABLED: 'true',
             MATCH_PAYOUTS_ENABLED: 'true'
         });
@@ -357,6 +366,9 @@ describe('EnvironmentValidator production launch gate', () => {
             expect.stringContaining('requires OPERATOR_CONTACT_URL=mailto:apps@such.software'),
             expect.stringContaining('requires MONERO_NETWORK=stagenet'),
             expect.stringContaining('requires DIRECT_PAYOUT_ESCAPE=2'),
+            expect.stringContaining('requires SOLO_ENABLED=true'),
+            expect.stringContaining('requires TAVERN_ENABLED=true'),
+            expect.stringContaining('requires MATCH_ENABLED=true'),
             expect.stringContaining('requires MATCH_CRYPTO_RACE_ENABLED=false'),
             expect.stringContaining('requires MATCH_PAYOUTS_ENABLED=false'),
             expect.stringContaining('requires ALLOW_MAINNET_PAYOUTS=false')

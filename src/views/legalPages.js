@@ -1,3 +1,7 @@
+const {
+    OPERATED_PRODUCT_PROFILE_IDS
+} = require('../config/operatedProductProfiles');
+
 const escapeHtml = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[character]);
@@ -36,6 +40,27 @@ function modeSummary(disclosure) {
         items.push(`<li><strong>Test network:</strong> ${escapeHtml(testNetworkNotice)}</li>`);
     }
     return items.length ? `<ul>${items.join('')}</ul>` : '<p>This instance currently exposes no paid play.</p>';
+}
+
+function leaderboardMapping(disclosure) {
+    const profileId = disclosure.operatedProduct?.id || null;
+    if (profileId === OPERATED_PRODUCT_PROFILE_IDS.WOW_PRESTIGE) {
+        return 'FREE solo runs and free competitive matches use the Pleb board. '
+            + 'Only PAID_CREDITS solo runs use the Hall of Champions; historical PAID_SINGLE '
+            + 'runs and match-generated game rows are excluded. credits_prestige matches use '
+            + 'the separate Prestige board. This operated profile does not offer crypto_race.';
+    }
+    if (profileId === OPERATED_PRODUCT_PROFILE_IDS.XMR_STAGENET) {
+        return 'FREE solo runs and free competitive matches use the Pleb board. '
+            + 'PAID_SINGLE and PAID_CREDITS solo runs use the Hall of Champions; match-generated '
+            + 'game rows are excluded. credits_prestige matches use the separate Prestige board. '
+            + 'This operated profile does not offer crypto_race.';
+    }
+    return 'Solo scores map by entry: FREE runs use the Pleb board, while PAID_SINGLE and '
+        + 'PAID_CREDITS runs use the Hall of Champions. PvP maps separately by economy: free '
+        + 'matches use the Pleb board, credits_prestige matches use the Prestige board, and an '
+        + 'enabled crypto_race records Hall of Champions rows. Those recorded crypto_race rows '
+        + 'remain historical Hall of Champions results if that economy is later disabled.';
 }
 
 function operatorAndSoftwareStatus(disclosure) {
@@ -85,7 +110,7 @@ function renderTerms(disclosure) {
         disclosure,
         body: `
 <section><h2>Who may use the service</h2><p>You may use the service only if you are at least ${escapeHtml(disclosure.minimumAge)}, can lawfully enter the transactions shown, and are acting for yourself. Do not use it where paid play, cryptocurrency transactions, prizes, or gambling-like games are prohibited.</p>${jurisdiction}</section>
-<section><h2>Current service modes</h2><p>The server configuration, confirmation screen, and invoice shown for an action control that action. Solo scores map by entry: FREE runs use the Pleb board, while PAID_SINGLE and PAID_CREDITS runs use the Hall of Champions. PvP maps separately by economy: free matches use the Pleb board, credits_prestige matches use the Prestige board, and crypto_race matches use the Hall of Champions.</p>${modeSummary(disclosure)}</section>
+<section><h2>Current service modes</h2><p>The server configuration, confirmation screen, and invoice shown for an action control that action. ${leaderboardMapping(disclosure)}</p>${modeSummary(disclosure)}</section>
 <section><h2>Payments, credits, and outcomes</h2><p>Blockchain transfers may be irreversible. Check the network, asset, address, and exact amount before sending. A pending invoice is not an entitlement until the server records the required confirmation. Do not send funds after an invoice expires; contact the operator for manual review.</p><p>Credits, tickets, cosmetics, and leaderboard status are service entitlements tied to an anonymous browser session. They are not deposits, do not earn interest, and are not redeemable for cryptocurrency unless a specific reward-enabled game says so before entry. Clearing browser storage or losing the session token can make an account inaccessible.</p><p>Random timing, dungeon generation, player decisions, other players, network conditions, and game rules affect results. A paid entry can lose its entire entry value. Previous results do not predict future results.</p></section>
 <section><h2>Fair play and acceptable use</h2><p>Do not exploit defects, automate the public service without permission, interfere with other players, evade limits, launder funds, submit unlawful content, or attempt to access another session. The operator may pause entry, quarantine ambiguous payments, reverse unconsumed service credits, or suspend access to protect players and the service. Blockchain transfers already broadcast cannot be reversed by the application.</p></section>
 <section><h2>Availability and changes</h2><p>The service is experimental software and may be paused, changed, or withdrawn. Rules and prices may change only for future entries; the server records the economic terms accepted for an admitted game. Verification pages and transaction records should be retained when resolving a dispute.</p></section>
@@ -122,4 +147,10 @@ function renderResponsiblePlay(disclosure) {
     });
 }
 
-module.exports = { escapeHtml, renderPrivacy, renderResponsiblePlay, renderTerms };
+module.exports = {
+    escapeHtml,
+    leaderboardMapping,
+    renderPrivacy,
+    renderResponsiblePlay,
+    renderTerms
+};

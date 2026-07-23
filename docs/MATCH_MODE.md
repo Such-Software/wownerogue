@@ -194,7 +194,12 @@ Client sends:
 - **Credits/prestige competitive matches** are served from authoritative `matches` and
   `match_entrants` rows by `GET /api/leaderboard?board=prestige`.
 - **Crypto competitive matches** create synthetic `games` rows with `game_mode = 'PAID_CREDITS'`
-  for the Hall of Champions board.
+  for the generic self-hosted Hall of Champions board. Such Software's two operated profiles keep
+  this economy disabled and exclude all match-generated rows from Champions.
+
+The public leaderboard endpoint requires `board=pleb|champions|prestige`; omitting `board` safely
+defaults to `pleb`. The removed mixed `board=all` behavior and unknown or blank values return 400
+instead of silently combining or translating economies.
 
 An individual win requires the durable match winner and placement #1 to agree; reaching the exit
 alone is never treated as a win in last-alive or score-attack. `coop-escape` is collective, records

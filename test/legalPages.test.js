@@ -38,7 +38,8 @@ describe('production disclosure pages', () => {
         expect(html).toContain('FREE runs use the Pleb board');
         expect(html).toContain('PAID_SINGLE and PAID_CREDITS runs use the Hall of Champions');
         expect(html).toContain('credits_prestige matches use the Prestige board');
-        expect(html).toContain('crypto_race matches use the Hall of Champions');
+        expect(html).toContain('enabled crypto_race records Hall of Champions rows');
+        expect(html).toContain('remain historical Hall of Champions results');
     });
 
     test('generic self-hosted pages carry the MIT conditions and third-party operator disclaimer', () => {
@@ -67,6 +68,9 @@ describe('production disclosure pages', () => {
         expect(html).toContain('offers no prizes, winnings, cash-out, or payouts');
         expect(html).toContain('not offered or marketed as gambling');
         expect(html).toContain('legal classification depends on applicable law');
+        expect(html).toContain('Only PAID_CREDITS solo runs use the Hall of Champions');
+        expect(html).toContain('historical PAID_SINGLE runs and match-generated game rows are excluded');
+        expect(html).toContain('does not offer crypto_race');
         expect(html).not.toContain('NO REAL VALUE');
     });
 
@@ -86,5 +90,19 @@ describe('production disclosure pages', () => {
         expect(html).toContain('NO REAL VALUE');
         expect(html).toContain('Never send mainnet XMR');
         expect(html).toContain('no real-money or mainnet gambling is offered');
+
+        const terms = renderTerms(disclosure({
+            OPERATED_PRODUCT_PROFILE: 'such-monerogue-stagenet'
+        }, {
+            cryptoType: 'XMR',
+            currencyLabel: 'sXMR',
+            network: 'stagenet',
+            isTestNetwork: true,
+            payoutsEnabled: true,
+            isPayoutEnabledForMode: () => true
+        }));
+        expect(terms).toContain('PAID_SINGLE and PAID_CREDITS solo runs use the Hall of Champions');
+        expect(terms).toContain('match-generated game rows are excluded');
+        expect(terms).toContain('does not offer crypto_race');
     });
 });

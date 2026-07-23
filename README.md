@@ -154,6 +154,7 @@ A warning appears if localStorage is unavailable.
 | `GET /health/live` | Process liveness probe |
 | `GET /health/ready` | Dependency readiness probe (503 while degraded) |
 | `GET /api/game-modes` | Current modes and pricing |
+| `GET /api/leaderboard?board=pleb\|champions\|prestige&period=all\|week\|month` | One explicitly separated score board; an omitted `board` means `pleb`, while legacy `all`, blank, and unknown board values return 400 |
 | `GET /api/user/:socketId/credits` | User credit balance |
 | `GET /api/user/:socketId/payments` | Payment history (paginated) |
 | `GET /api/user/:socketId/payouts` | Payout history (paginated) |

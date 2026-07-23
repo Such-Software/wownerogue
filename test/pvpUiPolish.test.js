@@ -75,7 +75,10 @@ describe('public multiplayer controls and boards', () => {
     const matchHtml = fs.readFileSync(path.join(__dirname, '../html/match.html'), 'utf8');
     const tavernHtml = fs.readFileSync(path.join(__dirname, '../html/tavern.html'), 'utf8');
     const matchClient = fs.readFileSync(path.join(__dirname, '../html/js/matchClient.js'), 'utf8');
+    const socketHandlers = fs.readFileSync(path.join(__dirname, '../html/js/network/socketHandlers.js'), 'utf8');
+    const helpModal = fs.readFileSync(path.join(__dirname, '../html/js/ui/helpModal.js'), 'utf8');
     const leaderboard = fs.readFileSync(path.join(__dirname, '../html/js/ui/leaderboard.js'), 'utf8');
+    const paymentUi = fs.readFileSync(path.join(__dirname, '../html/js/ui/paymentUI.js'), 'utf8');
     const designDoc = fs.readFileSync(path.join(__dirname, '../docs/TAVERN_AND_MULTIPLAYER.md'), 'utf8');
 
     test('match and Tavern D-pads are named groups activated through native click', () => {
@@ -90,6 +93,34 @@ describe('public multiplayer controls and boards', () => {
         expect(leaderboard).toContain('data-board="prestige"');
         expect(leaderboard).toContain('Credit-entry competitive PvP scores only');
         expect(leaderboard).toContain('never mixed with Free or the Hall of Champions');
+    });
+
+    test('arena renders only server-advertised economies, never locked out-of-profile cards', () => {
+        expect(matchClient).toContain('availableKeys.forEach(function (key)');
+        expect(matchClient).not.toContain('Object.keys(ECONOMIES).forEach(function (key)');
+        expect(matchClient).not.toContain("avail.textContent = locked ? 'NOT ENABLED'");
+        expect(tavernHtml).toContain('if (!economies[key]) return;');
+    });
+
+    test('Wownero-facing solo and leaderboard copy uses entry/credits, not stake claims', () => {
+        expect(socketHandlers).toContain('Choose your entry');
+        expect(socketHandlers).not.toContain('Choose your stakes');
+        expect(socketHandlers).toContain("Buy credits with ' + currency");
+        expect(helpModal).toContain('Prefer a free entry?');
+        expect(helpModal).not.toContain('Prefer no stakes?');
+        expect(leaderboard).toContain("this._profileId === 'such-play-wow-prestige'");
+        expect(leaderboard).toContain('Credit-entry solo scores only');
+        expect(leaderboard).toContain('historical crypto-match results recorded while that mode was enabled');
+        expect(leaderboard).not.toContain('crypto-stakes');
+    });
+
+    test('direct-entry payment copy never claims it adds a spendable credit', () => {
+        expect(socketHandlers).toContain('Buy a single entry or credits with ');
+        expect(socketHandlers).toContain('SocketHandlers._directModeEnabled');
+        expect(paymentUi).toContain('Single-game entry');
+        expect(paymentUi).toContain('no spendable credit is added');
+        expect(paymentUi).not.toContain('Single game <span');
+        expect(paymentUi).not.toContain('Counts as 1 credit toward cosmetic unlocks');
     });
 
     test('operator docs require restart for mode/ruleset changes and do not promise future combat', () => {

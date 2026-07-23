@@ -104,7 +104,7 @@ const HelpModal = {
         }
 
         const freeLine = config.freePlayEnabled
-            ? `<div style="font-size:0.82em; color:#888; margin-top:6px;">Prefer no stakes? Free runs are available too (Pleb leaderboard).</div>`
+            ? `<div style="font-size:0.82em; color:#888; margin-top:6px;">Prefer a free entry? Free runs are available too (Pleb leaderboard).</div>`
             : '';
 
         $container.html(`

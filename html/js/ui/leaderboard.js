@@ -5,7 +5,17 @@
 const Leaderboard = {
     _isLoading: false,
     _currentPeriod: 'all',
-    _currentBoard: 'champions', // solo paid | solo/free match | credits-prestige PvP
+    _currentBoard: 'champions', // paid solo (and generic opt-in crypto match) | free | prestige PvP
+    _profileId: null,
+    _cryptoMatchResultsEnabled: false,
+
+    updateConfig: function(config) {
+        config = config || {};
+        this._profileId = config.operatedProductProfileId || null;
+        this._cryptoMatchResultsEnabled = !!(config.modes && config.modes.match
+            && config.modes.match.economies && config.modes.match.economies.crypto_race);
+        if ($('#leaderboard-panel').length) this._updateTabs();
+    },
 
     init: function() {
         $('#leaderboardButton').on('click', function() {
@@ -94,10 +104,20 @@ const Leaderboard = {
                 $(this).css({ background: '#1a1a2e', color: '#aaa', borderColor: '#555' });
             }
         });
+        var championsNote;
+        if (this._profileId === 'such-play-wow-prestige') {
+            championsNote = 'Credit-entry solo scores only; no prizes, payouts, cash-out, or crypto-match results. Never mixed with Free or Prestige.';
+        } else if (this._profileId === 'such-monerogue-stagenet') {
+            championsNote = 'Direct-entry and credit-entry solo scores only; no crypto-match results. Never mixed with Free or Prestige.';
+        } else if (this._cryptoMatchResultsEnabled) {
+            championsNote = 'Paid solo and explicitly enabled crypto-match results; never mixed with Free or Prestige.';
+        } else {
+            championsNote = 'Paid solo scores plus any historical crypto-match results recorded while that mode was enabled; never mixed with Free or Prestige.';
+        }
         var boardMeta = {
             champions: {
                 title: '🏅 Hall of Champions',
-                note: 'Paid solo and configured crypto-stakes competitive results; never mixed with Free or Prestige.'
+                note: championsNote
             },
             prestige: {
                 title: '✨ PvP Prestige',

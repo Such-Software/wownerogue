@@ -54,6 +54,9 @@ describe('operated product environment templates', () => {
             DIRECT_PAYOUTS_ENABLED: 'false',
             CREDITS_PAYOUTS_ENABLED: 'false',
             ALLOW_MAINNET_PAYOUTS: 'false',
+            SOLO_ENABLED: 'true',
+            TAVERN_ENABLED: 'true',
+            MATCH_ENABLED: 'true',
             MATCH_CRYPTO_RACE_ENABLED: 'false',
             MATCH_PAYOUTS_ENABLED: 'false'
         }));
@@ -84,6 +87,9 @@ describe('operated product environment templates', () => {
             CREDITS_PAYOUT_ESCAPE: '2.0',
             CREDITS_PAYOUT_TREASURE: '3.0',
             ALLOW_MAINNET_PAYOUTS: 'false',
+            SOLO_ENABLED: 'true',
+            TAVERN_ENABLED: 'true',
+            MATCH_ENABLED: 'true',
             MATCH_CRYPTO_RACE_ENABLED: 'false',
             MATCH_PAYOUTS_ENABLED: 'false'
         }));

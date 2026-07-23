@@ -1,7 +1,10 @@
 const {
+    normalizeLeaderboardBoard,
     normalizeLeaderboardPeriod,
     prestigeCutoff,
-    queryPrestigeLeaderboard
+    queryPrestigeLeaderboard,
+    querySoloLeaderboard,
+    soloLeaderboardPolicy
 } = require('../src/network/prestigeLeaderboard');
 
 describe('prestige leaderboard periods', () => {
@@ -19,6 +22,58 @@ describe('prestige leaderboard periods', () => {
 
     test('unknown periods normalize to all', () => {
         expect(normalizeLeaderboardPeriod('YEAR')).toBe('all');
+    });
+
+    test.each([
+        ['pleb', 'pleb'],
+        ['CHAMPIONS', 'champions'],
+        [' prestige ', 'prestige'],
+        [undefined, 'pleb'],
+        [null, 'pleb'],
+        ['', null],
+        ['all', null],
+        ['unexpected', null]
+    ])('leaderboard board %p has an explicit, non-mixing API interpretation', (input, expected) => {
+        expect(normalizeLeaderboardBoard(input)).toBe(expected);
+    });
+
+    test('operated profile policies classify Champions from server identity', () => {
+        expect(soloLeaderboardPolicy('such-play-wow-prestige', 'champions')).toEqual({
+            gameModes: ['PAID_CREDITS'],
+            excludeMatchGenerated: true
+        });
+        expect(soloLeaderboardPolicy('such-monerogue-stagenet', 'champions')).toEqual({
+            gameModes: ['PAID_SINGLE', 'PAID_CREDITS'],
+            excludeMatchGenerated: true
+        });
+        expect(soloLeaderboardPolicy(null, 'champions')).toEqual({
+            gameModes: ['PAID_SINGLE', 'PAID_CREDITS'],
+            excludeMatchGenerated: false
+        });
+        expect(soloLeaderboardPolicy('such-play-wow-prestige', 'pleb')).toEqual({
+            gameModes: ['FREE'],
+            excludeMatchGenerated: false
+        });
+    });
+
+    test('operated solo query excludes both durable match markers', async () => {
+        const db = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+        await querySoloLeaderboard(db, {
+            profileId: 'such-play-wow-prestige',
+            board: 'champions',
+            period: 'week',
+            limit: 17,
+            now
+        });
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain("LEFT(COALESCE(g.outcome, ''), 6) <> 'match_'");
+        expect(sql).toContain('source_match.id::text = g.dungeon_seed');
+        expect(sql).toContain('g.game_mode = ANY($2::varchar[])');
+        expect(params[0].toISOString()).toBe('2026-07-14T16:00:00.000Z');
+        expect(params[1]).toEqual(['PAID_CREDITS']);
+        expect(params[2]).toBe(true);
+        expect(params[3]).toBe(17);
     });
 
     test.each(['week', 'month', 'all'])('queries match rows with a strict boundary for %s', async (period) => {

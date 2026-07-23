@@ -127,7 +127,9 @@ Pending:
 ## Scoring & Leaderboard (Feb 2026)
 - [x] **Scoring System**: New formula (max 800 pts) — base escape + treasure bonus + speed bonus + efficiency bonus
 - [x] **Score Persistence**: `score` column on games table, `high_score` on users (migration 014)
-- [x] **Leaderboard API**: `GET /api/leaderboard?period=all|week|month` with display name support
+- [x] **Leaderboard API**: `GET /api/leaderboard?board=pleb|champions|prestige&period=all|week|month`
+  with display-name support and no mixed-economy fallback (`board` omitted → Pleb; invalid/legacy
+  `all` → 400)
 - [x] **Leaderboard UI**: Modal with rank, name, best score, wins, games. Period tabs (All/Week/Month)
 - [x] **Display Names**: `/nick` chat command stores `display_name` on users table
 - [x] **Real-time Updates**: `leaderboard_update` broadcast on game wins, auto-refreshes open modal

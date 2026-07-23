@@ -88,7 +88,7 @@
         els.objectiveHint.textContent = 'Arrow keys / WASD · ' + activeRuleset.objective + ' · drag or pinch the camera';
         els.economyHelp.textContent = activeRuleset.cooperative
             ? 'Co-op is a team result and does not create an individual leaderboard winner.'
-            : 'Free, Prestige, and Champions results remain on separate boards.';
+            : 'Each available entry mode keeps its results on a separate leaderboard.';
     }
 
     function renderRulesets() {
@@ -119,20 +119,18 @@
         var availableKeys = Object.keys(ECONOMIES).filter(function (key) { return !!available[key]; });
         if (!available[selectedEconomy] && availableKeys.length) selectedEconomy = availableKeys[0];
         els.economies.innerHTML = '';
-        Object.keys(ECONOMIES).forEach(function (key) {
+        availableKeys.forEach(function (key) {
             var def = ECONOMIES[key];
-            var locked = !available[key];
             var button = document.createElement('button');
             button.type = 'button';
-            button.className = 'economy' + (key === selectedEconomy && !locked ? ' active' : '') + (locked ? ' locked' : '');
+            button.className = 'economy' + (key === selectedEconomy ? ' active' : '');
             button.dataset.economy = key;
-            button.disabled = locked;
-            button.setAttribute('aria-pressed', key === selectedEconomy && !locked ? 'true' : 'false');
+            button.setAttribute('aria-pressed', key === selectedEconomy ? 'true' : 'false');
             var title = document.createElement('strong'); title.textContent = def.label;
             var desc = document.createElement('small'); desc.textContent = def.description;
-            var avail = document.createElement('small'); avail.className = 'availability'; avail.textContent = locked ? 'NOT ENABLED' : def.available;
+            var avail = document.createElement('small'); avail.className = 'availability'; avail.textContent = def.available;
             button.appendChild(title); button.appendChild(desc); button.appendChild(avail);
-            if (!locked) button.addEventListener('click', function () {
+            button.addEventListener('click', function () {
                 selectedEconomy = key;
                 renderEconomies();
             });

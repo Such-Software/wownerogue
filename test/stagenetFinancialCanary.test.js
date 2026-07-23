@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
     LIVE_CONFIRM,
+    OPERATED_PROFILE_ID,
     REQUIRED_MIGRATIONS,
     SAFE_PROFILE_CONFIRM,
     SCENARIOS,
@@ -13,8 +14,10 @@ const {
     assertEmptyFinancialDatabase,
     assertInvoiceNotOwned,
     assertLiveSafety,
+    assertPublicModeContract,
     canonicalAcknowledgement,
     chooseMove,
+    enabledEconomyIds,
     readConfiguration,
     safeMessage,
     validateExpectedDatabaseName,
@@ -114,9 +117,14 @@ describe('XMR stagenet financial canary safety contract', () => {
     });
 
     test('builds exactly the current five-field stagenet acknowledgement', () => {
-        const acknowledgement = canonicalAcknowledgement({
+        const disclosure = {
             policyVersion: '2026-07-21-v2',
             paidAcknowledgementRequired: true,
+            operatedProduct: {
+                id: OPERATED_PROFILE_ID,
+                scopeNotice: 'Single-player 2×/3× outcomes use test coins.',
+                noRealValueNotice: 'NO REAL VALUE'
+            },
             service: {
                 cryptoType: 'XMR',
                 network: 'stagenet',
@@ -126,9 +134,11 @@ describe('XMR stagenet financial canary safety contract', () => {
                 paidCreditsEnabled: true,
                 soloPayoutsEnabled: true,
                 anyPayoutsEnabled: true,
-                paidPrestigeOnly: false
+                paidPrestigeOnly: false,
+                cryptoMatchPayoutsEnabled: false
             }
-        });
+        };
+        const acknowledgement = canonicalAcknowledgement(disclosure);
         expect(acknowledgement).toEqual({
             policyVersion: '2026-07-21-v2',
             ageEligible: true,
@@ -139,8 +149,17 @@ describe('XMR stagenet financial canary safety contract', () => {
         expect(Object.keys(acknowledgement)).toHaveLength(5);
         expect(Object.isFrozen(acknowledgement)).toBe(true);
         expect(() => canonicalAcknowledgement({
+            ...disclosure,
+            service: { ...disclosure.service, cryptoMatchPayoutsEnabled: true }
+        })).toThrow(/payout-enabled paid solo modes/);
+        expect(() => canonicalAcknowledgement({
+            ...disclosure,
+            operatedProduct: { ...disclosure.operatedProduct, id: 'unreviewed-profile' }
+        })).toThrow(/reviewed Such Software/);
+        expect(() => canonicalAcknowledgement({
             policyVersion: 'v1',
             paidAcknowledgementRequired: true,
+            operatedProduct: disclosure.operatedProduct,
             service: {
                 cryptoType: 'XMR',
                 network: 'mainnet',
@@ -150,9 +169,82 @@ describe('XMR stagenet financial canary safety contract', () => {
                 paidCreditsEnabled: true,
                 soloPayoutsEnabled: true,
                 anyPayoutsEnabled: true,
-                paidPrestigeOnly: false
+                paidPrestigeOnly: false,
+                cryptoMatchPayoutsEnabled: false
             }
         })).toThrow(/stagenet/);
+    });
+
+    test('requires the exact public profile and 2x/3x solo outcomes with crypto PvP off', () => {
+        const modes = {
+            operatedProductProfileId: OPERATED_PROFILE_ID,
+            cryptoMatchPayoutsEnabled: false,
+            soloEnabled: true,
+            FREE: { enabled: true },
+            PAID_SINGLE: {
+                enabled: true,
+                payoutMultiplier: { escape: 2, escapeWithTreasure: 3 }
+            },
+            PAID_CREDITS: {
+                enabled: true,
+                payoutMultiplier: { escape: 2, escapeWithTreasure: 3 }
+            },
+            match: {
+                enabled: true,
+                economies: {
+                    free: true,
+                    credits_prestige: true
+                }
+            }
+        };
+
+        expect(() => assertPublicModeContract(modes)).not.toThrow();
+        expect(() => assertPublicModeContract({
+            ...modes, operatedProductProfileId: 'unreviewed-profile'
+        })).toThrow(/reviewed no-crypto-PvP/);
+        expect(() => assertPublicModeContract({
+            ...modes, cryptoMatchPayoutsEnabled: true
+        })).toThrow(/reviewed no-crypto-PvP/);
+        expect(() => assertPublicModeContract({
+            ...modes,
+            soloEnabled: false
+        })).toThrow(/original solo mode/);
+        expect(() => assertPublicModeContract({
+            ...modes,
+            match: { ...modes.match, economies: { free: true } }
+        })).toThrow(/free and credits-prestige/);
+        expect(() => assertPublicModeContract({
+            ...modes,
+            match: {
+                ...modes.match,
+                economies: {
+                    ...modes.match.economies,
+                    crypto_race: true
+                }
+            }
+        })).toThrow(/free and credits-prestige/);
+        expect(() => assertPublicModeContract({
+            ...modes,
+            match: {
+                ...modes.match,
+                economies: {
+                    ...modes.match.economies,
+                    future_paid_mode: true
+                }
+            }
+        })).toThrow(/free and credits-prestige/);
+        expect(() => assertPublicModeContract({
+            ...modes,
+            PAID_CREDITS: {
+                ...modes.PAID_CREDITS,
+                payoutMultiplier: { escape: 2, escapeWithTreasure: 4 }
+            }
+        })).toThrow(/not exactly 3x/);
+        expect(enabledEconomyIds({
+            free: true,
+            credits_prestige: true,
+            crypto_race: false
+        })).toEqual(['credits_prestige', 'free']);
     });
 
     test('requires a scenario-named dedicated canary E2E database', () => {

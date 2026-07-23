@@ -714,7 +714,7 @@
         function buildMatchEconomies(info) {
             if (!info || !info.modes || !info.modes.match || !info.modes.match.enabled) return;
             var economies = info.modes.match.economies || {};
-            var labels = { free: 'Pleb · Free', credits_prestige: 'Prestige · Credits', crypto_race: 'Stagenet · Stakes' };
+            var labels = { free: 'Pleb · Free', credits_prestige: 'Prestige · Credits', crypto_race: 'Stagenet · Crypto entry' };
             var available = Object.keys(labels).filter(function (key) { return !!economies[key]; });
             if (!economies[selectedMatchEconomy] && available.length) selectedMatchEconomy = available[0];
             matchEconomies.innerHTML = '';

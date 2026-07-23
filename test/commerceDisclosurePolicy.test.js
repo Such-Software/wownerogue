@@ -93,6 +93,7 @@ describe('commerce disclosure and paid-action policy', () => {
         expect(disclosure.operatedProduct.scopeNotice).toContain('single-player 2×/3× outcomes are test gambling mechanics');
         expect(disclosure.operatedProduct.noRealValueNotice).toContain('NO REAL VALUE');
         expect(disclosure.operatedProduct.commerceSummary).toContain('never send mainnet XMR');
+        expect(disclosure.service.cryptoMatchPayoutsEnabled).toBe(false);
         expect(disclosure.software).toEqual(expect.objectContaining({
             license: 'MIT',
             publisherName: 'Such Software'

@@ -24,6 +24,7 @@ const { listMatchRulesets, resolveMatchRuleset } = require('./rulesets');
 const { matchPayoutAdmissionPolicy } = require('../network/matchEconomyPolicy');
 const { isSmirkEnabled } = require('../auth/smirkPolicy');
 const { reservePayoutCapacity } = require('../services/payoutAdmissionService');
+const { getOperatedProductProfile } = require('../config/operatedProductProfiles');
 
 // A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it
 // is SAFE to retry (no double-pay risk) — unlike an ambiguous post-broadcast failure. Monero
@@ -2415,6 +2416,7 @@ class GameModeManager {
         }));
         
         return {
+            operatedProductProfileId: getOperatedProductProfile(process.env)?.id || null,
             mode: this.gameMode,
             freePlayEnabled: !!this.freePlayEnabled, // players may choose free play even on a paid instance
             cryptoType: this.cryptoType,

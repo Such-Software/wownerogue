@@ -27,6 +27,7 @@ const FLOOR = new Set(["'1", "'2"]);
 const STEP_VECTORS = Object.freeze([[1, 0], [-1, 0], [0, 1], [0, -1]]);
 const LIVE_CONFIRM = 'I_UNDERSTAND_THIS_BROADCASTS_ONE_XMR_STAGENET_TRANSFER';
 const SAFE_PROFILE_CONFIRM = 'EASY_STATIC_MONSTER_ONE_LEVEL';
+const OPERATED_PROFILE_ID = 'such-monerogue-stagenet';
 const REQUIRED_MIGRATIONS = Object.freeze([
     '035_payment_entitlements_and_entry_evidence.sql',
     '037_payment_receipt_evidence.sql',
@@ -186,8 +187,14 @@ function canonicalAcknowledgement(disclosure) {
         && disclosure.service?.paidCreditsEnabled === true
         && disclosure.service?.soloPayoutsEnabled === true
         && disclosure.service?.anyPayoutsEnabled === true
-        && disclosure.service?.paidPrestigeOnly === false,
+        && disclosure.service?.paidPrestigeOnly === false
+        && disclosure.service?.cryptoMatchPayoutsEnabled === false,
     'commerce disclosure does not describe both payout-enabled paid solo modes');
+    assert(disclosure.operatedProduct?.id === OPERATED_PROFILE_ID,
+        'commerce disclosure is not the reviewed Such Software monerogue.app profile');
+    assert(String(disclosure.operatedProduct?.scopeNotice || '').includes('2×/3×')
+        && String(disclosure.operatedProduct?.noRealValueNotice || '').includes('NO REAL VALUE'),
+    'commerce disclosure is missing the 2x/3x or NO REAL VALUE operated-product warning');
     return Object.freeze({
         policyVersion: disclosure.policyVersion,
         ageEligible: true,
@@ -220,6 +227,34 @@ async function fetchCanonicalAcknowledgement(config) {
     return { disclosure: result.body, acknowledgement };
 }
 
+function enabledEconomyIds(economies) {
+    if (!economies || typeof economies !== 'object' || Array.isArray(economies)) return [];
+    return Object.keys(economies)
+        .filter(key => economies[key] === true)
+        .sort();
+}
+
+function assertPublicModeContract(modes) {
+    assert(modes?.operatedProductProfileId === OPERATED_PROFILE_ID
+        && modes?.cryptoMatchPayoutsEnabled === false,
+    'game-mode endpoint is not the reviewed no-crypto-PvP operated profile');
+    assert(modes?.soloEnabled === true && modes?.FREE?.enabled === true,
+        'the original solo mode and free solo entry must be enabled');
+    assert(modes?.PAID_SINGLE?.enabled === true
+        && modes?.PAID_CREDITS?.enabled === true,
+    'both direct and credits paid solo modes must be enabled');
+    assert(modes?.match?.enabled === true
+        && JSON.stringify(enabledEconomyIds(modes?.match?.economies))
+            === JSON.stringify(['credits_prestige', 'free']),
+    'match mode must expose only the reviewed free and credits-prestige economies');
+    for (const mode of ['PAID_SINGLE', 'PAID_CREDITS']) {
+        assert(Number(modes?.[mode]?.payoutMultiplier?.escape) === 2,
+            `${mode} escape payout is not exactly 2x`);
+        assert(Number(modes?.[mode]?.payoutMultiplier?.escapeWithTreasure) === 3,
+            `${mode} treasure payout is not exactly 3x`);
+    }
+}
+
 async function publicPreflight(config) {
     const ready = await jsonRequest(config.target, '/health/ready');
     assert(ready.response.status === 200 && ready.body?.ready === true,
@@ -237,15 +272,7 @@ async function publicPreflight(config) {
 
     const modes = await jsonRequest(config.target, '/api/game-modes');
     assert(modes.response.status === 200, 'game-mode endpoint is not HTTP 200');
-    assert(modes.body?.PAID_SINGLE?.enabled === true
-        && modes.body?.PAID_CREDITS?.enabled === true,
-    'both direct and credits paid solo modes must be enabled');
-    for (const mode of ['PAID_SINGLE', 'PAID_CREDITS']) {
-        assert(Number(modes.body?.[mode]?.payoutMultiplier?.escape) === 2,
-            `${mode} escape payout is not exactly 2x`);
-        assert(Number(modes.body?.[mode]?.payoutMultiplier?.escapeWithTreasure) === 3,
-            `${mode} treasure payout is not exactly 3x`);
-    }
+    assertPublicModeContract(modes.body);
 
     const stats = await jsonRequest(config.target, '/api/stats');
     assert(stats.response.status === 200
@@ -1276,7 +1303,8 @@ async function assertDatabaseSettlement(db, context) {
 }
 
 function assertModeInfo(info, config) {
-    assert(info?.cryptoType === 'XMR'
+    assert(info?.operatedProductProfileId === OPERATED_PROFILE_ID
+        && info?.cryptoType === 'XMR'
         && info.network === 'stagenet'
         && info.isTestNetwork === true
         && info.currencyLabel === 'sXMR'
@@ -1287,6 +1315,12 @@ function assertModeInfo(info, config) {
         && info.directPayoutsEnabled && info.creditsPayoutsEnabled,
     'mixed direct/credits mode and both payout paths must be enabled');
     assert(info.smirkEnabled === false, 'Smirk must be disabled on stagenet');
+    assert(info.modes?.solo === true
+        && info.modes?.tavern === true
+        && info.modes?.match?.enabled === true
+        && JSON.stringify(enabledEconomyIds(info.modes?.match?.economies))
+            === JSON.stringify(['credits_prestige', 'free']),
+    'operated Tavern/match modes or crypto-PvP exclusion drifted');
     for (const key of ['direct', 'credits']) {
         assert(Number(info.payoutMultipliers?.[key]?.escape) === 2
             && Number(info.payoutMultipliers?.[key]?.escapeWithTreasure) === 3,
@@ -1549,6 +1583,7 @@ if (require.main === module) {
 module.exports = {
     EMPTY_FINANCIAL_KEYS,
     LIVE_CONFIRM,
+    OPERATED_PROFILE_ID,
     REQUIRED_MIGRATIONS,
     SAFE_PROFILE_CONFIRM,
     SCENARIOS,
@@ -1558,9 +1593,11 @@ module.exports = {
     assertInvoiceNotOwned,
     assertLiveSafety,
     assertLocalUrl,
+    assertPublicModeContract,
     blockedKeys,
     canonicalAcknowledgement,
     chooseMove,
+    enabledEconomyIds,
     main,
     objectivePoint,
     readConfiguration,

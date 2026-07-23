@@ -129,6 +129,9 @@ function validateOperatedProductProfile(env = process.env, config = {}) {
     requireContract(isExplicitTrue(env.PAID_ACKNOWLEDGEMENT_REQUIRED),
         'PAID_ACKNOWLEDGEMENT_REQUIRED=true');
     requireContract(isExplicitTrue(env.FREE_PLAY_ENABLED), 'FREE_PLAY_ENABLED=true');
+    requireContract(isExplicitTrue(env.SOLO_ENABLED), 'SOLO_ENABLED=true');
+    requireContract(isExplicitTrue(env.TAVERN_ENABLED), 'TAVERN_ENABLED=true');
+    requireContract(isExplicitTrue(env.MATCH_ENABLED), 'MATCH_ENABLED=true');
     requireContract(isExplicitFalse(env.MATCH_CRYPTO_RACE_ENABLED), 'MATCH_CRYPTO_RACE_ENABLED=false');
     requireContract(isExplicitFalse(env.MATCH_PAYOUTS_ENABLED), 'MATCH_PAYOUTS_ENABLED=false');
     requireContract(!hasOutOfScopeProduct(config),

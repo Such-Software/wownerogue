@@ -178,9 +178,13 @@ const PaymentUI = {
 
         // Explain the two leaderboards up front when both paid and free are available.
         if (this.config.paymentsEnabled && this.config.freePlayEnabled) {
+            const paidEntryKinds = [];
+            if (this.config.creditsModeEnabled) paidEntryKinds.push('credits');
+            if (this.config.directModeEnabled) paidEntryKinds.push('single entry');
+            const paidEntryCopy = paidEntryKinds.join(' or ') || 'a paid entry';
             $container.append(
                 '<div style="margin-bottom:14px;padding:10px;background:rgba(245,158,11,0.08);border:1px solid #92400e;border-radius:6px;font-size:0.85em;line-height:1.5;">' +
-                    '🏅 <strong style="color:#fbbf24;">Pay</strong> (credits or single entry) to put your high scores in the <strong style="color:#fbbf24;">Hall of Champions</strong>.<br>' +
+                    '🏅 <strong style="color:#fbbf24;">Pay</strong> (' + this.escapeHtml(paidEntryCopy) + ') to put your high scores in the <strong style="color:#fbbf24;">Hall of Champions</strong>.<br>' +
                     '🪙 <strong style="color:#8ab4f8;">Play free</strong> — high scores go to the <strong style="color:#8ab4f8;">Pleb leaderboard</strong> instead.' +
                 '</div>'
             );
@@ -231,13 +235,13 @@ const PaymentUI = {
             $container.append(`
                 <div class="payment-section" style="margin-bottom:15px;padding:12px;background:#1a1a2e;border:1px solid #444;border-radius:6px;">
                     <div style="margin-bottom:8px;">
-                        <strong style="color:#f0f0f0;">⚡ Single game <span style="color:#a78bfa;font-size:0.8em;">· 1 credit</span></strong>
+                        <strong style="color:#f0f0f0;">⚡ Single-game entry</strong>
                         <span style="float:right;color:#fbbf24;font-weight:bold;">${price} ${currency}</span>
                     </div>
                     <div style="font-size:0.85em;color:#aaa;margin-bottom:6px;">
                         ${payoutInfo}
                     </div>
-                    <div style="font-size:0.78em;color:#888;margin-bottom:10px;">Counts as 1 credit toward cosmetic unlocks.</div>
+                    <div style="font-size:0.78em;color:#888;margin-bottom:10px;">Adds one purchase-progress point for unlock thresholds; no spendable credit is added.</div>
                     <button class="mode-option" data-mode="PAID_SINGLE" data-action="pay_direct"
                             style="width:100%;padding:8px;background:#3730a3;border:none;color:#fff;cursor:pointer;border-radius:4px;">
                         💰 Pay ${price} ${currency} to Play

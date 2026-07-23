@@ -16,6 +16,7 @@ const SocketHandlers = {
     _gameMode: null, // set from the server's game-modes event; was previously declared
                      // twice in this object literal (the later `null` silently won)
 
+    _directModeEnabled: false,
     _directPayoutsEnabled: false,
     _paymentsEnabled: false,
     _isSmirkExplicitlyEnabled: function(data) {
@@ -897,12 +898,16 @@ const SocketHandlers = {
         SocketHandlers._freePlayEnabled = !!data.freePlayEnabled;
         SocketHandlers._earlyEntryConfig = data.earlyEntry || { enabled: false };
         SocketHandlers._creditsPayoutsEnabled = !!data.creditsPayoutsEnabled;
+        SocketHandlers._directModeEnabled = !!data.directModeEnabled;
         SocketHandlers._directPayoutsEnabled = !!data.directPayoutsEnabled;
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
         SocketHandlers._smirkEnabled = SocketHandlers._isSmirkExplicitlyEnabled(data);
         SocketHandlers._cryptoType = data.cryptoType || 'WOW';
         SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
+        if (typeof Leaderboard !== 'undefined' && Leaderboard.updateConfig) {
+            Leaderboard.updateConfig(data);
+        }
         // Do not ask prestige-only users for a payout address or imply that mainnet paid
         // entries award crypto. Match crypto is exposed only when its economy is admitted.
         var matchCryptoPayouts = !!(data.modes && data.modes.match && data.modes.match.economies
@@ -1907,7 +1912,7 @@ const SocketHandlers = {
     // Entry Choice Modal
     // =====================
 
-    // ONE consolidated entry modal: timing (when) + stakes (free vs ranked) in a single dialog, so
+    // ONE consolidated entry modal: timing (when) + entry (free vs ranked) in a single dialog, so
     // the player never hits the old timing-modal-then-payment-modal double. Each card emits the
     // FINAL intent — Free sends {free:true} (server skips its options modal), Ranked uses a credit
     // or opens the real payment UI. Nothing starts until a card is clicked.
@@ -1918,6 +1923,10 @@ const SocketHandlers = {
         var hasCredits = !!opts.hasCredits;
         var cost = this._creditsPerGame || 1;
         var currency = this._currencyLabel || 'WOW';
+        var creditEntry = cost + (cost === 1 ? ' credit' : ' credits');
+        var buyRankedEntry = SocketHandlers._directModeEnabled
+            ? 'Buy a single entry or credits with ' + currency
+            : 'Buy credits with ' + currency;
         var timing = 'wait'; // safe default
 
         var $overlay = $('<div id="entryChoiceOverlay">').css({
@@ -1940,7 +1949,7 @@ const SocketHandlers = {
                 '<span style="display:block;font-size:13px;font-weight:bold;color:' + (on ? '#fff' : '#e6ead0') + '">' + t + '</span>' +
                 '<span style="display:block;font-size:10.5px;margin-top:2px;">' + d + '</span></button>';
         }
-        function stake(id, k, t, s, accent) {
+        function entryCard(id, k, t, s, accent) {
             return '<div id="' + id + '" style="display:flex;align-items:center;gap:11px;cursor:pointer;' +
                 'background:#0a0f07;border:1px solid ' + accent + ';border-radius:8px;padding:11px 12px;margin-bottom:9px;">' +
                 '<span style="font-size:21px;width:26px;text-align:center;">' + k + '</span>' +
@@ -1975,9 +1984,9 @@ const SocketHandlers = {
                         seg('ecWait', timing === 'wait', '&#128737; Next block', 'Start fresh &middot; blocks land at random', false) +
                         seg('ecNow', timing === 'now', '&#9889; Right now', 'Jump in &middot; race the time left', true) +
                     '</div>' +
-                    '<div style="font-size:10px;letter-spacing:2px;color:#5d6a4c;text-transform:uppercase;font-weight:bold;margin-bottom:7px;">2 &middot; Choose your stakes</div>' +
-                    (freeAvailable ? stake('ecFree', '&#127379;', 'Free Play', 'No cost &middot; Pleb leaderboard', '#123a17') : '') +
-                    stake('ecRank', '&#128176;', 'Ranked', (hasCredits ? '1 credit' : ('Pay ' + cost + ' ' + currency)) + ' &middot; Hall of Champions', '#2a1a4a') +
+                    '<div style="font-size:10px;letter-spacing:2px;color:#5d6a4c;text-transform:uppercase;font-weight:bold;margin-bottom:7px;">2 &middot; Choose your entry</div>' +
+                    (freeAvailable ? entryCard('ecFree', '&#127379;', 'Free Play', 'No cost &middot; Pleb leaderboard', '#123a17') : '') +
+                    entryCard('ecRank', '&#128176;', 'Ranked', (hasCredits ? creditEntry : buyRankedEntry) + ' &middot; Hall of Champions', '#2a1a4a') +
                     '<div style="margin-top:6px;font-size:11px;"><a id="ecBuy" style="color:#f0a828;cursor:pointer;">&#43; Buy credits (bulk discount)</a></div>' +
                 '</div>'
             );
