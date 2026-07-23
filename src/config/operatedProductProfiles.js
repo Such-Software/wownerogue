@@ -33,6 +33,8 @@ const PROFILES = Object.freeze({
         operatorName: 'Such Software',
         operatorContactUrl: SOURCE_SOFTWARE.contactUrl,
         operatorContactLabel: SOURCE_SOFTWARE.contactLabel,
+        legalPolicyVersion: '2026-07-22-v1',
+        termsEffectiveDate: '2026-07-22',
         scopeNotice: 'Such Software operates play.wowne.ro only as Wownero mainnet free play and pay-for-credits leaderboard/prestige play. Credits are non-redeemable service entitlements. The service offers no prizes, winnings, cash-out, or payouts and is not offered or marketed as gambling; legal classification depends on applicable law.',
         commerceSummary: 'This purchase grants non-redeemable service credits for leaderboard/prestige play only. play.wowne.ro offers no prize, payout, or cash-out and is not marketed as gambling.',
         noRealValueNotice: null
@@ -44,6 +46,8 @@ const PROFILES = Object.freeze({
         operatorName: 'Such Software',
         operatorContactUrl: SOURCE_SOFTWARE.contactUrl,
         operatorContactLabel: SOURCE_SOFTWARE.contactLabel,
+        legalPolicyVersion: '2026-07-23-v2',
+        termsEffectiveDate: '2026-07-23',
         scopeNotice: 'Such Software operates monerogue.app only with direct-entry Monero stagenet test coins. Its single-player 2×/3× outcomes are test gambling mechanics; purchased-credit entry is disabled, and no real-money or mainnet gambling is offered.',
         commerceSummary: 'NO REAL VALUE — monerogue.app uses direct-entry Monero stagenet test coins only. Single-player qualifying outcomes pay 2× or 3× in test coins. Purchased-credit entry is off. Never send mainnet XMR.',
         noRealValueNotice: 'NO REAL VALUE — Monero stagenet coins are test data, not money, deposits, redeemable prizes, or a promise of value. Never send mainnet XMR to this service.'
@@ -124,6 +128,10 @@ function validateOperatedProductProfile(env = process.env, config = {}) {
         `OPERATOR_CONTACT_URL=${profile.operatorContactUrl}`);
     requireContract(String(env.OPERATOR_CONTACT_LABEL || '').trim() === profile.operatorContactLabel,
         `OPERATOR_CONTACT_LABEL=${profile.operatorContactLabel}`);
+    requireContract(String(env.LEGAL_POLICY_VERSION || '').trim() === profile.legalPolicyVersion,
+        `LEGAL_POLICY_VERSION=${profile.legalPolicyVersion}`);
+    requireContract(String(env.TERMS_EFFECTIVE_DATE || '').trim() === profile.termsEffectiveDate,
+        `TERMS_EFFECTIVE_DATE=${profile.termsEffectiveDate}`);
     requireContract(isExplicitTrue(env.PAYMENTS_ENABLED) && config?.paymentsEnabled === true,
         'PAYMENTS_ENABLED=true');
     requireContract(isExplicitTrue(env.PAID_ACKNOWLEDGEMENT_REQUIRED),

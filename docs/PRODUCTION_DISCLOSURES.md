@@ -17,6 +17,8 @@ The corresponding `.env.mainnet.example` and `.env.stagenet.example` files opt i
 startup contract with `OPERATED_PRODUCT_PROFILE`. Preflight and normal startup reject any drift in
 host, operator identity, chain/network, paid modes, multipliers, or payout gates. Independent MIT
 self-hosts leave this setting unset and configure a truthful operator identity of their own.
+The operated Wownero disclosure is version `2026-07-22-v1`; Monerogue's direct-only scope is a
+material change and therefore uses version `2026-07-23-v2`, effective 2026-07-23.
 
 ## Open-source and operator disclaimer
 
