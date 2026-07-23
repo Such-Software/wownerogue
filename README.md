@@ -9,7 +9,7 @@ Such Software (`apps@such.software`) operates only these two public products:
 | Service | Operated scope |
 |---|---|
 | `play.wowne.ro` | Wownero mainnet free play and pay-for-credits leaderboard/prestige play. Credits are non-redeemable; there are no prizes, cash-out, or payouts, and the service is not offered or marketed as gambling. Legal classification depends on applicable law. |
-| `monerogue.app` | Monero **stagenet only**. Single-player 2×/3× outcomes are test gambling mechanics using test coins with **NO REAL VALUE**. Never send mainnet XMR. Crypto-match payouts remain off. |
+| `monerogue.app` | Monero **stagenet only**, with direct solo entry only. Single-player 2×/3× outcomes are test gambling mechanics using test coins with **NO REAL VALUE**. Purchased-credit entry and crypto-match payouts are off. Never send mainnet XMR. |
 
 The repository remains generally self-hostable under the MIT License. A third-party operator is
 solely responsible for its deployment, product, legal compliance, funds, players, claims, and
@@ -52,9 +52,10 @@ Open http://localhost:3000 to play.
 | **PAID_CREDITS** | Purchased credit | Profile-controlled | Paid prestige |
 
 The exact Such Software production profiles are `src/.env.mainnet.example` (credits only, every
-payout path off) and `src/.env.stagenet.example` (stagenet 2×/3× solo test payouts, crypto-match
-payouts off). Each opts into a startup contract with `OPERATED_PRODUCT_PROFILE`; preflight refuses
-network, operator-identity, or economic-scope drift. Generic self-hosts leave that variable unset.
+payout path off) and `src/.env.stagenet.example` (direct-entry-only stagenet 2×/3× solo test
+payouts, purchased credits and crypto-match payouts off). Each opts into a startup contract with
+`OPERATED_PRODUCT_PROFILE`; preflight refuses network, operator-identity, or economic-scope drift.
+Generic self-hosts leave that variable unset.
 
 ## Match Mode (Multiplayer Races)
 

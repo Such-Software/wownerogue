@@ -44,8 +44,8 @@ const PROFILES = Object.freeze({
         operatorName: 'Such Software',
         operatorContactUrl: SOURCE_SOFTWARE.contactUrl,
         operatorContactLabel: SOURCE_SOFTWARE.contactLabel,
-        scopeNotice: 'Such Software operates monerogue.app only with Monero stagenet test coins. Its single-player 2×/3× outcomes are test gambling mechanics; no real-money or mainnet gambling is offered.',
-        commerceSummary: 'NO REAL VALUE — monerogue.app uses Monero stagenet test coins only. Single-player qualifying outcomes pay 2× or 3× in test coins; never send mainnet XMR.',
+        scopeNotice: 'Such Software operates monerogue.app only with direct-entry Monero stagenet test coins. Its single-player 2×/3× outcomes are test gambling mechanics; purchased-credit entry is disabled, and no real-money or mainnet gambling is offered.',
+        commerceSummary: 'NO REAL VALUE — monerogue.app uses direct-entry Monero stagenet test coins only. Single-player qualifying outcomes pay 2× or 3× in test coins. Purchased-credit entry is off. Never send mainnet XMR.',
         noRealValueNotice: 'NO REAL VALUE — Monero stagenet coins are test data, not money, deposits, redeemable prizes, or a promise of value. Never send mainnet XMR to this service.'
     })
 });
@@ -158,22 +158,20 @@ function validateOperatedProductProfile(env = process.env, config = {}) {
     if (id === OPERATED_PRODUCT_PROFILE_IDS.XMR_STAGENET) {
         requireContract(cryptoType === 'XMR', 'CRYPTO_TYPE=XMR');
         requireContract(network === 'stagenet', 'MONERO_NETWORK=stagenet');
-        requireContract(String(env.PAYMENT_MODES || '').split(',').map(value => value.trim().toLowerCase()).join(',') === 'direct,credits',
-            'PAYMENT_MODES=direct,credits');
+        requireContract(String(env.PAYMENT_MODES || '').trim().toLowerCase() === 'direct',
+            'PAYMENT_MODES=direct');
         requireContract(isExplicitTrue(env.DIRECT_PAYMENT_ENABLED)
             && config?.modes?.direct?.enabled === true, 'DIRECT_PAYMENT_ENABLED=true');
-        requireContract(isExplicitTrue(env.CREDITS_ENABLED)
-            && config?.modes?.credits?.enabled === true, 'CREDITS_ENABLED=true');
+        requireContract(isExplicitFalse(env.CREDITS_ENABLED)
+            && config?.modes?.credits?.enabled === false, 'CREDITS_ENABLED=false');
         requireContract(isExplicitTrue(env.PAYOUTS_ENABLED)
             && config?.payouts?.enabled === true, 'PAYOUTS_ENABLED=true');
         requireContract(isExplicitTrue(env.DIRECT_PAYOUTS_ENABLED)
             && config?.payouts?.rules?.direct?.enabled === true, 'DIRECT_PAYOUTS_ENABLED=true');
-        requireContract(isExplicitTrue(env.CREDITS_PAYOUTS_ENABLED)
-            && config?.payouts?.rules?.credits?.enabled === true, 'CREDITS_PAYOUTS_ENABLED=true');
+        requireContract(isExplicitFalse(env.CREDITS_PAYOUTS_ENABLED)
+            && config?.payouts?.rules?.credits?.enabled === false, 'CREDITS_PAYOUTS_ENABLED=false');
         requireContract(exactMultiplier(env.DIRECT_PAYOUT_ESCAPE, 2), 'DIRECT_PAYOUT_ESCAPE=2');
         requireContract(exactMultiplier(env.DIRECT_PAYOUT_TREASURE, 3), 'DIRECT_PAYOUT_TREASURE=3');
-        requireContract(exactMultiplier(env.CREDITS_PAYOUT_ESCAPE, 2), 'CREDITS_PAYOUT_ESCAPE=2');
-        requireContract(exactMultiplier(env.CREDITS_PAYOUT_TREASURE, 3), 'CREDITS_PAYOUT_TREASURE=3');
         requireContract(isExplicitFalse(env.ALLOW_MAINNET_PAYOUTS), 'ALLOW_MAINNET_PAYOUTS=false');
     }
 

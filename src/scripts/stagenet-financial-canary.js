@@ -50,15 +50,15 @@ const SCENARIOS = Object.freeze({
         payoutReason: 'escape',
         scenarioConfirm: 'DIRECT_2X_ESCAPE'
     }),
-    'credits-3x': Object.freeze({
-        id: 'credits-3x',
-        databaseTag: 'credits',
-        paymentType: 'credits_package',
-        gameMode: 'PAID_CREDITS',
+    'direct-3x': Object.freeze({
+        id: 'direct-3x',
+        databaseTag: 'treasure',
+        paymentType: 'single_game',
+        gameMode: 'PAID_SINGLE',
         collectTreasure: true,
         multiplier: 3,
         payoutReason: 'escape_with_treasure',
-        scenarioConfirm: 'CREDITS_PACKAGE_THEN_3X_TREASURE_ESCAPE'
+        scenarioConfirm: 'DIRECT_3X_TREASURE_ESCAPE'
     })
 });
 
@@ -120,7 +120,7 @@ function readConfiguration(env = process.env) {
 
     const scenarioName = String(env.E2E_SCENARIO || '').trim();
     const scenario = scenarioName ? SCENARIOS[scenarioName] : null;
-    if (scenarioName) assert(scenario, 'E2E_SCENARIO must be direct-2x or credits-3x');
+    if (scenarioName) assert(scenario, 'E2E_SCENARIO must be direct-2x or direct-3x');
     if (mode !== 'preflight') {
         assert(scenario, 'E2E_SCENARIO is required for database and live modes');
     }
@@ -134,15 +134,10 @@ function readConfiguration(env = process.env) {
     assertLocalUrl(target, 'E2E_TARGET', 3102);
     assert(target.pathname === '/' || target.pathname === '', 'E2E_TARGET must not contain a path');
 
-    const packageId = String(env.E2E_CREDITS_PACKAGE_ID || 'small').trim();
-    assert(/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(packageId),
-        'E2E_CREDITS_PACKAGE_ID must be a simple product id');
-
     return Object.freeze({
         mode,
         scenario,
         target,
-        packageId,
         paymentTimeoutMs: boundedPositiveInt(env, 'E2E_PAYMENT_TIMEOUT_MS', 30 * 60 * 1000, 45 * 60 * 1000),
         payoutTimeoutMs: boundedPositiveInt(env, 'E2E_PAYOUT_TIMEOUT_MS', 15 * 60 * 1000, 30 * 60 * 1000),
         rpcPollMs: boundedPositiveInt(env, 'E2E_RPC_POLL_MS', 2000, 10000),
@@ -184,12 +179,12 @@ function canonicalAcknowledgement(disclosure) {
     'commerce disclosure is not canonical XMR stagenet policy');
     assert(disclosure.service?.paymentsEnabled === true
         && disclosure.service?.directPaidEntryEnabled === true
-        && disclosure.service?.paidCreditsEnabled === true
+        && disclosure.service?.paidCreditsEnabled === false
         && disclosure.service?.soloPayoutsEnabled === true
         && disclosure.service?.anyPayoutsEnabled === true
         && disclosure.service?.paidPrestigeOnly === false
         && disclosure.service?.cryptoMatchPayoutsEnabled === false,
-    'commerce disclosure does not describe both payout-enabled paid solo modes');
+    'commerce disclosure does not describe direct-only payout-enabled solo play');
     assert(disclosure.operatedProduct?.id === OPERATED_PROFILE_ID,
         'commerce disclosure is not the reviewed Such Software monerogue.app profile');
     assert(String(disclosure.operatedProduct?.scopeNotice || '').includes('2×/3×')
@@ -241,18 +236,17 @@ function assertPublicModeContract(modes) {
     assert(modes?.soloEnabled === true && modes?.FREE?.enabled === true,
         'the original solo mode and free solo entry must be enabled');
     assert(modes?.PAID_SINGLE?.enabled === true
-        && modes?.PAID_CREDITS?.enabled === true,
-    'both direct and credits paid solo modes must be enabled');
+        && modes?.PAID_CREDITS?.enabled === false
+        && Number(modes?.PAID_CREDITS?.payoutMultiplier) === 0,
+    'direct solo must be enabled and purchased-credit solo must be disabled');
     assert(modes?.match?.enabled === true
         && JSON.stringify(enabledEconomyIds(modes?.match?.economies))
             === JSON.stringify(['credits_prestige', 'free']),
     'match mode must expose only the reviewed free and credits-prestige economies');
-    for (const mode of ['PAID_SINGLE', 'PAID_CREDITS']) {
-        assert(Number(modes?.[mode]?.payoutMultiplier?.escape) === 2,
-            `${mode} escape payout is not exactly 2x`);
-        assert(Number(modes?.[mode]?.payoutMultiplier?.escapeWithTreasure) === 3,
-            `${mode} treasure payout is not exactly 3x`);
-    }
+    assert(Number(modes?.PAID_SINGLE?.payoutMultiplier?.escape) === 2,
+        'PAID_SINGLE escape payout is not exactly 2x');
+    assert(Number(modes?.PAID_SINGLE?.payoutMultiplier?.escapeWithTreasure) === 3,
+        'PAID_SINGLE treasure payout is not exactly 3x');
 }
 
 async function publicPreflight(config) {
@@ -665,40 +659,6 @@ async function createDirectInvoice(socket, journal, acknowledgement, config, mod
     return { invoice, amount, offer, clientSeed };
 }
 
-async function createCreditsInvoice(socket, journal, acknowledgement, config, packageInfo) {
-    const after = journal.seq;
-    socket.emit('request_payment', {
-        type: 'credits_package',
-        packageId: config.packageId,
-        legalAcknowledgement: acknowledgement
-    });
-    const outcome = await journal.waitAny([
-        { name: 'payment_created' },
-        { name: 'payment_error' },
-        { name: 'balance_critical' },
-        { name: 'payment_review_required' },
-        { name: '$disconnect' }
-    ], 30000, after);
-    assert(outcome.name === 'payment_created', `credits invoice creation failed (${outcome.name})`);
-    const invoice = outcome.data || {};
-    const amount = assertCommonInvoice(invoice, config, 'credits_package');
-    assert(invoice.productId === config.packageId && invoice.package?.id === config.packageId,
-        'credits invoice returned a different product');
-    assert(amount === BigInt(String(packageInfo.price)),
-        'credits invoice differs from advertised package price');
-    assert(Number(invoice.grants?.credits) === packageInfo.grantedCredits,
-        'credits invoice grant differs from advertised package grant');
-    assert(invoice.fairness == null, 'credits purchase must not bind a game fairness offer');
-    phase('pure credits package invoice matches its advertised product and grant');
-    return {
-        invoice,
-        amount,
-        grantedCredits: packageInfo.grantedCredits,
-        creditsPerGame: packageInfo.creditsPerGame,
-        payoutBase: packageInfo.payoutBase
-    };
-}
-
 function assertInvoiceNotOwned(ownership) {
     assert(ownership && ownership.error,
         'invoice belongs to the funding wallet; self-payment is forbidden');
@@ -1017,7 +977,7 @@ async function waitForIncomingPayout(funding, txHash, expected, config) {
     throw new Error('separate funding wallet did not observe the payout before timeout');
 }
 
-async function assertExactDatabaseCounts(db, scenario) {
+async function assertExactDatabaseCounts(db) {
     const result = await db.query(`
         SELECT
           (SELECT COUNT(*)::int FROM users) AS users,
@@ -1047,7 +1007,7 @@ async function assertExactDatabaseCounts(db, scenario) {
         refunds: 0,
         late_reviews: 0,
         credit_transactions: 2,
-        entitlement_grants: scenario.id === 'credits-3x' ? 1 : 0,
+        entitlement_grants: 0,
         pack_entitlements: 0,
         matches: 0,
         match_entrants: 0,
@@ -1090,32 +1050,18 @@ async function assertPaymentAndReceipt(db, context) {
         && Number.isInteger(Number(row.address_index)) && Number(row.address_index) >= 0,
     'payment row lacks its immutable invoice destination identity');
 
-    if (context.scenario.id === 'direct-2x') {
-        assert(row.product_id === 'single_game' && Number(row.credits_purchased) === 0
-            && Number(row.product_grants?.credits || 0) === 0
-            && Number(row.product_grants?.raceEntries || 0) === 0
-            && Array.isArray(row.product_grants?.packs) && row.product_grants.packs.length === 0
-            && row.product_grants?.premiumLevel == null,
-            'direct payment product identity changed');
-        assert(Number(row.fairness_proof_version) === 2 && row.bound && row.consumed,
-            'direct payment fairness binding was not consumed exactly once');
-        assert(row.fairness_offer_id === context.offer.offerId
-            && row.fairness_commitment === context.offer.commitment
-            && row.fairness_client_seed === context.clientSeed,
-        'direct payment fairness identity changed');
-    } else {
-        assert(row.product_id === context.packageId
-            && Number(row.credits_purchased) === context.grantedCredits
-            && Number(row.product_grants?.credits) === context.grantedCredits
-            && Number(row.product_grants?.raceEntries || 0) === 0
-            && Array.isArray(row.product_grants?.packs) && row.product_grants.packs.length === 0
-            && row.product_grants?.premiumLevel == null,
-        'credits payment product or durable grant identity changed');
-        assert(row.fairness_proof_version == null
-            && row.fairness_offer_id == null
-            && !row.bound && !row.consumed,
-        'credits package was incorrectly bound to a game fairness offer');
-    }
+    assert(row.product_id === 'single_game' && Number(row.credits_purchased) === 0
+        && Number(row.product_grants?.credits || 0) === 0
+        && Number(row.product_grants?.raceEntries || 0) === 0
+        && Array.isArray(row.product_grants?.packs) && row.product_grants.packs.length === 0
+        && row.product_grants?.premiumLevel == null,
+    'direct payment product identity changed');
+    assert(Number(row.fairness_proof_version) === 2 && row.bound && row.consumed,
+        'direct payment fairness binding was not consumed exactly once');
+    assert(row.fairness_offer_id === context.offer.offerId
+        && row.fairness_commitment === context.offer.commitment
+        && row.fairness_client_seed === context.clientSeed,
+    'direct payment fairness identity changed');
 
     const receipt = await db.query(`
         SELECT COUNT(*)::int AS count,
@@ -1199,15 +1145,9 @@ async function assertGameAndPayout(db, context) {
         && row.client_seed === context.clientSeed,
     'durable game fairness identity changed');
 
-    if (context.scenario.id === 'direct-2x') {
-        assert(String(row.payment_id) === String(context.paymentId)
-            && row.entry_credits_spent == null,
-        'direct game did not consume exactly its bound payment');
-    } else {
-        assert(row.payment_id == null
-            && Number(row.entry_credits_spent) === context.creditsPerGame,
-        'credits game did not consume exactly its credit entry');
-    }
+    assert(String(row.payment_id) === String(context.paymentId)
+        && row.entry_credits_spent == null,
+    'direct game did not consume exactly its bound payment');
 
     assert(String(row.payout_id) === String(context.payoutId)
         && BigInt(row.amount) === context.payoutAmount
@@ -1238,62 +1178,21 @@ async function assertCreditLedger(db, context, userId) {
     `, [userId]);
     assert(ledger.rows.length === 2, 'canary user does not have exactly two credit-ledger rows');
 
-    if (context.scenario.id === 'direct-2x') {
-        assert(Number(user.credits) === 0 && Number(user.total_credits_purchased) === 1,
-            'direct entry did not net to zero and advance purchase progress once');
-        const [purchase, spend] = ledger.rows;
-        assert(Number(purchase.amount) === 1 && purchase.reason === 'direct_entry'
-            && purchase.transaction_type === 'purchase' && Number(purchase.balance_after) === 0
-            && purchase.payment_id == null,
-        'direct-entry purchase ledger row is not exact');
-        assert(Number(spend.amount) === -1 && spend.reason === 'game_entry'
-            && spend.transaction_type === 'spend' && Number(spend.balance_after) === 0
-            && spend.payment_id == null,
-        'direct-entry spend ledger row is not exact');
-        return;
-    }
-
-    const finalBalance = context.grantedCredits - context.creditsPerGame;
-    assert(Number(user.credits) === finalBalance
-        && Number(user.total_credits_purchased) === context.grantedCredits,
-    'credits package grant or post-entry balance is wrong');
+    assert(Number(user.credits) === 0 && Number(user.total_credits_purchased) === 1,
+        'direct entry did not net to zero and advance purchase progress once');
     const [purchase, spend] = ledger.rows;
-    assert(Number(purchase.amount) === context.grantedCredits
-        && purchase.reason === 'package_purchase'
-        && purchase.transaction_type === 'purchase'
-        && Number(purchase.balance_after) === context.grantedCredits
-        && String(purchase.payment_id) === String(context.paymentId),
-    'package-purchase ledger row is not exact');
-    assert(Number(spend.amount) === -context.creditsPerGame
-        && spend.reason === 'game_entry'
-        && spend.transaction_type === 'spend'
-        && Number(spend.balance_after) === finalBalance
+    assert(Number(purchase.amount) === 1 && purchase.reason === 'direct_entry'
+        && purchase.transaction_type === 'purchase' && Number(purchase.balance_after) === 0
+        && purchase.payment_id == null,
+    'direct-entry purchase ledger row is not exact');
+    assert(Number(spend.amount) === -1 && spend.reason === 'game_entry'
+        && spend.transaction_type === 'spend' && Number(spend.balance_after) === 0
         && spend.payment_id == null,
-    'credits game-entry ledger row is not exact');
-
-    const grantResult = await db.query(`
-        SELECT source, credits_granted, purchase_progress_granted,
-               race_entries_granted, packs_granted, premium_level_granted,
-               status, credits_reversed, purchase_progress_reversed,
-               race_entries_reversed
-        FROM payment_entitlement_grants WHERE payment_id = $1 AND user_id = $2
-    `, [context.paymentId, userId]);
-    const grant = grantResult.rows[0];
-    assert(grantResult.rows.length === 1 && grant.source === 'product_confirmation'
-        && grant.status === 'active'
-        && Number(grant.credits_granted) === context.grantedCredits
-        && Number(grant.purchase_progress_granted) === context.grantedCredits
-        && Number(grant.race_entries_granted) === 0
-        && Array.isArray(grant.packs_granted) && grant.packs_granted.length === 0
-        && grant.premium_level_granted == null
-        && Number(grant.credits_reversed) === 0
-        && Number(grant.purchase_progress_reversed) === 0
-        && Number(grant.race_entries_reversed) === 0,
-    'payment-scoped credits entitlement marker is not exact');
+    'direct-entry spend ledger row is not exact');
 }
 
 async function assertDatabaseSettlement(db, context) {
-    await assertExactDatabaseCounts(db, context.scenario);
+    await assertExactDatabaseCounts(db);
     const paymentUserId = await assertPaymentAndReceipt(db, context);
     const gameUserId = await assertGameAndPayout(db, context);
     assert(String(paymentUserId) === String(gameUserId),
@@ -1302,7 +1201,7 @@ async function assertDatabaseSettlement(db, context) {
     phase('exact receipt, entitlement, credit, game, liability, and payout rows verified');
 }
 
-function assertModeInfo(info, config) {
+function assertModeInfo(info) {
     assert(info?.operatedProductProfileId === OPERATED_PROFILE_ID
         && info?.cryptoType === 'XMR'
         && info.network === 'stagenet'
@@ -1311,9 +1210,9 @@ function assertModeInfo(info, config) {
         && info.gameName === 'Monerogue',
     'Socket.IO product identity is not Monerogue XMR stagenet');
     assert(info.paymentsEnabled && info.payoutsEnabled
-        && info.directModeEnabled && info.creditsModeEnabled
-        && info.directPayoutsEnabled && info.creditsPayoutsEnabled,
-    'mixed direct/credits mode and both payout paths must be enabled');
+        && info.directModeEnabled && !info.creditsModeEnabled
+        && info.directPayoutsEnabled && !info.creditsPayoutsEnabled,
+    'direct entry/payout must be enabled and purchased-credit paths must be disabled');
     assert(info.smirkEnabled === false, 'Smirk must be disabled on stagenet');
     assert(info.modes?.solo === true
         && info.modes?.tavern === true
@@ -1321,39 +1220,14 @@ function assertModeInfo(info, config) {
         && JSON.stringify(enabledEconomyIds(info.modes?.match?.economies))
             === JSON.stringify(['credits_prestige', 'free']),
     'operated Tavern/match modes or crypto-PvP exclusion drifted');
-    for (const key of ['direct', 'credits']) {
-        assert(Number(info.payoutMultipliers?.[key]?.escape) === 2
-            && Number(info.payoutMultipliers?.[key]?.escapeWithTreasure) === 3,
-        `${key} Socket.IO payout multipliers are not exact 2x/3x`);
-    }
+    assert(Number(info.payoutMultipliers?.direct?.escape) === 2
+        && Number(info.payoutMultipliers?.direct?.escapeWithTreasure) === 3,
+    'direct Socket.IO payout multipliers are not exact 2x/3x');
     assert(/^\d+$/.test(String(info.singleGamePrice))
         && BigInt(String(info.singleGamePrice)) > 0n
         && BigInt(String(info.singleGamePrice)) * 3n <= BigInt(Number.MAX_SAFE_INTEGER),
     'Socket.IO direct price or its 3x result is not a safe positive atomic value');
 
-    const selected = (info.creditPackages || []).find(item => item.id === config.packageId);
-    assert(selected, 'selected credits package is not advertised');
-    const grantedCredits = Number(selected.grants?.credits);
-    const creditsPerGame = Number(info.creditsPerGame);
-    assert(Number.isSafeInteger(grantedCredits) && Number.isSafeInteger(creditsPerGame)
-        && grantedCredits >= creditsPerGame && creditsPerGame > 0,
-    'selected package cannot fund exactly one credits game');
-    assert(Number(selected.grants?.raceEntries || 0) === 0
-        && Array.isArray(selected.grants?.packs) && selected.grants.packs.length === 0
-        && selected.grants?.premiumLevel == null,
-    'financial canary requires a pure credits-only package');
-    assert(/^\d+$/.test(String(selected.price)) && BigInt(String(selected.price)) > 0n,
-        'selected package has no positive atomic price');
-    assert(/^\d+$/.test(String(info.creditsPayoutBaseValue))
-        && BigInt(String(info.creditsPayoutBaseValue)) > 0n
-        && BigInt(String(info.creditsPayoutBaseValue)) * 3n <= BigInt(Number.MAX_SAFE_INTEGER),
-    'credits payout base or its 3x result is not a safe positive atomic value');
-    return Object.freeze({
-        ...selected,
-        grantedCredits,
-        creditsPerGame,
-        payoutBase: BigInt(String(info.creditsPayoutBaseValue))
-    });
 }
 
 async function waitForPaymentConfirmation(journal, paymentId, timeoutMs) {
@@ -1366,29 +1240,6 @@ async function waitForPaymentConfirmation(journal, paymentId, timeoutMs) {
     assert(outcome.name === 'payment_confirmed', `payment was not confirmed (${outcome.name})`);
     phase('exact transfer became a receipt-backed confirmed payment');
     return outcome.data || {};
-}
-
-async function startCreditsGame(socket, journal, acknowledgement) {
-    const offer = await requestFreshFairness(socket, journal);
-    const clientSeed = crypto.randomBytes(32).toString('hex');
-    const after = journal.seq;
-    socket.emit('auto_start', {
-        fairnessOfferId: offer.offerId,
-        clientSeed,
-        legalAcknowledgement: acknowledgement
-    });
-    const outcome = await journal.waitAny([
-        { name: 'game_start' },
-        { name: 'fairness_error' },
-        { name: 'status_update', test: data => data?.type === 'error' || data?.status === 'error' },
-        { name: '$disconnect' }
-    ], 60000, after);
-    assert(outcome.name === 'game_start', `credits game did not start (${outcome.name})`);
-    assert(outcome.data?.proof?.offerId === offer.offerId
-        && outcome.data?.proof?.commitment === offer.commitment
-        && outcome.data?.proof?.clientSeed === clientSeed,
-    'credits game did not consume the fresh fairness offer');
-    return { gameStart: outcome, offer, clientSeed };
 }
 
 async function runLive(config, modules, db, legal, env = process.env) {
@@ -1416,7 +1267,7 @@ async function runLive(config, modules, db, legal, env = process.env) {
         assert(token.length >= 32, 'anonymous canary session token was not issued');
         const modeEvent = await journal.waitAny([{ name: 'game_mode_info' }], 15000);
         const modeInfo = modeEvent.data || {};
-        const packageInfo = assertModeInfo(modeInfo, config);
+        assertModeInfo(modeInfo);
 
         // Refetch immediately before the value-bearing action so the echoed version is current.
         const currentLegal = await fetchCanonicalAcknowledgement(config);
@@ -1425,60 +1276,29 @@ async function runLive(config, modules, db, legal, env = process.env) {
         const acknowledgement = currentLegal.acknowledgement;
         await savePayoutAddress(socket, journal, fundingIdentity.address);
 
-        let context;
-        if (config.scenario.id === 'direct-2x') {
-            const direct = await createDirectInvoice(socket, journal, acknowledgement, config, modeInfo);
-            context = {
-                scenario: config.scenario,
-                paymentId: direct.invoice.paymentId,
-                invoiceAddress: direct.invoice.address,
-                payoutAddress: fundingIdentity.address,
-                entryAmount: direct.amount,
-                payoutBase: direct.amount,
-                offer: direct.offer,
-                clientSeed: direct.clientSeed
-            };
-            await assertSeparateFundingWallet(funding, direct.invoice.address);
-            await sendExactEntry(funding, direct.invoice.address, direct.amount, config, transferGate);
-            await waitForPaymentConfirmation(journal, direct.invoice.paymentId, config.paymentTimeoutMs);
-            const gameStart = await journal.waitAny([
-                { name: 'game_start' }, { name: '$disconnect' }
-            ], 60000);
-            assert(gameStart.name === 'game_start', 'direct paid game did not start');
-            assert(gameStart.data?.proof?.offerId === direct.offer.offerId
-                && gameStart.data?.proof?.commitment === direct.offer.commitment
-                && gameStart.data?.proof?.clientSeed === direct.clientSeed,
-            'started direct dungeon is not bound to its invoice fairness proof');
-            context.gameStart = gameStart;
-        } else {
-            const purchase = await createCreditsInvoice(socket, journal, acknowledgement,
-                config, packageInfo);
-            context = {
-                scenario: config.scenario,
-                paymentId: purchase.invoice.paymentId,
-                invoiceAddress: purchase.invoice.address,
-                payoutAddress: fundingIdentity.address,
-                entryAmount: purchase.amount,
-                payoutBase: purchase.payoutBase,
-                packageId: config.packageId,
-                grantedCredits: purchase.grantedCredits,
-                creditsPerGame: purchase.creditsPerGame
-            };
-            await assertSeparateFundingWallet(funding, purchase.invoice.address);
-            await sendExactEntry(funding, purchase.invoice.address, purchase.amount, config, transferGate);
-            const confirmation = await waitForPaymentConfirmation(journal,
-                purchase.invoice.paymentId, config.paymentTimeoutMs);
-            assert(Number(confirmation.creditsAdded) === purchase.grantedCredits
-                && Number(confirmation.newBalance) === purchase.grantedCredits,
-            'credits confirmation did not grant the exact advertised balance');
-            const creditUpdate = journal.latest('credits_update', data =>
-                Number(data?.balance) === purchase.grantedCredits);
-            assert(creditUpdate, 'credits balance update was not observed after package confirmation');
-            const started = await startCreditsGame(socket, journal, acknowledgement);
-            context.offer = started.offer;
-            context.clientSeed = started.clientSeed;
-            context.gameStart = started.gameStart;
-        }
+        const direct = await createDirectInvoice(socket, journal, acknowledgement, config, modeInfo);
+        const context = {
+            scenario: config.scenario,
+            paymentId: direct.invoice.paymentId,
+            invoiceAddress: direct.invoice.address,
+            payoutAddress: fundingIdentity.address,
+            entryAmount: direct.amount,
+            payoutBase: direct.amount,
+            offer: direct.offer,
+            clientSeed: direct.clientSeed
+        };
+        await assertSeparateFundingWallet(funding, direct.invoice.address);
+        await sendExactEntry(funding, direct.invoice.address, direct.amount, config, transferGate);
+        await waitForPaymentConfirmation(journal, direct.invoice.paymentId, config.paymentTimeoutMs);
+        const gameStart = await journal.waitAny([
+            { name: 'game_start' }, { name: '$disconnect' }
+        ], 60000);
+        assert(gameStart.name === 'game_start', 'direct paid game did not start');
+        assert(gameStart.data?.proof?.offerId === direct.offer.offerId
+            && gameStart.data?.proof?.commitment === direct.offer.commitment
+            && gameStart.data?.proof?.clientSeed === direct.clientSeed,
+        'started direct dungeon is not bound to its invoice fairness proof');
+        context.gameStart = gameStart;
 
         const gameOver = await runBoundedBot(socket, journal, context.gameStart,
             config.scenario, config);
@@ -1496,10 +1316,8 @@ async function runLive(config, modules, db, legal, env = process.env) {
             && paymentRow.type === config.scenario.paymentType
             && BigInt(String(paymentRow.amount)) === context.entryAmount,
         'owned payment history differs from the confirmed invoice');
-        if (config.scenario.id === 'credits-3x') {
-            assert(Number(paymentRow.creditsReceived) === context.grantedCredits,
-                'owned payment history has the wrong credit grant');
-        }
+        assert(Number(paymentRow.creditsReceived || 0) === 0,
+            'owned payment history unexpectedly reports a purchased-credit grant');
 
         const payoutRow = await waitForCompletedPayout(config, socket.id, token, completion);
         await waitForIncomingPayout(funding, payoutRow.txHash, completion.expected, config);
@@ -1509,14 +1327,8 @@ async function runLive(config, modules, db, legal, env = process.env) {
                 headers: { 'X-Session-Token': token }
             });
         assert(credits.response.status === 200, 'owned credits endpoint is not HTTP 200');
-        const expectedCredits = config.scenario.id === 'direct-2x'
-            ? 0
-            : context.grantedCredits - context.creditsPerGame;
-        const expectedProgress = config.scenario.id === 'direct-2x'
-            ? 1
-            : context.grantedCredits;
-        assert(Number(credits.body?.credits) === expectedCredits
-            && Number(credits.body?.totalCreditsPurchased) === expectedProgress,
+        assert(Number(credits.body?.credits) === 0
+            && Number(credits.body?.totalCreditsPurchased) === 1,
         'owned credits endpoint differs from the exact scenario ledger');
 
         await assertDatabaseSettlement(db, context);
@@ -1529,7 +1341,7 @@ async function runLive(config, modules, db, legal, env = process.env) {
 function printHelp() {
     process.stdout.write(`Monerogue XMR stagenet financial canary\n\n`
         + `Modes: preflight | database-preflight | live-stagenet\n`
-        + `Scenarios: direct-2x | credits-3x\n\n`
+        + `Scenarios: direct-2x | direct-3x\n\n`
         + `This harness is localhost-only, stagenet-only, fresh-database-only, and one-transfer-only.\n`
         + `Read ../docs/STAGENET_FINANCIAL_CANARY.md before live use.\n`);
 }

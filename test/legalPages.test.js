@@ -82,6 +82,7 @@ describe('production disclosure pages', () => {
             currencyLabel: 'sXMR',
             network: 'stagenet',
             isTestNetwork: true,
+            creditsModeEnabled: false,
             payoutsEnabled: true,
             isPayoutEnabledForMode: () => true
         }));
@@ -98,11 +99,13 @@ describe('production disclosure pages', () => {
             currencyLabel: 'sXMR',
             network: 'stagenet',
             isTestNetwork: true,
+            creditsModeEnabled: false,
             payoutsEnabled: true,
             isPayoutEnabledForMode: () => true
         }));
-        expect(terms).toContain('PAID_SINGLE and PAID_CREDITS solo runs use the Hall of Champions');
-        expect(terms).toContain('match-generated game rows are excluded');
+        expect(terms).toContain('Only PAID_SINGLE solo runs use the Hall of Champions');
+        expect(terms).toContain('historical PAID_CREDITS runs and match-generated game rows are excluded');
+        expect(terms).toContain('does not sell credits');
         expect(terms).toContain('does not offer crypto_race');
     });
 });

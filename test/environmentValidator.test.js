@@ -225,7 +225,7 @@ describe('EnvironmentValidator production launch gate', () => {
         );
     });
 
-    test('accepts the exact Such Software monerogue.app stagenet 2x/3x contract', () => {
+    test('accepts the exact direct-only Such Software monerogue.app stagenet 2x/3x contract', () => {
         const env = productionEnv({
             OPERATED_PRODUCT_PROFILE: 'such-monerogue-stagenet',
             HOSTED_BY: 'https://monerogue.app',
@@ -233,16 +233,14 @@ describe('EnvironmentValidator production launch gate', () => {
             OPERATOR_CONTACT_URL: 'mailto:apps@such.software',
             OPERATOR_CONTACT_LABEL: 'apps@such.software',
             FREE_PLAY_ENABLED: 'true',
-            PAYMENT_MODES: 'direct,credits',
+            PAYMENT_MODES: 'direct',
             DIRECT_PAYMENT_ENABLED: 'true',
-            CREDITS_ENABLED: 'true',
+            CREDITS_ENABLED: 'false',
             PAYOUTS_ENABLED: 'true',
             DIRECT_PAYOUTS_ENABLED: 'true',
-            CREDITS_PAYOUTS_ENABLED: 'true',
+            CREDITS_PAYOUTS_ENABLED: 'false',
             DIRECT_PAYOUT_ESCAPE: '2.0',
             DIRECT_PAYOUT_TREASURE: '3.0',
-            CREDITS_PAYOUT_ESCAPE: '2.0',
-            CREDITS_PAYOUT_TREASURE: '3.0',
             ALLOW_MAINNET_PAYOUTS: 'false',
             SOLO_ENABLED: 'true',
             TAVERN_ENABLED: 'true',
@@ -251,11 +249,18 @@ describe('EnvironmentValidator production launch gate', () => {
             MATCH_PAYOUTS_ENABLED: 'false'
         });
         const operatedConfig = config({
+            modes: {
+                direct: { enabled: true, price: 10000n },
+                credits: {
+                    enabled: false,
+                    packages: [{ id: 'small', credits: 10, price: 90000000000n }]
+                }
+            },
             payouts: {
                 enabled: true,
                 rules: {
                     direct: { enabled: true },
-                    credits: { enabled: true }
+                    credits: { enabled: false }
                 }
             }
         });
@@ -365,6 +370,9 @@ describe('EnvironmentValidator production launch gate', () => {
             expect.stringContaining('requires OPERATOR_NAME=Such Software'),
             expect.stringContaining('requires OPERATOR_CONTACT_URL=mailto:apps@such.software'),
             expect.stringContaining('requires MONERO_NETWORK=stagenet'),
+            expect.stringContaining('requires PAYMENT_MODES=direct'),
+            expect.stringContaining('requires CREDITS_ENABLED=false'),
+            expect.stringContaining('requires CREDITS_PAYOUTS_ENABLED=false'),
             expect.stringContaining('requires DIRECT_PAYOUT_ESCAPE=2'),
             expect.stringContaining('requires SOLO_ENABLED=true'),
             expect.stringContaining('requires TAVERN_ENABLED=true'),

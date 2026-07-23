@@ -86,13 +86,17 @@ describe('commerce disclosure and paid-action policy', () => {
     });
 
     test('publishes conspicuous no-real-value monerogue.app scope and MIT operator boundary', () => {
-        const disclosure = buildCommerceDisclosure(manager(), env({
+        const disclosure = buildCommerceDisclosure(manager({
+            creditsModeEnabled: false
+        }), env({
             OPERATED_PRODUCT_PROFILE: 'such-monerogue-stagenet'
         }));
 
         expect(disclosure.operatedProduct.scopeNotice).toContain('single-player 2×/3× outcomes are test gambling mechanics');
         expect(disclosure.operatedProduct.noRealValueNotice).toContain('NO REAL VALUE');
-        expect(disclosure.operatedProduct.commerceSummary).toContain('never send mainnet XMR');
+        expect(disclosure.operatedProduct.commerceSummary).toMatch(/never send mainnet XMR/i);
+        expect(disclosure.operatedProduct.commerceSummary).toContain('Purchased-credit entry');
+        expect(disclosure.service.paidCreditsEnabled).toBe(false);
         expect(disclosure.service.cryptoMatchPayoutsEnabled).toBe(false);
         expect(disclosure.software).toEqual(expect.objectContaining({
             license: 'MIT',

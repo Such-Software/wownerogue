@@ -1,11 +1,14 @@
 # XMR stagenet financial canary
 
-`src/scripts/stagenet-financial-canary.js` is the release-gate harness for Monerogue's two paid solo settlement paths. It is intentionally narrow: one new anonymous user, one invoice, at most one funding transfer, one bounded game, and one payout. It supports these scenarios:
+`src/scripts/stagenet-financial-canary.js` is the release-gate harness for Monerogue's two
+direct-entry solo outcomes. Purchased-credit entry is outside the operated product profile. The
+harness is intentionally narrow: one new anonymous user, one invoice, at most one funding
+transfer, one bounded game, and one payout. It supports these scenarios:
 
 | `E2E_SCENARIO` | Entry | Required outcome | Exact payout |
 |---|---|---|---|
 | `direct-2x` | one `single_game` invoice | escape without treasure | invoice amount × 2 |
-| `credits-3x` | one pure credits-package invoice, then one `PAID_CREDITS` entry | collect treasure, then escape | configured credits payout base × 3 |
+| `direct-3x` | one `single_game` invoice | collect treasure, then escape | invoice amount × 3 |
 
 Stagenet XMR is valueless test currency. Never send mainnet XMR to a stagenet address. This harness refuses mainnet-facing application state and funding-wallet addresses, but that guard is not a substitute for checking the wallet and daemon commands yourself.
 
@@ -15,14 +18,19 @@ The harness fails closed unless all of these are true:
 
 - The application URL explicitly names `127.0.0.1`, `localhost`, or `::1` on dedicated port `3102`. It cannot target the public router, LAN hostname, or Nebula address.
 - Readiness, public disclosures, REST mode data, and Socket.IO mode data all identify real XMR stagenet with payments and payout dispatch enabled.
-- Both paid solo modes advertise exact 2× escape and 3× treasure multipliers.
+- Direct solo is enabled with exact 2× escape and 3× treasure multipliers. Purchased-credit solo
+  and its payout path are disabled.
 - The current `/api/disclosures` response requires the canonical five-field acknowledgement. The harness refetches it immediately before the value-bearing action and echoes exactly `policyVersion`, `ageEligible`, `termsRead`, `riskAccepted`, and `testnetUnderstood`.
-- The selected PostgreSQL database name contains `canary`, `e2e`, and the selected scenario (`direct` or `credits`). Its connection must be localhost, the harness session is read-only, current financial migrations must exist, and the database must contain only the migration-seeded admin with no game or financial rows.
+- The selected PostgreSQL database name contains `canary`, `e2e`, and the selected scenario tag
+  (`direct` for 2× or `treasure` for 3×). Its connection must be localhost, the harness session is
+  read-only, current financial migrations must exist, and the database must contain only the
+  migration-seeded admin with no game or financial rows.
 - Before any invoice, funding-wallet call, or transfer, a nonce challenge binds the application pool to the harness connection's exact PostgreSQL cluster identifier, database OID, and database name. A same-named database on another cluster does not pass.
 - The funding wallet RPC is localhost-only and either digest-authenticated or enabled by a separate explicit unauthenticated-local-RPC acknowledgement.
 - The funding wallet validates both its own address and the invoice as stagenet. `get_address_index` must prove the invoice does not belong to the funding wallet; this prevents a meaningless house-wallet self-payment.
 - Live execution needs three exact confirmations plus an atomic-unit transfer ceiling. The transfer gate is marked used before the sole `transfer` RPC call, so an ambiguous transport failure is never retried.
-- The bot is bounded to one dungeon depth, 3,000 moves, and eight minutes. The direct scenario treats treasure as blocked. The credits scenario treats the exit as blocked until treasure is collected.
+- The bot is bounded to one dungeon depth, 3,000 moves, and eight minutes. The 2× scenario treats
+  treasure as blocked. The 3× scenario treats the exit as blocked until treasure is collected.
 - Wallet addresses, session tokens, proof seeds, transaction hashes, and credentials are never printed. Failure messages redact those shapes.
 
 The harness never creates, restores, exports, migrates, or backs up a wallet. It never deploys code, changes router state, or edits fleet configuration.
@@ -32,7 +40,7 @@ The harness never creates, restores, exports, migrates, or backs up a wallet. It
 Use two different stagenet wallets:
 
 1. The canary application owns the normal house wallet used to create invoice subaddresses and dispatch payouts.
-2. A separate, low-balance funding wallet sends the entry/package payment and receives the payout.
+2. A separate, low-balance funding wallet sends the direct-entry payment and receives the payout.
 
 Expose only the separate funding wallet RPC to the harness, on loopback. Do not give the harness the house-wallet RPC URL or credentials. Keep the funding balance no larger than needed for the selected invoice plus fees.
 
@@ -55,18 +63,16 @@ DUNGEON_LEVELS=1
 The canary instance must otherwise use the intended production money configuration, including:
 
 - `CRYPTO_TYPE=XMR`, `MONERO_NETWORK=stagenet`, real stagenet daemon and house wallet RPC;
-- direct and credits paid modes enabled together;
-- direct and credits payouts enabled;
-- 2× escape and 3× treasure multipliers for both modes;
-- a positive `CREDITS_PAYOUT_BASE` whose 3× result is within the configured payout bounds;
-- a credits-only package (default id `small`) with no race entries, packs, or premium grant;
+- direct paid mode and direct payouts enabled;
+- purchased-credit mode and credit payouts disabled;
+- exact direct 2× escape and 3× treasure multipliers;
 - production paid-action acknowledgement enabled and current operator/legal disclosure metadata.
 
 Use a fresh database name such as:
 
 ```text
 monerogue_canary_direct_e2e
-monerogue_canary_credits_e2e
+monerogue_canary_treasure_e2e
 ```
 
 First boot the release candidate against the new database with payout dispatch disabled solely to run startup migrations. Stop it after readiness. Then run database preflight. Finally boot the same release candidate and same database with the intended payout configuration on localhost port `3102`. Do not point a public router at this instance.
@@ -81,7 +87,7 @@ CANARY_EXPECT_DATABASE=monerogue_canary_direct_e2e
 CANARY_DATABASE_NONCE_FILE=/run/credentials/canary/database-nonce
 ```
 
-Use the corresponding `credits` database name for that scenario. If none of the three
+Use the corresponding `treasure` database name for the 3× scenario. If none of the three
 `CANARY_DATABASE_*` variables is set, the endpoint is not registered. A partial configuration,
 non-XMR-stagenet process, non-production process, wrong port, or `DB_NAME` mismatch aborts startup.
 The endpoint signs its database identity and a fresh caller challenge; it never returns the nonce.
@@ -125,7 +131,8 @@ E2E_DATABASE_URL_FILE=/run/credentials/canary/direct-database-url \
 npm --prefix src run canary:stagenet
 ```
 
-For the credits scenario, use `E2E_SCENARIO=credits-3x`, a database name containing `credits`, and its separate protected connection file.
+For the 3× scenario, use `E2E_SCENARIO=direct-3x`, a database name containing `treasure`, and its
+separate protected connection file.
 
 ## Live direct 2× escape
 
@@ -151,17 +158,18 @@ npm --prefix src run canary:stagenet
 
 The harness binds a fresh fairness offer to the direct invoice before revealing its address, transfers the exact invoice amount, waits for receipt-backed confirmation and automatic game start, avoids treasure, escapes, and verifies an exact 2× payout.
 
-## Live credits-package then 3× treasure escape
+## Live direct 3× treasure escape
 
-Review the selected package's atomic price and set the ceiling accordingly. The default package id is `small`; override it with `E2E_CREDITS_PACKAGE_ID` only after confirming it is a pure credits-only package.
+Review the configured direct-entry atomic amount before setting the ceiling. As with the 2× run,
+the ceiling must be at least the advertised invoice amount and should equal that amount when
+practical.
 
 ```bash
 E2E_MODE=live-stagenet \
-E2E_SCENARIO=credits-3x \
-E2E_CREDITS_PACKAGE_ID=small \
+E2E_SCENARIO=direct-3x \
 E2E_TARGET=http://127.0.0.1:3102 \
-E2E_EXPECT_DATABASE=monerogue_canary_credits_e2e \
-E2E_DATABASE_URL_FILE=/run/credentials/canary/credits-database-url \
+E2E_EXPECT_DATABASE=monerogue_canary_treasure_e2e \
+E2E_DATABASE_URL_FILE=/run/credentials/canary/treasure-database-url \
 E2E_DATABASE_NONCE_FILE=/run/credentials/canary/database-nonce \
 E2E_FUNDING_RPC_URL=http://127.0.0.1:38083 \
 E2E_FUNDING_RPC_USER_FILE=/run/credentials/canary/funding-rpc-user \
@@ -169,12 +177,15 @@ E2E_FUNDING_RPC_PASSWORD_FILE=/run/credentials/canary/funding-rpc-password \
 E2E_MAX_TRANSFER_ATOMIC=REPLACE_WITH_REVIEWED_ATOMIC_CEILING \
 E2E_FEE_CUSHION_ATOMIC=1000000000 \
 E2E_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_ONE_XMR_STAGENET_TRANSFER \
-E2E_SCENARIO_CONFIRM=CREDITS_PACKAGE_THEN_3X_TREASURE_ESCAPE \
+E2E_SCENARIO_CONFIRM=DIRECT_3X_TREASURE_ESCAPE \
 E2E_CANARY_PROFILE=EASY_STATIC_MONSTER_ONE_LEVEL \
 npm --prefix src run canary:stagenet
 ```
 
-The harness purchases the package, verifies the exact confirmed grant and balance update, consumes a new fairness offer in `auto_start`, spends exactly one configured game credit, collects treasure before allowing the exit, and verifies an exact 3× payout based on `CREDITS_PAYOUT_BASE` (not the package price).
+The harness binds a fresh fairness offer to the direct invoice before revealing its address,
+transfers the exact invoice amount, waits for receipt-backed confirmation and automatic game
+start, collects treasure before allowing the exit, and verifies an exact 3× payout based on the
+invoice amount.
 
 ## Exact settlement assertions
 
@@ -187,9 +198,9 @@ After the funding wallet observes the incoming payout, the harness checks the re
 - one completed payout with the exact amount, multiplier, reason, payout address, and transaction evidence;
 - no refunds, late reviews, matches, match queues, race-entry ledgers, or race-entry lots.
 
-The direct scenario additionally requires exactly the `direct_entry +1` and `game_entry -1` credit-ledger rows, a zero balance, unified purchase progress of one, the game linked to the fairness-bound payment, and no product-entitlement marker.
-
-The credits scenario additionally requires exactly one payment-linked `package_purchase` grant, one `game_entry` debit, the exact final balance, one active payment-entitlement marker matching the advertised grant, and a `PAID_CREDITS` game with no direct `payment_id`.
+Each scenario additionally requires exactly the `direct_entry +1` and `game_entry -1`
+credit-ledger rows, a zero balance, unified purchase progress of one, the game linked to the
+fairness-bound payment, and no product-entitlement marker.
 
 ## Failure handling
 

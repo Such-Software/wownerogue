@@ -120,16 +120,16 @@ describe('GET /api/leaderboard operated-product integrity', () => {
         expect(db.calls[0].params.slice(1, 3)).toEqual([['PAID_CREDITS'], true]);
     });
 
-    test('Monerogue Champions includes direct and credit solo, never match-generated rows', async () => {
+    test('Monerogue Champions includes direct solo only, never historical credit or match rows', async () => {
         const { response, db } = await invokeLeaderboardRoute('such-monerogue-stagenet', {
             board: 'champions',
             period: 'all'
         });
         expect(response.status).toBe(200);
         expect(response.body.leaderboard.map(row => row.name))
-            .toEqual(['CreditSolo', 'LegacyDirect']);
+            .toEqual(['LegacyDirect']);
         expect(db.calls[0].params.slice(1, 3))
-            .toEqual([['PAID_SINGLE', 'PAID_CREDITS'], true]);
+            .toEqual([['PAID_SINGLE'], true]);
     });
 
     test('independent deployments retain the generic opt-in crypto-match mapping', async () => {

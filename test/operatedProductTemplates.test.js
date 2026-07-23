@@ -62,7 +62,7 @@ describe('operated product environment templates', () => {
         }));
     });
 
-    test('monerogue.app is exactly stagenet 2x/3x solo testing with crypto-match payouts off', () => {
+    test('monerogue.app is exactly direct-only stagenet 2x/3x solo testing', () => {
         const env = parseExample('.env.stagenet.example');
 
         expect(env).toEqual(expect.objectContaining({
@@ -78,14 +78,14 @@ describe('operated product environment templates', () => {
             CRYPTO_TYPE: 'XMR',
             MONERO_NETWORK: 'stagenet',
             FREE_PLAY_ENABLED: 'true',
-            PAYMENT_MODES: 'direct,credits',
+            PAYMENT_MODES: 'direct',
+            DIRECT_PAYMENT_ENABLED: 'true',
+            CREDITS_ENABLED: 'false',
             PAYOUTS_ENABLED: 'true',
             DIRECT_PAYOUTS_ENABLED: 'true',
-            CREDITS_PAYOUTS_ENABLED: 'true',
+            CREDITS_PAYOUTS_ENABLED: 'false',
             DIRECT_PAYOUT_ESCAPE: '2.0',
             DIRECT_PAYOUT_TREASURE: '3.0',
-            CREDITS_PAYOUT_ESCAPE: '2.0',
-            CREDITS_PAYOUT_TREASURE: '3.0',
             ALLOW_MAINNET_PAYOUTS: 'false',
             SOLO_ENABLED: 'true',
             TAVERN_ENABLED: 'true',
@@ -95,9 +95,6 @@ describe('operated product environment templates', () => {
         }));
         expect(BigInt(env.PAYOUT_MAX_PER_GAME)).toBeGreaterThanOrEqual(
             3n * BigInt(env.DIRECT_GAME_PRICE)
-        );
-        expect(BigInt(env.PAYOUT_MAX_PER_GAME)).toBeGreaterThanOrEqual(
-            3n * BigInt(env.CREDITS_PAYOUT_BASE)
         );
         expect(env.COSMETIC_PRODUCTS).toBeUndefined();
     });
@@ -109,7 +106,7 @@ describe('operated product environment templates', () => {
 
     test.each([
         ['.env.mainnet.example', 'paid modes: credits'],
-        ['.env.stagenet.example', 'paid modes: direct, credits']
+        ['.env.stagenet.example', 'paid modes: direct']
     ])('%s passes the real production preflight after only secret substitution', (name, summary) => {
         const result = preflightExample(name);
         expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: '' });

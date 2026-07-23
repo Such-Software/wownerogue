@@ -78,7 +78,9 @@ function soloLeaderboardPolicy(profileId, board) {
     }
     if (profileId === OPERATED_PRODUCT_PROFILE_IDS.XMR_STAGENET) {
         return Object.freeze({
-            gameModes: Object.freeze(['PAID_SINGLE', 'PAID_CREDITS']),
+            // The operated stagenet product accepts direct entries only. Historical credit
+            // package rows are not part of its current Hall of Champions.
+            gameModes: Object.freeze(['PAID_SINGLE']),
             excludeMatchGenerated: true
         });
     }

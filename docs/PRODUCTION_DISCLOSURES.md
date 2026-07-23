@@ -11,7 +11,7 @@ Such Software (`apps@such.software`) operates only:
 | Profile | Public service | Exact scope |
 |---|---|---|
 | `such-play-wow-prestige` | `play.wowne.ro` | Wownero mainnet free play and pay-for-credits leaderboard/prestige. Credits are non-redeemable; there are no prizes, payouts, cash-out, or crypto racing, and the service is not offered/marketed as gambling. Legal classification depends on applicable law. |
-| `such-monerogue-stagenet` | `monerogue.app` | Monero stagenet only. Single-player 2×/3× test gambling mechanics using test coins with **NO REAL VALUE**. Never mainnet XMR and no crypto-match payouts. |
+| `such-monerogue-stagenet` | `monerogue.app` | Monero stagenet direct-entry solo only. Single-player 2×/3× test gambling mechanics use test coins with **NO REAL VALUE**. Purchased-credit entry and crypto-match payouts are off. Never mainnet XMR. |
 
 The corresponding `.env.mainnet.example` and `.env.stagenet.example` files opt into a fail-closed
 startup contract with `OPERATED_PRODUCT_PROFILE`. Preflight and normal startup reject any drift in
@@ -90,8 +90,9 @@ The acknowledgement is a player statement, not proof of identity, age, capacity,
 | XMR stagenet/testnet | Valueless test currency; explicit warning never to send mainnet XMR |
 
 For the operated products, the generic rows narrow further: `play.wowne.ro` exposes purchased
-credits only, offers no payout/cash-out, and is not marketed as gambling; `monerogue.app` labels its 2×/3× stagenet mechanics as
-**NO REAL VALUE** and keeps crypto-match payouts disabled.
+credits only, offers no payout/cash-out, and is not marketed as gambling; `monerogue.app` labels
+its direct-entry 2×/3× stagenet mechanics as **NO REAL VALUE** and keeps purchased-credit entry and
+crypto-match payouts disabled.
 
 ## Unresolved launch decisions
 

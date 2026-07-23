@@ -52,9 +52,10 @@ function leaderboardMapping(disclosure) {
     }
     if (profileId === OPERATED_PRODUCT_PROFILE_IDS.XMR_STAGENET) {
         return 'FREE solo runs and free competitive matches use the Pleb board. '
-            + 'PAID_SINGLE and PAID_CREDITS solo runs use the Hall of Champions; match-generated '
-            + 'game rows are excluded. credits_prestige matches use the separate Prestige board. '
-            + 'This operated profile does not offer crypto_race.';
+            + 'Only PAID_SINGLE solo runs use the Hall of Champions; historical PAID_CREDITS '
+            + 'runs and match-generated game rows are excluded. credits_prestige matches use the '
+            + 'separate Prestige board. This operated profile does not sell credits and does not '
+            + 'offer crypto_race.';
     }
     return 'Solo scores map by entry: FREE runs use the Pleb board, while PAID_SINGLE and '
         + 'PAID_CREDITS runs use the Hall of Champions. PvP maps separately by economy: free '

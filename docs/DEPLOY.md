@@ -5,8 +5,9 @@ This guide covers deploying Wownerogue to a production environment.
 ## Operated profiles versus independent deployments
 
 Such Software (`apps@such.software`) operates only `play.wowne.ro` (Wownero mainnet
-pay-for-credits leaderboard/prestige, no prize/payout/cash-out and not marketed as gambling) and `monerogue.app` (Monero
-stagenet **NO REAL VALUE** 2×/3× solo test gambling mechanics, with crypto-match payouts off).
+pay-for-credits leaderboard/prestige, no prize/payout/cash-out and not marketed as gambling) and
+`monerogue.app` (Monero stagenet direct-entry-only **NO REAL VALUE** 2×/3× solo test gambling
+mechanics, with purchased-credit entry and crypto-match payouts off).
 Classification of any product under applicable law requires jurisdiction-specific advice.
 Their reviewed environment templates set `OPERATED_PRODUCT_PROFILE`, so preflight/startup rejects
 scope drift. Independent MIT deployments must leave that variable unset and identify their actual

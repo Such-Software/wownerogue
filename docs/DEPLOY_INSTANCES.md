@@ -148,8 +148,8 @@ DIFFICULTY_PRESET=casino
 
 # --- payments + free play ---
 PAYMENTS_ENABLED=true
-PAYMENT_MODES=direct,credits
-FREE_PLAY_ENABLED=true            # both boards available
+PAYMENT_MODES=direct
+FREE_PLAY_ENABLED=true            # free and direct solo boards available
 
 # --- direct (pay per game) WITH payouts (fake stagenet money) ---
 DIRECT_PAYMENT_ENABLED=true
@@ -159,17 +159,18 @@ DIRECT_PAYOUTS_ENABLED=true
 DIRECT_PAYOUT_ESCAPE=2.0
 DIRECT_PAYOUT_TREASURE=3.0
 
-# --- credits WITH payouts ---
-CREDITS_ENABLED=true
+# --- purchased credits are outside the operated Monerogue profile ---
+CREDITS_ENABLED=false
 CREDITS_PER_GAME=1
-CREDITS_REQUIRES_ADDRESS=true
-CREDITS_PAYOUTS_ENABLED=true
+CREDITS_REQUIRES_ADDRESS=false
+CREDITS_PAYOUTS_ENABLED=false
+# Inert compatibility values; no credit purchase or credit payout path may expose them.
 CREDITS_PAYOUT_BASE=10000000000
 CREDITS_PAYOUT_ESCAPE=2.0
 CREDITS_PAYOUT_TREASURE=3.0
 CREDITS_PACKAGES=[{"id":"small","credits":10,"price":"90000000000","bonus":0},{"id":"medium","credits":20,"price":"170000000000","bonus":2}]
-ALLOW_MIXED_MODE=true
-PREFER_CREDITS_FIRST=true
+ALLOW_MIXED_MODE=false
+PREFER_CREDITS_FIRST=false
 
 # --- payouts --- (verify the unlocked stagenet bankroll before every rollout)
 PAYOUTS_ENABLED=true
@@ -180,8 +181,8 @@ PAYOUT_BATCH_INTERVAL=300
 PAYOUT_MAX_RETRIES=3
 BALANCE_WARN=100000000000            # warn below 0.10 XMR unlocked
 BALANCE_CRITICAL=50000000000         # stop accepting new payout liability below 0.05 XMR
-# Tip: lower DIRECT_GAME_PRICE/CREDITS_PAYOUT_BASE to 0.001 XMR (1000000000) for many more
-# demo plays per the small bankroll; refill from a stagenet faucet as needed.
+# Tip: lower DIRECT_GAME_PRICE to 0.001 XMR (1000000000) for many more demo plays per the
+# small bankroll; refill from a stagenet faucet as needed.
 
 # --- wallet RPC (monero stagenet) ---
 PRIMARY_WALLET_ENDPOINT=http://127.0.0.1:38083

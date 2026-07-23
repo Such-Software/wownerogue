@@ -43,7 +43,7 @@ describe('prestige leaderboard periods', () => {
             excludeMatchGenerated: true
         });
         expect(soloLeaderboardPolicy('such-monerogue-stagenet', 'champions')).toEqual({
-            gameModes: ['PAID_SINGLE', 'PAID_CREDITS'],
+            gameModes: ['PAID_SINGLE'],
             excludeMatchGenerated: true
         });
         expect(soloLeaderboardPolicy(null, 'champions')).toEqual({

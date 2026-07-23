@@ -62,21 +62,21 @@ function visibleState({ player, exit, treasure }) {
 
 describe('XMR stagenet financial canary safety contract', () => {
     test('recognizes only the two explicit financial scenarios', () => {
-        expect(Object.keys(SCENARIOS)).toEqual(['direct-2x', 'credits-3x']);
+        expect(Object.keys(SCENARIOS)).toEqual(['direct-2x', 'direct-3x']);
         expect(SCENARIOS['direct-2x']).toEqual(expect.objectContaining({
             paymentType: 'single_game',
             gameMode: 'PAID_SINGLE',
             multiplier: 2,
             collectTreasure: false
         }));
-        expect(SCENARIOS['credits-3x']).toEqual(expect.objectContaining({
-            paymentType: 'credits_package',
-            gameMode: 'PAID_CREDITS',
+        expect(SCENARIOS['direct-3x']).toEqual(expect.objectContaining({
+            paymentType: 'single_game',
+            gameMode: 'PAID_SINGLE',
             multiplier: 3,
             collectTreasure: true
         }));
         expect(() => readConfiguration(configEnv({ E2E_SCENARIO: 'anything-else' })))
-            .toThrow(/direct-2x or credits-3x/);
+            .toThrow(/direct-2x or direct-3x/);
     });
 
     test('refuses public targets, embedded credentials, paths, and the wrong port', () => {
@@ -96,17 +96,17 @@ describe('XMR stagenet financial canary safety contract', () => {
 
         const env = configEnv({
             E2E_MODE: 'live-stagenet',
-            E2E_SCENARIO: 'credits-3x',
+            E2E_SCENARIO: 'direct-3x',
             E2E_MAX_TRANSFER_ATOMIC: '500000000000',
             E2E_CONFIRM: LIVE_CONFIRM,
-            E2E_SCENARIO_CONFIRM: SCENARIOS['credits-3x'].scenarioConfirm,
+            E2E_SCENARIO_CONFIRM: SCENARIOS['direct-3x'].scenarioConfirm,
             E2E_CANARY_PROFILE: SAFE_PROFILE_CONFIRM,
             E2E_DATABASE_NONCE_FILE: '/run/credentials/canary/database-nonce'
         });
         const config = readConfiguration(env);
         expect(() => assertLiveSafety(config, env)).not.toThrow();
         expect(() => assertLiveSafety(config, { ...env, E2E_SCENARIO_CONFIRM: 'DIRECT_2X_ESCAPE' }))
-            .toThrow(/CREDITS_PACKAGE_THEN_3X/);
+            .toThrow(/DIRECT_3X_TREASURE_ESCAPE/);
         expect(() => assertLiveSafety(config, { ...env, E2E_CONFIRM: '' }))
             .toThrow(/E2E_CONFIRM/);
         const noNonceConfig = readConfiguration({ ...env, E2E_DATABASE_NONCE_FILE: '' });
@@ -131,7 +131,7 @@ describe('XMR stagenet financial canary safety contract', () => {
                 isTestNetwork: true,
                 paymentsEnabled: true,
                 directPaidEntryEnabled: true,
-                paidCreditsEnabled: true,
+                paidCreditsEnabled: false,
                 soloPayoutsEnabled: true,
                 anyPayoutsEnabled: true,
                 paidPrestigeOnly: false,
@@ -151,7 +151,7 @@ describe('XMR stagenet financial canary safety contract', () => {
         expect(() => canonicalAcknowledgement({
             ...disclosure,
             service: { ...disclosure.service, cryptoMatchPayoutsEnabled: true }
-        })).toThrow(/payout-enabled paid solo modes/);
+        })).toThrow(/direct-only payout-enabled solo play/);
         expect(() => canonicalAcknowledgement({
             ...disclosure,
             operatedProduct: { ...disclosure.operatedProduct, id: 'unreviewed-profile' }
@@ -166,7 +166,7 @@ describe('XMR stagenet financial canary safety contract', () => {
                 isTestNetwork: false,
                 paymentsEnabled: true,
                 directPaidEntryEnabled: true,
-                paidCreditsEnabled: true,
+                paidCreditsEnabled: false,
                 soloPayoutsEnabled: true,
                 anyPayoutsEnabled: true,
                 paidPrestigeOnly: false,
@@ -186,8 +186,8 @@ describe('XMR stagenet financial canary safety contract', () => {
                 payoutMultiplier: { escape: 2, escapeWithTreasure: 3 }
             },
             PAID_CREDITS: {
-                enabled: true,
-                payoutMultiplier: { escape: 2, escapeWithTreasure: 3 }
+                enabled: false,
+                payoutMultiplier: 0
             },
             match: {
                 enabled: true,
@@ -237,6 +237,13 @@ describe('XMR stagenet financial canary safety contract', () => {
             ...modes,
             PAID_CREDITS: {
                 ...modes.PAID_CREDITS,
+                enabled: true
+            }
+        })).toThrow(/purchased-credit solo/);
+        expect(() => assertPublicModeContract({
+            ...modes,
+            PAID_SINGLE: {
+                ...modes.PAID_SINGLE,
                 payoutMultiplier: { escape: 2, escapeWithTreasure: 4 }
             }
         })).toThrow(/not exactly 3x/);
@@ -252,12 +259,12 @@ describe('XMR stagenet financial canary safety contract', () => {
             'monerogue_canary_direct_e2e', SCENARIOS['direct-2x']
         )).not.toThrow();
         expect(() => validateExpectedDatabaseName(
-            'monerogue_canary_credits_e2e', SCENARIOS['credits-3x']
+            'monerogue_canary_treasure_e2e', SCENARIOS['direct-3x']
         )).not.toThrow();
         expect(() => validateExpectedDatabaseName('monerogue', SCENARIOS['direct-2x']))
             .toThrow(/canary and e2e/);
         expect(() => validateExpectedDatabaseName(
-            'monerogue_canary_credits_e2e', SCENARIOS['direct-2x']
+            'monerogue_canary_treasure_e2e', SCENARIOS['direct-2x']
         )).toThrow(/scenario tag/);
     });
 
@@ -358,7 +365,7 @@ describe('XMR stagenet financial canary safety contract', () => {
             .toThrow(/could not prove/);
     });
 
-    test('direct bot avoids treasure while credits bot gets treasure before exit', () => {
+    test('2x direct bot avoids treasure while 3x direct bot gets treasure before exit', () => {
         const directState = visibleState({
             player: { x: 0, y: 0, hasTreasure: false },
             treasure: [1, 0],
@@ -369,28 +376,28 @@ describe('XMR stagenet financial canary safety contract', () => {
         expect(chooseMove(directKnown, directState, botState(), SCENARIOS['direct-2x']))
             .toBe('down');
 
-        const creditsState = visibleState({
+        const treasureState = visibleState({
             player: { x: 0, y: 0, hasTreasure: false },
             treasure: [1, 0],
             exit: [2, 0]
         });
-        const creditsKnown = new Map();
-        addVisible(creditsKnown, creditsState);
-        const creditsBot = botState();
-        expect(chooseMove(creditsKnown, creditsState, creditsBot, SCENARIOS['credits-3x']))
+        const treasureKnown = new Map();
+        addVisible(treasureKnown, treasureState);
+        const treasureBot = botState();
+        expect(chooseMove(treasureKnown, treasureState, treasureBot, SCENARIOS['direct-3x']))
             .toBe('right');
         const collected = {
-            ...creditsState,
+            ...treasureState,
             player: { x: 1, y: 0, hasTreasure: true },
             treasure: null
         };
-        expect(chooseMove(creditsKnown, collected, creditsBot, SCENARIOS['credits-3x']))
+        expect(chooseMove(treasureKnown, collected, treasureBot, SCENARIOS['direct-3x']))
             .toBe('right');
     });
 
     test.each([
         ['direct-2x', 10n, false],
-        ['credits-3x', 7n, true]
+        ['direct-3x', 7n, true]
     ])('verifies exact game-over liability and two-party proof for %s', (scenarioName, base, treasure) => {
         const scenario = SCENARIOS[scenarioName];
         const serverSeed = '11'.repeat(32);
@@ -452,14 +459,14 @@ describe('XMR stagenet financial canary safety contract', () => {
         expect(safe).not.toContain('password@example');
     });
 
-    test('source has one non-retriable relay call, a guarded main, and both exact flows', () => {
+    test('source has one non-retriable relay call, a guarded main, and direct-only entry', () => {
         const source = fs.readFileSync(SCRIPT, 'utf8');
         expect((source.match(/funding\.rpc\('transfer'/g) || [])).toHaveLength(1);
         expect(source).toMatch(/transferGate\.attempted = true;[\s\S]*do_not_relay: false/);
         expect(source).toContain('if (require.main === module)');
         expect(source).toContain("type: 'single_game'");
-        expect(source).toContain("type: 'credits_package'");
-        expect(source).toContain("socket.emit('auto_start'");
+        expect(source).not.toContain("type: 'credits_package'");
+        expect(source).not.toContain("socket.emit('auto_start'");
         expect(source).toContain('legalAcknowledgement: acknowledgement');
         expect(source).not.toContain('console.log(');
         const mainBody = source.slice(source.indexOf('async function main('));
