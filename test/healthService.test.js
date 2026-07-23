@@ -16,7 +16,39 @@ describe('public health payload', () => {
             status: 'ok',
             ready: true,
             checks: { database: 'up', chain: 'up', wallet: 'up' },
-            money: { paymentsEnabled: true, payoutsEnabled: false }
+            money: { paymentsEnabled: true, payoutsEnabled: false },
+            release: { verified: false, id: null, commit: null }
+        });
+    });
+
+    test('publishes only a self-consistent immutable release identity', () => {
+        const commit = 'a'.repeat(40);
+        const health = buildPublicHealth({
+            databaseReady: true,
+            blockHeight: 123,
+            releaseIdentity: {
+                verified: true,
+                id: `git-${commit.slice(0, 12)}`,
+                commit
+            }
+        });
+        expect(health.release).toEqual({
+            verified: true,
+            id: `git-${commit.slice(0, 12)}`,
+            commit
+        });
+
+        const mismatched = buildPublicHealth({
+            releaseIdentity: {
+                verified: true,
+                id: `git-${'b'.repeat(12)}`,
+                commit
+            }
+        });
+        expect(mismatched.release).toEqual({
+            verified: false,
+            id: null,
+            commit: null
         });
     });
 

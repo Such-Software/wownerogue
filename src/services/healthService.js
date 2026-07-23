@@ -1,5 +1,19 @@
 /** Build the public, non-sensitive health payload used by probes and the status UI. */
 function buildPublicHealth(input = {}) {
+    const releaseCandidate = input.releaseIdentity;
+    const releaseValid = releaseCandidate?.verified === true
+        && /^git-[0-9a-f]{12}$/.test(releaseCandidate.id || '')
+        && /^[0-9a-f]{40}$/.test(releaseCandidate.commit || '')
+        && releaseCandidate.id.slice(4) === releaseCandidate.commit.slice(0, 12);
+    const release = releaseValid ? {
+        verified: true,
+        id: releaseCandidate.id,
+        commit: releaseCandidate.commit
+    } : {
+        verified: false,
+        id: null,
+        commit: null
+    };
     const sanitizeIdentity = (identity, required) => {
         const pair = (value) => value && typeof value === 'object' ? {
             cryptoType: typeof value.cryptoType === 'string' ? value.cryptoType : null,
@@ -73,6 +87,7 @@ function buildPublicHealth(input = {}) {
             paymentsEnabled,
             payoutsEnabled
         },
+        release,
         identities: {
             daemon: sanitizeIdentity(daemonIdentity, daemonIdentityRequired),
             wallet: sanitizeIdentity(input.walletIdentity, walletIdentityRequired)

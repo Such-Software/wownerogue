@@ -34,6 +34,7 @@ const GameModeManager = require('./game/gameModeManager');
 const PaymentConfigManager = require('./config/paymentConfig');
 const EnvironmentValidator = require('./config/environmentValidator');
 const RuntimePolicy = require('./config/runtimePolicy');
+const { loadReleaseIdentity } = require('./config/releaseIdentity');
 const asyncHandler = require('./middleware/asyncHandler');
 const createErrorMiddleware = require('./middleware/errorHandler');
 const noStore = require('./middleware/noStore');
@@ -58,7 +59,9 @@ const { isSmirkEnabled } = require('./auth/smirkPolicy');
 // Initialize payment configuration
 const paymentConfigManager = new PaymentConfigManager({ logger: console });
 const environmentValidator = new EnvironmentValidator({ logger: console });
+let releaseIdentity;
 try {
+    releaseIdentity = loadReleaseIdentity();
     environmentValidator.assertValid(paymentConfigManager.getConfig());
 } catch (error) {
     console.error(`❌ Startup aborted: ${error.message}`);
@@ -79,6 +82,7 @@ const walletRPCService = new WalletRPCService(debugManager, {
     minConfirmations: paymentConfigManager.getConfig().payouts.processing.confirmations
 });
 const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager, paymentConfigManager);
+gameModeManager.releaseIdentity = releaseIdentity;
 // Provide io reference so GameModeManager can emit events (e.g., credits_update)
 gameModeManager.io = io;
 
@@ -473,6 +477,7 @@ function publicHealthSnapshot() {
     queuedGames: socketHandlers?.queueManager?.getQueueLength?.() || 0,
     connectedPlayers: io.sockets.sockets.size || 0,
     gameMode: gameModeManager.gameMode,
+    releaseIdentity,
     uptime: process.uptime()
   });
   // Informational only: an optional accounting sink must not make gameplay readiness fail.

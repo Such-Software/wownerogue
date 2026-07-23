@@ -2416,6 +2416,11 @@ class GameModeManager {
         }));
         
         return {
+            release: this.releaseIdentity || {
+                verified: false,
+                id: null,
+                commit: null
+            },
             operatedProductProfileId: getOperatedProductProfile(process.env)?.id || null,
             mode: this.gameMode,
             freePlayEnabled: !!this.freePlayEnabled, // players may choose free play even on a paid instance

@@ -228,6 +228,16 @@ describe('GameModeManager', () => {
             }
         });
 
+        test('game mode info binds Socket.IO clients to the immutable release', () => {
+            const release = {
+                verified: true,
+                id: `git-${'a'.repeat(12)}`,
+                commit: 'a'.repeat(40)
+            };
+            gmm.releaseIdentity = release;
+            expect(gmm.getGameModeInfo().release).toEqual(release);
+        });
+
         test('crypto race economy is hidden when the payout master switch is off', () => {
             const keys = [
                 'MATCH_ENABLED', 'MATCH_CRYPTO_RACE_ENABLED', 'MATCH_PAYOUTS_ENABLED',
