@@ -42,7 +42,10 @@ Use two different stagenet wallets:
 1. The canary application owns the normal house wallet used to create invoice subaddresses and dispatch payouts.
 2. A separate, low-balance funding wallet sends the direct-entry payment and receives the payout.
 
-Expose only the separate funding wallet RPC to the harness, on loopback. Do not give the harness the house-wallet RPC URL or credentials. Keep the funding balance no larger than needed for the selected invoice plus fees.
+Expose only the separate funding wallet RPC to the harness, on loopback. Use a dedicated port such
+as `38085`; port `38083` belongs to the promoted house wallet and must not be reused by the funding
+wallet. Do not give the harness the house-wallet RPC URL or credentials. Keep the funding balance
+no larger than needed for the selected invoice plus fees.
 
 Before live use, independently verify that both wallet files are recoverable according to the operator's wallet-backup procedure. Do not put seeds, private keys, wallet passwords, transaction keys, or mnemonic output in this runbook, shell history, screenshots, CI variables, or canary logs. This harness deliberately does not inspect or print seed material.
 
@@ -145,7 +148,7 @@ E2E_TARGET=http://127.0.0.1:3102 \
 E2E_EXPECT_DATABASE=monerogue_canary_direct_e2e \
 E2E_DATABASE_URL_FILE=/run/credentials/canary/direct-database-url \
 E2E_DATABASE_NONCE_FILE=/run/credentials/canary/database-nonce \
-E2E_FUNDING_RPC_URL=http://127.0.0.1:38083 \
+E2E_FUNDING_RPC_URL=http://127.0.0.1:38085 \
 E2E_FUNDING_RPC_USER_FILE=/run/credentials/canary/funding-rpc-user \
 E2E_FUNDING_RPC_PASSWORD_FILE=/run/credentials/canary/funding-rpc-password \
 E2E_MAX_TRANSFER_ATOMIC=REPLACE_WITH_REVIEWED_ATOMIC_CEILING \
@@ -171,7 +174,7 @@ E2E_TARGET=http://127.0.0.1:3102 \
 E2E_EXPECT_DATABASE=monerogue_canary_treasure_e2e \
 E2E_DATABASE_URL_FILE=/run/credentials/canary/treasure-database-url \
 E2E_DATABASE_NONCE_FILE=/run/credentials/canary/database-nonce \
-E2E_FUNDING_RPC_URL=http://127.0.0.1:38083 \
+E2E_FUNDING_RPC_URL=http://127.0.0.1:38085 \
 E2E_FUNDING_RPC_USER_FILE=/run/credentials/canary/funding-rpc-user \
 E2E_FUNDING_RPC_PASSWORD_FILE=/run/credentials/canary/funding-rpc-password \
 E2E_MAX_TRANSFER_ATOMIC=REPLACE_WITH_REVIEWED_ATOMIC_CEILING \

@@ -30,6 +30,7 @@ const {
 } = require('../src/services/canaryDatabaseIdentity');
 
 const SCRIPT = path.join(__dirname, '../src/scripts/stagenet-financial-canary.js');
+const RUNBOOK = path.join(__dirname, '../docs/STAGENET_FINANCIAL_CANARY.md');
 
 function configEnv(overrides = {}) {
     return {
@@ -474,5 +475,13 @@ describe('XMR stagenet financial canary safety contract', () => {
         const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/package.json'), 'utf8'));
         expect(manifest.scripts['canary:stagenet'])
             .toBe('node scripts/stagenet-financial-canary.js');
+    });
+
+    test('runbook keeps the separate funding wallet off the house-wallet RPC port', () => {
+        const runbook = fs.readFileSync(RUNBOOK, 'utf8');
+        expect(runbook).toContain('port `38083` belongs to the promoted house wallet');
+        expect(runbook).not.toContain('E2E_FUNDING_RPC_URL=http://127.0.0.1:38083');
+        expect(runbook.match(/E2E_FUNDING_RPC_URL=http:\/\/127\.0\.0\.1:38085/g))
+            .toHaveLength(2);
     });
 });
