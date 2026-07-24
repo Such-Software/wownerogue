@@ -386,11 +386,18 @@ class PaymentConfigManager {
         if (!this.config.paymentsEnabled) {
             return 'FREE';
         }
-        if (this.legacyOverride) {
-            return this.legacyOverride.toUpperCase();
-        }
         const directEnabled = !!this.config.modes.direct.enabled;
         const creditsEnabled = !!this.config.modes.credits.enabled;
+        const legacyOverride = String(this.legacyOverride || '').trim().toUpperCase();
+        // GAME_MODE is legacy compatibility input, not authority over the parsed payment
+        // policy. Honor it only when the selected mode is actually enabled; contradictory
+        // PAYMENT_MODES/per-mode switches must never be misreported to sockets or health.
+        if (legacyOverride === 'PAID_SINGLE' && directEnabled) {
+            return 'PAID_SINGLE';
+        }
+        if (legacyOverride === 'PAID_CREDITS' && creditsEnabled) {
+            return 'PAID_CREDITS';
+        }
         if (directEnabled && !creditsEnabled) {
             return 'PAID_SINGLE';
         }

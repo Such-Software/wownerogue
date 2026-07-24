@@ -9,7 +9,10 @@
 const { isSupported, familyFor } = require('../chain/chainProfile');
 const { resolveMatchRuleset } = require('../game/rulesets');
 const money = require('../money/atomic');
-const { validateOperatedProductProfile } = require('./operatedProductProfiles');
+const {
+    getOperatedProductProfile,
+    validateOperatedProductProfile
+} = require('./operatedProductProfiles');
 const {
     PG_BIGINT_MAX,
     cryptoRulesetSupported,
@@ -133,7 +136,10 @@ class EnvironmentValidator {
         const financialSinkUrl = String(env.FINANCIAL_EVENT_SINK_URL || '').trim();
         const financialSinkToken = String(env.FINANCIAL_EVENT_SINK_TOKEN || '').trim();
 
-        if (env.GAME_MODE && env.PAYMENT_MODES) {
+        const operatedProfile = getOperatedProductProfile(env);
+        const exactOperatedLegacyMode = operatedProfile
+            && String(env.GAME_MODE || '').trim() === operatedProfile.gameMode;
+        if (env.GAME_MODE && env.PAYMENT_MODES && !exactOperatedLegacyMode) {
             warnings.push('Both GAME_MODE and PAYMENT_MODES are set. PAYMENT_MODES takes precedence.');
         }
 

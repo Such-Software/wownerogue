@@ -236,9 +236,8 @@ function assertPublicModeContract(modes) {
     assert(modes?.soloEnabled === true && modes?.FREE?.enabled === true,
         'the original solo mode and free solo entry must be enabled');
     assert(modes?.PAID_SINGLE?.enabled === true
-        && modes?.PAID_CREDITS?.enabled === false
-        && Number(modes?.PAID_CREDITS?.payoutMultiplier) === 0,
-    'direct solo must be enabled and purchased-credit solo must be disabled');
+        && !Object.prototype.hasOwnProperty.call(modes || {}, 'PAID_CREDITS'),
+    'direct solo must be enabled and purchased-credit solo must be omitted');
     assert(modes?.match?.enabled === true
         && JSON.stringify(enabledEconomyIds(modes?.match?.economies))
             === JSON.stringify(['credits_prestige', 'free']),

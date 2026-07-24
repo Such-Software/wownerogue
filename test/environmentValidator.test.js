@@ -192,6 +192,7 @@ describe('EnvironmentValidator production launch gate', () => {
             CRYPTO_TYPE: 'WOW',
             MONERO_NETWORK: 'mainnet',
             FREE_PLAY_ENABLED: 'true',
+            GAME_MODE: 'PAID_CREDITS',
             PAYMENT_MODES: 'credits',
             DIRECT_PAYMENT_ENABLED: 'false',
             CREDITS_ENABLED: 'true',
@@ -219,6 +220,16 @@ describe('EnvironmentValidator production launch gate', () => {
         expect(new EnvironmentValidator({ env, logger: silentLogger })
             .assertValid(operatedConfig).errors).toEqual([]);
 
+        for (const gameMode of [undefined, 'PAID_SINGLE']) {
+            const driftedEnv = { ...env };
+            if (gameMode === undefined) delete driftedEnv.GAME_MODE;
+            else driftedEnv.GAME_MODE = gameMode;
+            expect(new EnvironmentValidator({ env: driftedEnv, logger: silentLogger })
+                .validate(operatedConfig).errors).toContain(
+                    'OPERATED_PRODUCT_PROFILE=such-play-wow-prestige requires GAME_MODE=PAID_CREDITS.'
+                );
+        }
+
         expect(new EnvironmentValidator({ env, logger: silentLogger }).validate({
             ...operatedConfig,
             products: { cosmetic: [{ id: 'unrelated-pack', price: 1n }] }
@@ -237,6 +248,7 @@ describe('EnvironmentValidator production launch gate', () => {
             LEGAL_POLICY_VERSION: '2026-07-23-v2',
             TERMS_EFFECTIVE_DATE: '2026-07-23',
             FREE_PLAY_ENABLED: 'true',
+            GAME_MODE: 'PAID_SINGLE',
             PAYMENT_MODES: 'direct',
             DIRECT_PAYMENT_ENABLED: 'true',
             CREDITS_ENABLED: 'false',
@@ -312,6 +324,7 @@ describe('EnvironmentValidator production launch gate', () => {
             CRYPTO_TYPE: 'WOW',
             MONERO_NETWORK: 'mainnet',
             FREE_PLAY_ENABLED: 'true',
+            GAME_MODE: 'PAID_CREDITS',
             PAYMENT_MODES: 'direct,credits',
             DIRECT_PAYMENT_ENABLED: 'true',
             CREDITS_ENABLED: 'true',
@@ -345,6 +358,7 @@ describe('EnvironmentValidator production launch gate', () => {
             CRYPTO_TYPE: 'XMR',
             MONERO_NETWORK: 'mainnet',
             FREE_PLAY_ENABLED: 'true',
+            GAME_MODE: 'PAID_CREDITS',
             PAYMENT_MODES: 'direct,credits',
             DIRECT_PAYMENT_ENABLED: 'true',
             CREDITS_ENABLED: 'true',
@@ -376,6 +390,7 @@ describe('EnvironmentValidator production launch gate', () => {
             expect.stringContaining('requires LEGAL_POLICY_VERSION=2026-07-23-v2'),
             expect.stringContaining('requires TERMS_EFFECTIVE_DATE=2026-07-23'),
             expect.stringContaining('requires MONERO_NETWORK=stagenet'),
+            expect.stringContaining('requires GAME_MODE=PAID_SINGLE'),
             expect.stringContaining('requires PAYMENT_MODES=direct'),
             expect.stringContaining('requires CREDITS_ENABLED=false'),
             expect.stringContaining('requires CREDITS_PAYOUTS_ENABLED=false'),

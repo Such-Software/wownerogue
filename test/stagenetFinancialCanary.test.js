@@ -185,10 +185,6 @@ describe('XMR stagenet financial canary safety contract', () => {
                 enabled: true,
                 payoutMultiplier: { escape: 2, escapeWithTreasure: 3 }
             },
-            PAID_CREDITS: {
-                enabled: false,
-                payoutMultiplier: 0
-            },
             match: {
                 enabled: true,
                 economies: {

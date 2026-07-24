@@ -51,6 +51,7 @@ const { attachDungeonVerification } = require('./game/fairnessVerifier');
 const { renderVerifyPage } = require('./views/verifyPage');
 const { renderPrivacy, renderResponsiblePlay, renderTerms } = require('./views/legalPages');
 const { buildCommerceDisclosure } = require('./config/commerceDisclosurePolicy');
+const { selectPublicPaidModeDescriptors } = require('./config/operatedProductProfiles');
 const createAdminRoutes = require('./routes/admin');
 const createAuthRoutes = require('./routes/auth');
 const { createLeaderboardHandler } = require('./routes/leaderboard');
@@ -399,7 +400,7 @@ app.get('/api/user/:socketId/mode', requireSessionOwnership(401), asyncHandler(a
     }
     res.json({
       socketId,
-      preferredPaymentMode: user.preferred_payment_mode || 'direct',
+      preferredPaymentMode: gameModeManager.getPublicPreferredPaymentMode(user),
       hasPayoutAddress: !!user.payout_address,
       paymentsEnabled: gameModeManager.paymentsEnabled,
       directModeEnabled: gameModeManager.directModeEnabled,
@@ -789,19 +790,7 @@ app.get('/api/game-modes', (req, res) => {
     }
   }
 
-  res.json({
-    operatedProductProfileId: disclosure.operatedProduct?.id || null,
-    cryptoMatchPayoutsEnabled: disclosure.service.cryptoMatchPayoutsEnabled,
-    soloEnabled: publicModeInfo.modes?.solo === true,
-    // Free play is available when the instance is free-only OR when free play is offered
-    // as a choice alongside paid options (FREE_PLAY_ENABLED).
-    freePlayEnabled: !!gameModeManager.freePlayEnabled,
-    FREE: {
-      name: 'Free Play',
-      cost: 0,
-      payoutMultiplier: 0,
-      enabled: !!gameModeManager.freePlayEnabled
-    },
+  const paidModeDescriptors = selectPublicPaidModeDescriptors(process.env, {
     PAID_SINGLE: {
       name: 'Paid Single Game',
       cost: toDisplay(directMode.price),
@@ -818,7 +807,23 @@ app.get('/api/game-modes', (req, res) => {
       payoutMultiplier: isPayoutProcessingEnabled() && creditsMode.enabled && config.payouts.rules.credits.enabled
         ? gameModeManager.getImplementedPayoutMultipliersForMode('PAID_CREDITS')
         : 0
+    }
+  });
+
+  res.json({
+    operatedProductProfileId: disclosure.operatedProduct?.id || null,
+    cryptoMatchPayoutsEnabled: disclosure.service.cryptoMatchPayoutsEnabled,
+    soloEnabled: publicModeInfo.modes?.solo === true,
+    // Free play is available when the instance is free-only OR when free play is offered
+    // as a choice alongside paid options (FREE_PLAY_ENABLED).
+    freePlayEnabled: !!gameModeManager.freePlayEnabled,
+    FREE: {
+      name: 'Free Play',
+      cost: 0,
+      payoutMultiplier: 0,
+      enabled: !!gameModeManager.freePlayEnabled
     },
+    ...paidModeDescriptors,
     match: {
       enabled: publicModeInfo.modes?.match?.enabled === true,
       economies: publicModeInfo.modes?.match?.economies || {}

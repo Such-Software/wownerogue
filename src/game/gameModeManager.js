@@ -1258,6 +1258,27 @@ class GameModeManager {
         };
     }
 
+    getPublicPreferredPaymentMode(user) {
+        if (!this.paymentsEnabled) {
+            return 'free';
+        }
+
+        const preferred = String(user?.preferred_payment_mode || '').trim().toLowerCase();
+        if (preferred === 'direct' && this.directModeEnabled) {
+            return 'direct';
+        }
+        if (preferred === 'credits' && this.creditsModeEnabled) {
+            return 'credits';
+        }
+        if (this.creditsModeEnabled) {
+            return 'credits';
+        }
+        if (this.directModeEnabled) {
+            return 'direct';
+        }
+        return 'free';
+    }
+
     /**
      * Get available payment options for a user
      * @param {string} socketId - Socket ID

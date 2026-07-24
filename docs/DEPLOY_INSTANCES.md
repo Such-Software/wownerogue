@@ -51,6 +51,7 @@ OPERATOR_NAME=Such Software
 OPERATOR_CONTACT_URL=mailto:apps@such.software
 OPERATOR_CONTACT_LABEL=apps@such.software
 FREE_PLAY_ENABLED=true            # offer free play as a choice (Pleb board)
+GAME_MODE=PAID_CREDITS            # exact operated-profile legacy/socket identity
 PAYMENT_MODES=credits             # only purchased-credit prestige is operated here
 DIRECT_PAYMENT_ENABLED=false      # per-run payment is outside the operated scope
 CREDITS_ENABLED=true
@@ -74,7 +75,8 @@ service while the wallet/preflight and fleet activation gates remain open:
 ```bash
 sudo systemctl restart wownerogue.service
 journalctl -u wownerogue.service -n 50 --no-pager   # verify: "Payment system: ENABLED", payouts disabled
-curl -s localhost:3000/api/game-modes | jq '{freePlayEnabled, PAID_SINGLE, PAID_CREDITS}'
+curl -fsS localhost:3000/api/game-modes \
+  | jq -e '.FREE.enabled == true and .PAID_CREDITS.enabled == true and (has("PAID_SINGLE") | not)'
 ```
 
 **MAINNET WALLET NO-GO:** this application release does not authorize changing, copying, stopping,
@@ -150,6 +152,7 @@ DIFFICULTY_PRESET=casino
 
 # --- payments + free play ---
 PAYMENTS_ENABLED=true
+GAME_MODE=PAID_SINGLE
 PAYMENT_MODES=direct
 FREE_PLAY_ENABLED=true            # free and direct solo boards available
 
@@ -244,6 +247,9 @@ domains, websocket upgrades, and local readiness probes still work.
 ## Step 6 — Verify end to end
 
 - `monerogue.app` loads; `play.wowne.ro` still healthy.
+- Each public modes document contains only its operated paid solo product:
+  Wownero has `PAID_CREDITS` and no `PAID_SINGLE`; Monerogue has `PAID_SINGLE` and no
+  `PAID_CREDITS`.
 - After wallet promotion and the separately approved bounded canary: buy credits / pay entry with a
   stagenet wallet → game starts → qualifying solo outcome → 2×/3× test-coin payout arrives.
 - After the corresponding gates clear, both boards populate: free game → Pleb, paid game → Hall of

@@ -105,6 +105,38 @@ describe('production payment policy wiring', () => {
         expect(wallet.createPaymentRequest).not.toHaveBeenCalled();
     });
 
+    test('a contradictory legacy GAME_MODE cannot misreport the enabled payment policy', () => {
+        process.env.PAYMENTS_ENABLED = 'true';
+        process.env.GAME_MODE = 'PAID_SINGLE';
+        process.env.PAYMENT_MODES = 'credits';
+        process.env.DIRECT_PAYMENT_ENABLED = 'false';
+        process.env.CREDITS_ENABLED = 'true';
+        process.env.PAYOUTS_ENABLED = 'false';
+        process.env.DIRECT_PAYOUTS_ENABLED = 'false';
+        process.env.CREDITS_PAYOUTS_ENABLED = 'false';
+
+        const manager = new PaymentConfigManager({ logger: { warn() {}, info() {} } });
+        const gameModes = new GameModeManager(
+            { query: jest.fn(), withTransaction: jest.fn() },
+            { validateAddress: jest.fn() },
+            { CONSOLE_LOGGING: false },
+            manager
+        );
+
+        expect(manager.getConfig().modes.direct.enabled).toBe(false);
+        expect(manager.getConfig().modes.credits.enabled).toBe(true);
+        expect(manager.getLegacyGameMode()).toBe('PAID_CREDITS');
+        expect(gameModes.getGameModeInfo()).toEqual(expect.objectContaining({
+            mode: 'PAID_CREDITS',
+            directModeEnabled: false,
+            creditsModeEnabled: true,
+            payoutsEnabled: false
+        }));
+        expect(gameModes.getPublicPreferredPaymentMode({
+            preferred_payment_mode: 'direct'
+        })).toBe('credits');
+    });
+
     test('global per-game payout cap is an outer bound for direct and credit wins', () => {
         process.env.PAYMENT_MODES = 'direct,credits';
         process.env.PAYOUT_MAX_PER_GAME = '123456';

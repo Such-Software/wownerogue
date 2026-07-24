@@ -28,6 +28,7 @@ const SOURCE_SOFTWARE = Object.freeze({
 const PROFILES = Object.freeze({
     [OPERATED_PRODUCT_PROFILE_IDS.WOW_PRESTIGE]: Object.freeze({
         id: OPERATED_PRODUCT_PROFILE_IDS.WOW_PRESTIGE,
+        gameMode: 'PAID_CREDITS',
         hostname: 'play.wowne.ro',
         publicUrl: 'https://play.wowne.ro',
         operatorName: 'Such Software',
@@ -41,6 +42,7 @@ const PROFILES = Object.freeze({
     }),
     [OPERATED_PRODUCT_PROFILE_IDS.XMR_STAGENET]: Object.freeze({
         id: OPERATED_PRODUCT_PROFILE_IDS.XMR_STAGENET,
+        gameMode: 'PAID_SINGLE',
         hostname: 'monerogue.app',
         publicUrl: 'https://monerogue.app',
         operatorName: 'Such Software',
@@ -71,6 +73,16 @@ function selectedProfileId(env = process.env) {
 
 function getOperatedProductProfile(env = process.env) {
     return PROFILES[selectedProfileId(env)] || null;
+}
+
+function selectPublicPaidModeDescriptors(env = process.env, descriptors = {}) {
+    const profile = getOperatedProductProfile(env);
+    if (!profile) {
+        return { ...descriptors };
+    }
+
+    const descriptor = descriptors[profile.gameMode];
+    return descriptor === undefined ? {} : { [profile.gameMode]: descriptor };
 }
 
 function isExactPublicRoot(value, expected) {
@@ -134,6 +146,8 @@ function validateOperatedProductProfile(env = process.env, config = {}) {
         `TERMS_EFFECTIVE_DATE=${profile.termsEffectiveDate}`);
     requireContract(isExplicitTrue(env.PAYMENTS_ENABLED) && config?.paymentsEnabled === true,
         'PAYMENTS_ENABLED=true');
+    requireContract(String(env.GAME_MODE || '').trim() === profile.gameMode,
+        `GAME_MODE=${profile.gameMode}`);
     requireContract(isExplicitTrue(env.PAID_ACKNOWLEDGEMENT_REQUIRED),
         'PAID_ACKNOWLEDGEMENT_REQUIRED=true');
     requireContract(isExplicitTrue(env.FREE_PLAY_ENABLED), 'FREE_PLAY_ENABLED=true');
@@ -190,6 +204,7 @@ module.exports = {
     OPERATED_PRODUCT_PROFILE_IDS,
     SOURCE_SOFTWARE,
     getOperatedProductProfile,
+    selectPublicPaidModeDescriptors,
     selectedProfileId,
     validateOperatedProductProfile
 };
