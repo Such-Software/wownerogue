@@ -18,6 +18,7 @@
         this.host = host;
         this.THREE = RK.THREE.THREE;
         this.GLTFLoader = RK.THREE.GLTFLoader;
+        this.SkeletonUtils = RK.THREE.SkeletonUtils;
         this.models = {};
         this.mixers = [];
         this.entities = {};
@@ -26,6 +27,7 @@
         this.panX = 0;
         this.panY = 0;
         this._sizeKey = null;
+        this._destroyed = false;
         this._init();
     }
 
@@ -66,7 +68,11 @@
         this.scene.add(this.world);
         this.clock = new T.Clock();
         var self = this;
-        this._raf = requestAnimationFrame(function tick() { self._animate(); self._raf = requestAnimationFrame(tick); });
+        this._raf = requestAnimationFrame(function tick() {
+            if (self._destroyed || !self.renderer) { self._raf = null; return; }
+            if (self._animate() === false) { self._raf = null; return; }
+            self._raf = requestAnimationFrame(tick);
+        });
     };
 
     // Fill the host and frame a fixed "screenful" around the player. The camera FOLLOWS the player
@@ -110,12 +116,31 @@
         return new T.MeshStandardMaterial({ color: colorNum(hex), roughness: 0.82, metalness: 0.02 });
     };
 
+    ThreeRenderer.prototype._disposeObject = function (object) {
+        if (!object || !object.traverse) return;
+        object.traverse(function (obj) {
+            if (obj.geometry && obj.geometry.dispose) obj.geometry.dispose();
+            if (!obj.material) return;
+            var materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+            materials.forEach(function (mat) { if (mat && mat.dispose) mat.dispose(); });
+        });
+    };
+
     ThreeRenderer.prototype._buildTiles = function (scene) {
         var T = this.THREE;
-        this.world.clear();
+        // Visibility changes rebuild the floor/walls, but live entities must stay attached to their
+        // stable layer. Clearing the whole world here made every avatar disappear after the first
+        // fog-of-war update because this.entities still pointed at detached objects.
+        if (this.tileLayer) {
+            this.world.remove(this.tileLayer);
+            this._disposeObject(this.tileLayer);
+        }
         this.tileLayer = new T.Group();
-        this.entityLayer = new T.Group();
-        this.world.add(this.tileLayer, this.entityLayer);
+        this.world.add(this.tileLayer);
+        if (!this.entityLayer) {
+            this.entityLayer = new T.Group();
+            this.world.add(this.entityLayer);
+        }
         var cx = (scene.cols - 1) / 2, cz = (scene.rows - 1) / 2;
         for (var y = 0; y < scene.rows; y++) {
             for (var x = 0; x < scene.cols; x++) {
@@ -146,16 +171,16 @@
 
     ThreeRenderer.prototype._applyModelTint = function (model, visual) {
         var tint = tintForVisual(visual, null);
-        if (!tint || !model) return;
+        if (!model) return;
         var T = this.THREE;
-        var color = new T.Color(colorNum(tint));
+        var color = tint ? new T.Color(colorNum(tint)) : null;
         model.traverse(function (obj) {
             if (!obj.isMesh || !obj.material) return;
             var materials = Array.isArray(obj.material) ? obj.material : [obj.material];
             var next = materials.map(function (mat) {
-                if (!mat || !mat.color) return mat;
+                if (!mat) return mat;
                 var copy = mat.clone();
-                copy.color.copy(color);
+                if (color && copy.color) copy.color.copy(color);
                 return copy;
             });
             obj.material = Array.isArray(obj.material) ? next : next[0];
@@ -182,7 +207,7 @@
         box.getSize(size);
         box.getCenter(center);
         var maxDim = Math.max(size.x, size.y, size.z) || 1;
-        var scale = 5.0 / maxDim;
+        var scale = 1.8 / maxDim;
         model.position.set(-center.x, -box.min.y, -center.z);
         wrapper.scale.setScalar(scale);
         wrapper.add(model);
@@ -240,10 +265,17 @@
         if (visual && visual.allowed !== false && visual.model) {
             this._loadModel(visual, function (rec) {
                 if (!rec || !rec.gltf || !shell.parent) return;
-                var model = rec.gltf.scene.clone(true);
+                var model = self.SkeletonUtils && self.SkeletonUtils.clone
+                    ? self.SkeletonUtils.clone(rec.gltf.scene)
+                    : rec.gltf.scene.clone(true);
                 self._applyModelTint(model, visual);
                 model.rotation.y = Math.PI;
                 var fitted = self._fitModel(model);
+                if (shell._body) {
+                    shell.remove(shell._body);
+                    self._disposeObject(shell._body);
+                    shell._body = null;
+                }
                 shell.add(fitted);
                 shell._model = fitted;
                 if (rec.gltf.animations && rec.gltf.animations.length) {
@@ -275,7 +307,9 @@
             seen[id] = true;
             var ent = this.entities[id];
             if (!ent) {
-                ent = this.entities[id] = { obj: this._makeEntity(e), x: e.x, y: e.y };
+                var obj = this._makeEntity(e);
+                obj.position.set(e.x - cx, 0, e.y - cz);
+                ent = this.entities[id] = { obj: obj, x: e.x, y: e.y };
                 this.entityLayer.add(ent.obj);
             }
             ent.e = e;
@@ -284,7 +318,14 @@
         }
         for (id in this.entities) {
             if (!seen[id]) {
-                this.entityLayer.remove(this.entities[id].obj);
+                var removed = this.entities[id].obj;
+                this.entityLayer.remove(removed);
+                if (removed._mixer) {
+                    removed._mixer.stopAllAction();
+                    var mixerIndex = this.mixers.indexOf(removed._mixer);
+                    if (mixerIndex >= 0) this.mixers.splice(mixerIndex, 1);
+                }
+                this._disposeObject(removed);
                 delete this.entities[id];
             }
         }
@@ -348,16 +389,21 @@
         this.renderer.render(this.scene, this.camera);
         } catch (err) {
             if (root.console) console.warn('3D animate error; stopping 3D loop:', err && err.message);
-            if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; }
-            return;
+            return false;
         }
+        return true;
     };
 
     ThreeRenderer.prototype.destroy = function () {
+        this._destroyed = true;
         if (this._raf) cancelAnimationFrame(this._raf);
+        this._raf = null;
+        for (var i = 0; i < this.mixers.length; i++) this.mixers[i].stopAllAction();
+        this._disposeObject(this.world);
         if (this.renderer) {
             if (this.renderer.domElement && this.renderer.domElement.parentNode) this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
             this.renderer.dispose();
+            if (this.renderer.forceContextLoss) this.renderer.forceContextLoss();
         }
         this.renderer = null;
         this.entities = {};

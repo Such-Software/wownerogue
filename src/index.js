@@ -133,6 +133,12 @@ let latePaymentReconciler = null;
 let walletHealthInterval = null; // Keeps readiness tied to a live wallet, not startup state
 let databaseHealthInterval = null; // Detects a database outage after startup
 const socketHandlers = new SocketHandlers(io, activeGames, broadcastManager, debugManager, gameModeManager, walletRPCService);
+// Three.js is an exact production dependency and is served from this application origin. This
+// keeps the 3D renderer available without granting a third-party CDN script privileges in the
+// game/payment UI. The version is part of the public URL so its immutable cache cannot survive an
+// upgrade to different bytes.
+const rendererLocalEnabled = true;
+const rendererLocalVersion = '0.160.0';
 // Third-party renderer code executes with the same privileges as the game/payment UI. Keep CDN
 // execution off by default; production operators must make the supply-chain tradeoff explicit.
 const rendererCdnEnabled = /^true$/i.test(String(process.env.RENDERER_CDN_ENABLED || 'false'));
@@ -188,9 +194,31 @@ app.use(['/api/user', '/api/auth', '/api/admin', '/api/payment'], noStore);
 app.get('/runtime-config.js', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.type('application/javascript').send(
-        `window.WOWNGEON_RUNTIME=Object.freeze({rendererCdnEnabled:${rendererCdnEnabled}});`
+        'window.WOWNGEON_RUNTIME=Object.freeze('
+        + JSON.stringify({ rendererLocalEnabled, rendererLocalVersion, rendererCdnEnabled })
+        + ');'
     );
 });
+
+// Publish only the browser-facing Three.js build and addons. They remain same-origin under CSP;
+// package metadata, source maps outside these directories, and the rest of node_modules are not
+// exposed. Versioned immutable URLs prevent mixed-library deployments during a rolling release.
+const rendererVendorPath = `/vendor/three/${rendererLocalVersion}`;
+const threePackagePath = path.join(__dirname, 'node_modules/three');
+const rendererVendorStaticOptions = {
+    etag: true,
+    immutable: true,
+    lastModified: true,
+    maxAge: '1y'
+};
+app.use(
+    `${rendererVendorPath}/addons`,
+    express.static(path.join(threePackagePath, 'examples/jsm'), rendererVendorStaticOptions)
+);
+app.use(
+    rendererVendorPath,
+    express.static(path.join(threePackagePath, 'build'), rendererVendorStaticOptions)
+);
 
 // Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
@@ -828,6 +856,8 @@ app.get('/api/game-modes', (req, res) => {
       enabled: publicModeInfo.modes?.match?.enabled === true,
       economies: publicModeInfo.modes?.match?.economies || {}
     },
+    rendererLocalEnabled,
+    rendererLocalVersion,
     rendererCdnEnabled,
     hostedBy
   });

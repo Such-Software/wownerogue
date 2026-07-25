@@ -16,6 +16,19 @@
     function doc() { return root.document; }
     function gameDisplay() { return doc() && doc().getElementById('game-display'); }
 
+    // Keyboard movement is intentionally scoped to #game-display so typing in chat and controls
+    // can never move the player. UI controls that affect the live renderer call this immediately
+    // after activation to restore that explicit gameplay focus.
+    SP.focusGameplay = function () {
+        var gd = gameDisplay();
+        if (!gd || !gd.focus) return false;
+        gd.setAttribute('tabindex', '-1');
+        try { gd.focus({ preventScroll: true }); }
+        catch (_) { gd.focus(); }
+        if (root.UI && UI.updateFocusIndicator) UI.updateFocusIndicator();
+        return doc().activeElement === gd;
+    };
+
     // A dedicated, SELF-SIZING child host so the RK canvas doesn't collide with the ROT canvas and
     // doesn't depend on the ROT canvas for its dimensions (it's an aspect-ratio viewport the camera
     // transform is clipped to).
@@ -93,7 +106,11 @@
             b.type = 'button'; b.textContent = label; b.title = title; b.setAttribute('aria-label', title);
             b.style.cssText = 'min-width:30px;height:28px;padding:0 7px;background:#151b22;color:#e5e7eb;' +
                 'border:1px solid #3b4552;border-radius:4px;cursor:pointer;font:inherit;';
-            b.addEventListener('click', function (e) { e.stopPropagation(); action(); });
+            b.addEventListener('click', function (e) {
+                e.stopPropagation();
+                action();
+                SP.focusGameplay();
+            });
             controls.appendChild(b);
         }
         addButton('−', 'Zoom out', function () { SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) / 1.18); });
@@ -113,9 +130,9 @@
         var host = rkHost();
         if (!host || !RK.createRenderer) return null;
         var mode = SP.mode();
-        // 3D needs THREE, lazy-loaded from a CDN. The sync createRenderer() silently returns a Tiled
-        // renderer when THREE isn't loaded yet ("picked 3D, got original"). Kick off the load and
-        // re-mount as real 3D once it's ready; meanwhile we render Tiled so the screen isn't blank.
+        // 3D needs THREE, lazy-loaded from the pinned same-origin vendor route (or the explicitly
+        // enabled CDN fallback). The sync createRenderer() returns Tiled until it is ready; remount
+        // as real 3D after loading so the screen never goes blank.
         if (mode === '3d' && RK.ensureThree && RK.threeReady && !RK.threeReady()) {
             if (!SP._threePending) {
                 SP._threePending = true;

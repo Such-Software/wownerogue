@@ -28,6 +28,9 @@
     <script src="js/render/threeRenderer.js"></script>
     <script src="js/render/tavernLife.js"></script>
     <script src="/runtime-config.js"></script>
+    <script type="importmap">
+        {"imports":{"three":"/vendor/three/0.160.0/three.module.min.js"}}
+    </script>
     <script src="js/render/renderModes.js"></script>
     <script src="js/ui/matchUiCopy.js"></script>
     <style>
@@ -47,6 +50,14 @@
         .muted { color:var(--muted);font-size:13px; }
         .rk-canvas { background:#050609;display:block;max-width:100%;image-rendering:pixelated; }
         .panel { background:rgba(21,26,32,.97);border:1px solid var(--line);border-radius:9px;padding:14px;margin-bottom:12px;box-shadow:inset 0 1px rgba(255,255,255,.025); }
+        #joinPanel { padding:18px; }
+        .join-copy { display:flex;align-items:baseline;gap:10px;margin-bottom:13px; }
+        .join-copy strong { color:#fff;font-size:18px;letter-spacing:.02em; }
+        .join-fields { display:grid;grid-template-columns:auto minmax(150px,1fr) auto auto;gap:8px;align-items:center; }
+        #joinStatus { display:flex;align-items:center;gap:7px;margin:12px 0 0;min-height:18px;color:var(--muted);font-size:13px; }
+        #joinStatus::before { content:"";width:8px;height:8px;flex:0 0 auto;border-radius:50%;background:var(--gold);box-shadow:0 0 10px rgba(239,182,75,.5); }
+        #joinStatus.connected::before { background:var(--accent);box-shadow:0 0 10px rgba(81,213,105,.55); }
+        #joinStatus.error::before { background:#ff6b6b;box-shadow:0 0 10px rgba(255,107,107,.5); }
         label { font-size: 13px; margin-right: 6px; }
         input, select, button { font:inherit;background:#0d1116;color:var(--text);border:1px solid var(--line);border-radius:5px;padding:7px 9px; }
         input:focus,button:focus-visible { outline:2px solid rgba(98,216,255,.7);outline-offset:2px; }
@@ -86,7 +97,7 @@
         .touch-pad { display:none;grid-template-areas:". up ." "left down right";gap:5px;justify-content:end;margin:8px 0; }
         .touch-pad button { width:44px;height:40px;padding:0;touch-action:manipulation;background:rgba(25,45,31,.94);color:#93f3a2;border-color:#4f9a5c; }
         .touch-pad [data-dir="up"]{grid-area:up}.touch-pad [data-dir="left"]{grid-area:left}.touch-pad [data-dir="down"]{grid-area:down}.touch-pad [data-dir="right"]{grid-area:right}
-        @media (max-width:700px),(pointer:coarse) { .touch-pad{display:grid} #stage,.spectator-render{height:min(54vh,500px)} #joinPanel{display:flex;flex-wrap:wrap;gap:7px;align-items:center} #joinPanel label{width:100%} #name{min-width:0;flex:1} }
+        @media (max-width:700px),(pointer:coarse) { .touch-pad{display:grid} #stage,.spectator-render{height:min(54vh,500px)} .join-copy{display:block}.join-copy .muted{display:block;margin-top:5px}.join-fields{grid-template-columns:auto minmax(0,1fr)}.join-fields #customizeBtn,.join-fields #joinBtn{grid-column:auto / span 1}.join-fields label{grid-column:1}.join-fields #name{grid-column:2} }
         @media (max-width:430px) { .wrap{padding-inline:8px}.tavern-head .muted{display:none}#modebar{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}.modebtn{white-space:nowrap} }
         @media (prefers-reduced-motion:reduce) { *,*::before,*::after{animation:none!important;transition:none!important} }
     </style>
@@ -98,13 +109,20 @@
             <span><a class="backlink" href="/responsible-play">Responsible Play</a> <a class="backlink" href="/">← Lobby</a></span>
         </header>
 
-        <div id="joinPanel" class="panel">
-            <label for="name">Name</label>
-            <input id="name" maxlength="16" placeholder="anon" autocomplete="off">
-            <button id="customizeBtn" type="button">🎭 Customize</button>
+        <form id="joinPanel" class="panel" autocomplete="off">
+            <div class="join-copy">
+                <strong>Walk in anonymously</strong>
+                <span class="muted">No account required. Pick an optional display name and character.</span>
+            </div>
+            <div class="join-fields">
+                <label for="name">Name</label>
+                <input id="name" maxlength="16" placeholder="anon" autocomplete="nickname">
+                <button id="customizeBtn" type="button">🎭 Customize</button>
+                <button id="joinBtn" type="submit" disabled>Connecting…</button>
+            </div>
             <span id="appearancePreview" class="muted"></span>
-            <button id="joinBtn">Enter tavern</button>
-        </div>
+            <p id="joinStatus" role="status" aria-live="polite">Connecting to the tavern…</p>
+        </form>
 
         <div id="modebar" class="hidden"></div>
         <div id="packbar" class="hidden"></div>
@@ -116,7 +134,7 @@
             <button type="button" data-dir="right" aria-label="Move right">▶</button>
         </div>
         <p id="status" class="muted" role="status" aria-live="polite"></p>
-        <p id="movementHint" class="muted">Move with arrow keys or WASD · drag/pinch to explore · ★ may require credits · ⛔ is unavailable on this server.</p>
+        <p id="movementHint" class="muted hidden">Move with arrow keys or WASD · drag/pinch to explore · ★ may require credits · ⛔ is unavailable on this server.</p>
 
         <div id="chatPanel" class="panel hidden">
             <div id="chatLog" aria-live="polite"></div>
@@ -181,6 +199,7 @@
         var statusEl = document.getElementById('status');
         var joinPanel = document.getElementById('joinPanel');
         var joinBtn = document.getElementById('joinBtn');
+        var joinStatus = document.getElementById('joinStatus');
         var stageEl = document.getElementById('stage');
         var modebar = document.getElementById('modebar');
         var packbar = document.getElementById('packbar');
@@ -236,8 +255,28 @@
         var activeMatchSnapshots = {};
         var activeMatchTickMs = 250;
         var currentMatchRuleset = MatchCopy.normalize({ id: 'race' });
+        var joinPending = false;
+        var joinTimer = null;
 
-        function setStatus(msg) { statusEl.textContent = msg; }
+        function setStatus(msg, kind) {
+            statusEl.textContent = msg;
+            joinStatus.textContent = msg;
+            var connectionKind = kind || (socket.connected ? 'connected' : '');
+            joinStatus.classList.toggle('connected', connectionKind === 'connected');
+            joinStatus.classList.toggle('error', connectionKind === 'error');
+        }
+        function updateJoinButton() {
+            joinBtn.disabled = joinPending || !socket.connected;
+            joinBtn.textContent = joinPending
+                ? 'Entering…'
+                : (socket.connected ? 'Enter tavern' : 'Connecting…');
+        }
+        function clearJoinAttempt() {
+            if (joinTimer) window.clearTimeout(joinTimer);
+            joinTimer = null;
+            joinPending = false;
+            updateJoinButton();
+        }
         function applyEntitlements(data) {
             if (RK.setEntitlementSnapshot) RK.setEntitlementSnapshot(data || {});
             updateAppearancePreview();
@@ -375,16 +414,30 @@
         }
 
         // ---- Join / state ------------------------------------------------------------
-        joinBtn.addEventListener('click', function () {
+        joinPanel.addEventListener('submit', function (event) {
+            event.preventDefault();
+            if (joinPending) return;
+            if (!socket.connected) {
+                setStatus('Not connected yet. Retrying automatically…', 'error');
+                updateJoinButton();
+                return;
+            }
             var name = document.getElementById('name').value || '';
             var appearance = RK.normalizeAppearance(selectedAppearance);
-            joinBtn.disabled = true;
+            joinPending = true;
+            updateJoinButton();
+            setStatus('Entering the tavern…', 'connected');
             socket.emit('tavern_join', { name: name, avatar: appearance.avatar, appearance: appearance });
+            joinTimer = window.setTimeout(function () {
+                if (!joinPending) return;
+                clearJoinAttempt();
+                setStatus('The tavern did not respond. Check the connection and try again.', 'error');
+            }, 10000);
         });
 
         socket.on('tavern_error', function (e) {
-            joinBtn.disabled = false;
-            setStatus((e && e.message) || 'Could not enter the tavern.');
+            clearJoinAttempt();
+            setStatus((e && e.message) || 'Could not enter the tavern.', 'error');
         });
         socket.on('game_mode_info', function (data) {
             lastGameModeInfo = data || null;
@@ -413,6 +466,7 @@
         });
 
         socket.on('tavern_joined', function (data) {
+            clearJoinAttempt();
             state.you = data.you;
             applyFull(data.state);
             joinPanel.classList.add('hidden');
@@ -420,6 +474,8 @@
             stageEl.classList.remove('hidden');
             chatPanel.classList.remove('hidden');
             tavernDpad.classList.remove('hidden');
+            movementHint.classList.remove('hidden');
+            stageEl.setAttribute('tabindex', '-1');
             rebuildScene();
             buildModebar();
             setMode(RK.loadMode('tiles'));
@@ -437,7 +493,7 @@
                 rebuildScene();
                 draw();
             });
-            setStatus('You are in the tavern.');
+            setStatus('You are in the tavern.', 'connected');
             watchGamesBtn.classList.remove('hidden');
         });
 
@@ -550,12 +606,23 @@
         bindDpad(tavernDpad);
         bindDpad(spectatorDpad);
 
-        setStatus('Connecting…');
+        setStatus('Connecting to the tavern…');
+        updateJoinButton();
         socket.on('connect', function () {
+            clearJoinAttempt();
             socket.emit('register_client', { clientId: socket.id, userAgent: navigator.userAgent });
             socket.emit('identity:get');
             socket.emit('match_reconnect', {});
-            setStatus('Connected. Choose a name and enter.');
+            setStatus('Connected. Choose a name and enter.', 'connected');
+        });
+        socket.on('disconnect', function () {
+            clearJoinAttempt();
+            if (window.CommerceConsent && window.CommerceConsent.clear) window.CommerceConsent.clear();
+            setStatus('Connection lost. Reconnecting automatically…', 'error');
+        });
+        socket.on('connect_error', function () {
+            clearJoinAttempt();
+            setStatus('Could not connect. Retrying automatically…', 'error');
         });
 
         // ---- Shared spectator viewport (solo runs + public PvP races) -----------------
@@ -929,10 +996,6 @@
 
         // ---- End match UI ----------------------------------------------------
 
-        socket.on('disconnect', function () {
-            if (window.CommerceConsent && window.CommerceConsent.clear) window.CommerceConsent.clear();
-            setStatus('Disconnected.');
-        });
     })();
     </script>
 </body>

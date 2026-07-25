@@ -2,13 +2,18 @@
 (function (root) {
     'use strict';
     var RK = root.RK = root.RK || {};
+    RK.localRenderersEnabled = function () {
+        return !!(root.WOWNGEON_RUNTIME && root.WOWNGEON_RUNTIME.rendererLocalEnabled === true);
+    };
     RK.externalRenderersEnabled = function () {
         return !!(root.WOWNGEON_RUNTIME && root.WOWNGEON_RUNTIME.rendererCdnEnabled === true);
     };
     RK.isModeRuntimeAvailable = function (id) {
         if (!RK.modeMeta || !RK.modeMeta(id)) return false;
         if (id === '3d') {
-            return !!(RK.THREE && RK.THREE.THREE) || RK.externalRenderersEnabled();
+            return !!(RK.THREE && RK.THREE.THREE)
+                || RK.localRenderersEnabled()
+                || RK.externalRenderersEnabled();
         }
         return true;
     };
@@ -116,20 +121,46 @@
 
     var threeLoading = false, threeCbs = [];
     RK.threeReady = function () { return !!(RK.THREE && RK.THREE.THREE); };
+    RK.threeModuleSources = function () {
+        if (RK.localRenderersEnabled()) {
+            var version = String(root.WOWNGEON_RUNTIME.rendererLocalVersion || '');
+            if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
+            var base = '/vendor/three/' + version;
+            return {
+                library: base + '/three.module.min.js',
+                loader: base + '/addons/loaders/GLTFLoader.js',
+                skeleton: base + '/addons/utils/SkeletonUtils.js'
+            };
+        }
+        if (!RK.externalRenderersEnabled()) return null;
+        return {
+            library: 'https://cdn.jsdelivr.net/npm/three@0.160.0/+esm',
+            loader: 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm',
+            skeleton: 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm'
+        };
+    };
     RK.ensureThree = function (cb) {
         if (RK.threeReady()) { cb(true); return; }
-        if (!RK.externalRenderersEnabled()) { cb(false); return; }
+        var sources = RK.threeModuleSources();
+        if (!sources) { cb(false); return; }
         threeCbs.push(cb);
         if (threeLoading) return;
         threeLoading = true;
         Promise.all([
-            import('https://cdn.jsdelivr.net/npm/three@0.160.0/+esm'),
-            import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm')
+            import(sources.library),
+            import(sources.loader),
+            import(sources.skeleton)
         ]).then(function (mods) {
-            RK.THREE = { THREE: mods[0], GLTFLoader: mods[1].GLTFLoader };
+            threeLoading = false;
+            RK.THREE = {
+                THREE: mods[0],
+                GLTFLoader: mods[1].GLTFLoader,
+                SkeletonUtils: mods[2]
+            };
             var cbs = threeCbs; threeCbs = [];
             cbs.forEach(function (f) { f(true); });
         }).catch(function (e) {
+            threeLoading = false;
             if (root.console) console.warn('Three renderer unavailable:', e && e.message);
             var cbs = threeCbs; threeCbs = [];
             cbs.forEach(function (f) { f(false); });

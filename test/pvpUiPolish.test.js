@@ -89,6 +89,16 @@ describe('public multiplayer controls and boards', () => {
         expect(tavernHtml).toContain("b.addEventListener('click'");
     });
 
+    test('anonymous Tavern admission has explicit connection, pending, and retry states', () => {
+        expect(tavernHtml).toContain('Walk in anonymously');
+        expect(tavernHtml).toContain('No account required');
+        expect(tavernHtml).toMatch(/id="joinPanel"[^>]*>[\s\S]*id="joinBtn"[^>]*disabled/);
+        expect(tavernHtml).toContain("joinPanel.addEventListener('submit'");
+        expect(tavernHtml).toContain("socket.on('disconnect'");
+        expect(tavernHtml).toContain("socket.on('connect_error'");
+        expect(tavernHtml).toContain('The tavern did not respond');
+    });
+
     test('Prestige is a distinct public board with an explicit non-mixing disclosure', () => {
         expect(leaderboard).toContain('data-board="prestige"');
         expect(leaderboard).toContain('Credit-entry competitive PvP scores only');

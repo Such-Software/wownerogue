@@ -59,7 +59,10 @@
             b.setAttribute('aria-disabled', usable ? 'false' : 'true');
             b.onclick = function () {
                 if (!usable) return;
-                if (RK.SPGame.setMode(m.id)) build();
+                if (RK.SPGame.setMode(m.id)) {
+                    build();
+                    if (RK.SPGame.focusGameplay) RK.SPGame.focusGameplay();
+                }
             };
             modeRow.appendChild(b);
         });
@@ -80,6 +83,7 @@
                     if (RK.setActivePack && RK.setActivePack(p.id)) {
                         if (RK.SPGame.refreshPack) RK.SPGame.refreshPack();
                         build();
+                        if (RK.SPGame.focusGameplay) RK.SPGame.focusGameplay();
                     }
                 };
                 packRow.appendChild(b);

@@ -76,13 +76,18 @@ function loadPickerWithRuntimeDisabled() {
     context,
   );
   window.RK.entitlements.premium = true;
-  window.RK.SPGame = { mode: () => 'tiles', setMode: () => true };
+  const focusGameplay = jest.fn();
+  window.RK.SPGame = {
+    mode: () => 'tiles',
+    setMode: () => true,
+    focusGameplay,
+  };
   vm.runInNewContext(
     fs.readFileSync(path.join(__dirname, '../html/js/ui/spRenderPicker.js'), 'utf8'),
     context,
   );
   window.RK.rebuildRenderPicker();
-  return { picker, RK: window.RK };
+  return { picker, RK: window.RK, focusGameplay };
 }
 
 describe('optional renderer CDN policy', () => {
@@ -118,6 +123,25 @@ describe('optional renderer CDN policy', () => {
     expect(callback).toHaveBeenCalledWith(true);
   });
 
+  test('the pinned same-origin renderer is available without enabling CDN execution', () => {
+    const RK = loadRenderModes({
+      rendererLocalEnabled: true,
+      rendererLocalVersion: '0.160.0',
+      rendererCdnEnabled: false,
+    });
+    RK.entitlements.premium = true;
+
+    expect(RK.externalRenderersEnabled()).toBe(false);
+    expect(RK.localRenderersEnabled()).toBe(true);
+    expect(RK.isModeRuntimeAvailable('3d')).toBe(true);
+    expect(RK.canUseMode('3d')).toBe(true);
+    expect(RK.threeModuleSources()).toEqual({
+      library: '/vendor/three/0.160.0/three.module.min.js',
+      loader: '/vendor/three/0.160.0/addons/loaders/GLTFLoader.js',
+      skeleton: '/vendor/three/0.160.0/addons/utils/SkeletonUtils.js',
+    });
+  });
+
   test('homepage picker labels policy-disabled 3D as unavailable, not purchasable', () => {
     const { picker } = loadPickerWithRuntimeDisabled();
     const modeButtons = picker.children[0].children;
@@ -128,6 +152,15 @@ describe('optional renderer CDN policy', () => {
     expect(threeButton.title).toMatch(/unavailable on this server/i);
     expect(threeButton.title).not.toMatch(/unlock with credits/i);
     expect(threeButton.attributes['aria-disabled']).toBe('true');
+  });
+
+  test('homepage renderer selection immediately returns keyboard focus to gameplay', () => {
+    const { picker, focusGameplay } = loadPickerWithRuntimeDisabled();
+    const tiledButton = picker.children[0].children.find(button => button.textContent === 'Tiled');
+
+    tiledButton.onclick();
+
+    expect(focusGameplay).toHaveBeenCalledTimes(1);
   });
 
   test('server CSP trusts jsDelivr only when the renderer CDN flag is enabled', () => {
@@ -152,5 +185,20 @@ describe('optional renderer CDN policy', () => {
     expect(homepage).toContain('js/lib/jquery-3.7.1.min.js');
     expect(debugPage).toContain('js/lib/jquery-3.7.1.min.js');
     expect(homepage + debugPage).not.toContain('jquery-3.4.1');
+  });
+
+  test('server and renderer pages publish the exact same-origin Three.js build', () => {
+    const packageJson = require('../src/package.json');
+    const serverSource = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
+    const pages = ['index.html', 'tavern.html', 'match.html']
+      .map(name => fs.readFileSync(path.join(__dirname, '../html', name), 'utf8'))
+      .join('\n');
+
+    expect(packageJson.dependencies.three).toBe('0.160.0');
+    expect(serverSource).toContain("const rendererLocalVersion = '0.160.0'");
+    expect(serverSource).toContain("'examples/jsm'");
+    expect(serverSource).toContain("'node_modules/three'");
+    expect(pages.split('"three":"/vendor/three/0.160.0/three.module.min.js"'))
+      .toHaveLength(4);
   });
 });
