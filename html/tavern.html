@@ -256,6 +256,7 @@
         var activeMatchTickMs = 250;
         var currentMatchRuleset = MatchCopy.normalize({ id: 'race' });
         var joinPending = false;
+        var joinReady = false;
         var joinTimer = null;
 
         function setStatus(msg, kind) {
@@ -266,16 +267,22 @@
             joinStatus.classList.toggle('error', connectionKind === 'error');
         }
         function updateJoinButton() {
-            joinBtn.disabled = joinPending || !socket.connected;
+            joinBtn.disabled = joinPending || !socket.connected || !joinReady;
             joinBtn.textContent = joinPending
                 ? 'Entering…'
-                : (socket.connected ? 'Enter tavern' : 'Connecting…');
+                : (!socket.connected ? 'Connecting…' : (joinReady ? 'Enter tavern' : 'Preparing…'));
         }
         function clearJoinAttempt() {
             if (joinTimer) window.clearTimeout(joinTimer);
             joinTimer = null;
             joinPending = false;
             updateJoinButton();
+        }
+        function markJoinReady() {
+            if (!socket.connected || joinReady) return;
+            joinReady = true;
+            updateJoinButton();
+            setStatus('Connected. Choose a name and enter.', 'connected');
         }
         function applyEntitlements(data) {
             if (RK.setEntitlementSnapshot) RK.setEntitlementSnapshot(data || {});
@@ -417,8 +424,8 @@
         joinPanel.addEventListener('submit', function (event) {
             event.preventDefault();
             if (joinPending) return;
-            if (!socket.connected) {
-                setStatus('Not connected yet. Retrying automatically…', 'error');
+            if (!socket.connected || !joinReady) {
+                setStatus('The anonymous session is not ready yet. Retrying automatically…', 'error');
                 updateJoinButton();
                 return;
             }
@@ -447,10 +454,12 @@
         socket.on('credits_update', applyEntitlements);
         socket.on('session_token', function (data) {
             try { if (data && data.token) localStorage.setItem('wownerogue_token', data.token); } catch (_) {}
+            markJoinReady();
         });
         socket.on('session_resumed', function (data) {
             try { if (data && data.token) localStorage.setItem('wownerogue_token', data.token); } catch (_) {}
             applyEntitlements(data || {});
+            markJoinReady();
         });
         socket.on('identity_update', function (data) {
             if (!data) return;
@@ -460,6 +469,7 @@
                 RK.saveIdentity(selectedAppearance);
                 updateAppearancePreview();
             }
+            markJoinReady();
         });
         socket.on('identity_error', function (data) {
             if (data && data.message) setStatus(data.message);
@@ -609,18 +619,21 @@
         setStatus('Connecting to the tavern…');
         updateJoinButton();
         socket.on('connect', function () {
+            joinReady = false;
             clearJoinAttempt();
             socket.emit('register_client', { clientId: socket.id, userAgent: navigator.userAgent });
             socket.emit('identity:get');
             socket.emit('match_reconnect', {});
-            setStatus('Connected. Choose a name and enter.', 'connected');
+            setStatus('Connected. Preparing your anonymous session…', 'connected');
         });
         socket.on('disconnect', function () {
+            joinReady = false;
             clearJoinAttempt();
             if (window.CommerceConsent && window.CommerceConsent.clear) window.CommerceConsent.clear();
             setStatus('Connection lost. Reconnecting automatically…', 'error');
         });
         socket.on('connect_error', function () {
+            joinReady = false;
             clearJoinAttempt();
             setStatus('Could not connect. Retrying automatically…', 'error');
         });

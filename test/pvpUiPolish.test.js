@@ -96,6 +96,8 @@ describe('public multiplayer controls and boards', () => {
         expect(tavernHtml).toContain("joinPanel.addEventListener('submit'");
         expect(tavernHtml).toContain("socket.on('disconnect'");
         expect(tavernHtml).toContain("socket.on('connect_error'");
+        expect(tavernHtml).toContain('Preparing your anonymous session');
+        expect(tavernHtml).toContain('!socket.connected || !joinReady');
         expect(tavernHtml).toContain('The tavern did not respond');
     });
 
