@@ -2,6 +2,10 @@
 
 This guide covers deploying Wownerogue to a production environment.
 
+For evidence about the release currently serving `play.wowne.ro`, see the dated
+[production-state record](PRODUCTION_STATE_2026-07-25.md). That record is not a substitute for this
+runbook or authorization for another activation.
+
 ## Operated profiles versus independent deployments
 
 Such Software (`apps@such.software`) operates only `play.wowne.ro` (Wownero mainnet
@@ -44,6 +48,8 @@ claims, and support; Such Software neither endorses nor accepts responsibility f
 - [ ] Set up database backups (see [LOGS_AND_BACKUP.md](./LOGS_AND_BACKUP.md))
 - [ ] Configure log rotation
 - [ ] Run database migrations
+- [ ] If 3D is offered, provision the gitignored runtime GLBs and verify library/model requests
+      stay same-origin
 
 ---
 
@@ -74,10 +80,12 @@ root-owned mode-0700 candidate inbox and compares its remote SHA-256 with the in
 recorded literal digest. Follow the fleet Wowngeon runbook; the role is a one-shot custody boundary,
 not deployment.
 
-The current fleet repository deliberately has no executable extraction/activation helper yet.
-Until that helper exists, the safe host boundary is blob-only staging: do not manually
-extract beneath `releases/`, install dependencies there, change `current`, restart an application,
-or run migrations merely because the blob has arrived.
+The executable extraction/activation boundary lives only in the separately reviewed fleet
+repository as the default-closed `wowngeon_release_activate` role. This application checkout cannot
+attest which fleet revision is installed or authorize its execution. Follow the hash-pinned fleet
+runbook and literal receipt contract; do not manually extract beneath `releases/`, install
+dependencies there, change `current`, restart an application, or run migrations merely because a
+blob has arrived.
 
 ---
 
@@ -95,12 +103,13 @@ node --version
 npm --version
 ```
 
-The eventual reviewed extraction/activation helper installs exactly the locked production graph in its private,
-writable staging directory with `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`, verifies
-it with `npm ls --omit=dev`, and seals the finished release root-owned and non-writable before it can
-be selected. Never make a release tree writable by `wownerogue`. Online advisory lookup is a
-separate explicitly authorized source-review operation; never run `npm audit fix` in staging or on
-a live release.
+The reviewed fleet extraction/activation role installs exactly the locked production graph in its
+private, writable staging directory with
+`npm ci --omit=dev --ignore-scripts --no-audit --no-fund`, verifies it with
+`npm ls --omit=dev`, and seals the finished release root-owned and non-writable before it can be
+selected. Never make a release tree writable by `wownerogue`. Online advisory lookup is a separate
+explicitly authorized source-review operation; never run `npm audit fix` in staging or on a live
+release.
 
 ---
 
@@ -114,7 +123,7 @@ sudo chmod 0640 /etc/wownerogue/app.env
 ```
 
 Do not use recursive ownership changes on `/var/www/wownerogue`; they can hand the service process
-write access to immutable code or the rollback selector. The reviewed extraction/activation helper must verify
+write access to immutable code or the rollback selector. The reviewed fleet role must verify
 every individual release's ownership and modes before activation.
 
 **Database ownership** - the application currently runs its own migrations at startup, so its
@@ -228,11 +237,12 @@ location /socket.io/ {
 ## Updating the Deployment
 
 Run the full suite from the clean source commit, then build and verify the runtime artifact using
-[RELEASE_ARTIFACT.md](./RELEASE_ARTIFACT.md). Today, use the fleet blob-staging playbook and stop at
-the independently hash-verified root-owned candidate blob because the reviewed extraction/activation
-helper does not yet exist. When that helper implements the documented contract, it—not an application service identity or a
-manual shell session—will build a new immutable `/var/www/<instance>/releases/<release-id>`, install
-the locked graph, run the clone/preflight gates, seal ownership, and atomically select `current`.
+[RELEASE_ARTIFACT.md](./RELEASE_ARTIFACT.md). Use the fleet blob-staging playbook, then proceed only
+through the reviewed, hash-pinned `wowngeon_release_activate` role after its clone, wallet,
+accounting, drain, predecessor, and receipt gates pass. That role—not an application service
+identity or a manual shell session—builds a new immutable
+`/var/www/<instance>/releases/<release-id>`, installs the locked graph, verifies the clone/preflight
+evidence, seals ownership, and atomically selects `current`.
 Never run `git pull`, `npm install`, or `npm audit fix` inside the active release. Keep the previous
 release and database backup until the new version has passed public health, WebSocket,
 payment-intake, and (stagenet only) payout smoke tests.

@@ -24,6 +24,19 @@ transport-agnostic makes it unit-testable in isolation and reusable as a standal
 choose an avatar, move around a shared map, and chat. A spectator camera lets them watch live
 single-player or multiplayer games from inside the room.
 
+### Entering anonymously
+
+The Tavern requires no account or login. On connection, the browser registers the client and waits
+for the normal anonymous session handshake (`session_token`, `session_resumed`, or the associated
+identity response) before enabling **Enter tavern**. The token is stored as `wownerogue_token` in
+that browser's `localStorage` and is reused after refresh or reconnect.
+
+The join form accepts its submit action, including Enter from the optional name field. Its button
+shows `Connecting…`, `Preparing…`, or `Entering…` while the corresponding step is pending. A
+disconnect or connection error resets readiness and retries automatically; a join with no server
+response becomes a visible retryable error after ten seconds. Cosmetic availability is still
+normalized and enforced by server entitlement policy.
+
 **Multiplayer Match** — a shared dungeon Room using the operator-selected ruleset. Players may race
 to escape, fight to remain last alive, compete for score, or cooperate. Block-bounded rulesets end
 on the first advancing header after their active-play duration floor; every match also has a hard
@@ -151,16 +164,18 @@ into a `Scene` (a tile grid + entities), and any renderer draws it. This lives i
 `html/js/render/` and is used by the Tavern, multiplayer client, spectators, and the single-player
 render bridge.
 
-Render tiers:
+Selectable render techniques:
 - **ASCII** — monospace glyph grid (canvas). Always-available fallback; accessible.
 - **Tiled** — coloured tiles + entity sprites (canvas 2D). The default. Real tilesets/atlases
   slot in here later.
-- **Fancy** — WebGL via PixiJS: a blurred bloom on entities, flickering warm lights along the
-  bar, drifting dust motes, a vignette, and smooth movement — all programmatic (no art assets).
 - **Iso** — canvas isometric projection using Kenney's Isometric Miniature Dungeon runtime PNGs.
-- **3D** — Three.js projection. It loads generated GLB avatars with `idle` / `run` / `jump`
-  clips when available and falls back to lightweight low-poly avatars during asset iteration.
-- Planned: **Fancy ASCII** — shader-lit, animated glyphs.
+- **3D** — Three.js projection, loaded lazily from the pinned same-origin `three@0.160.0` runtime.
+  It attaches generated GLB avatars with `idle` / `run` / `jump` clips when available and keeps a
+  lightweight low-poly fallback only when the model cannot load.
+
+`fancyRenderer.js` remains an internal PixiJS prototype, not a registered selectable mode.
+Production top-down styling comes from interchangeable packs plus the shared canvas FX layer.
+Planned: **Fancy ASCII** — shader-lit, animated glyphs.
 
 Render mode is a per-user choice (persisted) with an operator default. Modes can be marked
 **premium** — a cosmetic entitlement intended to be unlocked with credits (the same Operator
@@ -169,10 +184,9 @@ not a hard boundary; premium-only *assets* (special tilesets, shaders) are the r
 stronger gating is wanted. The render kit provides the engine and programmatic tiles/effects —
 polished pixel-art tilesets, sprite sheets, and shader effects are a separate content effort.
 
-**CSP note:** PixiJS compiles shaders with `eval`, which the app's strict CSP blocks. The Fancy
-tier therefore loads `@pixi/unsafe-eval` (it precompiles shaders without eval) immediately after
-`pixi.js`, so no `'unsafe-eval'` is added to the CSP. Any page using the Fancy renderer must
-include both scripts, in that order.
+**CSP note:** If the internal PixiJS prototype is invoked, it loads `@pixi/unsafe-eval`
+immediately after `pixi.js` to precompile shaders without adding `'unsafe-eval'` to CSP. It also
+requires the server's explicit external-renderer policy; no current mode button invokes it.
 
 ## Asset delivery & performance
 
@@ -181,17 +195,20 @@ Rules for keeping the tree lean and the client fast:
 - **Heavy source artifacts never go in git.** 3D models and generation intermediates (`*.glb`,
   `*.fbx`, `*.blend`, …) are produced by the sprite pipeline (`~/src/docs/animated-sprite-pipeline.md`)
   and are gitignored. Only the *outputs* the game loads are considered for shipping.
-- **Generated / premium assets are hosted, not committed.** AI-generated premium skins live under
-  `html/assets/generated/` (gitignored) and are delivered from an external asset host / CDN by URL.
-  The base tier's Kenney CC0 tiles are small and stay in-repo.
+- **Generated / premium assets are provisioned, not committed.** Premium skins and runtime GLBs
+  live under `html/assets/generated/` (gitignored). They may be provisioned into the same-origin
+  runtime path or delivered by an explicitly reviewed asset host and CSP policy; they are not
+  present in the Git release artifact. The base tier's small Kenney CC0 tiles stay in-repo.
 - **Lazy-load by mode / entitlement.** Nothing heavy loads until it's actually needed:
-  - PixiJS (+ `@pixi/unsafe-eval`) loads only when the **Fancy** mode is first selected — ASCII and
-    Tiled need no WebGL library.
+  - ASCII and Tiled need no WebGL library. The unregistered Fancy prototype requests PixiJS plus
+    `@pixi/unsafe-eval` only if called directly.
   - A premium skin's sprite sheet is fetched only when that skin is selected and the player is
     entitled to it.
-  - Three.js loads only when the **3D** mode is selected. Generated GLBs are emitted by
-    `scripts/build_kenney_3d_characters.py` from the local Kenney FBX sources into
-    `html/assets/generated/3d/` (gitignored).
+  - The exact production Three.js dependency is served beneath `/vendor/three/0.160.0/` and
+    imported only when **3D** is selected. Local delivery takes precedence; external renderer
+    execution remains off unless `RENDERER_CDN_ENABLED=true`.
+  - Generated GLBs are emitted by `scripts/build_kenney_3d_characters.py` from local Kenney FBX
+    sources into `html/assets/generated/3d/` (gitignored).
 - **Optimize what ships.** Sprite sheets are delivered as **WebP** (alpha), right-sized to display
   resolution, content-hashed with a long cache TTL. (Example: the demo walk sheet is 633 KB as PNG,
   65 KB as WebP — ~10×.)
@@ -213,8 +230,9 @@ Multiplayer:
 - **M3** — Free, credit-prestige, and gated crypto-race economies wired in. (Done)
 
 Rendering:
-- **R0** — Shared render kit: scene model + ASCII / Tiled / Fancy (PixiJS) renderers + mode
-  switch, wired to the Tavern. Premium-mode gating scaffolded. (Done)
+- **R0** — Shared render kit: scene model + selectable ASCII / Tiled / Iso / 3D techniques,
+  internal Fancy prototype, and a mode switch wired to the Tavern. Premium-mode gating
+  scaffolded. (Done)
 - **R1** — Wire the main game to the render kit behind the existing display layer. (Done)
 - **R2** — Real tilesets / sprite sheets and the Fancy-ASCII tier.
 - **R3** — Wire premium render modes to credit entitlements (Operator Policy). (Done)
@@ -233,8 +251,9 @@ All milestones are additive and config-gated; the single-player path is unchange
 and Socket.IO room broadcasts. Wired into `SocketHandlers` (`tavern_join` / `tavern_move` /
 `tavern_leave`, plus disconnect cleanup and shutdown). Inert unless `TAVERN_ENABLED=true`.
 
-`html/tavern.html` — the browser client: connect, choose a name/avatar, enter the room, walk with
-keyboard or on-screen controls, chat, watch solo/multiplayer games, or join a match.
+`html/tavern.html` — the browser client: establish/resume an anonymous session, choose an optional
+name/avatar, enter the room, walk with keyboard or on-screen controls, chat, watch
+solo/multiplayer games, or join a match. No account login is required.
 
 `src/network/chat/` — the `ChatProvider` seam. `ChatProvider` (interface) + `SocketChatProvider`
 (default: Socket.IO delivery + Postgres history). Both the global chat (`ChatHandler`) and tavern
@@ -242,14 +261,16 @@ chat deliver through it, so the backend can be swapped (e.g. a Nostr channel) wi
 callers. Tavern chat is room-scoped and ephemeral.
 
 `html/js/render/` — the render kit: `sceneModel.js` (renderer-agnostic adapters), ASCII, tiled,
-Fancy (PixiJS), isometric, and Three.js renderers, plus `renderModes.js` (registry, factory with
-graceful fallback, entitlements, persistence). Clients expose a mode toolbar where applicable;
-premium modes are marked and gated by `RK.entitlements`.
+isometric, and Three.js renderers plus the internal Fancy (PixiJS) prototype, and
+`renderModes.js` (registry, factory with graceful fallback, entitlements, persistence). Clients
+expose a mode toolbar where applicable; premium modes are marked and gated by `RK.entitlements`.
 
 Tests: `test/tavernRoom.test.js` (engine), `test/tavernManager.test.js` (manager incl. chat),
 `test/chatProvider.test.js`, `test/renderScene.test.js` (scene adapter),
 `test/entitlements.test.js`, `test/identityService.test.js`, and `test/productGrants.test.js`.
-End-to-end join/move/leave and chat over a real socket verified out-of-band.
+`test/pvpUiPolish.test.js` covers the anonymous readiness/join states, and
+`test/rendererCdnPolicy.test.js` covers the same-origin Three.js runtime policy. End-to-end
+join/move/leave, local 3D, and chat over a real socket are verified out-of-band.
 
 Payment/product entitlement pieces:
 - `src/migrations/020_user_appearance_and_pack_entitlements.sql` — persisted appearance,

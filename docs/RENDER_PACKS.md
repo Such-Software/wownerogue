@@ -17,8 +17,39 @@ art can be added as products.
   packs interchangeable across both.
 
 Entitlement: packs are gated by the operator-owned cosmetic catalog (`cosmetic_catalog` table,
-`src/multiplayer/entitlements.js`) — free / grant / lifetime-spend / subscription-tier. `?unlock=1`
-sets a sticky local QA bypass. See `MONETIZATION.md`.
+`src/multiplayer/entitlements.js`) — free / grant / lifetime-spend / subscription-tier. See
+`MONETIZATION.md`.
+
+For browser QA, `?unlock=1` sets a sticky local bypass for render-mode and pack display gates;
+`?unlock=0` clears it. This affects only that browser's `localStorage`, grants no server
+entitlement, and is not an operator access-control mechanism.
+
+## Gameplay focus contract
+
+Single-player keyboard movement is deliberately accepted only while `#game-display` owns browser
+focus, so typing in chat or another form cannot move the player. Choosing Tiled, ASCII, Iso, 3D, a
+pack, or a camera control immediately returns focus to that gameplay area without scrolling.
+
+## Local 3D runtime
+
+Three.js `0.160.0` is an exact production dependency. The server advertises the local version in
+`/runtime-config.js` and exposes only the browser build and required addons beneath:
+
+```text
+/vendor/three/0.160.0/three.module.min.js
+/vendor/three/0.160.0/addons/loaders/GLTFLoader.js
+/vendor/three/0.160.0/addons/utils/SkeletonUtils.js
+```
+
+The modules are imported lazily when 3D is selected. Local delivery is always enabled in the
+application runtime and takes precedence over external sources. `RENDERER_CDN_ENABLED=true` makes
+the jsDelivr renderer source path eligible only in a runtime where local delivery is disabled. All
+checked-in environment profiles keep external renderer execution off, including production, so
+Three.js remains same-origin under CSP.
+
+Three.js library delivery is separate from generated model delivery. Runtime GLBs under
+`html/assets/generated/3d/` are gitignored and must be provisioned independently; the renderer
+keeps a low-poly fallback when a model cannot load and removes it once the animated GLB is attached.
 
 ## The FX layer (`fxLayer.js`, `RK.fx`)
 
@@ -44,5 +75,8 @@ the moment the generator emits their chars (`L`/`P`/`^`) — pending the generat
 | `zoomControl.js` | `RK.attachZoom(host)` — wheel/pinch zoom (0.4–4.0), dblclick reset, pixelated scaling. |
 | `catSprites.js`  | Animated tavern cat (Pet Cats Pack idle strips). |
 | `packRegistry.js`| Multi-pack-per-projection registry: active-pack selection persisted per projection, entitlement-gated, graceful fallback. Node-testable. |
+| `threeRenderer.js` | Same-origin Three.js scene, fog-aware entity retention, animated GLB cloning, fitted model scale, camera follow, and complete renderer/resource cleanup. |
+| `spGameRenderer.js` | Single-player render bridge, player-centred camera, local 3D lazy-load, and explicit gameplay-focus restoration. |
 
-Tests: `test/renderPackResolver.test.js`, `test/packRegistry_ultra.test.js`.
+Tests: `test/renderPackResolver.test.js`, `test/packRegistry_ultra.test.js`,
+`test/rendererCdnPolicy.test.js`, and `test/pvpUiPolish.test.js`.

@@ -107,8 +107,9 @@ Neither wallet role reads, exports, or proves a mnemonic. A passing keyfile/pass
 independent seed custody or a full off-host recovery drill. Record those separately as unproven
 until a human-controlled custody inventory and isolated off-host restore establish them. This gap
 does not authorize weakening a proof, printing a secret, or applying either role to the funded
-Wownero mainnet wallet. Wownero wallet promotion and the corresponding application activation
-remain blocked pending that separate review.
+Wownero mainnet wallet. Wownero wallet promotion and the corresponding full mainline application
+activation remain blocked pending that separate review. The dated
+[schema-neutral production state](PRODUCTION_STATE_2026-07-25.md) does not clear this gate.
 
 ## Step 3 — Create the monerogue identity, immutable layout, and DB
 

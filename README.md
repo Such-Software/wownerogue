@@ -23,7 +23,10 @@ third-party deployment.
 - **Persistent chat** with 30-day history
 - **Transaction history** - view payment and payout records
 - **Multiple game modes**: Free play, per-game payments, or credit bundles
-- **Social Tavern** with chat, live solo spectating, and in-place race queues
+- **Anonymous social Tavern** (no account required) with chat, live solo spectating, and in-place
+  race queues
+- **Shared render kit** with Tiled, ASCII, Iso, and locally served 3D techniques across the dungeon
+  and Tavern
 - **Real-time multiplayer races**: free, prestige-credit, or crypto winner-take-pot races every block
 - Configurable difficulty with house edge tuning
 - Automatic wallet RPC integration for payments and payouts
@@ -137,7 +140,7 @@ Click **"📜 History"** to view your payment and payout records. Shows:
 
 ### Session Persistence
 
-Sessions use an anonymous token stored in localStorage:
+Sessions, including anonymous Tavern entry, use an anonymous token stored in localStorage:
 - ✅ Persists across refreshes, browser closes, server restarts
 - ⚠️ Lost when clearing cookies/localStorage, using incognito mode, or switching browsers/devices
 
@@ -263,6 +266,9 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed production deployment instruct
 - Nginx/reverse proxy setup with WebSocket support
 - Database permissions and security hardening
 - Multi-instance deployment (running Wownero and Monero on the same server)
+
+The dated [`play.wowne.ro` production record](docs/PRODUCTION_STATE_2026-07-25.md) distinguishes the
+live schema-neutral renderer/Tavern overlay from the still-gated full mainline migration cutover.
 
 ---
 
