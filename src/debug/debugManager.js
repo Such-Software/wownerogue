@@ -137,18 +137,21 @@ class DebugManager {
                 }
                 
                 // Always broadcast current height to keep clients updated
-                this.broadcastManager.broadcastBlockHeight(currentHeight);
-                
+                this.broadcastManager.broadcastBlockHeight(currentHeight, this.chainTip);
+
                 // If new block found
                 if (currentHeight > this.lastProductionBlockHeight) {
                     if (this.CONSOLE_LOGGING) {
                         console.log(`⛏️ New block found: ${currentHeight}`);
                     }
-                    
+
                     // Notify listeners about new block
                     this.onNewBlock(currentHeight);
-                    
+
                     this.lastProductionBlockHeight = currentHeight;
+                    // Refresh the cosmetic tip (hash/difficulty) only on an actual new block — this
+                    // is decoration for the Tavern, not something worth an extra RPC every 2s.
+                    this._refreshChainTip(currentHeight);
                 }
             } catch (error) {
                 if (this.CONSOLE_LOGGING) {
@@ -162,7 +165,29 @@ class DebugManager {
         this.debugInterval = setInterval(poll, 2000); // Every 2 seconds
     }
 
+    /**
+     * Best-effort refresh of the cosmetic chain tip. Never awaited by a caller and never allowed to
+     * reject: a failed decoration lookup must not disturb block-driven game logic.
+     */
+    _refreshChainTip(height) {
+        if (!this.rpcService?.getChainTipInfo) return;
+        this.rpcService.getChainTipInfo()
+            .then((tip) => {
+                if (!tip) return;
+                this.chainTip = { ...tip, height };
+            })
+            .catch(() => { /* decoration only */ });
+    }
+
     // ====== BLOCK HEIGHT MANAGEMENT ======
+
+    /**
+     * Cosmetic chain tip for ambient UI. Null until the first successful post-block lookup, and
+     * always null under simulated blocks (there is no chain to describe).
+     */
+    getChainTip() {
+        return this.SIMULATED_BLOCKS ? null : (this.chainTip || null);
+    }
 
     /**
      * Get the current block height (debug or production)

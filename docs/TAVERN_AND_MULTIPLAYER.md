@@ -157,6 +157,33 @@ render modes, and later multiplayer rooms.
 The existing chat backend is retained and wrapped behind a `ChatProvider` interface so the backend
 can be swapped later without changing callers. The current backend remains the default.
 
+**Tavern chat is global chat.** When a `globalChatProvider` is injected, `tavern_chat` reaches every
+connected client and the persisted history, so it must clear the same bar as the lobby path:
+`TavernManager._moderateChat` applies the chat ban list, the reconnect-proof rate limiter
+(`stableId` + IP), and `user_id` attribution before publishing. Without those guards `tavern_chat` is
+simply an unauthenticated bypass of lobby moderation under a client-chosen display name. The
+per-occupant cooldown alone still governs the ephemeral tavern-scoped fallback room, which nobody
+outside the room ever sees.
+
+Speech bubbles resolve the speaker from the occupant list **by display name**. The chat provider
+publishes a short `publicId`, never the raw socket id, so anything keying bubbles off `socketId`
+silently never fires.
+
+## Chain ambience
+
+The Tavern stage carries a decorative chain layer (`RK.mountChainAmbience`, `chainAmbience.js`):
+fragments of the real top block hash fade in around the border and drift away, a corner readout
+tracks the height, and a landing block sends a ripple around the frame plus a brighter burst.
+
+It consumes the public `blockheight` broadcast, which now carries an optional cosmetic tip
+(`hash`, `difficulty`, `txPoolSize`). The tip is refreshed from `get_info` **only when the height
+actually advances** — it is decoration, not worth an extra RPC every poll — and
+`RpcService.getChainTipInfo()` never throws and never feeds fairness, payouts, or match seeding.
+`DebugManager.getChainTip()` returns null under simulated blocks, since there is no chain to
+describe. The layer is `pointer-events:none`, honours `prefers-reduced-motion`, and stops spawning
+(and drops its backlog) while the tab is hidden — a hidden tab pauses CSS animations, so
+`animationend` never fires and motes would otherwise accumulate indefinitely.
+
 ## Rendering (art pass)
 
 Rendering goes through a shared, renderer-agnostic **scene model**: game/tavern state is adapted

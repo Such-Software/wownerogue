@@ -275,6 +275,41 @@ To run multiple instances (e.g., Wownero on port 3000 and Monero stagenet on por
 | `PRIMARY_WALLET_ENDPOINT` | http://127.0.0.1:34570 | http://127.0.0.1:38083 |
 | `PRIMARY_RPC_ENDPOINT` | http://127.0.0.1:34568 | http://127.0.0.1:38081 |
 
+### Daemon redundancy and graceful degradation
+
+`RPC_ENDPOINTS` takes any number of daemons, comma or whitespace separated, in **preference order**:
+
+```
+RPC_ENDPOINTS=http://127.0.0.1:34568,http://10.42.1.40:34568,http://10.42.1.41:34568
+```
+
+`PRIMARY_RPC_ENDPOINT` / `FALLBACK_RPC_ENDPOINT` still work and are appended to the list. The list
+is deduplicated — note that the stock configuration sets primary and fallback to the *same* host, so
+by default there is exactly one node and no redundancy at all. Add at least one genuinely separate
+daemon before relying on failover.
+
+Behaviour:
+
+- one logical RPC call tries **every** configured node before it fails;
+- each node must pass the same chain-identity check before it may answer, so failover can never
+  silently serve a different chain's data;
+- after failing over, the preferred node is re-tested every `RPC_PREFERRED_RETRY_MS` (default 60s,
+  minimum 1s), so recovery does not need a restart;
+- when **no** node answers, the service reports unhealthy and throws. `getBlockCountStrict()` —
+  used by fairness and match seeding — never substitutes a cached height.
+
+**Entries are refused while no node is reachable.** A run's lifetime is counted in blocks and its
+entry block comes from the last successful poll; admitting a game during an outage anchors it to an
+already-past block and it is killed as a timeout on the first recovered poll. The player is told
+`Can't reach a <CHAIN> node right now…` and nothing is charged. Credits are not consumed, because
+the gate runs before any spend.
+
+**The wallet is deliberately NOT failed over.** Two `wallet-rpc` processes serving one wallet file
+can build transactions from the same outputs and corrupt the wallet cache — a standby wallet is a
+custody decision for the operator, not something the app may do on its own. Daemons are read-only
+and interchangeable; wallets are neither. When the wallet is unreachable the server declines paid
+intake with `Payments are temporarily unavailable…`, and credits and free play keep working.
+
 ### Separate systemd Service
 
 Install the hash-pinned fleet copy of `monerogue.service`; it is intentionally absent from the

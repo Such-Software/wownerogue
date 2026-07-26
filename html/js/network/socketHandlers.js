@@ -494,6 +494,29 @@ const SocketHandlers = {
         }
     },
 
+    // Chat text arrives ALREADY HTML-escaped by the server (that is the delivery contract — the
+    // tavern renders it as HTML directly). Escaping it a second time on the way in is what made
+    // every apostrophe show up as &#39; and every ampersand as &amp;. Decode the exact five
+    // entities the server writes, then render through a TEXT node: no double encoding, and strictly
+    // safer than the old innerHTML path because the message can never be parsed as markup at all —
+    // so the client keeps its "never trust the server escaped it" stance without the artefacts.
+    _chatText: function(value) {
+        return String(value == null ? '' : value)
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, '&'); // last — mirrors the server escaping & first
+    },
+
+    // <strong>sender:</strong> followed by the message as a text node.
+    _chatLine: function(msgElement, sender, message) {
+        const strong = document.createElement('strong');
+        strong.textContent = SocketHandlers._chatText(sender) + ':';
+        msgElement.append(strong);
+        msgElement.append(document.createTextNode(' ' + SocketHandlers._chatText(message)));
+    },
+
     onChatBroadcast: function(data) {
         const msgElement = $('<li style="color: #aaa;">');
         // Prefer non-sensitive attribution fields; the server no longer sends the raw full
@@ -501,11 +524,9 @@ const SocketHandlers = {
         const sender = data.username || data.playerId || data.publicId ||
             (data.socketId ? String(data.socketId).substring(0, 6) : null);
         if (sender) {
-            // Escape both fields — chat content is attacker-controlled. Defense in depth:
-            // the server also escapes, but the client must never trust that.
-            msgElement.html('<strong>' + escapeHtml(String(sender)) + ':</strong> ' + escapeHtml(data.message));
+            SocketHandlers._chatLine(msgElement, String(sender), data.message);
         } else {
-            msgElement.text(data.message);
+            msgElement.text(SocketHandlers._chatText(data.message));
         }
         $('#messages').append(msgElement);
         UI.scrollChat();
@@ -531,11 +552,13 @@ const SocketHandlers = {
                 msgElement.addClass('status');
             }
             // Add timestamp if available
-            let timeStr = '';
             if (msg.timestamp) {
-                timeStr = '<span style="color:#555;font-size:10px;">[' + SocketHandlers._formatTimeAgo(new Date(msg.timestamp)) + ']</span> ';
+                const stamp = document.createElement('span');
+                stamp.style.cssText = 'color:#555;font-size:10px;';
+                stamp.textContent = '[' + SocketHandlers._formatTimeAgo(new Date(msg.timestamp)) + '] ';
+                msgElement.append(stamp);
             }
-            msgElement.html(timeStr + '<strong>' + escapeHtml(username) + ':</strong> ' + escapeHtml(msg.message));
+            SocketHandlers._chatLine(msgElement, username, msg.message);
             $('#messages').append(msgElement);
         });
 

@@ -16,6 +16,10 @@ class RateLimiter {
             'address:set': { window: 300000, max: 3 },        // 3 address changes per 5min
             'move:player': { window: 1000, max: 50 },         // 50 moves per second (already handled separately)
             'connection:new': { window: 60000, max: 10 },     // 10 connections per minute per IP
+            // Cheap-looking socket events that each perform a users SELECT + UPDATE (last_active)
+            // and an entitlements SELECT. Unlimited, they can be pipelined at packet rate and turn
+            // one socket into a database load generator.
+            'identity:read': { window: 10000, max: 20 },      // 20 identity/address reads per 10s
             ...options.limits
         };
         
@@ -84,6 +88,7 @@ class RateLimiter {
             'payment:',      // Payment creation/operations
             'game:',         // Game start/queue operations
             'address:',      // Address changes
+            'identity:',     // Identity/entitlement reads (each one hits the database)
             'chat:'          // Chat messages (reconnect-proof spam protection)
         ];
         return ipLimitedPrefixes.some(prefix => action.startsWith(prefix));
@@ -208,11 +213,21 @@ class RateLimiter {
     }
 
     /**
-     * Get limit config from storage key
+     * Get limit config from storage key.
+     *
+     * Storage keys are `${id}:${action}`, but the id itself contains colons — `u:123` / `s:<socketId>`
+     * from rateLimitContext.stableId, and raw IPv6 addresses in ipStorage. Stripping only the FIRST
+     * segment therefore produced `123:chat:message`, which matches no configured limit, so every
+     * lookup returned undefined. Two things silently broke: `cleanup()` skipped every entry (the only
+     * registered memory reclamation freed nothing, and both Maps grew for the process lifetime), and
+     * `_recordAttempt` never reset an expired window, so counts accumulated forever. Match the known
+     * action names as a suffix instead — correct regardless of how many colons the id contains.
      */
     _getLimitFromKey(key) {
-        const action = key.split(':').slice(1).join(':'); // Remove userId/IP prefix
-        return this.limits[action];
+        for (const action of Object.keys(this.limits)) {
+            if (key === action || key.endsWith(`:${action}`)) return this.limits[action];
+        }
+        return undefined;
     }
 
     /**

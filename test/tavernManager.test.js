@@ -182,7 +182,7 @@ describe('TavernManager', () => {
             await mgr.join(s, { name: 'Alice' });
             io.emitted.length = 0;
 
-            mgr.chat(s, { text: 'hi <b>there</b>' });
+            await mgr.chat(s, { text: 'hi <b>there</b>' });
             const ev = io.emitted.find(e => e.event === 'chat_broadcast' && e.channel === mgr.channel);
             expect(ev).toBeTruthy();
             expect(ev.payload.username).toBe('Alice');
@@ -196,9 +196,9 @@ describe('TavernManager', () => {
             const s = makeFakeSocket('a', io);
             await mgr.join(s, {});
             io.emitted.length = 0;
-            mgr.chat(s, { text: 'one' });
+            await mgr.chat(s, { text: 'one' });
             s.emitted.length = 0;
-            mgr.chat(s, { text: 'two' }); // immediate second is dropped
+            await mgr.chat(s, { text: 'two' }); // immediate second is dropped
             const msgs = io.emitted.filter(e => e.event === 'chat_broadcast');
             expect(msgs).toHaveLength(1);
             expect(msgs[0].payload.message).toBe('one');
@@ -210,12 +210,12 @@ describe('TavernManager', () => {
             const io = makeFakeIo();
             const mgr = new TavernManager({ io });
             const outsider = makeFakeSocket('z', io);
-            mgr.chat(outsider, { text: 'sneaky' }); // never joined -> ignored
+            await mgr.chat(outsider, { text: 'sneaky' }); // never joined -> ignored
 
             const s = makeFakeSocket('a', io);
             await mgr.join(s, {});
             io.emitted.length = 0;
-            mgr.chat(s, { text: '   ' }); // whitespace only -> ignored
+            await mgr.chat(s, { text: '   ' }); // whitespace only -> ignored
             expect(io.emitted.filter(e => e.event === 'chat_broadcast')).toHaveLength(0);
         });
 
@@ -255,7 +255,7 @@ describe('TavernManager', () => {
                 const mgr = new TavernManager({ io, globalChatProvider: gcp });
                 const s = makeFakeSocket('a', io);
                 await mgr.join(s, { name: 'Alice' });
-                mgr.chat(s, { text: 'hello world' });
+                await mgr.chat(s, { text: 'hello world' });
                 const sent = gcp.published.find(m => m.text && m.text.indexOf('hello') !== -1);
                 expect(sent).toBeDefined();
                 expect(sent.scope).toBe('global');
@@ -267,7 +267,7 @@ describe('TavernManager', () => {
                 const s = makeFakeSocket('a', io);
                 await mgr.join(s, { name: 'Alice' });
                 io.emitted.length = 0;
-                mgr.chat(s, { text: 'local only' });
+                await mgr.chat(s, { text: 'local only' });
                 const bc = io.emitted.find(e => e.event === 'chat_broadcast');
                 expect(bc).toBeDefined();
                 expect(bc.channel).toBe('tavern:main'); // room-scoped, not global

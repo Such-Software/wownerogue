@@ -205,6 +205,53 @@ describe('Batch payout dispatch', () => {
         const review = db.query.mock.calls.find(call => call[1]?.[0] === 'needs_review');
         expect(review).toBeDefined();
         expect(db._mockClient.query.mock.calls.some(call => /status = 'completed'/i.test(call[0]))).toBe(false);
+
+        // ...but the EVIDENCE that the coins were broadcast must survive. A split is exactly what
+        // transfer_split is for; quarantining the rows with tx_hash NULL stranded already-sent funds
+        // with nothing for an operator (or the retry service's chain guard) to reconcile against.
+        expect(review[1][3]).toBe('a'.repeat(64));            // COALESCE($4, tx_hash)
+        expect(review[1][1]).toContain('a'.repeat(64));       // last_error carries the full list
+        expect(review[1][1]).toContain('b'.repeat(64));
+    });
+
+    test('a PRE-BROADCAST failure returns the batch to pending, not needs_review', async () => {
+        // Address validation and the transfer gate run strictly before transfer_split can send
+        // anything, so those rows are provably unsent and safe to retry. Quarantining them in
+        // needs_review parked them permanently — the retry service deliberately skips that status.
+        const preBroadcast = Object.assign(new Error('One or more payout addresses failed validation.'),
+            { preBroadcast: true });
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn().mockRejectedValue(preBroadcast)
+        };
+        const { gmm, db } = buildGmm(walletService);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        expect(db.query.mock.calls.some(call => call[1]?.[0] === 'needs_review')).toBe(false);
+        const deferred = db.query.mock.calls.find(call => call[1]?.[0] === 'pending');
+        expect(deferred).toBeDefined();
+    });
+
+    test('an ambiguous POST-broadcast failure still quarantines the batch', async () => {
+        const ambiguous = new Error('socket hang up'); // no preBroadcast tag — may have sent
+        const walletService = {
+            getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
+            processPayout: jest.fn(),
+            processBatchPayout: jest.fn().mockRejectedValue(ambiguous)
+        };
+        const { gmm, db } = buildGmm(walletService);
+        db._mockClient.query
+            .mockResolvedValueOnce({ rows: TWO_PENDING })
+            .mockResolvedValue({ rows: [] });
+
+        await gmm._processPendingPayouts();
+
+        expect(db.query.mock.calls.some(call => call[1]?.[0] === 'needs_review')).toBe(true);
     });
 
     test('MONERO LOCKING: defers the batch to pending when unlocked balance is insufficient (no transfer attempted)', async () => {

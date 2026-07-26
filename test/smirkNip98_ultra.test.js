@@ -304,6 +304,15 @@ describe('(ix) route layer — single-use challenge consume rejects replay', () 
     return { status: res.status, json };
   }
 
+  // The route binds the signed event to this deployment's host (HOSTED_BY when configured), so the
+  // route tests must declare the host their events are signed for.
+  const prevHostedBy = process.env.HOSTED_BY;
+  beforeEach(() => { process.env.HOSTED_BY = `https://${HOST}`; });
+  afterEach(() => {
+    if (prevHostedBy === undefined) delete process.env.HOSTED_BY;
+    else process.env.HOSTED_BY = prevHostedBy;
+  });
+
   test('a valid NIP-98 event links once, then the identical replay is rejected', async () => {
     const sk = generateSecretKey();
     const socketId = 'sock-xyz-1';
@@ -324,6 +333,32 @@ describe('(ix) route layer — single-use challenge consume rejects replay', () 
       const second = await postJson(server, PATH_SUFFIX, { socketId, event: ev }, token);
       expect(second.status).toBe(400);
       expect(second.json.error).toBeTruthy();
+    } finally {
+      server.close();
+    }
+  });
+
+  // The takeover this binding exists to stop: an event the victim's wallet signed for ANOTHER site
+  // (any origin whose path ends in /api/auth/smirk/verify) must not authenticate here. Linking
+  // ADOPTS the account that already owns the pubkey and hands back its session, so accepting a
+  // borrowed event is full account takeover, not just a sloppy audience check.
+  test('an event signed for a different host is rejected even with a valid challenge', async () => {
+    const sk = generateSecretKey();
+    const socketId = 'sock-xyz-2';
+    const token = 'route-session-token-2';
+    const challenge = 'route-nonce-cross-host';
+    const ev = buildEvent(sk, {
+      created_at: Math.floor(Date.now() / 1000),
+      challenge,
+      u: `https://evil.example${PATH_SUFFIX}`
+    });
+
+    const db = mockDb(challenge, socketId, token);
+    const server = await startServer(db);
+    try {
+      const res = await postJson(server, PATH_SUFFIX, { socketId, event: ev }, token);
+      expect(res.status).toBe(400);
+      expect(res.json).not.toMatchObject({ linked: true });
     } finally {
       server.close();
     }

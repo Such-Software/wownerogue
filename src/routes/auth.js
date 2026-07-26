@@ -11,25 +11,69 @@ const { verifyNip98Event } = require('../utils/nip98');
 const AUTH_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_MAX_KEYS = 10000;
 
+/**
+ * The host a NIP-98 auth event must be signed for.
+ *
+ * `HOSTED_BY` is the operator's canonical public origin and is contract-enforced in operated
+ * production profiles, so it is the authority whenever it is set — that keeps verification correct
+ * behind a proxy and immune to a spoofed Host header. Unconfigured (dev / self-host) deployments
+ * fall back to the request's own host, which still binds the event to the origin it was sent to.
+ */
+function expectedAuthHost(req) {
+  const configured = typeof process.env.HOSTED_BY === 'string' ? process.env.HOSTED_BY.trim() : '';
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.host) return parsed.host;
+    } catch (_) { /* malformed HOSTED_BY — fall through to the request host */ }
+  }
+  return (req && (req.get('host') || req.headers?.host)) || null;
+}
+
+/**
+ * Per-IP auth rate limiter with a bounded key map.
+ *
+ * The bound must be enforced by EVICTION, never by refusing new keys. Refusing turned the memory
+ * cap into a denial-of-service primitive: an attacker sourcing from many addresses could hold the
+ * map at capacity and every legitimate first-time caller of /challenge or /verify got a 429, locking
+ * the whole population out of Smirk login. Eviction keeps the same memory ceiling while leaving the
+ * limiter functional — the worst case is that a very old window's count is forgotten, which grants
+ * one extra window to an attacker who was already being counted.
+ */
 function createIpRateLimiter({ max }) {
   const hits = new Map();
   let lastSweep = 0;
 
+  const sweepExpired = (now) => {
+    for (const [key, value] of hits) {
+      if (now - value.windowStart >= AUTH_WINDOW_MS) hits.delete(key);
+    }
+    lastSweep = now;
+  };
+
+  // Discard the oldest live windows in one batch, so the O(n) pass is amortised rather than paid
+  // on every request once the map is full.
+  const evictOldest = (count) => {
+    const oldest = Array.from(hits.entries())
+      .sort((left, right) => left[1].windowStart - right[1].windowStart)
+      .slice(0, count);
+    for (const [key] of oldest) hits.delete(key);
+  };
+
   return (req, res, next) => {
     const now = Date.now();
-    if (now - lastSweep >= AUTH_WINDOW_MS) {
-      for (const [key, value] of hits) {
-        if (now - value.windowStart >= AUTH_WINDOW_MS) hits.delete(key);
-      }
-      lastSweep = now;
-    }
+    if (now - lastSweep >= AUTH_WINDOW_MS) sweepExpired(now);
 
     const ip = req.ip || req.socket?.remoteAddress || 'unknown';
     let entry = hits.get(ip);
     if (!entry || now - entry.windowStart >= AUTH_WINDOW_MS) {
       if (!entry && hits.size >= AUTH_RATE_MAX_KEYS) {
-        res.setHeader('Retry-After', '60');
-        return res.status(429).json({ error: 'Too many authentication attempts' });
+        // Sweeping is otherwise lazy (once per window), so a map full of expired entries would
+        // stay full. Reclaim first, and only evict live windows if that was not enough.
+        sweepExpired(now);
+        if (hits.size >= AUTH_RATE_MAX_KEYS) {
+          evictOldest(Math.max(1, Math.ceil(AUTH_RATE_MAX_KEYS * 0.1)));
+        }
       }
       entry = { count: 0, windowStart: now };
       hits.set(ip, entry);
@@ -283,9 +327,16 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
     }
 
     const now = Math.floor(Date.now() / 1000);
+    // Bind the signed event to THIS deployment's host. The 'u' tag path check alone is not an
+    // authentication boundary: a kind:27235 event the same wallet signed for any other site whose
+    // path happens to end in /api/auth/smirk/verify would otherwise verify here — and because the
+    // link step ADOPTS whatever account already owns that pubkey and returns its session token, a
+    // borrowed event is a full account takeover. Prefer the operator's configured HOSTED_BY origin;
+    // fall back to the request host only when it is not configured (dev/self-host).
     const result = verifyNip98Event(body.event, {
       challenge,
       expectedPathSuffix: '/api/auth/smirk/verify',
+      expectedHost: expectedAuthHost(req),
       now,
       maxSkewSec: 120
     });

@@ -66,6 +66,48 @@ draws only the tile's floor **base** in the static pass and lets `RK.fx` paint t
 the live loop. The tavern has wall braziers + a hearth; the dungeon hazard kinds are wired and render
 the moment the generator emits their chars (`L`/`P`/`^`) — pending the generator + gameplay stakes.
 
+## Lighting model (iso & 3D)
+
+Both premium projections light the dungeon rather than just tinting it, and both derive their
+lighting from the same `scene.lightGrid` the 2D modes use — so switching projection changes the
+technique, never what you are allowed to see.
+
+**Iso** composites in one pass per frame:
+
+- tiles are **shaded opaque** (`_shadedImage`, quantized to 6 cached levels) instead of alpha-faded.
+  Alpha-fading made remembered walls translucent, so the dungeon read as a haze of overlapping
+  ghosts; multiplying a sprite's own pixels toward a cold near-black keeps distant stone *solid and
+  unlit*, which is what memory should look like;
+- **light pools** (`_lightPool`) are additive, squashed to the ground plane, and emitted by torches
+  (flickering), the player's lantern, and objective beacons on the stairs/treasure;
+- **crevice AO** (`_wallAO`) darkens floor cells by how many walls they touch;
+- **embers** rise off each flame, seeded per cell so they don't reshuffle every frame;
+- a **cold blue wash** (`_memoryWash`) separates remembered rooms from torchlit ones by colour
+  temperature. The wash colour must stay *darker* than the tiles it covers — a mid-tone blue lifts
+  memory brighter than the lit centre and inverts the depth hierarchy.
+
+**3D** (`threeRenderer.js`) draws the level as **three InstancedMeshes** (walls / ground / props),
+so a 70×35 dungeon costs three draw calls and a fog-of-war update is a few thousand matrix writes
+rather than ~2500 mesh allocations. Wall and floor materials are generated on a canvas at startup
+(coursed stone, irregular flagstones, both doubling as bump maps) — no new downloads, nothing for
+the CSP to block. On top: a low warm key light with a player-tracking shadow frustum, a pool of six
+point lights reassigned each frame to the nearest braziers, a hand-held lantern, drifting dust motes,
+and a **wall cutaway** that squashes the walls between the isometric camera and the player.
+
+Two things that are easy to get wrong here:
+
+- **Fog is measured from the CAMERA**, which sits ~17 world units back along the isometric offset —
+  not from the player. A fog band tuned as if it started at the player puts the player a quarter of
+  the way into fog and crushes the scene to near-black.
+- **Do not apply `lightGrid` to albedo at full strength in 3D.** The point lights already provide
+  falloff; multiplying by the grid as well double-darkens every surface. 3D compresses it
+  (`0.38 + 0.62·lb`) and lets the lamps shape the scene.
+
+Features (`entrance` / `exit` / `treasure` / items) are **set dressing, not avatars** in both
+projections: stairs with a beacon shaft, a gold chest, a spinning pickup. Before that distinction
+existed, every one of them was drawn as a humanoid, so the entrance looked like a second player
+standing at the map origin.
+
 ## Other pieces
 
 | File | Role |
@@ -75,7 +117,8 @@ the moment the generator emits their chars (`L`/`P`/`^`) — pending the generat
 | `zoomControl.js` | `RK.attachZoom(host)` — wheel/pinch zoom (0.4–4.0), dblclick reset, pixelated scaling. |
 | `catSprites.js`  | Animated tavern cat (Pet Cats Pack idle strips). |
 | `packRegistry.js`| Multi-pack-per-projection registry: active-pack selection persisted per projection, entitlement-gated, graceful fallback. Node-testable. |
-| `threeRenderer.js` | Same-origin Three.js scene, fog-aware entity retention, animated GLB cloning, fitted model scale, camera follow, and complete renderer/resource cleanup. |
+| `threeRenderer.js` | Same-origin Three.js scene. Instanced level geometry, procedural stone/flagstone materials, torch light pool + shadows, dedicated feature/monster meshes, dust motes, wall cutaway, fog-aware entity retention, animated GLB cloning, camera follow, and complete renderer/resource cleanup. |
+| `chainAmbience.js` | `RK.mountChainAmbience(host)` — drifting top-block-hash fragments, a block-height readout, and a ripple when a block lands. Consumes the public `blockheight` broadcast; decoration only, and it pauses/prunes itself while the tab is hidden. |
 | `spGameRenderer.js` | Single-player render bridge, player-centred camera, local 3D lazy-load, and explicit gameplay-focus restoration. |
 
 Tests: `test/renderPackResolver.test.js`, `test/packRegistry_ultra.test.js`,

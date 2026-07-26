@@ -755,12 +755,19 @@ function pathTo(parent, target) {
     return result;
 }
 
+/**
+ * The objective's coordinate, or null while it is still undiscovered.
+ *
+ * The server enforces fog of war: entrance/exit/treasure are withheld until the player has actually
+ * seen them. The bot therefore cannot assume it knows where it is going — it explores frontiers
+ * until the objective is revealed, exactly as a human player must. (This function used to assert
+ * the coordinate was always present, which was asserting the leak.)
+ */
 function objectivePoint(state, scenario) {
     const wantsTreasure = scenario.collectTreasure && state?.player?.hasTreasure !== true;
     const point = wantsTreasure ? state?.treasure : state?.exit;
-    assert(Array.isArray(point) && point.length === 2
-        && Number.isInteger(Number(point[0])) && Number.isInteger(Number(point[1])),
-    wantsTreasure ? 'treasure coordinate is unavailable' : 'exit coordinate is unavailable');
+    if (!Array.isArray(point) || point.length !== 2) return null;
+    if (!Number.isInteger(Number(point[0])) || !Number.isInteger(Number(point[1]))) return null;
     return [Number(point[0]), Number(point[1])];
 }
 
@@ -768,8 +775,12 @@ function chooseMove(known, state, bot, scenario) {
     assert(state?.player && Number.isInteger(state.player.x) && Number.isInteger(state.player.y),
         'bot received no valid player coordinate');
     const start = pointKey(state.player.x, state.player.y);
-    const [targetX, targetY] = objectivePoint(state, scenario);
-    const target = pointKey(targetX, targetY);
+    const objective = objectivePoint(state, scenario);
+    const targetX = objective ? objective[0] : null;
+    const targetY = objective ? objective[1] : null;
+    // 'unknown' keeps the frontier bookkeeping stable across the undiscovered phase, and still
+    // resets it the moment the real objective is revealed.
+    const target = objective ? pointKey(targetX, targetY) : 'unknown';
     if (bot.objective !== target) {
         bot.objective = target;
         bot.goal = null;
@@ -777,7 +788,7 @@ function chooseMove(known, state, bot, scenario) {
     }
 
     const parent = bfs(known, state, scenario);
-    let selectedPath = FLOOR.has(known.get(target)) ? pathTo(parent, target) : null;
+    let selectedPath = (objective && FLOOR.has(known.get(target))) ? pathTo(parent, target) : null;
     if (!selectedPath || selectedPath.length < 2) {
         if (bot.goal === start) {
             bot.frontiersTried.add(bot.goal);
@@ -798,9 +809,11 @@ function chooseMove(known, state, bot, scenario) {
                 candidates.push({
                     candidate,
                     path: candidatePath,
-                    score: Math.abs(x - targetX) * 10
-                        + Math.abs(y - targetY) * 10
-                        + candidatePath.length
+                    // With the objective still fogged there is nothing to bias toward, so fall back
+                    // to nearest-frontier exploration.
+                    score: objective
+                        ? Math.abs(x - targetX) * 10 + Math.abs(y - targetY) * 10 + candidatePath.length
+                        : candidatePath.length
                 });
             }
             candidates.sort((left, right) => left.score - right.score
@@ -830,12 +843,12 @@ async function runBoundedBot(socket, journal, startEvent, scenario, config) {
     let state = startEvent.data;
     assert(Number(state?.maxDepth) === 1,
         'financial canary requires exactly one dungeon depth');
-    assert(Array.isArray(state?.exit) && state.exit.length === 2,
-        'game did not disclose an exit coordinate');
-    if (scenario.collectTreasure) {
-        assert(Array.isArray(state?.treasure) && state.treasure.length === 2,
-            '3x scenario did not disclose a treasure coordinate');
-    }
+    // Objectives are NOT disclosed up front — the server withholds unexplored features. Assert the
+    // fog instead: a start state that already names the exit means the leak has regressed.
+    assert(state?.exit == null,
+        'game disclosed the exit before it was explored (server-side fog of war regressed)');
+    assert(state?.treasure == null,
+        'game disclosed the treasure before it was explored (server-side fog of war regressed)');
     const bot = {
         known: new Map(), frontiersTried: new Set(), goal: null, objective: null,
         depth: Number(state.depth || 1)
