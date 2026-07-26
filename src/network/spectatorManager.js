@@ -319,18 +319,25 @@ class SpectatorManager {
     }
 
     /**
-     * Notify spectators that a game has ended
+     * Notify spectators that a game has ended and release them.
+     *
+     * MUST be called for every way a game can leave `activeGames`, not just committed settlement.
+     * A game that vanishes via disconnect/suspension used to leave its spectators sitting in the
+     * `spectate:<gameId>` room — still tracked, already removed from the lobby room, receiving no
+     * further updates and no `spectate_ended`, i.e. permanently stuck on a dead view.
+     *
      * @param {string} gameId - Game ID
      * @param {Object} gameOverData - Game over information
+     * @param {string} [reason] - Why the view ended ('game_over' | 'player_disconnected' | ...)
      */
-    notifyGameEnded(gameId, gameOverData) {
+    notifyGameEnded(gameId, gameOverData, reason = 'game_over') {
         const spectators = this._spectatorsByGame.get(gameId);
         
         // Emit game over to spectators if any
         if (spectators && spectators.size > 0) {
             this.io.to(`spectate:${gameId}`).emit('spectate_ended', {
                 gameId: gameId,
-                reason: 'game_over',
+                reason,
                 gameOverData: gameOverData
             });
             

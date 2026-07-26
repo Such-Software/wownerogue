@@ -22,6 +22,16 @@ class AddressManager {
     this.onConfirmed = onConfirmed; // optional callback(socketId, accepted, address)
   }
 
+  /**
+   * Drop an unconfirmed address prompt for a departed socket.
+   *
+   * `pending` entries were only removed inside confirm(), so any player who triggered address
+   * detection and then left without answering left a permanent entry keyed on a volatile socket id.
+   */
+  forgetSocket(socketId) {
+    this.pending.delete(socketId);
+  }
+
   detectInText(text) {
     if (!text || typeof text !== 'string') return null;
     const match = text.match(ADDRESS_REGEX);

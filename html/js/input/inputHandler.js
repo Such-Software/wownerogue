@@ -1,6 +1,34 @@
 /**
  * Input handlers for the Wowngeon game
  */
+
+// Is a blocking dialog on screen?
+//
+// The document-level Enter shortcut submits a RANKED (paid-intent) entry, and it used to fire
+// regardless of what was on top — including while the entry-choice modal or the payment modal was
+// open. Since those modals advertise "ENTER ▸" on their own cards, one Enter silently submitted an
+// entry the player had not chosen, and the click that followed submitted a second one. Anything
+// that takes over the screen must swallow the shortcut.
+function modalIsOpen() {
+    if (document.getElementById('entryChoiceOverlay')) return true;
+    var overlays = document.querySelectorAll('.modal-overlay');
+    for (var i = 0; i < overlays.length; i++) {
+        if (!overlays[i].classList.contains('hidden')) return true;
+    }
+    var paymentUi = document.getElementById('payment-ui');
+    if (paymentUi && paymentUi.offsetParent !== null) return true;
+    return false;
+}
+
+// Enter inside any text field belongs to that field, not to the game.
+function typingInAField() {
+    var el = document.activeElement;
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    var tag = (el.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
 const InputHandler = {
     _lastMoveTime: 0,
     _moveCooldown: 100, // Minimum 100ms between moves
@@ -151,12 +179,13 @@ const InputHandler = {
                         }
                     }
                 }
-            } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]) {
+            } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]
+                       && !modalIsOpen() && !typingInAField()) {
                 // If Enter is pressed and chat is not focused
                 if (typeof Game !== 'undefined' && !Game._gameActive) {
                     // On welcome screen - start the game
                     e.preventDefault();
-                    
+
                     const isDebugMode = window.location.hostname === 'localhost' || 
                                        window.location.hostname === '127.0.0.1' || 
                                        window.location.protocol === 'file:';

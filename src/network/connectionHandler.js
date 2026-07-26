@@ -174,8 +174,16 @@ class ConnectionHandler {
         }
         this.clientSocketMap.delete(socket.id);
         
-        // Clean up user records
-        user.removeUser(socket.client.id);
+        // Clean up user records.
+        //
+        // The registry is keyed by socket.id (see `new user.User(socket.id, ...)` in handleConnection
+        // and User's constructor), but this used to delete by socket.client.id — a DIFFERENT value
+        // under the Engine.IO 4 protocol. Nothing was ever removed, so the Map grew by one entry per
+        // connection for the process lifetime, and each retained User can pin a whole Game instance
+        // through `currentGame`. Remove both keys: socket.id is the real one, client.id is harmless
+        // and covers any legacy entry.
+        user.removeUser(socket.id);
+        if (socket.client?.id && socket.client.id !== socket.id) user.removeUser(socket.client.id);
         
         // Broadcast updated user count to all clients
         this.broadcastManager.broadcastUserCount();
@@ -328,7 +336,15 @@ class ConnectionHandler {
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log(`📈 Sending current block height ${currentBlock} to new connection ${socket.id}`);
         }
-        this.io.to(socket.id).emit('blockheight', { blockHeight: currentBlock });
+        // Include the cosmetic chain tip so a client that connects mid-block still gets the ambient
+        // chain readout instead of waiting up to a full block interval for the next broadcast.
+        const tip = this.debugManager.getChainTip ? this.debugManager.getChainTip() : null;
+        this.io.to(socket.id).emit(
+            'blockheight',
+            this.broadcastManager.blockHeightPayload
+                ? this.broadcastManager.blockHeightPayload(currentBlock, tip)
+                : { blockHeight: currentBlock }
+        );
         
         // Send connection status
         this.broadcastManager.sendStatusUpdate(socket.id, 'connection', `Connected to ${gameNameFor(process.env.CRYPTO_TYPE)} server`);

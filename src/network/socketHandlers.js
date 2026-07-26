@@ -251,7 +251,17 @@ class SocketHandlers {
             entitlementProvider: async (socket) => this._entitlementsForSocket(socket),
             // Share the lobby's global chat provider so the tavern joins one global chat with
             // persistent history (and nostr fan-out when enabled), instead of ephemeral room chat.
-            globalChatProvider: this.chatHandler.chatProvider
+            globalChatProvider: this.chatHandler.chatProvider,
+            // Publishing into GLOBAL chat must carry the same guards the lobby path applies —
+            // otherwise `tavern_chat` is an unauthenticated bypass of the chat ban list, the
+            // reconnect-proof rate limiter, and user_id attribution, reaching every connected
+            // client and the persisted history under a name the client picked.
+            chatModeration: {
+                rateLimiter: this.rateLimiter,
+                sessionManager: this.gameModeManager?.sessionManager || null,
+                chatHistory: this.chatHandler?.chatHistory || null,
+                getOrCreateUser: (socketId) => this.gameModeManager?.getOrCreateUser(socketId)
+            }
         });
         this.tavernManager.initialize();
         // Initialize match mode queue, scheduler, and manager. Inert unless MATCH_ENABLED=true.
@@ -769,7 +779,32 @@ class SocketHandlers {
         // Register event handlers. Admission wrappers remain live for the life of this socket and
         // consult the dynamic shutdown flag, so existing connections cannot race the snapshot.
         const runAdmission = (kind, task) => this._runAdmission(socket, kind, task);
-        socket.on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
+
+        // SAFE DISPATCH — every listener below is registered through `on`, never `socket.on`.
+        //
+        // Socket.IO invokes listeners without a try/catch, and this process treats
+        // `uncaughtException` and `unhandledRejection` as fatal (see the handlers in src/index.js,
+        // which call gracefulShutdown and exit). That combination makes ONE unguarded throw in ANY
+        // listener an unauthenticated remote kill switch: a client sends a malformed — or entirely
+        // absent — payload and the whole server exits, taking live games and payment monitoring
+        // with it. Containing the fault to the offending socket is the invariant; individual
+        // handlers hardening their own inputs is defence in depth, not a substitute.
+        const on = (event, handler) => {
+            socket.on(event, (...args) => {
+                let result;
+                try {
+                    result = handler(...args);
+                } catch (err) {
+                    this._onHandlerFault(socket, event, err);
+                    return;
+                }
+                if (result && typeof result.then === 'function') {
+                    result.catch((err) => this._onHandlerFault(socket, event, err));
+                }
+            });
+        };
+
+        on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
             // Legacy text command has no client contribution, but still consumes the already
             // published one-time server offer with an empty clientSeed.
             handleGameQueue: (commandSocket) => runAdmission('chat_game_queue',
@@ -778,11 +813,11 @@ class SocketHandlers {
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
         // Phase 2: a client-signed global chat event (posts under the player's own Smirk npub).
-        socket.on('chat_signed', (payload) => this.chatHandler.handleSignedChatMessage(socket, payload));
-    socket.on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
-        socket.on('disconnect', () => this.handleDisconnect(socket));
-        socket.on('debug_ping', (data) => this.handleDebugPing(socket, data));
-        socket.on('register_client', async (data) => {
+        on('chat_signed', (payload) => this.chatHandler.handleSignedChatMessage(socket, payload));
+    on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
+        on('disconnect', () => this.handleDisconnect(socket));
+        on('debug_ping', (data) => this.handleDebugPing(socket, data));
+        on('register_client', async (data) => {
             this.connectionHandler.handleRegisterClient(socket, data);
             this._emitFairnessOffer(socket);
             // Re-send game mode info after client registers handlers (fixes race condition)
@@ -806,48 +841,48 @@ class SocketHandlers {
                 if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to re-send identity snapshot:', err.message);
             });
         });
-        socket.on('auto_start', (data) => runAdmission('auto_start',
+        on('auto_start', (data) => runAdmission('auto_start',
             () => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {}))); // New handler for start button
-        socket.on('play_free', (data) => runAdmission('play_free',
+        on('play_free', (data) => runAdmission('play_free',
             () => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true }))); // Explicit free-play choice
-        socket.on('join_queue', (data) => runAdmission('join_queue',
+        on('join_queue', (data) => runAdmission('join_queue',
             () => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {}))); // Queue instead of auto-start ({ free: true } for Pleb-board free play)
-        socket.on('early_entry', (data) => runAdmission('early_entry',
+        on('early_entry', (data) => runAdmission('early_entry',
             () => this.handleEarlyEntry(socket, (data && typeof data === 'object') ? data : {}))); // Early entry without waiting for block
-        socket.on('fairness_offer_request', () => this._emitFairnessOffer(socket));
-        socket.on('address:prompt', () => this.handleAddressPrompt(socket));
+        on('fairness_offer_request', () => this._emitFairnessOffer(socket));
+        on('address:prompt', () => this._withIdentityReadLimit(socket, () => this.handleAddressPrompt(socket)));
         
         // Payment system handlers
-        socket.on('request_payment', (data) => runAdmission('request_payment',
+        on('request_payment', (data) => runAdmission('request_payment',
             () => this.handlePaymentRequest(socket, data)));
-        socket.on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
-        socket.on('get_user_credits', () => this.handleGetUserCredits(socket));
-        socket.on('address:update', (data) => this.handleAddressUpdate(socket, data));
-        socket.on('identity:get', () => this.handleIdentityGet(socket));
-        socket.on('identity:update', (data) => this.handleIdentityUpdate(socket, data));
+        on('check_payment_status', (data) => this.handleCheckPaymentStatus(socket, data));
+        on('get_user_credits', () => this.handleGetUserCredits(socket));
+        on('address:update', (data) => this.handleAddressUpdate(socket, data));
+        on('identity:get', () => this._withIdentityReadLimit(socket, () => this.handleIdentityGet(socket)));
+        on('identity:update', (data) => this.handleIdentityUpdate(socket, data));
         
         // Spectator handlers
-        socket.on('get_active_games', (options) => this.handleGetActiveGames(socket, options));
-        socket.on('spectate_game', (data) => this.handleSpectateGame(socket, data));
-        socket.on('leave_spectate', () => this.handleLeaveSpectate(socket));
+        on('get_active_games', (options) => this.handleGetActiveGames(socket, options));
+        on('spectate_game', (data) => this.handleSpectateGame(socket, data));
+        on('leave_spectate', () => this.handleLeaveSpectate(socket));
 
         // Tavern handlers (social hangout mode; refused server-side unless enabled)
-        socket.on('tavern_join', (data) => {
+        on('tavern_join', (data) => {
             Promise.resolve(this.tavernManager.join(socket, data)).catch(err => {
                 console.error('Tavern join failed:', err.message);
                 socket.emit('tavern_error', { message: 'Could not enter the tavern.' });
             });
         });
-        socket.on('tavern_move', (data) => this.tavernManager.move(socket, data));
-        socket.on('tavern_chat', (data) => this.tavernManager.chat(socket, data));
-        socket.on('tavern_leave', () => this.tavernManager.leave(socket));
+        on('tavern_move', (data) => this.tavernManager.move(socket, data));
+        on('tavern_chat', (data) => this.tavernManager.chat(socket, data));
+        on('tavern_leave', () => this.tavernManager.leave(socket));
         // Match mode handlers. Every match listener is wrapped so a match-layer fault can
         // never crash the connection or leak a stack to the client — it logs and emits a
         // benign 'match_error' instead (C5). Identity is always resolved from the CONNECTION,
         // never from the client payload.
-        socket.on('match_queue', (data) => runAdmission('match_queue',
+        on('match_queue', (data) => runAdmission('match_queue',
             () => this._handleMatchQueue(socket, data)));
-        socket.on('match_move', (data) => {
+        on('match_move', (data) => {
             try {
                 this.matchManager.move(socket, data);
             } catch (err) {
@@ -855,7 +890,7 @@ class SocketHandlers {
                 socket.emit('match_error', { message: 'Move could not be processed.' });
             }
         });
-        socket.on('match_leave', () => {
+        on('match_leave', () => {
             try {
                 this.matchManager.leave(socket);
             } catch (err) {
@@ -863,9 +898,9 @@ class SocketHandlers {
                 socket.emit('match_error', { message: 'Could not leave the match.' });
             }
         });
-        socket.on('match_reconnect', (data) => this._handleMatchReconnect(socket, data));
+        on('match_reconnect', (data) => this._handleMatchReconnect(socket, data));
         // Tavern match spectator bridge
-        socket.on('tavern_match_list', () => {
+        on('tavern_match_list', () => {
             const list = this.tavernMatchBridge ? this.tavernMatchBridge.getActiveMatches() : [];
             socket.emit('tavern_match_list', list);
         });
@@ -1133,6 +1168,20 @@ class SocketHandlers {
             return;
         }
         try {
+            // Early entry CREATES A GAME and may consume a credit, so it must carry the same
+            // reconnect-proof admission budget as auto_start / join_queue / request_payment. It
+            // previously had none of its own: the only limiter downstream keyed on the raw, volatile
+            // socket.id with no IP bucket, so simply reconnecting reset the allowance.
+            const rlId = stableId(socket, this.sessionManager);
+            const rlIp = clientIp(socket);
+            const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'game:queue', rlIp);
+            if (!rateLimitResult.allowed) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
+                    `Slow down — try entering again in ${Math.ceil(rateLimitResult.retryAfter / 1000)}s.`);
+                return;
+            }
+            await this.rateLimiter.recordAttempt(rlId, 'game:queue', rlIp);
+
             // Early entry is free only on a free-only instance. Mixed/credits entry may consume a
             // credit, so treat ambiguous mixed-mode requests as paid and fail closed.
             if (this.gameModeManager?.gameMode !== 'FREE'
@@ -1451,6 +1500,22 @@ class SocketHandlers {
                 this.activeGames.delete(socketId);
             }
             
+            // Release anyone watching this run. Suspension and the no-identity drop above both
+            // remove the game from activeGames without going through the settlement publisher that
+            // normally calls this, so without it those spectators are stranded in a dead room.
+            if (activeGame?.id && this.spectatorManager?.notifyGameEnded) {
+                try {
+                    this.spectatorManager.notifyGameEnded(activeGame.id, {
+                        status: 'interrupted',
+                        message: 'The player disconnected.'
+                    }, 'player_disconnected');
+                } catch (err) {
+                    if (this.debugManager?.CONSOLE_LOGGING) {
+                        console.error('[SocketHandlers] spectator release failed:', err.message);
+                    }
+                }
+            }
+
             // Clean up payment monitoring (but remember it was active for restoration)
             if (this.paymentHandlers && typeof this.paymentHandlers.stopMonitoringForSocket === 'function') {
                 this.paymentHandlers.stopMonitoringForSocket(socketId);
@@ -1482,6 +1547,12 @@ class SocketHandlers {
             if (this.spectatorManager) {
                 this.spectatorManager.handleDisconnect(socketId);
             }
+
+            // Per-socket bookkeeping keyed on the VOLATILE socket id. Nothing else ever removes
+            // these, so without an explicit disconnect sweep each one accrues a permanent entry per
+            // socket that ever moved / ever triggered address detection.
+            if (this.movementManager?.forgetSocket) this.movementManager.forgetSocket(socketId);
+            if (this.addressManager?.forgetSocket) this.addressManager.forgetSocket(socketId);
 
             // Clean up tavern presence
             if (this.tavernManager) {
@@ -1547,15 +1618,52 @@ class SocketHandlers {
     }
 
     /**
-     * Handle debug ping
+     * Contain a socket-listener fault to the socket that caused it.
+     *
+     * Never rethrows and never touches process state: the entire point is that a malformed client
+     * payload must not reach the fatal `uncaughtException` / `unhandledRejection` handlers.
+     */
+    _onHandlerFault(socket, event, err) {
+        console.error(`❌ Socket handler '${event}' faulted:`, (err && err.message) || err);
+        if (err && err.stack && this.debugManager?.CONSOLE_LOGGING) console.error(err.stack);
+        try {
+            // Deliberately generic — a client must never learn where in the server it broke.
+            socket.emit('error_message', { message: 'That request could not be processed.' });
+        } catch (_) { /* socket already gone */ }
+    }
+
+    /**
+     * Gate a cheap-looking read that actually hits the database.
+     *
+     * `identity:get` and `address:prompt` each run getOrCreateUser (a users SELECT plus an
+     * UPDATE ... SET last_active) and an entitlements SELECT, but unlike their sibling
+     * `identity:update` neither had any limit — so a single socket could pipeline them at packet
+     * rate. Uses the reconnect-proof stable id + IP buckets, so dropping and re-opening the socket
+     * does not reset the budget.
+     */
+    async _withIdentityReadLimit(socket, task) {
+        const rlId = stableId(socket, this.sessionManager);
+        const rlIp = clientIp(socket);
+        const verdict = await this.rateLimiter.checkLimit(rlId, 'identity:read', rlIp);
+        if (!verdict.allowed) return;
+        await this.rateLimiter.recordAttempt(rlId, 'identity:read', rlIp);
+        return task();
+    }
+
+    /**
+     * Handle debug ping.
+     *
+     * `data` is fully attacker-controlled and may be absent or a non-object: `socket.emit('debug_ping')`
+     * sends no argument at all, and `emit('debug_ping', null)` defeats a default parameter.
      */
     handleDebugPing(socket, data) {
         if (this.debugManager.CONSOLE_LOGGING) {
             console.log(`Debug ping received from ${socket.client.id}`);
         }
+        const clientTime = (data && typeof data === 'object' && data.time != null) ? data.time : null;
         socket.emit('debug_pong', {
             message: "Hello from server!",
-            clientTime: data.time,
+            clientTime,
             serverTime: Date.now(),
             socketId: socket.client.id
         });

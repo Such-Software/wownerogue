@@ -27,6 +27,7 @@
     <script src="js/render/isoRenderer.js"></script>
     <script src="js/render/threeRenderer.js"></script>
     <script src="js/render/tavernLife.js"></script>
+    <script src="js/render/chainAmbience.js"></script>
     <script src="/runtime-config.js"></script>
     <script type="importmap">
         {"imports":{"three":"/vendor/three/0.160.0/three.module.min.js"}}
@@ -293,6 +294,17 @@
             }
         }
 
+        // ---- Chain ambience ----------------------------------------------------------
+        // Decorative only: it consumes the public `blockheight` broadcast. The last payload is
+        // retained so a tip that arrives before the player enters still shows once mounted.
+        var chainAmbience = null;
+        var lastChainTip = null;
+        function mountChainAmbience() {
+            if (chainAmbience || !RK.mountChainAmbience) return;
+            chainAmbience = RK.mountChainAmbience(stageEl);
+            if (chainAmbience && lastChainTip) chainAmbience.setTip(lastChainTip);
+        }
+
         // ---- Rendering ---------------------------------------------------------------
         function rebuildScene() {
             if (!state.layout) return;
@@ -496,6 +508,9 @@
             tavernLife.setMode(currentMode || 'tiles');
             tavernLife.spawn();
             tavernLife.welcomeBubbles();
+            // The chain drifting around the frame: hash fragments and the height, with a ripple
+            // whenever a block lands. It sits over the stage and never intercepts input.
+            mountChainAmbience();
             startRafLoop();
             // Load the designed room (if the server is using one); re-render when ready.
             if (state.roomUrl) RK.loadRoom(state.roomUrl, function (room) {
@@ -505,6 +520,11 @@
             });
             setStatus('You are in the tavern.', 'connected');
             watchGamesBtn.classList.remove('hidden');
+        });
+
+        socket.on('blockheight', function (data) {
+            lastChainTip = data;
+            if (chainAmbience) chainAmbience.setTip(data);
         });
 
         socket.on('tavern_update', function (snap) {
@@ -531,11 +551,26 @@
             var isGlobal = !m.scope || m.scope === 'global';
             if (!isGlobal && m.scope !== state.channel) return;
             addChatLine(m.username, m.message);
-            // Show a speech bubble above the speaker's avatar.
-            if (tavernLife && m.socketId) {
-                // m.message is server-escaped HTML; strip tags for the bubble.
-                var text = m.message ? m.message.replace(/<[^>]*>/g, '') : '';
-                tavernLife.showPlayerBubble(m.socketId, text);
+            // Speech bubble above the speaker's avatar.
+            //
+            // This used to key off `m.socketId`, which the chat provider deliberately stopped
+            // sending (it publishes a short `publicId` instead so the raw socket id never leaves the
+            // server) — so the bubble branch simply never ran and nobody in the tavern ever spoke
+            // visibly. Resolve the speaker from the occupant list by display name instead, which
+            // needs no additional identity on the wire.
+            if (tavernLife) {
+                var speaker = null;
+                for (var oi = 0; oi < state.occupants.length; oi++) {
+                    if (state.occupants[oi] && state.occupants[oi].name === m.username) {
+                        speaker = state.occupants[oi];
+                        break;
+                    }
+                }
+                if (speaker) {
+                    // m.message is server-escaped HTML; strip tags for the bubble.
+                    var text = m.message ? m.message.replace(/<[^>]*>/g, '') : '';
+                    tavernLife.showPlayerBubble(speaker.id, text);
+                }
             }
         });
         socket.on('tavern_notice', function (n) {

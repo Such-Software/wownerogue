@@ -103,6 +103,17 @@ class MovementManager {
     }
   }
 
+  /**
+   * Drop the move-cooldown entry for a departed socket.
+   *
+   * `_lastMove` is keyed by the volatile socket.id and written on every accepted move, but was only
+   * ever emptied by shutdown() — so a long-lived process accumulated one permanent entry per socket
+   * that ever moved.
+   */
+  forgetSocket(socketId) {
+    this._lastMove.delete(socketId);
+  }
+
   /** Freeze gameplay before the graceful-shutdown settlement drain takes its snapshot. */
   shutdown() {
     this._acceptingMoves = false;

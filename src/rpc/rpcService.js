@@ -339,6 +339,30 @@ class RPCService {
     }
 
     /**
+     * Cosmetic chain tip (top block hash + difficulty) for the Tavern's ambient chain display.
+     *
+     * Deliberately non-authoritative: it never throws and never feeds fairness, payouts, or match
+     * seeding — those use getBlockCountStrict()/matchFairness, which must not accept a cached or
+     * best-effort value. On any RPC failure this returns null and the UI simply shows nothing new.
+     */
+    async getChainTipInfo() {
+        try {
+            const info = await this.makeRPCCall('get_info');
+            const hash = typeof info?.top_block_hash === 'string' ? info.top_block_hash : null;
+            return {
+                hash: hash && /^[0-9a-f]{64}$/i.test(hash) ? hash.toLowerCase() : null,
+                difficulty: Number.isFinite(Number(info?.difficulty)) ? Number(info.difficulty) : null,
+                txPoolSize: Number.isFinite(Number(info?.tx_pool_size)) ? Number(info.tx_pool_size) : null
+            };
+        } catch (error) {
+            if (CONSOLE_LOGGING) {
+                console.error('❌ Failed to get chain tip info:', error.message);
+            }
+            return null;
+        }
+    }
+
+    /**
      * Get block information by height
      */
     async getBlockByHeight(height) {

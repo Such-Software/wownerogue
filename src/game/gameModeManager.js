@@ -38,6 +38,22 @@ function payoutErrorText(error, depth = 0) {
     return parts.filter(Boolean).join(' ');
 }
 
+/**
+ * A batch that wallet-rpc legitimately broadcast as MORE THAN ONE transaction.
+ *
+ * Not an error in the usual sense — the money is out. It is raised so the existing quarantine path
+ * records the batch for attribution review while carrying the transaction hashes with it, instead
+ * of the previous behaviour of discarding them and leaving the rows with tx_hash NULL.
+ */
+class BatchSplitEvidence extends Error {
+    constructor(hashes, totalFee) {
+        super(`Batch was broadcast as ${hashes.length} transactions: ${hashes.join(', ')}`);
+        this.name = 'BatchSplitEvidence';
+        this.hashes = hashes;
+        this.totalFee = totalFee ?? null;
+    }
+}
+
 function isInsufficientFundsError(error) {
     return /not enough (unlocked )?(money|balance|outputs)|insufficient|no unlocked|unlocked balance/i
         .test(payoutErrorText(error));
@@ -2973,8 +2989,14 @@ class GameModeManager {
                     // Once a valid hash was observed, broadcast is proven even if the following
                     // DB transaction failed. Preserve that evidence and never return the row to
                     // the automatic retry pool.
+                    // Provably pre-broadcast failures (transfer gate, identity check, address
+                    // validation — all strictly before transfer_split) are safe to retry: nothing
+                    // was sent, so returning them to 'pending' cannot double-pay. Only genuinely
+                    // ambiguous post-broadcast failures may quarantine the batch.
+                    const preBroadcast = !observedTxHash && err?.preBroadcast === true;
                     const fundsIssue = !observedTxHash && isInsufficientFundsError(err);
-                    const status = fundsIssue ? 'pending' : 'needs_review';
+                    const retryable = fundsIssue || preBroadcast;
+                    const status = retryable ? 'pending' : 'needs_review';
                     console.error(`❌ Single payout ${p.id} failed -> ${status}:`, err.message);
                     await this.db.query(
                         `UPDATE payouts
@@ -3004,8 +3026,19 @@ class GameModeManager {
                     const hashes = Array.isArray(result?.tx_hash_list)
                         ? result.tx_hash_list.map(hash => String(hash || '').trim())
                         : [];
-                    if (result?.success !== true || hashes.length !== 1 || !validTxHash(hashes[0])) {
+                    if (result?.success !== true || hashes.length === 0 || !hashes.every(validTxHash)) {
                         throw new Error('Wallet returned ambiguous batch transaction-hash evidence');
+                    }
+                    if (hashes.length > 1) {
+                        // wallet-rpc SPLIT the send — which is exactly what transfer_split exists to
+                        // do when the destination set does not fit one transaction. The coins are
+                        // already broadcast, so this is not a failure; but the response does not say
+                        // which destination landed in which tx, so per-row attribution stays a human
+                        // decision (the operator's documented policy). What must NOT happen is what
+                        // used to: throwing here sent every row to needs_review with tx_hash NULL,
+                        // discarding the only evidence that the money left the wallet.
+                        observedTxHash = hashes[0];
+                        throw new BatchSplitEvidence(hashes, result.totalFee);
                     }
                     const txHash = hashes[0];
                     observedTxHash = txHash;
@@ -3041,8 +3074,14 @@ class GameModeManager {
                     // even though the RPC response errored. Those rows have no tx_hash, so the
                     // retry service's blockchain guard can't protect them and an auto-retry
                     // could DOUBLE-PAY. Mark 'needs_review' (retry service skips it) + alert.
+                    // Provably pre-broadcast failures (transfer gate, identity check, address
+                    // validation — all strictly before transfer_split) are safe to retry: nothing
+                    // was sent, so returning them to 'pending' cannot double-pay. Only genuinely
+                    // ambiguous post-broadcast failures may quarantine the batch.
+                    const preBroadcast = !observedTxHash && err?.preBroadcast === true;
                     const fundsIssue = !observedTxHash && isInsufficientFundsError(err);
-                    const status = fundsIssue ? 'pending' : 'needs_review';
+                    const retryable = fundsIssue || preBroadcast;
+                    const status = retryable ? 'pending' : 'needs_review';
                     console.error(`❌ Batch payout failed (${pending.rows.length} payouts) -> ${status}:`, err.message);
                     await this.db.query(
                         `UPDATE payouts
@@ -3051,11 +3090,19 @@ class GameModeManager {
                          WHERE id = ANY($3)`,
                         [status, String(err.message).slice(0, 500), ids, observedTxHash]
                     ).catch(() => {});
-                    if (!fundsIssue && this.alertService && typeof this.alertService.sendAlert === 'function') {
+                    if (!retryable && this.alertService && typeof this.alertService.sendAlert === 'function') {
+                        const split = err instanceof BatchSplitEvidence;
                         this.alertService.sendAlert('batch_payout_failed', {
-                            subject: '⚠️ Batch payout failed — manual review required',
-                            html: `<p>A batch of ${pending.rows.length} payout(s) failed and was marked <b>needs_review</b> to avoid a possible double-payout.</p>`
-                                + `<p>Payout IDs: ${ids.join(', ')}</p><p>Error: ${err.message}</p>`
+                            subject: split
+                                ? '⚠️ Batch payout SPLIT — attribution review required'
+                                : '⚠️ Batch payout failed — manual review required',
+                            html: split
+                                ? `<p>A batch of ${pending.rows.length} payout(s) was <b>broadcast as ${err.hashes.length} transactions</b>.`
+                                    + ` The funds have been sent; only the per-row attribution needs confirming.</p>`
+                                    + `<p>Payout IDs: ${ids.join(', ')}</p>`
+                                    + `<p>Transaction hashes:<br>${err.hashes.join('<br>')}</p>`
+                                : `<p>A batch of ${pending.rows.length} payout(s) failed and was marked <b>needs_review</b> to avoid a possible double-payout.</p>`
+                                    + `<p>Payout IDs: ${ids.join(', ')}</p><p>Error: ${err.message}</p>`
                         }).catch(() => {});
                     }
                 }

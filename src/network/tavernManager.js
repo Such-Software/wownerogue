@@ -2,6 +2,7 @@ const Room = require('../multiplayer/Room');
 const Appearance = require('../multiplayer/appearance');
 const Entitlements = require('../multiplayer/entitlements');
 const SocketChatProvider = require('./chat/SocketChatProvider');
+const { stableId, clientIp } = require('./rateLimitContext');
 
 function escapeHtml(s) {
     return String(s)
@@ -23,7 +24,7 @@ function escapeHtml(s) {
  * is broadcast to occupants once per server tick (clients render from these snapshots).
  */
 class TavernManager {
-    constructor({ io, debugManager, roomId = 'main', tickMs = null, roomData = null, roomUrl = null, entitlementProvider = null, globalChatProvider = null } = {}) {
+    constructor({ io, debugManager, roomId = 'main', tickMs = null, roomData = null, roomUrl = null, entitlementProvider = null, globalChatProvider = null, chatModeration = null } = {}) {
         this.io = io;
         this.debugManager = debugManager;
         this.enabled = process.env.TAVERN_ENABLED === 'true';
@@ -47,6 +48,9 @@ class TavernManager {
         // injected, fall back to an ephemeral tavern-scoped provider (previous behavior).
         this.globalChatProvider = globalChatProvider;
         this.chatProvider = new SocketChatProvider({ io: this.io, debugManager: this.debugManager });
+        // Guards applied before anything reaches GLOBAL chat (ban list, shared rate limiter,
+        // user_id attribution). Optional so a tavern-only/ephemeral instance still works.
+        this.chatModeration = chatModeration;
     }
 
     get channel() {
@@ -153,7 +157,15 @@ class TavernManager {
         this.room.moveOccupant(socket.id, dx, dy); // next tick broadcasts the result
     }
 
-    chat(socket, data = {}) {
+    /**
+     * Publish a tavern message.
+     *
+     * When a global chat provider is injected this reaches EVERY connected client and the persisted
+     * history, so it must clear the same bar as the lobby path: chat ban, the reconnect-proof rate
+     * limiter, and user_id attribution. Async — callers are wrapped by the socket safe-dispatch, and
+     * a moderation lookup failure must never publish.
+     */
+    async chat(socket, data = {}) {
         if (!this.enabled) return;
         const occ = this.room.getOccupant(socket.id);
         if (!occ) return; // must be in the tavern to talk
@@ -166,11 +178,16 @@ class TavernManager {
         if (now - (this._lastChatAt.get(socket.id) || 0) < this.chatCooldownMs) {
             // Tell the sender instead of silently dropping — a silent drop with a cleared
             // input reads as "my message disappeared".
-            if (socket && typeof socket.emit === 'function') {
-                socket.emit('tavern_notice', { message: 'Easy — wait a moment before your next message.' });
-            }
+            this._notice(socket, 'Easy — wait a moment before your next message.');
             return;
         }
+
+        const moderation = await this._moderateChat(socket);
+        if (!moderation.allowed) {
+            this._notice(socket, moderation.message);
+            return;
+        }
+
         this._lastChatAt.set(socket.id, now);
 
         const username = occ.name || String(socket.id).slice(0, 6);
@@ -184,8 +201,56 @@ class TavernManager {
             username,
             text: escapeHtml(text),
             ts: now,
-            socketId: socket.id
+            socketId: socket.id,
+            userId: moderation.userId
         });
+    }
+
+    _notice(socket, message) {
+        if (socket && typeof socket.emit === 'function') {
+            socket.emit('tavern_notice', { message });
+        }
+    }
+
+    /**
+     * Shared-chat guards. Returns { allowed, message, userId }.
+     *
+     * Only enforced for messages that actually enter GLOBAL chat — a tavern-scoped fallback room is
+     * ephemeral and stays governed by the per-occupant cooldown alone.
+     */
+    async _moderateChat(socket) {
+        const mod = this.chatModeration;
+        if (!mod || !this.globalChatProvider) return { allowed: true, userId: null };
+
+        if (mod.rateLimiter) {
+            const rlId = stableId(socket, mod.sessionManager);
+            const rlIp = clientIp(socket);
+            const verdict = await mod.rateLimiter.checkLimit(rlId, 'chat:message', rlIp);
+            if (!verdict.allowed) {
+                return { allowed: false, message: 'Please slow down before your next message.', userId: null };
+            }
+            await mod.rateLimiter.recordAttempt(rlId, 'chat:message', rlIp);
+        }
+
+        let userId = null;
+        try {
+            const row = mod.getOrCreateUser ? await mod.getOrCreateUser(socket.id) : null;
+            userId = row?.id || null;
+        } catch (e) {
+            if (this.debugManager?.CONSOLE_LOGGING) console.warn('[Tavern] chat user lookup failed:', e.message);
+        }
+
+        if (userId && mod.chatHistory?.isUserChatBanned) {
+            let banned = false;
+            try {
+                banned = await mod.chatHistory.isUserChatBanned(userId);
+            } catch (e) {
+                if (this.debugManager?.CONSOLE_LOGGING) console.warn('[Tavern] ban lookup failed:', e.message);
+            }
+            if (banned) return { allowed: false, message: 'You have been banned from chat.', userId };
+        }
+
+        return { allowed: true, userId };
     }
 
     leave(socket) {

@@ -663,27 +663,36 @@ class WalletRPCService {
      * @returns {Object} - { tx_hash_list, tx_key_list, fee_list, totalFee }
      */
     async processBatchPayout(destinations) {
-        this._assertTransferAllowed();
-        if (!destinations || destinations.length === 0) {
-            throw new AppError('No destinations provided for batch payout', {
-                safeMessage: 'Batch payout requires at least one destination.'
-            });
-        }
-        await this.ensureNetworkIdentity();
+        // Everything up to the transfer_split call below happens BEFORE anything can be broadcast.
+        // Tag those failures so the caller can safely return the batch to 'pending' and retry it,
+        // instead of quarantining provably-unsent payouts in 'needs_review' — where the retry
+        // service deliberately never looks at them again.
+        try {
+            this._assertTransferAllowed();
+            if (!destinations || destinations.length === 0) {
+                throw new AppError('No destinations provided for batch payout', {
+                    safeMessage: 'Batch payout requires at least one destination.'
+                });
+            }
+            await this.ensureNetworkIdentity();
 
-        // Validate all addresses before attempting transfer
-        for (const dest of destinations) {
-            if (!dest.address || typeof dest.address !== 'string') {
-                throw new AppError('Invalid address in batch payout', {
-                    safeMessage: 'One or more payout addresses are invalid.'
-                });
+            // Validate all addresses before attempting transfer
+            for (const dest of destinations) {
+                if (!dest.address || typeof dest.address !== 'string') {
+                    throw new AppError('Invalid address in batch payout', {
+                        safeMessage: 'One or more payout addresses are invalid.'
+                    });
+                }
+                const validation = await this.validateAddress(dest.address);
+                if (!validation.valid) {
+                    throw new AppError(`Invalid payout address in batch: ${dest.address.substring(0, 10)}...`, {
+                        safeMessage: 'One or more payout addresses failed validation.'
+                    });
+                }
             }
-            const validation = await this.validateAddress(dest.address);
-            if (!validation.valid) {
-                throw new AppError(`Invalid payout address in batch: ${dest.address.substring(0, 10)}...`, {
-                    safeMessage: 'One or more payout addresses failed validation.'
-                });
-            }
+        } catch (err) {
+            if (err && typeof err === 'object') err.preBroadcast = true;
+            throw err;
         }
 
         const transferParams = {
@@ -705,7 +714,12 @@ class WalletRPCService {
 
         // Address validation may take several RPC round trips. Recheck at the last possible
         // point before transfer_split can broadcast.
-        this._assertTransferAllowed();
+        try {
+            this._assertTransferAllowed();
+        } catch (err) {
+            if (err && typeof err === 'object') err.preBroadcast = true;
+            throw err;
+        }
         const response = await this.rpcCall('transfer_split', transferParams);
 
         const hashes = Array.isArray(response.result?.tx_hash_list)

@@ -42,8 +42,11 @@ class BroadcastManager {
     /**
      * Broadcast block height to all connected clients
      * @param {number} blockHeight - Current block height
+     * @param {{hash?: string, difficulty?: number, txPoolSize?: number}|null} [tip] - Cosmetic chain
+     *   tip for ambient UI. Public chain data only; omitted entirely when unavailable so clients
+     *   keep whatever they last had rather than flickering to a blank readout.
      */
-    broadcastBlockHeight(blockHeight) {
+    broadcastBlockHeight(blockHeight, tip) {
         // Only log when the height actually changes to avoid per-client spam
         if (blockHeight !== this._lastBroadcastBlock) {
             if (this.debugManager?.CONSOLE_LOGGING) {
@@ -51,7 +54,16 @@ class BroadcastManager {
             }
             this._lastBroadcastBlock = blockHeight;
         }
-        this.io.emit('blockheight', { blockHeight });
+        this.io.emit('blockheight', this.blockHeightPayload(blockHeight, tip));
+    }
+
+    /** Shared shape for the `blockheight` event so the per-socket emit on connect matches. */
+    blockHeightPayload(blockHeight, tip) {
+        const payload = { blockHeight };
+        if (tip && tip.hash) payload.hash = tip.hash;
+        if (tip && Number.isFinite(tip.difficulty)) payload.difficulty = tip.difficulty;
+        if (tip && Number.isFinite(tip.txPoolSize)) payload.txPoolSize = tip.txPoolSize;
+        return payload;
     }
 
     /**

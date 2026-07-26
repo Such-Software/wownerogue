@@ -11,6 +11,25 @@ const { verifyNip98Event } = require('../utils/nip98');
 const AUTH_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_MAX_KEYS = 10000;
 
+/**
+ * The host a NIP-98 auth event must be signed for.
+ *
+ * `HOSTED_BY` is the operator's canonical public origin and is contract-enforced in operated
+ * production profiles, so it is the authority whenever it is set — that keeps verification correct
+ * behind a proxy and immune to a spoofed Host header. Unconfigured (dev / self-host) deployments
+ * fall back to the request's own host, which still binds the event to the origin it was sent to.
+ */
+function expectedAuthHost(req) {
+  const configured = typeof process.env.HOSTED_BY === 'string' ? process.env.HOSTED_BY.trim() : '';
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.host) return parsed.host;
+    } catch (_) { /* malformed HOSTED_BY — fall through to the request host */ }
+  }
+  return (req && (req.get('host') || req.headers?.host)) || null;
+}
+
 function createIpRateLimiter({ max }) {
   const hits = new Map();
   let lastSweep = 0;
@@ -283,9 +302,16 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
     }
 
     const now = Math.floor(Date.now() / 1000);
+    // Bind the signed event to THIS deployment's host. The 'u' tag path check alone is not an
+    // authentication boundary: a kind:27235 event the same wallet signed for any other site whose
+    // path happens to end in /api/auth/smirk/verify would otherwise verify here — and because the
+    // link step ADOPTS whatever account already owns that pubkey and returns its session token, a
+    // borrowed event is a full account takeover. Prefer the operator's configured HOSTED_BY origin;
+    // fall back to the request host only when it is not configured (dev/self-host).
     const result = verifyNip98Event(body.event, {
       challenge,
       expectedPathSuffix: '/api/auth/smirk/verify',
+      expectedHost: expectedAuthHost(req),
       now,
       maxSkewSec: 120
     });

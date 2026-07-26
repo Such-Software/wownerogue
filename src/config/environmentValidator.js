@@ -115,6 +115,27 @@ class EnvironmentValidator {
         const warnings = [];
         const errors = [];
         const production = String(env.NODE_ENV || '').toLowerCase() === 'production';
+
+        // NODE_ENV must be explicit and recognized.
+        //
+        // Every fail-closed gate in the app (chain/wallet identity verification, secret-strength
+        // checks, the simulated-block prohibition, HSTS, the readiness identity requirement) tests
+        // for the literal string 'production'. DebugManager, meanwhile, defaults an UNSET NODE_ENV
+        // *to* production — so it suppresses console logging and reports IS_PRODUCTION while every
+        // safety gate silently reads false. A missing or misspelled NODE_ENV therefore produced a
+        // quiet, worst-of-both-worlds deployment: hardening off, diagnostics off, no warning. Rather
+        // than reconcile nine call sites, make the ambiguous state impossible to boot.
+        const RECOGNIZED_ENVS = ['production', 'development', 'debug', 'test'];
+        const declaredEnv = typeof env.NODE_ENV === 'string' ? env.NODE_ENV.trim() : '';
+        if (!declaredEnv) {
+            errors.push('NODE_ENV is not set. Set it explicitly to one of: '
+                + `${RECOGNIZED_ENVS.join(', ')}. An unset NODE_ENV disables every production safety `
+                + 'gate while the runtime still behaves as production.');
+        } else if (!RECOGNIZED_ENVS.includes(declaredEnv.toLowerCase())) {
+            errors.push(`NODE_ENV='${declaredEnv}' is not a recognized environment. Use one of: `
+                + `${RECOGNIZED_ENVS.join(', ')}. An unrecognized value disables every production `
+                + 'safety gate.');
+        }
         const paymentsEnabled = Boolean(config?.paymentsEnabled);
         const directEnabled = paymentsEnabled && Boolean(config?.modes?.direct?.enabled);
         const creditsEnabled = paymentsEnabled && Boolean(config?.modes?.credits?.enabled);

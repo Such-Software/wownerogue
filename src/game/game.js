@@ -457,16 +457,48 @@ class Game {
     };
   }
   
+  /** Is this dungeon cell inside the player's CURRENT field of view? */
+  _isVisible(point) {
+    if (!point) return false;
+    const x = Array.isArray(point) ? point[0] : point.x;
+    const y = Array.isArray(point) ? point[1] : point.y;
+    if (typeof x !== 'number' || typeof y !== 'number') return false;
+    const row = this.visibleTiles && this.visibleTiles[y];
+    return !!row && row[x] !== undefined;
+  }
+
+  /**
+   * Sticky record of which dungeon features the player has actually laid eyes on.
+   *
+   * Fog of war used to be enforced ONLY in the browser: the server put the absolute entrance, exit
+   * and treasure coordinates — plus the monster's exact position — into every `game_start` and
+   * `game_update`, and the client renderer simply declined to draw them. Anyone reading the socket
+   * frame in devtools could walk straight to the treasure and the exit from move 0, which in a
+   * paid mode is a direct attack on the payout. Discovery is sticky (matching the client's
+   * "explored memory") so a feature you have found stays on your map after you walk away.
+   */
+  _updateDiscovered() {
+    if (!this._discovered) this._discovered = { entrance: false, exit: false, treasure: false };
+    if (!this.dungeon) return this._discovered;
+    if (!this._discovered.entrance && this._isVisible(this.dungeon.entrance)) this._discovered.entrance = true;
+    if (!this._discovered.exit && this._isVisible(this.dungeon.exit)) this._discovered.exit = true;
+    if (!this._discovered.treasure && this._isVisible(this.dungeon.treasure)) this._discovered.treasure = true;
+    return this._discovered;
+  }
+
   getState() {
+    const discovered = this._updateDiscovered();
     const state = {
       gameState: this.gameState,
       player: this.player.getState(),
-      monster: this.monster ? this.monster.getState() : null,
+      // The monster is concealed the same way the client conceals it — only while in view. Sending
+      // it always let a player track the hunter through walls.
+      monster: (this.monster && this._isVisible(this.monster)) ? this.monster.getState() : null,
       visibleTiles: { ...this.visibleTiles },
       lighting: this.calculateLighting(),
-      entrance: this.dungeon ? this.dungeon.entrance : null,
-      exit: this.dungeon ? this.dungeon.exit : null,
-      treasure: this.dungeon ? this.dungeon.treasure : null,
+      entrance: (this.dungeon && discovered.entrance) ? this.dungeon.entrance : null,
+      exit: (this.dungeon && discovered.exit) ? this.dungeon.exit : null,
+      treasure: (this.dungeon && discovered.treasure) ? this.dungeon.treasure : null,
       depth: this.depth,
       maxDepth: this.maxDepth,
       moves: this.moveCount,
