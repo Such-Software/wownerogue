@@ -30,25 +30,50 @@ function expectedAuthHost(req) {
   return (req && (req.get('host') || req.headers?.host)) || null;
 }
 
+/**
+ * Per-IP auth rate limiter with a bounded key map.
+ *
+ * The bound must be enforced by EVICTION, never by refusing new keys. Refusing turned the memory
+ * cap into a denial-of-service primitive: an attacker sourcing from many addresses could hold the
+ * map at capacity and every legitimate first-time caller of /challenge or /verify got a 429, locking
+ * the whole population out of Smirk login. Eviction keeps the same memory ceiling while leaving the
+ * limiter functional — the worst case is that a very old window's count is forgotten, which grants
+ * one extra window to an attacker who was already being counted.
+ */
 function createIpRateLimiter({ max }) {
   const hits = new Map();
   let lastSweep = 0;
 
+  const sweepExpired = (now) => {
+    for (const [key, value] of hits) {
+      if (now - value.windowStart >= AUTH_WINDOW_MS) hits.delete(key);
+    }
+    lastSweep = now;
+  };
+
+  // Discard the oldest live windows in one batch, so the O(n) pass is amortised rather than paid
+  // on every request once the map is full.
+  const evictOldest = (count) => {
+    const oldest = Array.from(hits.entries())
+      .sort((left, right) => left[1].windowStart - right[1].windowStart)
+      .slice(0, count);
+    for (const [key] of oldest) hits.delete(key);
+  };
+
   return (req, res, next) => {
     const now = Date.now();
-    if (now - lastSweep >= AUTH_WINDOW_MS) {
-      for (const [key, value] of hits) {
-        if (now - value.windowStart >= AUTH_WINDOW_MS) hits.delete(key);
-      }
-      lastSweep = now;
-    }
+    if (now - lastSweep >= AUTH_WINDOW_MS) sweepExpired(now);
 
     const ip = req.ip || req.socket?.remoteAddress || 'unknown';
     let entry = hits.get(ip);
     if (!entry || now - entry.windowStart >= AUTH_WINDOW_MS) {
       if (!entry && hits.size >= AUTH_RATE_MAX_KEYS) {
-        res.setHeader('Retry-After', '60');
-        return res.status(429).json({ error: 'Too many authentication attempts' });
+        // Sweeping is otherwise lazy (once per window), so a map full of expired entries would
+        // stay full. Reclaim first, and only evict live windows if that was not enough.
+        sweepExpired(now);
+        if (hits.size >= AUTH_RATE_MAX_KEYS) {
+          evictOldest(Math.max(1, Math.ceil(AUTH_RATE_MAX_KEYS * 0.1)));
+        }
       }
       entry = { count: 0, windowStart: now };
       hits.set(ip, entry);

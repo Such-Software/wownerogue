@@ -361,8 +361,62 @@ class SocketHandlers {
         return true;
     }
 
+    /**
+     * Refuse admission while no blockchain node is reachable.
+     *
+     * A run's lifetime is measured in blocks, and its entry block comes from the last SUCCESSFUL
+     * poll. With every node unreachable that value silently goes stale, so a game admitted during an
+     * outage was anchored to an already-past block and `checkGamesTimeout` killed it as a timeout on
+     * the first recovered poll — the player lost a run (and in paid mode, an entry) to our
+     * infrastructure. Failing the entry up front is the honest outcome: nothing is charged and the
+     * player is told why.
+     *
+     * Deliberately conservative: it only fires when the health check explicitly reports false.
+     * Simulated blocks report healthy, and a runtime without the probe is left alone.
+     */
+    _rejectAdmissionWhenNodeUnreachable(socket, kind) {
+        if (this.debugManager?.isChainHealthy?.() !== false) return false;
+        const chain = String(process.env.CRYPTO_TYPE || 'WOW').toUpperCase().slice(0, 8);
+        const message = `Can't reach a ${chain} node right now, so entries are paused. `
+            + 'Nothing was charged — please try again shortly.';
+        try { socket?.emit?.('chain_unavailable', { code: 'NODE_UNREACHABLE', kind, message }); } catch (_) {}
+        try { this.broadcastManager?.sendStatusUpdate?.(socket?.id, 'error', message); } catch (_) {}
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.warn(`[SocketHandlers] '${kind}' refused — no daemon reachable.`);
+        }
+        return true;
+    }
+
+    /**
+     * Refuse PAID intake while the wallet is unreachable.
+     *
+     * Deliberately NOT a failover. Two `wallet-rpc` processes serving one wallet file can build
+     * transactions from the same outputs and corrupt the wallet cache, so a standby wallet is an
+     * operator decision about custody, not something this code may take on its own. Daemons are
+     * read-only and interchangeable — wallets are neither. The safe behaviour when the wallet is
+     * down is therefore to decline the invoice cleanly rather than to route around it.
+     *
+     * Only gates kinds that actually need the wallet: credits/free entry runs off the database and
+     * must keep working through a wallet outage.
+     */
+    _rejectPaidIntakeWhenWalletUnreachable(socket, kind) {
+        if (kind !== 'request_payment') return false;
+        // Only meaningful once a wallet has been wired up and has reported at least once.
+        if (!this.walletService || this.walletService.isHealthy !== false) return false;
+        const message = 'Payments are temporarily unavailable — the wallet is unreachable. '
+            + 'Nothing was charged. Credits and free play still work.';
+        try { socket?.emit?.('payment_unavailable', { code: 'WALLET_UNREACHABLE', kind, message }); } catch (_) {}
+        try { this.broadcastManager?.sendStatusUpdate?.(socket?.id, 'error', message); } catch (_) {}
+        if (this.debugManager?.CONSOLE_LOGGING) {
+            console.warn(`[SocketHandlers] '${kind}' refused — wallet unreachable.`);
+        }
+        return true;
+    }
+
     _runAdmission(socket, kind, task) {
         if (this._rejectAdmissionDuringShutdown(socket, kind)) return Promise.resolve(null);
+        if (this._rejectAdmissionWhenNodeUnreachable(socket, kind)) return Promise.resolve(null);
+        if (this._rejectPaidIntakeWhenWalletUnreachable(socket, kind)) return Promise.resolve(null);
         const token = {};
         this._admissionsInFlight.add(token);
         let work;

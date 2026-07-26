@@ -101,14 +101,53 @@ function endpointLabel(value) {
     }
 }
 
+/** Split a comma/whitespace separated endpoint list from configuration. */
+function parseEndpointList(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string') return [];
+    return value.split(/[,\s]+/).map(part => part.trim()).filter(Boolean);
+}
+
+/** Trim trailing slashes and drop duplicates while preserving preference order. */
+function normalizeEndpointList(values) {
+    const seen = new Set();
+    const out = [];
+    for (const raw of values) {
+        if (typeof raw !== 'string') continue;
+        const endpoint = raw.trim().replace(/\/$/, '');
+        if (!endpoint || seen.has(endpoint)) continue;
+        seen.add(endpoint);
+        out.push(endpoint);
+    }
+    return out.length ? out : ['http://127.0.0.1:34568'];
+}
+
 class RPCService {
     constructor(options = {}) {
         const env = options.env || process.env;
         this.http = options.http || axios;
-        this.primaryEndpoint = options.primaryEndpoint || env.PRIMARY_RPC_ENDPOINT || 'http://127.0.0.1:34568';
-        this.fallbackEndpoint = options.fallbackEndpoint || env.FALLBACK_RPC_ENDPOINT || 'http://127.0.0.1:34568';
-        this.currentEndpoint = this.primaryEndpoint;
+        // Ordered preference list. `RPC_ENDPOINTS` (comma/whitespace separated) declares any number
+        // of daemons and, when present, its ORDER is the preference order. PRIMARY/FALLBACK remain
+        // supported and are appended when explicitly configured. Deduped — the stock configuration
+        // pointed both at the same host, which looked like redundancy and was none.
+        const declaredEndpoints = options.endpoints || parseEndpointList(env.RPC_ENDPOINTS);
+        const configuredPrimary = options.primaryEndpoint || env.PRIMARY_RPC_ENDPOINT || null;
+        const configuredFallback = options.fallbackEndpoint || env.FALLBACK_RPC_ENDPOINT || null;
+        this.endpoints = normalizeEndpointList(
+            declaredEndpoints.length
+                // An explicit list is authoritative: never silently graft the localhost default onto it.
+                ? [...declaredEndpoints, configuredPrimary, configuredFallback].filter(Boolean)
+                : [configuredPrimary || 'http://127.0.0.1:34568', configuredFallback].filter(Boolean)
+        );
+        this.primaryEndpoint = configuredPrimary || this.endpoints[0];
+        this.fallbackEndpoint = configuredFallback || this.primaryEndpoint;
+        this.currentEndpoint = this.endpoints[0];
         this.failoverActive = false;
+        // How long to stay on a backup before re-testing the preferred daemon. Without this a single
+        // blip pins the process to a degraded node until it restarts.
+        this.preferredRetryMs = Math.max(1000, Number(options.preferredRetryMs)
+            || Number(env.RPC_PREFERRED_RETRY_MS) || 60000);
+        this._preferredProbedAt = 0;
         this.lastBlockHeight = 0;
         this.healthy = false;
         this.lastSuccessAt = 0;
@@ -134,8 +173,7 @@ class RPCService {
         
         if (CONSOLE_LOGGING) {
             console.log(`🔗 RPC Service initialized`);
-            console.log(`Primary: ${endpointLabel(this.primaryEndpoint)}`);
-            console.log(`Fallback: ${endpointLabel(this.fallbackEndpoint)}`);
+            console.log(`Endpoints: ${this.endpoints.map(endpointLabel).join(', ')}`);
         }
     }
 
@@ -204,103 +242,86 @@ class RPCService {
         return identity;
     }
 
-    async _ensureCurrentIdentity() {
-        if (!this.identityRequired) return null;
-        const candidates = [this.currentEndpoint];
-        const alternate = this.currentEndpoint === this.primaryEndpoint
-            ? this.fallbackEndpoint
-            : this.primaryEndpoint;
-        if (alternate && alternate !== this.currentEndpoint) candidates.push(alternate);
-
-        let lastError = null;
-        for (const endpoint of candidates) {
-            try {
-                const identity = await this._verifyEndpointIdentity(endpoint);
-                if (endpoint !== this.currentEndpoint) {
-                    this.currentEndpoint = endpoint;
-                    this.failoverActive = endpoint !== this.primaryEndpoint;
-                }
-                return identity;
-            } catch (error) {
-                lastError = error;
-            }
+    /**
+     * The order to try endpoints in for one logical call.
+     *
+     * Normally: whichever node we are already on, then every other node in declared preference
+     * order. Periodically the PREFERRED node goes first instead, so recovering from a blip does not
+     * require a restart — previously `failoverActive` was a one-way latch and the process stayed on
+     * the backup forever.
+     */
+    _attemptOrder() {
+        const preferred = this.endpoints[0];
+        const now = Date.now();
+        const retryPreferred = this.currentEndpoint !== preferred
+            && (now - this._preferredProbedAt) >= this.preferredRetryMs;
+        if (retryPreferred) this._preferredProbedAt = now;
+        const first = retryPreferred ? preferred : this.currentEndpoint;
+        const order = [first];
+        for (const endpoint of this.endpoints) {
+            if (endpoint !== first) order.push(endpoint);
         }
-        this.healthy = false;
-        throw lastError || new Error('Blockchain daemon identity could not be verified.');
+        return order;
+    }
+
+    _selectEndpoint(endpoint) {
+        const wasFailedOver = this.failoverActive;
+        this.currentEndpoint = endpoint;
+        this.failoverActive = endpoint !== this.endpoints[0];
+        // Start the re-test clock AT the moment of failover. Leaving it at 0 meant the very next
+        // call re-probed the dead preferred node, paying its timeout on every request.
+        if (this.failoverActive && !wasFailedOver) this._preferredProbedAt = Date.now();
+        if (!this.failoverActive) this._preferredProbedAt = 0;
     }
 
     /**
      * Make RPC call with automatic failover
      */
     async makeRPCCall(method, params = {}) {
-        try {
-            await this._ensureCurrentIdentity();
-            const result = await this._rawRpcCall(this.currentEndpoint, method, params, 10000);
+        const order = this._attemptOrder();
+        let lastError = null;
 
-            // Reset failure counter on success
-            this.consecutiveFailures = 0;
-            this.healthy = true;
-            this.lastSuccessAt = Date.now();
-            
-            return result;
+        for (const endpoint of order) {
+            try {
+                // Identity is verified per ENDPOINT (cached for identityMaxAgeMs): a backup node
+                // must prove it is the same chain before it is allowed to answer, or failover
+                // becomes a way to silently serve a different chain's data.
+                if (this.identityRequired) await this._verifyEndpointIdentity(endpoint);
+                const result = await this._rawRpcCall(endpoint, method, params, 10000);
 
-        } catch (error) {
-            this.consecutiveFailures++;
-            this.healthy = false;
-            this.lastFailureAt = Date.now();
-            
-            if (CONSOLE_LOGGING) {
-                console.error(`❌ RPC call failed (${this.consecutiveFailures}/${this.maxFailures}):`, error.message);
+                if (endpoint !== this.currentEndpoint && CONSOLE_LOGGING) {
+                    console.log(`🔄 RPC now using ${endpointLabel(endpoint)}`);
+                }
+                this._selectEndpoint(endpoint);
+                this.consecutiveFailures = 0;
+                this.healthy = true;
+                this.lastSuccessAt = Date.now();
+                return result;
+            } catch (error) {
+                lastError = error;
+                if (CONSOLE_LOGGING) {
+                    console.error(`❌ RPC ${method} failed on ${endpointLabel(endpoint)}:`, error.message);
+                }
             }
-
-            // Try failover if we haven't exceeded max failures
-            if (this.consecutiveFailures >= this.maxFailures && !this.failoverActive) {
-                return await this.tryFailover(method, params);
-            }
-
-            throw error;
         }
+
+        // Every configured node refused or was unreachable. Callers must degrade gracefully from
+        // here — nothing downstream may treat a stale cached height as live chain state.
+        this.consecutiveFailures++;
+        this.healthy = false;
+        this.lastFailureAt = Date.now();
+        throw lastError
+            || new Error(`No blockchain daemon answered (${this.endpoints.length} endpoint(s) tried).`);
     }
 
     /**
-     * Attempt failover to backup endpoint
+     * Retained for callers that explicitly ask for a failover attempt.
+     *
+     * makeRPCCall now walks every configured endpoint within a single call, so this is simply that
+     * walk. It no longer latches `failoverActive`, and it no longer gives up after two endpoints.
      */
     async tryFailover(method, params) {
-        if (this.currentEndpoint === this.fallbackEndpoint) {
-            throw new Error('Both primary and fallback RPC endpoints failed');
-        }
-
-        if (CONSOLE_LOGGING) {
-            console.log('🔄 Attempting RPC failover to backup endpoint');
-        }
-
-        this.currentEndpoint = this.fallbackEndpoint;
-        this.failoverActive = true;
-        this.consecutiveFailures = 0;
-
-        try {
-            if (this.identityRequired) {
-                await this._verifyEndpointIdentity(this.currentEndpoint, { force: true });
-            }
-            const result = await this._rawRpcCall(this.currentEndpoint, method, params, 10000);
-
-            if (CONSOLE_LOGGING) {
-                console.log('✅ Failover successful');
-            }
-
-            this.healthy = true;
-            this.lastSuccessAt = Date.now();
-
-            return result;
-
-        } catch (error) {
-            this.healthy = false;
-            this.lastFailureAt = Date.now();
-            if (CONSOLE_LOGGING) {
-                console.error('❌ Failover also failed:', error.message);
-            }
-            throw new Error('Both primary and fallback RPC endpoints failed');
-        }
+        return this.makeRPCCall(method, params);
     }
 
     /**
@@ -445,20 +466,24 @@ class RPCService {
             }
         };
 
-        checks.primary = await probe(this.primaryEndpoint);
-        if (this.fallbackEndpoint !== this.primaryEndpoint) {
-            checks.fallback = await probe(this.fallbackEndpoint);
-        } else {
-            checks.fallback = { ...checks.primary };
+        // Probe every configured node, in preference order, and adopt the first healthy one.
+        checks.endpoints = [];
+        let selectedEndpoint = null;
+        for (const endpoint of this.endpoints) {
+            const result = await probe(endpoint);
+            checks.endpoints.push(result);
+            if (!selectedEndpoint && result.status === 'healthy') selectedEndpoint = endpoint;
         }
 
-        checks.healthy = checks.primary.status === 'healthy' || checks.fallback.status === 'healthy';
+        // `primary` / `fallback` remain in the payload for existing readiness consumers.
+        const byEndpoint = new Map(this.endpoints.map((e, i) => [e, checks.endpoints[i]]));
+        checks.primary = byEndpoint.get(this.primaryEndpoint) || checks.primary;
+        checks.fallback = byEndpoint.get(this.fallbackEndpoint) || { ...checks.primary };
+
+        checks.healthy = selectedEndpoint !== null;
+        checks.healthyCount = checks.endpoints.filter(e => e.status === 'healthy').length;
         if (checks.healthy) {
-            const selectedEndpoint = checks.primary.status === 'healthy'
-                ? this.primaryEndpoint
-                : this.fallbackEndpoint;
-            this.currentEndpoint = selectedEndpoint;
-            this.failoverActive = selectedEndpoint !== this.primaryEndpoint;
+            this._selectEndpoint(selectedEndpoint);
             this.networkIdentity = this.endpointIdentities.get(selectedEndpoint) || this.networkIdentity;
         }
         checks.current = endpointLabel(this.currentEndpoint);
@@ -477,6 +502,7 @@ class RPCService {
     getStatus() {
         return {
             currentEndpoint: endpointLabel(this.currentEndpoint),
+            endpoints: this.endpoints.map(endpointLabel),
             failoverActive: this.failoverActive,
             consecutiveFailures: this.consecutiveFailures,
             lastBlockHeight: this.lastBlockHeight,
