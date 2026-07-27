@@ -18,7 +18,7 @@ describe('SocketChatProvider', () => {
         const broadcast = [];
         const history = { saveMessage: (m) => { saved.push(m); return Promise.resolve(); } };
         const broadcastManager = {
-            // The 4th arg is the sanitized public id (never the raw socket.id — S1 defense in depth).
+            // The 4th arg is the sanitized public id (never the raw socket.id: S1 defense in depth).
             broadcastChatMessage: (username, text, ts, publicId) => broadcast.push({ username, text, ts, publicId })
         };
         const provider = new SocketChatProvider({ io, broadcastManager, historyManager: history });

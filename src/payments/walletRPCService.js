@@ -80,9 +80,9 @@ class WalletRPCService {
             reason: 'not_checked',
             checkedAt: 0
         };
-        // The production composition root replaces this with the single payout/readiness
-        // predicate. Isolated diagnostics and the explicitly guarded stagenet canary retain the
-        // legacy default unless they deliberately inject a stricter boundary.
+        // The production composition root injects the single payout/readiness predicate here.
+        // Isolated diagnostics and the explicitly guarded stagenet canary keep the permissive
+        // default unless they deliberately inject a stricter boundary.
         this.transferAllowed = typeof options.transferAllowed === 'function'
             ? options.transferAllowed
             : () => true;
@@ -94,7 +94,6 @@ class WalletRPCService {
     async initialize() {
         try {
             await this.ensureAuthentication({ force: true });
-            // Test wallet connection
             const response = await this.rpcCall('get_version');
             if (!response?.result) throw new Error('Wallet version response is invalid.');
             
@@ -103,8 +102,7 @@ class WalletRPCService {
                     version: response.result?.version || 'unknown'
                 });
             }
-            
-            // Get wallet height to ensure it's synced
+
             const heightResponse = await this.rpcCall('get_height');
             const height = Number(heightResponse.result?.height);
             if (!Number.isSafeInteger(height) || height <= 0) {
@@ -345,7 +343,6 @@ class WalletRPCService {
     async createPaymentRequest(amount, description, userId, socketId) {
         try {
             await this.ensureNetworkIdentity();
-            // Create a new subaddress for this payment
             const response = await this.rpcCall('create_address', {
                 account_index: this.accountIndex,
                 label: `game_${userId}_${Date.now()}`
@@ -354,7 +351,7 @@ class WalletRPCService {
             const address = response.result.address;
             const addressIndex = response.result.address_index;
 
-            // Store mapping for payment monitoring
+            // Payment monitoring resolves an address back to its payer and invoice.
             const paymentInfo = {
                 userId: userId,
                 socketId: socketId,
@@ -382,12 +379,12 @@ class WalletRPCService {
 
             return {
                 success: true,
-                id: uuidv4(), // Generate payment ID
+                id: uuidv4(),
                 address: address,
                 amount: amount,
                 description: description,
                 addressIndex: addressIndex,
-                expiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
+                expiresAt: new Date(Date.now() + 30 * 60 * 1000)
             };
         } catch (error) {
             const wrapped = error instanceof AppError ? error : new ExternalServiceError('Failed to create payment address', {
@@ -478,13 +475,11 @@ class WalletRPCService {
                 });
             };
 
-            // Check pending (mempool) transactions
             if (response.result?.pool && response.result.pool.length > 0) {
                 for (const tx of response.result.pool) {
                     poolReceived += money.toBig(tx.amount);
                     inMempool = true;
-                    
-                    // Mark as detected if this is first time seeing it
+
                     if (!userInfo.detected) {
                         userInfo.detected = true;
                         if (this.debugManager?.CONSOLE_LOGGING) {
@@ -619,7 +614,7 @@ class WalletRPCService {
 
     startPaymentMonitoring(address, callback, interval = 2000) {
         if (this.paymentWatchers.has(address)) {
-            return; // Already monitoring
+            return;
         }
 
         const watcher = setInterval(async () => {
@@ -627,8 +622,7 @@ class WalletRPCService {
             
             if (status.in_mempool || status.confirmed) {
                 callback(status);
-                
-                // Stop monitoring if payment is confirmed
+
                 if (status.confirmed && status.complete) {
                     this.stopPaymentMonitoring(address);
                 }
@@ -658,15 +652,15 @@ class WalletRPCService {
 
     /**
      * Send a batch payout to multiple destinations in a single transfer_split call.
-     * More efficient than individual transfers — uses fewer outputs and pays less in fees.
+     * Uses fewer outputs and pays less in fees than individual transfers.
      * @param {Array<{amount: number|bigint, address: string}>} destinations
      * @returns {Object} - { tx_hash_list, tx_key_list, fee_list, totalFee }
      */
     async processBatchPayout(destinations) {
-        // Everything up to the transfer_split call below happens BEFORE anything can be broadcast.
-        // Tag those failures so the caller can safely return the batch to 'pending' and retry it,
-        // instead of quarantining provably-unsent payouts in 'needs_review' — where the retry
-        // service deliberately never looks at them again.
+        // Everything up to the transfer_split call below runs before anything can be broadcast.
+        // Those failures are tagged preBroadcast so the caller can safely return the batch to
+        // 'pending' and retry it. Untagged failures go to 'needs_review', which the retry service
+        // never revisits.
         try {
             this._assertTransferAllowed();
             if (!destinations || destinations.length === 0) {
@@ -676,7 +670,6 @@ class WalletRPCService {
             }
             await this.ensureNetworkIdentity();
 
-            // Validate all addresses before attempting transfer
             for (const dest of destinations) {
                 if (!dest.address || typeof dest.address !== 'string') {
                     throw new AppError('Invalid address in batch payout', {
@@ -875,7 +868,6 @@ class WalletRPCService {
             }
             await this.ensureNetworkIdentity();
 
-            // Validate address with wallet RPC before attempting transfer
             const validation = await this.validateAddress(address);
             if (!validation.valid) {
                 throw new AppError(`Invalid payout address: ${validation.error || 'validation failed'}`, {
@@ -911,8 +903,8 @@ class WalletRPCService {
             }
 
             this._assertTransferAllowed();
-            // Use transfer_split for better output handling — automatically splits
-            // across multiple outputs if needed, more resilient than plain transfer
+            // transfer_split spreads a payout across multiple outputs when needed, so it succeeds
+            // in wallet states where a plain transfer would fail on output availability.
             const response = await this.rpcCall('transfer_split', transferParams);
 
             // transfer_split returns arrays: tx_hash_list, tx_key_list, fee_list
@@ -977,7 +969,6 @@ class WalletRPCService {
                 return { exists: false, confirmed: false, in_mempool: false };
             }
 
-            // Use get_transfer_by_txid to check if transaction exists
             const response = await this.rpcCall('get_transfer_by_txid', {
                 txid: txHash,
                 account_index: this.accountIndex
@@ -997,11 +988,11 @@ class WalletRPCService {
 
             return { exists: false, confirmed: false, in_mempool: false };
         } catch (error) {
-            // If the RPC fails with "Transaction not found" style error, tx doesn't exist
+            // A "not found" RPC error is proof of absence; any other error leaves existence
+            // unknown, so it propagates rather than reporting a missing transaction.
             if (error.message?.includes('not found') || error.details?.message?.includes('not found')) {
                 return { exists: false, confirmed: false, in_mempool: false };
             }
-            // For other errors, we can't be sure, so throw
             throw error;
         }
     }
@@ -1020,7 +1011,6 @@ class WalletRPCService {
         }
     }
 
-    // Get service health status
     getHealthStatus() {
         return {
             healthy: this.isHealthy

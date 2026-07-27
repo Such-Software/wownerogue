@@ -43,7 +43,7 @@ describe('money.mulByDecimal (exact, no float)', () => {
   });
 
   test('large amounts stay exact where float would drift', () => {
-    // 9,007,199,254,740,993 is 2^53 + 1 — not representable as a float64.
+    // 9,007,199,254,740,993 is 2^53 + 1: not representable as a float64.
     const big = 9007199254740993n;
     expect(money.mulByDecimal(big, 3)).toBe(27021597764222979n);
     // Sanity: the naive float computation is wrong, proving why BigInt matters.

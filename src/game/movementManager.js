@@ -25,9 +25,9 @@ class MovementManager {
     const game = this.activeGames.get(socketId);
     if (!game) return; // not in a game
 
-    // A terminal result stays in activeGames while its atomic DB completion is retried. Keeping
-    // the entry blocks replacement games; this explicit guard prevents the retained Game object
-    // from accepting moves (Game.movePlayer historically does not inspect gameState itself).
+    // A terminal result stays in activeGames while its atomic DB completion is retried, which
+    // blocks replacement games. Game.movePlayer does not inspect gameState, so this guard is what
+    // stops the retained Game object from accepting further moves.
     if (game.settlementPending || game.settlementCommitted || game.gameState === 'ended') return;
 
     const dir = moveData.direction;
@@ -45,7 +45,7 @@ class MovementManager {
       moveResult = game.movePlayer(dx, dy);
     }
 
-    // Allow hook to perform monster movement or other side-effects BEFORE we snapshot state
+    // The hook performs monster movement and other side-effects before the state snapshot.
     if (moveResult && moveResult.status === 'moved' && this.postMoveHook) {
       try {
         this.postMoveHook({ socketId, game, moveResult });
@@ -54,7 +54,7 @@ class MovementManager {
       }
     }
 
-    // Build state after player + potential monster move
+    // State reflects both the player move and any monster move made by the hook.
     let state;
     if (typeof game.getState === 'function') {
       state = game.getState();
@@ -72,8 +72,8 @@ class MovementManager {
       this.spectatorManager.broadcastToSpectators(game.id, state);
     }
 
-    // Handle special events from moveResult (escape / treasure / descend). Include depth for the
-    // multi-level descend so the client can tell the player they took the stairs down (not a bug).
+    // Special events from moveResult (escape / treasure / descend). Depth and maxDepth accompany a
+    // multi-level descend so the client can tell the player they took the stairs down.
     if (moveResult && moveResult.event) {
       this.io.to(socketId).emit('game_event', {
         event: moveResult.event, depth: moveResult.depth, maxDepth: moveResult.maxDepth
@@ -106,9 +106,8 @@ class MovementManager {
   /**
    * Drop the move-cooldown entry for a departed socket.
    *
-   * `_lastMove` is keyed by the volatile socket.id and written on every accepted move, but was only
-   * ever emptied by shutdown() — so a long-lived process accumulated one permanent entry per socket
-   * that ever moved.
+   * `_lastMove` is keyed by the volatile socket.id and written on every accepted move. Without this
+   * call it is only emptied by shutdown(), leaving one permanent entry per socket that ever moved.
    */
   forgetSocket(socketId) {
     this._lastMove.delete(socketId);

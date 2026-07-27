@@ -29,7 +29,7 @@ describe('Provably fair: deterministic dungeon generation', () => {
 
   test('regeneration is stable even when interleaved with another seed (no global RNG bleed)', () => {
     const a1 = DungeonGenerator.layoutFingerprint(DungeonGenerator.regenerateFromSeed(SEED_A, 'WOW'));
-    // Generate a different seed's dungeon in between — must not affect SEED_A's output.
+    // Generate a different seed's dungeon in between: must not affect SEED_A's output.
     DungeonGenerator.regenerateFromSeed(SEED_B, 'WOW');
     const a2 = DungeonGenerator.layoutFingerprint(DungeonGenerator.regenerateFromSeed(SEED_A, 'WOW'));
     expect(a1).toBe(a2);

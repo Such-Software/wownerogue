@@ -50,17 +50,16 @@ class GameManager {
     /**
      * Create a new game for a user
      * @param {Object} user - User object
-     * @param {string} gameType - Type of game ('standard', 'legacy')
      * @param {Object} options - Additional game options
      * @returns {Object} Created game instance
      */
-    async createGameForUser(user, gameType = 'standard', options = {}) {
+    async createGameForUser(user, options = {}) {
         if (this._admissionClosed) {
             const error = new Error('Game admission is closed for server shutdown');
             error.code = 'SERVER_SHUTTING_DOWN';
             throw error;
         }
-        const creation = this._createGameForUser(user, gameType, options);
+        const creation = this._createGameForUser(user, options);
         this._creationsInFlight.add(creation);
         try {
             return await creation;
@@ -69,7 +68,7 @@ class GameManager {
         }
     }
 
-    async _createGameForUser(user, gameType = 'standard', options = {}) {
+    async _createGameForUser(user, options = {}) {
         // Settlement-pending games intentionally remain in activeGames. This is the last-line
         // guard against starting/charging a replacement run while the previous terminal result
         // is not yet durable (and also closes ordinary double-start races between handlers).
@@ -77,13 +76,7 @@ class GameManager {
             throw new Error('User already has an active or settlement-pending game');
         }
 
-        let game;
-
-        if (gameType === 'legacy') {
-            game = Game.createLegacyGame(user.id, user, options);
-        } else {
-            game = Game.createStandardGame(user.id, user, options);
-        }
+        const game = Game.createStandardGame(user.id, user, options);
 
         // Persist before exposing the game or charging entry. Paid-start processing updates this
         // exact row; allowing play to continue after a failed INSERT can consume a payment/credit
@@ -98,7 +91,7 @@ class GameManager {
         this.activeGames.set(user.id, game);
 
         if (this.debugManager.CONSOLE_LOGGING) {
-            console.log(`[createGameForUser] Created ${gameType} game ${game.id} for user ${user.id} (dbId: ${game.dbId || 'none'})`);
+            console.log(`[createGameForUser] Created game ${game.id} for user ${user.id} (dbId: ${game.dbId || 'none'})`);
         }
         return game;
     }
@@ -464,11 +457,9 @@ class GameManager {
         const gameStates = new Map();
         
         for (const [socketId, game] of this.activeGames.entries()) {
-            // Count by game type (if available)
             const type = game.type || 'unknown';
             gameTypes.set(type, (gameTypes.get(type) || 0) + 1);
-            
-            // Count by game state
+
             const state = game.gameState || 'active';
             gameStates.set(state, (gameStates.get(state) || 0) + 1);
         }
@@ -583,23 +574,22 @@ class GameManager {
                 ]);
                 game.dbId = result.rows[0]?.id || null;
 
-                // Stamp the stable DB users.id onto the in-memory game object so
-                // suspend/restore and completeGame can key on it WITHOUT any socket_id
-                // lookup (socket ids are volatile across reconnects). game.userId is the
-                // canonical field; game.dbUserId is kept as an alias for the disconnect/
-                // suspend path that already reads it.
+                // Stamps the stable users.id onto the in-memory game so suspend/restore and
+                // completeGame key on it rather than on socket_id, which is volatile across
+                // reconnects. game.userId is canonical; game.dbUserId is an alias read by the
+                // disconnect/suspend path.
                 const stableUserId = result.rows[0]?.user_id ?? null;
                 if (stableUserId != null) {
                     game.userId = stableUserId;
                     if (game.dbUserId == null) game.dbUserId = stableUserId;
                 }
 
-                // Entry block height captured at creation so the suspend path can persist
-                // it (blockRec) and the reconnect timeout logic stays consistent.
+                // Entry block height, captured at creation so the suspend path persists it and
+                // the reconnect timeout logic stays consistent.
                 game.blockRec = blockHeight;
 
-                // Reference to the DB pool so restoreGame can keep games.socket_id aligned
-                // to the reconnecting socket without needing its own DB handle.
+                // DB pool handle so restoreGame can keep games.socket_id aligned to the
+                // reconnecting socket without holding its own handle.
                 game.db = db;
             } catch (err) {
                 console.error('Game insert failed:', err.message);
@@ -630,7 +620,6 @@ class GameManager {
                     WHERE dungeon_seed = $6 AND socket_id = $7
                 `, [status, outcome, game.player.hasTreasure, moves, durationSeconds, game.id, socketId, score]);
 
-                // Update user's high score if this is a new personal best
                 if (score > 0) {
                     await db.query(`
                         UPDATE users SET high_score = GREATEST(COALESCE(high_score, 0), $1)

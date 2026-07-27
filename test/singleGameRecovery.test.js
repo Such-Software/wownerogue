@@ -3,7 +3,7 @@
  *
  * If a user pays for a single game and disconnects before a game starts (no games row
  * references the payment), the money was taken with nothing given. recoverPendingPayments
- * must grant the equivalent credits — exactly once (idempotent), and never for a payment
+ * must grant the equivalent credits, exactly once (idempotent), and never for a payment
  * that was actually consumed by a game.
  */
 
@@ -12,7 +12,7 @@ const SessionManager = require('../src/network/sessionManager');
 function makeDb({ singleGamePayments = [], gamesForPayment = new Set(), recoveredReasons = new Set(), entitlementPaymentIds = new Set() }) {
   let credits = 0;
   const handler = async (text, params = []) => {
-    // credits_package recovery queries (unprocessed + orphaned) — none in these tests
+    // credits_package recovery queries (unprocessed + orphaned): none in these tests
     if (/FROM payments[\s\S]*credits_package/i.test(text)) return { rows: [] };
     if (/FROM payments\s+WHERE id = \$1[\s\S]*FOR UPDATE/i.test(text)) {
       const p = singleGamePayments.find(row => row.id === params[0]);
@@ -84,7 +84,7 @@ describe('Single-game disconnect recovery', () => {
     expect(db._getCredits()).toBe(0);
   });
 
-  test('is idempotent — a second recovery does not double-credit', async () => {
+  test('is idempotent: a second recovery does not double-credit', async () => {
     const db = makeDb({ singleGamePayments: [{ id: 42, confirmed_at: new Date() }] });
     const sm = makeSession(db);
 

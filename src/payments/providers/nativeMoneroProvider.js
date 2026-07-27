@@ -1,7 +1,7 @@
 const { PaymentProvider } = require('./paymentProvider');
 
 /**
- * Native Monero/Wownero provider — wraps the existing walletRPCService (subaddress invoicing +
+ * Native Monero/Wownero provider: wraps the existing walletRPCService (subaddress invoicing +
  * transfer_split payouts) so "our own XMR/WOW stuff" is just another plugin behind the same
  * contract. Behavior-preserving: it delegates to the exact calls the game already makes today.
  * Supports XMR/WOW only; other chains route to BTCPay.
@@ -46,9 +46,9 @@ class NativeMoneroProvider extends PaymentProvider {
         return this._normalize(await this.wallet.checkPaymentStatus(this._addr(invoiceRef)));
     }
 
-    // The monitoring contract passes the RAW wallet status through untouched — the shape
+    // The monitoring contract passes the RAW wallet status through untouched, the shape
     // checkPaymentStatus produces ({ in_mempool, confirmed, complete, amount, required,
-    // confirmations }) — so the confirmation callback in paymentHandlers is byte-for-byte
+    // confirmations }), so the confirmation callback in paymentHandlers is byte-for-byte
     // the legacy path for native. (getInvoiceStatus above still returns the normalized shape.)
     startWatch(invoiceRef, onUpdate, intervalMs = 2000) {
         const address = this._addr(invoiceRef);

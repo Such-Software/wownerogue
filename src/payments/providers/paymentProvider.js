@@ -3,7 +3,7 @@
  *
  * Instead of the game implementing per-chain wallet/daemon code, it talks to pluggable PAYMENT
  * PROVIDERS. BTCPay Server is the first plugin (it already handles BTC/LTC natively + XMR/WOW via
- * checkout plugins + Grin via our own plugin — all five Smirk chains). The existing native
+ * checkout plugins + Grin via our own plugin: all five Smirk chains). The existing native
  * Monero/Wownero wallet-RPC integration is a second plugin, so an operator can route each chain to
  * whichever provider they run (e.g. BTCPay for BTC/LTC/GRIN, native-RPC for XMR/WOW).
  *

@@ -164,7 +164,7 @@ const SmirkAuth = {
         // Sign directly. If this origin doesn't yet hold the Nostr scope, the wallet throws
         // NOT_AUTHORIZED (no popup); grant it once via getNostrPublicKey() and retry. Signing
         // first means a RETURNING user (scope already granted) gets a SINGLE approval instead of
-        // two. The wallet still asks per-signature for kind 27235 — that can't be silenced.
+        // two. The wallet still asks per-signature for kind 27235; that can't be silenced.
         let signed;
         try {
             signed = await window.smirk.signNostrEvent(evt);
@@ -267,7 +267,7 @@ const SmirkAuth = {
         }
 
         try {
-            // /status is session-gated (BOLA fix) — send the session token so a linked user
+            // /status is session-gated (BOLA fix): send the session token so a linked user
             // is recognised; without it the endpoint returns 401 and we fall through to unlinked.
             var token = '';
             try { token = localStorage.getItem('wownerogue_token') || ''; } catch (_) { token = ''; }
@@ -366,7 +366,7 @@ const SmirkAuth = {
             this._updateButton(btn, 'error'); // button label becomes "Retry Smirk Connect"
 
             // A locked wallet is an action, not a red error. Current Smirk builds auto-open the
-            // unlock popup on connect()/signNostrEvent(); older builds throw LOCKED — so guide the
+            // unlock popup on connect()/signNostrEvent(); older builds throw LOCKED, so guide the
             // user to unlock and retry (the Retry button re-invokes connect(), which pops the
             // unlock screen on the updated build).
             const locked = (err && err.code === 'LOCKED') || /is locked/i.test((err && err.message) || '');

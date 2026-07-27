@@ -39,7 +39,7 @@ describe('single-player character identity wiring', () => {
   });
 
   test('welcome legend draws the player as the original hero tile (uniform grid, no overlay)', () => {
-    // The splash draws every icon — including the player — as a grid tile so the four rows align
+    // The splash draws every icon, including the player, as a grid tile so the four rows align
     // and the player is the original hero tile, not a staggered avatar overlay.
     expect(screenManager).toContain('role: "player"');
     expect(screenManager).toContain('SinglePlayerAvatar.clearOverlay'); // overlay still cleared

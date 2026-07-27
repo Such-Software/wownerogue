@@ -6,15 +6,27 @@ Run with Blender, not plain Python:
 
   blender --background --python scripts/build_kenney_3d_characters.py
 
-The source FBX files remain in the local Kenney bundle. Outputs are written under
-html/assets/generated/ (gitignored) for CDN/local delivery.
+The source FBX files remain in your local Kenney bundle. Outputs are written under
+html/assets/generated/ (gitignored) for local delivery.
+
+Point KENNEY_ASSETS_DIR at the "Animated Characters 1" directory of your own copy of the
+Kenney Game Assets bundle, for example:
+
+  KENNEY_ASSETS_DIR="$HOME/assets/Kenney Game Assets All-in-1 1.1.0/3D assets/Animated Characters 1" \
+    blender --background --python scripts/build_kenney_3d_characters.py
 """
+import os
 from pathlib import Path
 import bpy
 
 
 ROOT = Path(__file__).resolve().parents[1]
-KENNEY = Path("/home/jw/Drawings/assets/Kenney Game Assets All-in-1 1.1.0/3D assets/Animated Characters 1")
+_kenney_dir = os.environ.get("KENNEY_ASSETS_DIR")
+if not _kenney_dir:
+    raise SystemExit(
+        "Set KENNEY_ASSETS_DIR to the 'Animated Characters 1' directory of your Kenney bundle."
+    )
+KENNEY = Path(_kenney_dir).expanduser()
 OUT = ROOT / "html/assets/generated/3d/kenney-animated-characters"
 
 MODEL = KENNEY / "Model/characterMedium.fbx"

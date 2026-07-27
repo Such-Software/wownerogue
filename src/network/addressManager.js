@@ -23,10 +23,9 @@ class AddressManager {
   }
 
   /**
-   * Drop an unconfirmed address prompt for a departed socket.
-   *
-   * `pending` entries were only removed inside confirm(), so any player who triggered address
-   * detection and then left without answering left a permanent entry keyed on a volatile socket id.
+   * Drop an unconfirmed address prompt for a departed socket. Required because confirm() is the
+   * only other path that clears `pending`, and its keys are volatile socket ids: a player who
+   * triggers detection then leaves without answering would leak an entry.
    */
   forgetSocket(socketId) {
     this.pending.delete(socketId);
@@ -43,7 +42,7 @@ class AddressManager {
   isValidAddress(address) {
     const value = typeof address === 'string' ? address.trim() : '';
     if (!value) return false;
-    // Basic length guard for sanity (allowing integrated addresses)
+    // Upper bound accommodates integrated addresses.
     if (value.length < 80 || value.length > 120) return false;
 
     const currency = String(this.gameModeManager?.cryptoType || '').toUpperCase();
@@ -60,7 +59,7 @@ class AddressManager {
 
   async _validateWithWallet(address) {
     if (!this.gameModeManager || typeof this.gameModeManager.validatePayoutAddress !== 'function') {
-      return true; // legacy/injected managers retain syntax-only behavior
+      return true; // injected managers without wallet access are syntax-checked only
     }
     let result;
     try {
@@ -142,7 +141,6 @@ class AddressManager {
         await this._validateWithWallet(pending);
         const saved = await this.gameModeManager.setUserPayoutAddress(socketId, pending);
         if (saved !== true) throw new Error('Payout address was not persisted');
-        // this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address saved.'); // Removed duplicate
         this.io.to(socketId).emit('address_confirmed', { address: pending, message: 'Payout address saved.' });
       } catch (e) {
         const normalized = normalizeError?.(e, 'Failed to save address') || e;
@@ -156,7 +154,6 @@ class AddressManager {
       }
     } else {
       this.pending.delete(socketId);
-      // this.broadcastManager?.sendStatusUpdate(socketId, 'success', 'Payout address accepted (session only).'); // Removed duplicate
       this.io.to(socketId).emit('address_confirmed', { address: pending, message: 'Payout address accepted (session only).' });
     }
     if (this.onConfirmed) {
@@ -166,7 +163,7 @@ class AddressManager {
   }
 
   requiresPayoutAddress() {
-    if (!this.gameModeManager) return false; // free mode => no requirement
+    if (!this.gameModeManager) return false; // free mode has no payout address requirement
     const mode = this.gameModeManager.gameMode;
     if (typeof this.gameModeManager.requiresPayoutAddressForMode === 'function') {
       return this.gameModeManager.requiresPayoutAddressForMode(mode);

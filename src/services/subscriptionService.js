@@ -5,9 +5,9 @@ const { loadNostrTools } = require('../utils/nostrLoader');
  * unlocks cosmetics (see docs/MONETIZATION.md). The game can't read the Smirk backend's self-only
  * /premium/status by npub, so this resolves from two sources, in order:
  *
- *   1. PREMIUM_NPUBS — an operator allowlist ("npub1…|hex[:tier],…"). Works TODAY, zero backend
+ *   1. PREMIUM_NPUBS: an operator allowlist ("npub1…|hex[:tier],…"). Works TODAY, zero backend
  *      dependency: mark specific npubs premium and they get the tier immediately.
- *   2. SMIRK_PREMIUM_STATUS_URL — an optional HTTP endpoint that answers premium-by-npub, for full
+ *   2. SMIRK_PREMIUM_STATUS_URL: an optional HTTP endpoint that answers premium-by-npub, for full
  *      automation once the Smirk backend exposes a service lookup ({active, tier?}). Degrades to (1).
  *
  * Results are cached (TTL). With no source configured, tierForNpub() returns null → unchanged

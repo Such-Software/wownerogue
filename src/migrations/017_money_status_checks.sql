@@ -2,7 +2,7 @@
 --
 -- payments.status, payouts.status and payments.payment_type were free-form VARCHARs.
 -- A typo in any one query (e.g. 'complete' vs 'completed') silently produces a row that
--- no index/predicate matches — orphaning money (a payout stuck in a misspelled status is
+-- no index/predicate matches, orphaning money (a payout stuck in a misspelled status is
 -- invisible to both the batcher and the retry candidate query). These CHECKs catch typos.
 --
 -- Added NOT VALID so they enforce all NEW writes without failing on any pre-existing rows,

@@ -229,7 +229,7 @@
         // Sprite recoloring (skin / hair / cloth-base / gear tinting) is intentionally disabled:
         // characters and equipment render in their native Kenney art. Returning null makes every
         // caller (drawCharTileCanvas, charTileTexture) fall through to the untinted sprite. The
-        // ASCII '@' colour is unaffected — it uses colors.base via avatarVisuals.tintColorFor,
+        // ASCII '@' colour is unaffected: it uses colors.base via avatarVisuals.tintColorFor,
         // a separate path. To restore tinting, delete this early return.
         return null;
         var a = RK.charAtlas();

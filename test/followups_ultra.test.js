@@ -3,7 +3,7 @@
  *
  *  1. No-address match winner reconciliation: setUserPayoutAddress converts a claimable
  *     'needs_review' match payout (reason 'match_winner_no_address') into a sendable 'pending'
- *     payout once a real address is set — and NEVER touches other 'needs_review' rows (e.g. the
+ *     payout once a real address is set, and NEVER touches other 'needs_review' rows (e.g. the
  *     ambiguous single-payout rows, which would double-pay if reset).
  *  2. Match boot-recovery age guard: _recoverAbandonedMatches reclaims all in-flight matches
  *     immediately in single-instance mode, but only aged-out ones when MATCH_SINGLE_INSTANCE=false.
@@ -43,14 +43,14 @@ function buildGmm() {
     return { gmm, db, calls };
 }
 
-describe('Follow-up 1 — no-address match winner reconciliation', () => {
+describe('Follow-up 1: no-address match winner reconciliation', () => {
     test('converts claimable rows and kicks the batcher when an address is set', async () => {
         const { gmm, db } = buildGmm();
         const ok = await gmm.setUserPayoutAddress('sock', 'Wo3pRealAddress');
         expect(ok).toBe(true);
         const payoutUpdate = db.query.mock.calls.find(c => /UPDATE\s+payouts/i.test(c[0]));
         expect(payoutUpdate).toBeTruthy();
-        // Narrow, safe filter — only explicit no-address liabilities, never generic needs_review.
+        // Narrow, safe filter: only explicit no-address liabilities, never generic needs_review.
         expect(payoutUpdate[0]).toMatch(/reason\s+IN\s*\(\s*'match_winner_no_address'\s*,\s*'solo_winner_no_address'\s*\)/);
         expect(payoutUpdate[0]).toMatch(/status\s*=\s*'needs_review'/);
         expect(payoutUpdate[0]).toMatch(/PENDING_NO_ADDRESS/);
@@ -74,7 +74,7 @@ describe('Follow-up 1 — no-address match winner reconciliation', () => {
     });
 });
 
-describe('Follow-up 2 — match boot-recovery age guard', () => {
+describe('Follow-up 2: match boot-recovery age guard', () => {
     function queueWithCapturingDb() {
         const params = [];
         const db = {

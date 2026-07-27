@@ -4,7 +4,7 @@
  * Two defects motivated this:
  *   - the stock configuration pointed PRIMARY and FALLBACK at the SAME host, so what looked like
  *     redundancy was none, and only two endpoints were ever supported;
- *   - `failoverActive` was a one-way latch — once the process moved to a backup it stayed there
+ *   - `failoverActive` was a one-way latch: once the process moved to a backup it stayed there
  *     until restart, even after the preferred node recovered.
  *
  * The contract now: one logical call tries every configured node before failing, the preferred node
@@ -46,7 +46,7 @@ describe('daemon endpoint failover', () => {
         expect(svc.failoverActive).toBe(false);
     });
 
-    test('deduplicates endpoints — the stock PRIMARY == FALLBACK config is one node, not two', () => {
+    test('deduplicates endpoints: the stock PRIMARY == FALLBACK config is one node, not two', () => {
         const same = 'http://127.0.0.1:34568';
         const svc = new RpcService({
             http: httpFor([same]),

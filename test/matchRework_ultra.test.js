@@ -1,5 +1,5 @@
 /**
- * matchRework_ultra — regression coverage for the match-mode production hardening pass.
+ * matchRework_ultra: regression coverage for the match-mode production hardening pass.
  *
  * Exercises the confirmed defects the rework fixes: the move() crash (MP-C2), the real
  * countdown (MP-H6), reconnect re-keying + ownership (MP-H1/H2), winner consistency across
@@ -43,7 +43,7 @@ function makeCryptoFinishedRoom({ winner = 'a' } = {}) {
     return room;
 }
 
-describe('match rework — crash + countdown (MatchManager)', () => {
+describe('match rework: crash + countdown (MatchManager)', () => {
     const managers = [];
     function mgr(opts = {}) {
         const m = new MatchManager({ io: makeIo(), db: null, debugManager: null, ...opts });
@@ -160,7 +160,7 @@ describe('match rework — crash + countdown (MatchManager)', () => {
     });
 });
 
-describe('match rework — reconnect re-keying + ownership (MP-H1/H2)', () => {
+describe('match rework: reconnect re-keying + ownership (MP-H1/H2)', () => {
     const managers = [];
     afterEach(() => { while (managers.length) managers.pop().shutdown(); delete process.env.MATCH_ENABLED; });
 
@@ -246,7 +246,7 @@ describe('match rework — reconnect re-keying + ownership (MP-H1/H2)', () => {
     });
 });
 
-describe('match rework — winner consistency across end paths', () => {
+describe('match rework: winner consistency across end paths', () => {
     test('all-dead: winnerId equals the placement #1 player (never a stranded null)', () => {
         const room = new MatchRoom({ economy: 'crypto_race', entrants: { a: { userId: 1 }, b: { userId: 2 } }, seed: SEED });
         room.start();
@@ -269,7 +269,7 @@ describe('match rework — winner consistency across end paths', () => {
     });
 });
 
-describe('match rework — payout economics (MP-C4/H5)', () => {
+describe('match rework: payout economics (MP-C4/H5)', () => {
     function capturingDb({ address = 'WALLET', pot = '20000', fee = '1000' } = {}) {
         const captured = [];
         const amount = (BigInt(pot) - BigInt(fee)).toString();
@@ -378,7 +378,7 @@ describe('match rework — payout economics (MP-C4/H5)', () => {
     });
 });
 
-describe('match rework — refunds on every cancellation path (MP-H3/H4)', () => {
+describe('match rework: refunds on every cancellation path (MP-H3/H4)', () => {
     afterEach(() => { delete process.env.MATCH_ENABLED; delete process.env.MATCH_CREDITS_COST; });
 
     test('refundEntries cancels the queue row AND writes a ticket refund ledger row', async () => {
@@ -447,7 +447,7 @@ describe('match rework — refunds on every cancellation path (MP-H3/H4)', () =>
     });
 });
 
-describe('match rework — durable-finish isolated finalize (MP-C5)', () => {
+describe('match rework: durable-finish isolated finalize (MP-C5)', () => {
     afterEach(() => { delete process.env.MATCH_ENABLED; });
 
     test('a nondurable winner creates no payout, leaderboard row, or final announcement', async () => {

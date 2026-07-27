@@ -1,15 +1,15 @@
 /**
- * ChainProfile registry — the 10× foundation stone for multi-chain (Pillar 3).
+ * ChainProfile registry: the 10× foundation stone for multi-chain (Pillar 3).
  *
  * A single, data-driven source for everything chain-specific that ISN'T an RPC call: money units
- * (decimals / atomic divisor), the block-timing model (mean block time — which difficulty must
+ * (decimals / atomic divisor), the block-timing model (mean block time, which difficulty must
  * scale to), the adapter family (which wallet/daemon adapter implements it), and the payment-URI
  * scheme. The adapters (daemon/wallet clients, address validators) plug in per family and read
  * their params from here.
  *
- * The set is exactly what the Smirk wallet supports — btc, ltc, xmr, wow, grin (see
- * smirk-monorepo packages/core/src/types.ts AssetType) — all proof-of-work / high-variance, so the
- * "a random block ends your run" mechanic is fair on every one. Adding a chain = one entry here
+ * The set is exactly what the Smirk wallet supports: btc, ltc, xmr, wow, grin (see
+ * smirk-monorepo packages/core/src/types.ts AssetType). All are proof-of-work / high-variance, so
+ * the "a random block ends your run" mechanic is fair on every one. Adding a chain = one entry here
  * plus a family adapter, never a fork.
  */
 
@@ -54,7 +54,7 @@ function uriSchemeFor(cryptoType) {
     return getProfile(cryptoType).uriScheme;
 }
 
-/** Atomic divisor as a BigInt (10 ** decimals) — safe for ETH-18-scale amounts (none here, but correct). */
+/** Atomic divisor as a BigInt (10 ** decimals): safe for ETH-18-scale amounts (none here, but correct). */
 function atomicDivisor(cryptoType) {
     return 10n ** BigInt(decimalsFor(cryptoType));
 }

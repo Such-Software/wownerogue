@@ -1,7 +1,7 @@
 const { DEFAULT_CATALOG } = require('../multiplayer/entitlements');
 
 /**
- * Loads the operator-owned cosmetic catalog (migration 024 `cosmetic_catalog`) — the single
+ * Loads the operator-owned cosmetic catalog (migration 024 `cosmetic_catalog`): the single
  * server-authoritative source for pack definitions + unlock rules, replacing the split-brain
  * hardcoded PACKS in entitlements.js (server) and assetPacks.js (client, via the served snapshot).
  *
@@ -65,7 +65,7 @@ class CatalogService {
             if (Object.keys(out).length === 0) return DEFAULT_CATALOG; // no valid catalog rows
             return out;
         } catch (err) {
-            // Table missing (fresh/partly-migrated DB) — degrade to the built-in default.
+            // Table missing (fresh/partly-migrated DB): degrade to the built-in default.
             if (err && (err.code === '42P01' || /cosmetic_catalog/i.test(err.message || ''))) {
                 return DEFAULT_CATALOG;
             }

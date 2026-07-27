@@ -1,5 +1,5 @@
 /**
- * Phase 2 — per-player nostr identity: verify client-signed chat events, relay them under the
+ * Phase 2, per-player nostr identity: verify client-signed chat events, relay them under the
  * player's own npub, and let a premium subscription unlock cosmetic tiers.
  */
 const { verifyChatEvent } = require('../src/utils/verifyChatEvent');
@@ -101,7 +101,7 @@ describe('relaySignedEvent', () => {
 });
 
 describe('premium subscription unlocks cosmetic tiers', () => {
-    test('an active premium sub sets the tier and unlocks tier-1 packs — no purchase needed', () => {
+    test('an active premium sub sets the tier and unlocks tier-1 packs: no purchase needed', () => {
         const free = Entitlements.snapshotForUser({ credits: 0, total_credits_purchased: 0 });
         expect(free.tier).toBe(0);
         expect(free.packs['generated-skins']).toBe(false); // tier-1 pack locked for free

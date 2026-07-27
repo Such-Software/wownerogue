@@ -1,7 +1,7 @@
 -- 025: graduate the cosmetic ladder.
 --
 -- Migration 024 seeded every premium pack at tier 1 / unlock_min_credits 1, so buying ANY credit
--- unlocked skins + iso + 3D at once (flat, not tiered). Turn it into a real ladder — unlock by
+-- unlocked skins + iso + 3D at once (flat, not tiered). Turn it into a real ladder: unlock by
 -- lifetime credit spend OR by subscription tier, whichever comes first:
 --   Fancy (generated-skins)      1 credit  / supporter (tier 1)
 --   Iso   (iso-dungeon)         10 credits / premium   (tier 2)

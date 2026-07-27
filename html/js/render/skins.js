@@ -1,6 +1,5 @@
-// Character skins for the render kit. A skin is an animated sprite sheet (rows = facing
-// directions, cols = animation frames) produced by the sprite pipeline
-// (~/src/docs/animated-sprite-pipeline.md). Sheets are HEAVY and PREMIUM, so they are:
+// Character skins for the render kit. A skin is an animated sprite sheet: rows are facing
+// directions, columns are animation frames. Sheets are large and premium, so they are:
 //   - lazy-loaded (only fetched when an entity actually uses the skin, in a sprite-capable mode),
 //   - gated by entitlement (RK.entitlements.premium),
 //   - delivered as WebP.

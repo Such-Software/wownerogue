@@ -5,30 +5,29 @@
 
 class RateLimiter {
     constructor(options = {}) {
-        // Default rate limits. SocketHandlers passes a production `limits` override that
-        // takes precedence (merged below); these defaults are kept ALIGNED with it so a
-        // RateLimiter constructed without options (e.g. in tests) behaves the same.
+        // Default rate limits. SocketHandlers passes a `limits` override that takes
+        // precedence (merged below); these defaults stay aligned with it so a RateLimiter
+        // constructed without options behaves the same.
         this.limits = {
             'payment:create': { window: 60000, max: 3 },      // 3 payments per minute
             'game:start': { window: 60000, max: 15 },         // 15 game starts per minute
             'game:queue': { window: 30000, max: 5 },          // 5 queue attempts per 30s
             'chat:message': { window: 10000, max: 12 },       // 12 messages per 10s
             'address:set': { window: 300000, max: 3 },        // 3 address changes per 5min
-            'move:player': { window: 1000, max: 50 },         // 50 moves per second (already handled separately)
+            'move:player': { window: 1000, max: 50 },         // 50 moves per second
             'connection:new': { window: 60000, max: 10 },     // 10 connections per minute per IP
-            // Cheap-looking socket events that each perform a users SELECT + UPDATE (last_active)
-            // and an entitlements SELECT. Unlimited, they can be pipelined at packet rate and turn
-            // one socket into a database load generator.
+            // Identity reads each perform a users SELECT + UPDATE (last_active) and an
+            // entitlements SELECT. Without a limit they can be pipelined at packet rate,
+            // turning one socket into a database load generator.
             'identity:read': { window: 10000, max: 20 },      // 20 identity/address reads per 10s
             ...options.limits
         };
         
-        // Storage for rate limit data - in production, use Redis
+        // In-process storage; a multi-instance deployment needs a shared store such as Redis.
         this.storage = new Map(); // key: userId:action, value: { count, firstAttempt }
         this.ipStorage = new Map(); // key: ip:action, value: { count, firstAttempt }
-        
-        // Cleanup interval to prevent memory leaks
-        this.cleanupInterval = setInterval(() => this.cleanup(), 60000); // cleanup every minute
+
+        this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
         
         this.debugMode = options.debugMode || false;
     }
@@ -43,25 +42,21 @@ class RateLimiter {
     async checkLimit(userId, action, ip = null) {
         const limit = this.limits[action];
         if (!limit) {
-            // No limit configured for this action
             return { allowed: true, remaining: Infinity, retryAfter: 0 };
         }
 
         const now = Date.now();
         const key = `${userId}:${action}`;
 
-        // Check user-based limits
         const userResult = this._checkSingleLimit(key, limit, now);
 
-        // Check IP-based limits if IP provided
-        // Apply to: connection actions, payment actions, and game actions
         let ipResult = { allowed: true, remaining: Infinity, retryAfter: 0 };
         if (ip && this._shouldApplyIpLimit(action)) {
             const ipKey = `${ip}:${action}`;
             ipResult = this._checkSingleLimit(ipKey, limit, now, this.ipStorage);
         }
 
-        // Return most restrictive result
+        // Most restrictive of the two applies.
         const result = {
             allowed: userResult.allowed && ipResult.allowed,
             remaining: Math.min(userResult.remaining, ipResult.remaining),
@@ -81,15 +76,14 @@ class RateLimiter {
      * @returns {boolean}
      */
     _shouldApplyIpLimit(action) {
-        // Actions that should be rate limited by IP (in addition to socket ID)
-        // This prevents abuse when users reconnect to bypass socket-based limits
+        // Limited by IP in addition to socket ID, so reconnecting cannot reset the counter.
         const ipLimitedPrefixes = [
             'connection:',   // Connection attempts
             'payment:',      // Payment creation/operations
             'game:',         // Game start/queue operations
             'address:',      // Address changes
-            'identity:',     // Identity/entitlement reads (each one hits the database)
-            'chat:'          // Chat messages (reconnect-proof spam protection)
+            'identity:',     // Identity/entitlement reads, each of which hits the database
+            'chat:'          // Chat messages
         ];
         return ipLimitedPrefixes.some(prefix => action.startsWith(prefix));
     }
@@ -104,10 +98,8 @@ class RateLimiter {
         const now = Date.now();
         const key = `${userId}:${action}`;
 
-        // Record user attempt
         this._recordSingleAttempt(key, now);
 
-        // Record IP attempt for actions that should have IP-based limiting
         if (ip && this._shouldApplyIpLimit(action)) {
             const ipKey = `${ip}:${action}`;
             this._recordSingleAttempt(ipKey, now, this.ipStorage);
@@ -155,7 +147,6 @@ class RateLimiter {
             const key = `${userId}:${action}`;
             this.storage.delete(key);
         } else {
-            // Clear all limits for this user
             for (const key of this.storage.keys()) {
                 if (key.startsWith(`${userId}:`)) {
                     this.storage.delete(key);
@@ -171,18 +162,14 @@ class RateLimiter {
         const data = storage.get(key);
         
         if (!data) {
-            // First attempt
             return { allowed: true, remaining: limit.max - 1, retryAfter: 0 };
         }
 
-        // Check if window has expired
         if (now - data.firstAttempt > limit.window) {
-            // Window expired, reset
             storage.delete(key);
             return { allowed: true, remaining: limit.max - 1, retryAfter: 0 };
         }
 
-        // Within window, check if limit exceeded
         if (data.count >= limit.max) {
             const retryAfter = (data.firstAttempt + limit.window) - now;
             return { allowed: false, remaining: 0, retryAfter: Math.max(0, retryAfter) };
@@ -200,13 +187,10 @@ class RateLimiter {
         if (!data) {
             storage.set(key, { count: 1, firstAttempt: now });
         } else {
-            // Check if window has expired
             const limit = this._getLimitFromKey(key);
             if (limit && now - data.firstAttempt > limit.window) {
-                // Reset window
                 storage.set(key, { count: 1, firstAttempt: now });
             } else {
-                // Increment within window
                 data.count++;
             }
         }
@@ -215,13 +199,12 @@ class RateLimiter {
     /**
      * Get limit config from storage key.
      *
-     * Storage keys are `${id}:${action}`, but the id itself contains colons — `u:123` / `s:<socketId>`
-     * from rateLimitContext.stableId, and raw IPv6 addresses in ipStorage. Stripping only the FIRST
-     * segment therefore produced `123:chat:message`, which matches no configured limit, so every
-     * lookup returned undefined. Two things silently broke: `cleanup()` skipped every entry (the only
-     * registered memory reclamation freed nothing, and both Maps grew for the process lifetime), and
-     * `_recordAttempt` never reset an expired window, so counts accumulated forever. Match the known
-     * action names as a suffix instead — correct regardless of how many colons the id contains.
+     * Storage keys are `${id}:${action}`, and the id itself contains colons: `u:123` / `s:<socketId>`
+     * from rateLimitContext.stableId, and raw IPv6 addresses in ipStorage. The action is therefore
+     * matched as a key suffix rather than by splitting on the first colon, which stays correct no
+     * matter how many colons the id contains. An unmatched key would make `cleanup()` skip the entry
+     * (leaking it for the process lifetime) and stop `_recordSingleAttempt` from resetting an
+     * expired window.
      */
     _getLimitFromKey(key) {
         for (const action of Object.keys(this.limits)) {
@@ -237,7 +220,6 @@ class RateLimiter {
         const now = Date.now();
         let cleanedCount = 0;
 
-        // Clean user storage
         for (const [key, data] of this.storage.entries()) {
             const limit = this._getLimitFromKey(key);
             if (limit && now - data.firstAttempt > limit.window) {
@@ -246,7 +228,6 @@ class RateLimiter {
             }
         }
 
-        // Clean IP storage
         for (const [key, data] of this.ipStorage.entries()) {
             const limit = this._getLimitFromKey(key);
             if (limit && now - data.firstAttempt > limit.window) {

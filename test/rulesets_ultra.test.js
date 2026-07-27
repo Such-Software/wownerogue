@@ -1,5 +1,5 @@
 /**
- * Pillar 4 — Ruleset engine + PvP modes on the match engine.
+ * Pillar 4: Ruleset engine + PvP modes on the match engine.
  */
 const { defineRuleset, WIN, getRuleset, listRulesets, rulesetFromMatchOpts } = require('../src/game/rulesets');
 const MatchRoom = require('../src/multiplayer/MatchRoom');
@@ -179,7 +179,7 @@ describe('MatchRoom drives new rulesets', () => {
         ]));
     });
 
-    test('high-score: reaching the exit does NOT instantly win — the match keeps going', () => {
+    test('high-score: reaching the exit does NOT instantly win; the match keeps going', () => {
         const room = new MatchRoom({
             ruleset: { id: 'test-score', winCondition: { type: WIN.HIGH_SCORE }, entities: { monster: false }, players: { min: 1, max: 4 } },
             entrants: { a: { userId: 1 }, b: { userId: 2 } },
@@ -191,7 +191,7 @@ describe('MatchRoom drives new rulesets', () => {
         const res = room.resolveTick();
 
         expect(room.playerStates.get('a').escaped).toBe(true);
-        expect(room.status).toBe('active');   // b is still in play — no instant win
+        expect(room.status).toBe('active');   // b is still in play: no instant win
         expect(room.winnerId).toBeNull();
         expect(res.finished).toBe(false);
 

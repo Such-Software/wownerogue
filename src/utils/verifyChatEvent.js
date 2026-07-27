@@ -10,12 +10,12 @@ function fail(reason) { return { ok: false, reason }; }
 /**
  * Verify a client-signed global-chat event before the server relays it to nostr (Phase 2 per-player
  * signing). Same defense posture as verifyNip98Event: rebuild a clean event from primitives,
- * INDEPENDENTLY recompute the id, verify the schnorr signature, check freshness — and, critically,
+ * INDEPENDENTLY recompute the id, verify the schnorr signature, check freshness and, critically,
  * bind the author to the session's authenticated npub so a player can only ever post as THEMSELVES.
  *
  * @param {object} event  signed nostr event { kind, created_at, pubkey, id, sig, content, tags }
  * @param {object} opts
- * @param {string}  opts.expectedPubkey  64-hex x-only key the session is authenticated as (from NIP-98 login) — required
+ * @param {string}  opts.expectedPubkey  64-hex x-only key the session is authenticated as (from NIP-98 login), required
  * @param {string} [opts.channelTag]     't' tag the event must carry (default 'wowngeon-global')
  * @param {number} [opts.kind]           expected kind (default 1)
  * @param {number} [opts.maxLen]         max content length (default 280)
@@ -51,7 +51,7 @@ function verifyChatEvent(event, opts = {}) {
     if (event.kind !== kind) return fail('wrong-kind');
     if (event.content.length > maxLen) return fail('too-long');
 
-    // Author binding — the ONE that stops impersonation: the event must be signed by the npub this
+    // Author binding, the ONE that stops impersonation: the event must be signed by the npub this
     // session authenticated as (users.smirk_public_key from NIP-98 login). A valid signature by
     // SOME other key is not enough.
     if (event.pubkey.toLowerCase() !== String(expectedPubkey).toLowerCase()) return fail('pubkey-mismatch');
@@ -67,7 +67,7 @@ function verifyChatEvent(event, opts = {}) {
         tags: event.tags.map((t) => t.slice())
     };
 
-    // Independently recompute the id — defeats content/tag tampering regardless of memoization.
+    // Independently recompute the id: defeats content/tag tampering regardless of memoization.
     let recomputed;
     try { recomputed = getEventHash(clean); } catch (_) { return fail('hash-error'); }
     if (recomputed !== clean.id) return fail('id-mismatch');
@@ -77,7 +77,7 @@ function verifyChatEvent(event, opts = {}) {
     try { sigOk = verifyEvent(clean) === true; } catch (_) { return fail('sig-verify-threw'); }
     if (!sigOk) return fail('bad-signature');
 
-    // Freshness — reject replayed-late / skewed events.
+    // Freshness: reject replayed-late / skewed events.
     if (Math.abs(now - Number(clean.created_at)) > maxSkewSec) return fail('expired');
 
     // Must target OUR channel tag, so the server can't be used to relay arbitrary events.

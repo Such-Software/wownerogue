@@ -217,7 +217,7 @@ describe('Batch payout dispatch', () => {
     test('a PRE-BROADCAST failure returns the batch to pending, not needs_review', async () => {
         // Address validation and the transfer gate run strictly before transfer_split can send
         // anything, so those rows are provably unsent and safe to retry. Quarantining them in
-        // needs_review parked them permanently — the retry service deliberately skips that status.
+        // needs_review parked them permanently: the retry service deliberately skips that status.
         const preBroadcast = Object.assign(new Error('One or more payout addresses failed validation.'),
             { preBroadcast: true });
         const walletService = {
@@ -238,7 +238,7 @@ describe('Batch payout dispatch', () => {
     });
 
     test('an ambiguous POST-broadcast failure still quarantines the batch', async () => {
-        const ambiguous = new Error('socket hang up'); // no preBroadcast tag — may have sent
+        const ambiguous = new Error('socket hang up'); // no preBroadcast tag: may have sent
         const walletService = {
             getBalance: jest.fn().mockResolvedValue({ balance: '10000000000000', unlocked_balance: '10000000000000' }),
             processPayout: jest.fn(),

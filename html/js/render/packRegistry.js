@@ -1,8 +1,8 @@
-// Pack registry — the engine behind "add more 2D tilesets / iso packs / 3D skins as products".
+// Pack registry: the engine behind "add more 2D tilesets / iso packs / 3D skins as products".
 //
 // A PACK is a rich, self-contained render environment for a projection (topdown | iso | 3d). Because
 // every scene (tavern OR dungeon) is kind-based (floor/wall/table/torch/monster…), the SAME pack
-// renders both — packs are interchangeable across town and dungeon. Each pack maps 1:1 to a catalog
+// renders both; packs are interchangeable across town and dungeon. Each pack maps 1:1 to a catalog
 // entry (id/tier/threshold), so it's a monetizable product gated by entitlements.
 //
 // This module makes packs MULTI (like RK.THEMES already is for topdown) and adds active-pack

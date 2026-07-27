@@ -1,5 +1,5 @@
-// FancyRenderer — WebGL tier via PixiJS (v7). Beyond flat shapes: a real blurred bloom on
-// entities, warm flickering lights along the bar, drifting dust motes, and a vignette — all
+// FancyRenderer: WebGL tier via PixiJS (v7). Beyond flat shapes: a real blurred bloom on
+// entities, warm flickering lights along the bar, drifting dust motes, and a vignette, all
 // programmatic (no art assets). Requires a global PIXI (loaded from CDN, with @pixi/unsafe-eval
 // so shaders compile under a strict CSP); the factory falls back to tiled if PIXI is missing.
 (function (root) {
@@ -77,7 +77,7 @@
     FancyRenderer.prototype._buildTiles = function (scene) {
         this.tileLayer.removeChildren();
         var cell = this.cell;
-        // A designed room is loaded — draw its layered tiles as sprites from the room atlas.
+        // A designed room is loaded: draw its layered tiles as sprites from the room atlas.
         if (window.RK && RK.roomReady && RK.roomReady()) {
             var d = RK.activeRoom.desc, a = RK.activeRoom.atlas;
             for (var li = 0; li < d.layerOrder.length; li++) {

@@ -4,11 +4,10 @@
 
 // Is a blocking dialog on screen?
 //
-// The document-level Enter shortcut submits a RANKED (paid-intent) entry, and it used to fire
-// regardless of what was on top — including while the entry-choice modal or the payment modal was
-// open. Since those modals advertise "ENTER ▸" on their own cards, one Enter silently submitted an
-// entry the player had not chosen, and the click that followed submitted a second one. Anything
-// that takes over the screen must swallow the shortcut.
+// The document-level Enter shortcut submits a ranked (paid-intent) entry. The entry-choice and
+// payment modals advertise "ENTER" on their own cards, so anything that takes over the screen must
+// swallow the shortcut; otherwise Enter submits an entry the player has not chosen and the
+// following click submits a second one.
 function modalIsOpen() {
     if (document.getElementById('entryChoiceOverlay')) return true;
     var overlays = document.querySelectorAll('.modal-overlay');
@@ -33,7 +32,7 @@ const InputHandler = {
     _lastMoveTime: 0,
     _moveCooldown: 100, // Minimum 100ms between moves
     _pendingMove: null,
-    _initialized: false, // Flag to prevent multiple initializations
+    _initialized: false, // Guards against repeated init() calls binding duplicate handlers
     
     init: function() {
         if (this._initialized) {
@@ -51,12 +50,11 @@ const InputHandler = {
     setupChatForm: function() {
         const MAX_CHAT_LENGTH = 200;
 
-        // Character counter update
         $('#chatInput').on('input', function() {
             const len = $(this).val().length;
             const counter = $('#charCounter');
             counter.text(len + '/' + MAX_CHAT_LENGTH);
-            // Change color when approaching limit
+            // Red at the limit, amber within the last 20%.
             if (len >= MAX_CHAT_LENGTH) {
                 counter.css('color', '#f66');
             } else if (len >= MAX_CHAT_LENGTH * 0.8) {
@@ -70,11 +68,9 @@ const InputHandler = {
             e.preventDefault();
             var msg = $('#chatInput').val().trim();
 
-            // Don't send empty messages
             if (!msg) return false;
 
-            // If the message is "enter", always send it to server
-            // The server will handle queueing logic and timing
+            // "enter" always goes to the server, which owns queueing logic and timing.
             if (msg.toLowerCase() === 'enter') {
                 if (typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
                     if (!SocketHandlers.emitFairGameStart('join_queue')) return false;
@@ -82,15 +78,11 @@ const InputHandler = {
                     socket.emit('chat message', msg);
                 }
 
-                // Don't automatically switch to waiting screen - let the server control screen state
-                // The server will send appropriate events (payment_created, waiting_status, etc.)
-                // to control what the user sees
-
-                // Add visual feedback that request was sent
+                // The server controls screen state via payment_created, waiting_status and similar
+                // events, so this path does not switch to the waiting screen itself.
                 $('#messages').append($('<li style="color: #0f0;">').text("🔑 Processing game entry request..."));
                 UI.scrollChat();
             } else {
-                // Send other chat messages normally
                 socket.emit('chat message', msg);
             }
 
@@ -99,24 +91,22 @@ const InputHandler = {
             return false;
         });
 
-        // Set initial focus to chat input
         $('#chatInput').focus();
         UI.updateFocusIndicator();
     },
 
     setupFocusHandlers: function() {
-        // Add focus/blur listeners for visual indicator
+        // Focus/blur drive the visual focus indicator.
         $('#chatInput').on('focus', UI.updateFocusIndicator).on('blur', UI.updateFocusIndicator);
         $('#game-display').on('focus', UI.updateFocusIndicator).on('blur', UI.updateFocusIndicator);
 
-        // Make game display focusable
+        // tabindex -1 makes the game display programmatically focusable without entering tab order.
         $('#game-display').attr('tabindex', '-1');
     },
 
     setupKeyboardControls: function() {
-        const self = this; // Store reference to InputHandler for use in event handler
+        const self = this; // The keydown handler runs with its own `this`, so capture InputHandler.
         $(document).on('keydown', function(e) {
-            // Handle ESC to leave spectate mode
             if (e.key === 'Escape' && typeof SocketHandlers !== 'undefined' && SocketHandlers._spectatorMode) {
                 e.preventDefault();
                 if (window.socket) {
@@ -127,9 +117,8 @@ const InputHandler = {
             
             if (document.activeElement === $('#game-display')[0]) {
                 if (Game && Game._gameActive) {
-                    // Block movement input if spectating
+                    // Spectators drive no character, so movement keys are ignored.
                     if (typeof Game !== 'undefined' && Game._isSpectating) {
-                        // In spectator mode - ignore movement keys
                         return;
                     }
                     
@@ -146,17 +135,16 @@ const InputHandler = {
                     }
 
                     if (moved && direction) {
-                        e.preventDefault(); // Prevent page scrolling
-                        
-                        // Implement movement throttling to prevent rapid-fire movement
+                        e.preventDefault(); // Arrow keys would otherwise scroll the page.
+
+                        // Moves are throttled to one per _moveCooldown; a move arriving inside the
+                        // window replaces any pending one so only the latest direction is sent.
                         const now = Date.now();
                         if (now - self._lastMoveTime >= self._moveCooldown) {
-                            // Send move immediately if enough time has passed
                             socket.emit('player_move', { direction });
                             self._lastMoveTime = now;
                             self._pendingMove = null;
                         } else {
-                            // Queue the move to be sent after cooldown
                             self._pendingMove = { direction };
                             const timeToWait = self._moveCooldown - (now - self._lastMoveTime);
                             setTimeout(() => {
@@ -169,10 +157,9 @@ const InputHandler = {
                         }
                     }
                 } else {
-                    // Game display has focus but game is not active (welcome screen)
-                    // Only handle animation toggle
+                    // Game display has focus with no active game (welcome/waiting screen): the only
+                    // key handled is the animation toggle.
                     if (e.key === 'A' || e.key === 'a') {
-                        // Toggle animation on waiting screen
                         e.preventDefault();
                         if (typeof ScreenManager !== 'undefined') {
                             ScreenManager.toggleAnimation();
@@ -181,9 +168,8 @@ const InputHandler = {
                 }
             } else if (e.key === 'Enter' && document.activeElement !== $('#chatInput')[0]
                        && !modalIsOpen() && !typingInAField()) {
-                // If Enter is pressed and chat is not focused
                 if (typeof Game !== 'undefined' && !Game._gameActive) {
-                    // On welcome screen - start the game
+                    // Enter on the welcome screen requests a game start.
                     e.preventDefault();
 
                     const isDebugMode = window.location.hostname === 'localhost' || 
@@ -197,17 +183,18 @@ const InputHandler = {
                     }
                     
                     if (isDebugMode || ScreenManager.canEnterGame()) {
-                        // Check if we should show waiting screen
                         const addressRequired = typeof SocketHandlers !== 'undefined' && SocketHandlers.payoutAddressRequired();
                         const hasAddress = typeof SocketHandlers !== 'undefined' && SocketHandlers._hasPayoutAddress;
                         const canAfford = typeof SocketHandlers !== 'undefined' && SocketHandlers.canAffordGame();
                         const isFree = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'FREE';
 
-                        // Only show waiting screen if address is set (if required) and they can afford it (if credits)
+                        // Free play always waits; otherwise the player needs an affordable entry and,
+                        // where required, a payout address on file.
                         const shouldShowWaiting = isFree || (canAfford && (!addressRequired || hasAddress));
 
                         if (shouldShowWaiting && typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) {
-                            // Optimistically set awaiting payment if needed
+                            // Paid entries show the awaiting-payment state up front, except when
+                            // credits mode already has enough credits to cover the game.
                             const isPaidCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'PAID_CREDITS';
                             const hasEnoughCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._creditsBalance >= (SocketHandlers._creditsPerGame || 1);
                             
@@ -223,11 +210,10 @@ const InputHandler = {
                         UI.scrollChat();
                     }
                     
-                    // Add visual feedback to chat
                     $('#messages').append($('<li style="color: #0f0;">').text("🔑 Game start requested..."));
                     UI.scrollChat();
                 } else {
-                    // Game is active or in other state - focus chat
+                    // With a game active, Enter moves focus to chat.
                     $('#chatInput').focus();
                     UI.updateFocusIndicator();
                 }
@@ -236,12 +222,11 @@ const InputHandler = {
     },
 
     setupClickHandlers: function() {
-        // Add click handling for the HTML START button
         $('#startButton').click(function(e) {
-            // Show the wait-vs-drop-in TIMING choice whenever the game would start instantly (no
-            // upfront payment): free play (this instance allows it), a FREE instance, or paid-credits
-            // with credits in hand. The chosen payment method flows through auto_start / join_queue
-            // unchanged — this modal only picks WHEN you enter.
+            // The wait-vs-drop-in timing choice appears whenever the game would start instantly with
+            // no upfront payment: free play enabled, a FREE instance, or paid-credits with credits in
+            // hand. The modal only picks when you enter; the payment method still flows through
+            // auto_start / join_queue unchanged.
             if (typeof SocketHandlers !== 'undefined') {
                 var mode = SocketHandlers._gameMode;
                 var freeAvailable = SocketHandlers._freePlayEnabled || mode === 'FREE';
@@ -253,27 +238,25 @@ const InputHandler = {
                 }
             }
 
-            // Default: attempt immediate start (payment-required modes go through their own flow)
+            // Otherwise attempt an immediate start; payment-required modes go through their own flow.
             if (typeof SocketHandlers !== 'undefined' && SocketHandlers.emitFairGameStart) {
                 if (!SocketHandlers.emitFairGameStart('auto_start')) return;
             } else {
                 socket.emit('auto_start');
             }
 
-            // Check if we should show waiting screen
             const addressRequired = typeof SocketHandlers !== 'undefined' && SocketHandlers.payoutAddressRequired();
             const hasAddress = typeof SocketHandlers !== 'undefined' && SocketHandlers._hasPayoutAddress;
             const canAfford = typeof SocketHandlers !== 'undefined' && SocketHandlers.canAffordGame();
             const isFree = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'FREE';
 
-            // We only show waiting screen if:
-            // 1. It's free mode
-            // 2. We have address (if required) AND (it's direct pay OR we have credits)
+            // Free play always waits; otherwise the player needs an affordable entry and, where
+            // required, a payout address on file.
             const shouldShowWaiting = isFree || (canAfford && (!addressRequired || hasAddress));
 
             if (shouldShowWaiting) {
-                // If in a paid mode but no payment detected yet, optimistically set awaiting payment
-                // UNLESS it is credits mode and we already have enough credits
+                // Paid modes with no payment detected yet show the awaiting-payment state, except
+                // when credits mode already has enough credits to cover the game.
                 const isPaidCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._gameMode === 'PAID_CREDITS';
                 const hasEnoughCredits = typeof SocketHandlers !== 'undefined' && SocketHandlers._creditsBalance >= (SocketHandlers._creditsPerGame || 1);
                 
@@ -287,7 +270,7 @@ const InputHandler = {
                     ScreenManager.drawWaitingScreen();
                 }
             } else {
-                // If not showing waiting screen, add helpful message to chat if missing address
+                // A missing payout address is the actionable case, so name it in chat.
                 if (addressRequired && !hasAddress) {
                     $('#messages').append($('<li style="color: #ffa500;">').text("⚠️ Please set a payout address using the button below before starting."));
                     UI.scrollChat();
@@ -304,7 +287,6 @@ const InputHandler = {
             if ($panel.length && $panel.is(':visible')) {
                 $panel.hide();
             } else {
-                // Request fresh game list and show panel
                 if (window.socket) {
                     socket.emit('get_active_games', { page: 1, pageSize: 20 });
                 }
@@ -314,24 +296,21 @@ const InputHandler = {
             }
         });
         
-        // Add click handling for the animation toggle button
         $('#animationToggleButton').click(function(e) {
-            
+
             if (typeof ScreenManager !== 'undefined' && ScreenManager.toggleAnimation) {
                 ScreenManager.toggleAnimation();
-                // Redraw the waiting screen to reflect the change
+                // The waiting screen is drawn once, so it needs a redraw to pick up the new setting.
                 if (typeof ScreenManager.drawWaitingScreen === 'function') {
                     ScreenManager.drawWaitingScreen();
                 }
             }
-            
-            // Add visual feedback to chat
+
             const status = ScreenManager._animationEnabled ? "enabled" : "disabled";
             $('#messages').append($('<li style="color: #aa0;">').text(`🎬 Animation ${status}`));
             UI.scrollChat();
         });
 
-        // Address management button
         $('#manageAddressButton').click(function(e) {
             e.preventDefault();
             if (window.socket) {
@@ -358,10 +337,9 @@ const InputHandler = {
     }
 };
 
-// Ensure InputHandler is available globally
 if (typeof window !== 'undefined') {
     window.InputHandler = InputHandler;
 }
 
-// Note: InputHandler.init() is called from index.html after DOM ready
-// to ensure proper initialization order with other modules
+// index.html calls InputHandler.init() after DOM ready, once the modules it reaches into
+// (UI, Game, ScreenManager, SocketHandlers) are defined.

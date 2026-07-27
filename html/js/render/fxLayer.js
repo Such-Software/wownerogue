@@ -1,8 +1,8 @@
-// fxLayer.js — the shared "juice" engine (RK.fx). Pure-canvas animated FX (no WebGL, no shaders,
+// fxLayer.js: the shared "juice" engine (RK.fx). Pure-canvas animated FX (no WebGL, no shaders,
 // CSP-safe) used by BOTH the top-down tiled renderer and the iso renderer so a scene lights up the
 // same way in either projection: dancing torch/hearth flame + warm glow, and pulsing hazard tiles
 // (lava / poison / spikes) for the dungeon. Everything is a function of `now` (ms) so callers just
-// keep a RAF loop alive and pass the clock — no per-particle state to thread through.
+// keep a RAF loop alive and pass the clock: no per-particle state to thread through.
 (function (root) {
     'use strict';
     var RK = root.RK = root.RK || {};

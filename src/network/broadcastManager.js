@@ -1,7 +1,7 @@
 /**
  * Broadcast Manager Module
- * Handles all socket.io event broadcasting for the Wownerogue game server
- * Supports current player-specific events and future spectator broadcasting
+ * Handles all socket.io event broadcasting for the Wownerogue game server:
+ * global emits to every client and targeted emits to a single player socket.
  */
 
 class BroadcastManager {
@@ -22,19 +22,21 @@ class BroadcastManager {
      * Broadcast connected user count to all clients
      */
     broadcastUserCount() {
-        // Try multiple ways to get the count
+        // io.sockets.sockets is the authoritative set; io.engine.clientsCount is the fallback for
+        // adapters that do not expose it.
         let count = 0;
         if (this.io.sockets && this.io.sockets.sockets) {
             count = this.io.sockets.sockets.size || 0;
         } else if (this.io.engine) {
             count = this.io.engine.clientsCount || 0;
         }
-        
+
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`👥 Broadcasting user count: ${count} (last was ${this._lastUserCount})`);
         }
 
-        // Always broadcast to ensure new clients get the count
+        // Emitted unconditionally, including on an unchanged count, so clients that just connected
+        // receive a value.
         this._lastUserCount = count;
         this.io.emit('user_count', { count });
     }
@@ -71,8 +73,8 @@ class BroadcastManager {
      * @param {string} username - Username of the sender
      * @param {string} message - Chat message content
      * @param {number} timestamp - Message timestamp
-     * @param {string} publicId - Short, non-sensitive public id of the sender (NOT the raw
-     *   full socket.id — S1 defense in depth; the full socket.id must never leave the server)
+     * @param {string} publicId - Short, non-sensitive public id of the sender. Never the full
+     *   socket.id, which must not leave the server.
      */
     broadcastChatMessage(username, message, timestamp, publicId) {
         if (this.debugManager?.CONSOLE_LOGGING) {
@@ -112,7 +114,7 @@ class BroadcastManager {
     }
 
     /**
-     * Send game state update to player and any spectators
+     * Send game state update to the player's socket
      * @param {string} playerSocketId - The socket ID of the player
      * @param {object} gameState - The game state to broadcast
      */
@@ -123,18 +125,7 @@ class BroadcastManager {
             console.log(`  - Torch data: ${!!gameState.torches} (${gameState.torches ? gameState.torches.length : 0} torches)`);
         }
 
-        // Send to the player
         this.io.to(playerSocketId).emit('game_update', gameState);
-        
-        // TODO: Future spectator support
-        // Get list of spectators for this game and broadcast to them too
-        // const spectators = getSpectatorsForPlayer(playerSocketId);
-        // spectators.forEach(spectatorId => {
-        //     this.io.to(spectatorId).emit('spectator_update', {
-        //         playerSocketId: playerSocketId,
-        //         gameState: gameState
-        //     });
-        // });
     }
 
     /**
@@ -202,40 +193,6 @@ class BroadcastManager {
         this.io.to(socketId).emit('debug_pong', pongData);
     }
 
-    // ====== FUTURE SPECTATOR SUPPORT ======
-
-    /**
-     * Get spectators for a specific player's game
-     * @param {string} playerSocketId - The player's socket ID
-     * @returns {string[]} Array of spectator socket IDs
-     * TODO: Implement spectator tracking system
-     */
-    getSpectatorsForPlayer(playerSocketId) {
-        // Future implementation: return array of spectator socket IDs
-        return [];
-    }
-
-    /**
-     * Add spectator to a player's game
-     * @param {string} playerSocketId - The player's socket ID
-     * @param {string} spectatorSocketId - The spectator's socket ID
-     * TODO: Implement spectator tracking system
-     */
-    addSpectator(playerSocketId, spectatorSocketId) {
-        // Future implementation: track spectators per game
-        console.log(`TODO: Add spectator ${spectatorSocketId} to watch player ${playerSocketId}`);
-    }
-
-    /**
-     * Remove spectator from a player's game
-     * @param {string} playerSocketId - The player's socket ID
-     * @param {string} spectatorSocketId - The spectator's socket ID
-     * TODO: Implement spectator tracking system
-     */
-    removeSpectator(playerSocketId, spectatorSocketId) {
-        // Future implementation: remove spectator tracking
-        console.log(`TODO: Remove spectator ${spectatorSocketId} from watching player ${playerSocketId}`);
-    }
 }
 
 module.exports = BroadcastManager;

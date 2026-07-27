@@ -17,7 +17,7 @@ describe('SubscriptionService', () => {
         expect(await svc.tierForNpub(pubHex)).toBeNull();
     });
 
-    test('PREMIUM_NPUBS allowlist grants the tier — hex and npub1 both match the stored pubkey', async () => {
+    test('PREMIUM_NPUBS allowlist grants the tier: hex and npub1 both match the stored pubkey', async () => {
         const byHex = new SubscriptionService({ env: { PREMIUM_NPUBS: pubHex } });
         expect(await byHex.tierForNpub(pubHex)).toBe('premium'); // default tier
 

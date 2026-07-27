@@ -759,7 +759,7 @@ function pathTo(parent, target) {
  * The objective's coordinate, or null while it is still undiscovered.
  *
  * The server enforces fog of war: entrance/exit/treasure are withheld until the player has actually
- * seen them. The bot therefore cannot assume it knows where it is going — it explores frontiers
+ * seen them. The bot therefore cannot assume it knows where it is going; it explores frontiers
  * until the objective is revealed, exactly as a human player must. (This function used to assert
  * the coordinate was always present, which was asserting the leak.)
  */
@@ -843,7 +843,7 @@ async function runBoundedBot(socket, journal, startEvent, scenario, config) {
     let state = startEvent.data;
     assert(Number(state?.maxDepth) === 1,
         'financial canary requires exactly one dungeon depth');
-    // Objectives are NOT disclosed up front — the server withholds unexplored features. Assert the
+    // Objectives are NOT disclosed up front: the server withholds unexplored features. Assert the
     // fog instead: a start state that already names the exit means the leak has regressed.
     assert(state?.exit == null,
         'game disclosed the exit before it was explored (server-side fog of war regressed)');

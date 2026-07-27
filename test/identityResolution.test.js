@@ -2,7 +2,7 @@
  * Identity resolution tests (Phase 2.1).
  *
  * getOrCreateUser must resolve through the stable anon_token identity (via SessionManager)
- * rather than the mutable, non-unique socket_id — and must NOT create a duplicate "orphan"
+ * rather than the mutable, non-unique socket_id, and must NOT create a duplicate "orphan"
  * user row when a session already exists.
  */
 

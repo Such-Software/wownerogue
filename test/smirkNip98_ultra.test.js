@@ -4,7 +4,7 @@
  * We sign REAL kind:27235 events with nostr-tools (generateSecretKey / getPublicKey /
  * finalizeEvent) and then attack them: tamper content/tags, wrong kind/method/url,
  * stale timestamps, flipped signatures, and the memoization-bypass trick. The verifier
- * is exercised directly (no HTTP). Case (ix) — single-use / replay — is enforced at the
+ * is exercised directly (no HTTP). Case (ix), single-use / replay, is enforced at the
  * route layer, so we drive the real Express route with a mock DB for that one.
  */
 
@@ -72,7 +72,7 @@ function baseOpts(extra = {}) {
   };
 }
 
-describe('verifyNip98Event — adversarial round-trip', () => {
+describe('verifyNip98Event: adversarial round-trip', () => {
   test('(i) a valid, correctly-signed event is accepted and returns the x-only pubkey', () => {
     const sk = generateSecretKey();
     const ev = buildEvent(sk);
@@ -120,7 +120,7 @@ describe('verifyNip98Event — adversarial round-trip', () => {
     expect(r.reason).toBe('wrong-kind');
   });
 
-  test('(v) an expired created_at (beyond maxSkew) is rejected — past and future', () => {
+  test('(v) an expired created_at (beyond maxSkew) is rejected: past and future', () => {
     const sk = generateSecretKey();
     const stale = buildEvent(sk, { created_at: NOW - 10_000 });
     const past = verifyNip98Event(stale, baseOpts({ now: NOW }));
@@ -189,7 +189,7 @@ describe('verifyNip98Event — adversarial round-trip', () => {
     expect(verifyNip98Event({}, baseOpts()).ok).toBe(false);
     const sk = generateSecretKey();
     const ev = buildEvent(sk);
-    // Corrupt the pubkey to non-hex — must not throw, must reject.
+    // Corrupt the pubkey to non-hex: must not throw, must reject.
     const bad = { ...ev, pubkey: 'zz' + ev.pubkey.slice(2) };
     const r = verifyNip98Event(bad, baseOpts());
     expect(r.ok).toBe(false);
@@ -218,14 +218,14 @@ describe('verifyNip98Event — adversarial round-trip', () => {
     expect(verifyEvent(ev)).toBe(true);
 
     // Our verifier rebuilds a clean event (no memo symbol) and re-runs schnorr, so the
-    // signature — made over the ORIGINAL content — fails against the repaired id.
+    // signature, made over the ORIGINAL content, fails against the repaired id.
     const r = verifyNip98Event(ev, baseOpts());
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('bad-signature');
   });
 });
 
-describe('(ix) route layer — single-use challenge consume rejects replay', () => {
+describe('(ix) route layer: single-use challenge consume rejects replay', () => {
   const express = appRequire('express');
   const http = require('http');
   const createAuthRoutes = require('../src/routes/auth');
@@ -318,7 +318,7 @@ describe('(ix) route layer — single-use challenge consume rejects replay', () 
     const socketId = 'sock-xyz-1';
     const token = 'route-session-token';
     const challenge = 'route-nonce-9f8e7d';
-    // created_at must be genuinely fresh — the route uses real Date.now().
+    // created_at must be genuinely fresh: the route uses real Date.now().
     const ev = buildEvent(sk, { created_at: Math.floor(Date.now() / 1000), challenge });
 
     const db = mockDb(challenge, socketId, token);

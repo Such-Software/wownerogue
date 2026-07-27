@@ -150,7 +150,7 @@ function seedToInt(seed) {
  * Derive a per-level seed for a multi-level run. Level 1 uses the master seed verbatim (so
  * single-level games stay byte-identical to pre-multi-level behaviour); deeper levels salt the
  * master seed with the depth. The whole descent is therefore reproducible from the one committed
- * seed — feed (masterSeed, depth) to `createSeededRNG`/`seedToInt` to regenerate any level.
+ * seed: feed (masterSeed, depth) to `createSeededRNG`/`seedToInt` to regenerate any level.
  * @param {string} masterSeed - The game's committed seed
  * @param {number} depth - 1-based level index
  * @returns {string} The seed string for that level

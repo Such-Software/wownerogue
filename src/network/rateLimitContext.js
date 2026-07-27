@@ -14,7 +14,7 @@
 
 // S5: with a single trusted nginx proxy in front, nginx APPENDS the real client IP as the
 // last hop of X-Forwarded-For. The leftmost entries are attacker-controlled (a client can
-// pre-populate the header), so we must read the RIGHTMOST hop — the one the proxy added —
+// pre-populate the header), so we must read the RIGHTMOST hop, the one the proxy added,
 // not the leftmost. Still gated on TRUST_PROXY so a direct-exposure deploy can't be spoofed.
 function clientIp(socket) {
     try {

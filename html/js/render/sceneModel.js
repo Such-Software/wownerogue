@@ -9,21 +9,21 @@
     // Tile kinds and how each renderer treats them (glyph for ASCII, colour for tiled/fancy).
     // `over` names the ground tile an object sits on, so the renderer composites the object over it
     // (its transparent areas show the floor/wall, not the dark canvas). Ground tiles (wall/floor/rug)
-    // have no `over` — they fill the cell.
+    // have no `over`; they fill the cell.
     var TAVERN_LEGEND = {
         wall:   { char: '#', color: '#3a3f4b', solid: true },
         window: { char: 'W', color: '#4a6a8a', solid: true,  over: 'wall' },
-        floor:  { char: '·', color: '#6b4d33', solid: false },  // warm wood, not the old dark green
+        floor:  { char: '·', color: '#6b4d33', solid: false },  // warm wood
         rug:    { char: 'r', color: '#7a3b39', solid: false, over: 'floor' },
         bar:    { char: '=', color: '#6a4a2a', solid: true,  over: 'floor' },
         keg:    { char: 'k', color: '#5a4028', solid: true,  over: 'floor' },
         shelf:  { char: 'h', color: '#4a3a28', solid: true,  over: 'floor' },
         table:  { char: 'T', color: '#6a4a2a', solid: true,  over: 'floor' },
-        chair:  { char: 'c', color: '#5a4028', solid: false, over: 'floor' },  // walkable — stand on it to "sit"
+        chair:  { char: 'c', color: '#5a4028', solid: false, over: 'floor' },  // walkable: stand on it to "sit"
         barrel: { char: 'B', color: '#5a4028', solid: true,  over: 'floor' },
         crate:  { char: 'C', color: '#7a5a38', solid: true,  over: 'floor' },
         door:   { char: 'D', color: '#3fb950', solid: false, over: 'floor' },
-        // Fire fixtures — the base tile is floor; RK.fx paints the animated flame + glow on top.
+        // Fire fixtures: the base tile is floor; RK.fx paints the animated flame + glow on top.
         torch:  { char: 'i', color: '#d29922', solid: true,  over: 'floor', fx: 'fire', fxScale: 0.34 },
         hearth: { char: 'F', color: '#e0742a', solid: true,  over: 'floor', fx: 'fire', fxScale: 0.7 }
     };
@@ -95,7 +95,7 @@
     // ---- Dungeon game-state adapter ------------------------------------------------
     // Converts a game state (from the server's game_start/game_update/spectator_update) into a
     // renderer-agnostic Scene, so the render kit can draw the dungeon just like the tavern.
-    // This is the bridge for milestone R1 (main game → render kit) and T2b (tavern spectator).
+    // Used by both the main game and the tavern spectator view.
 
     var DUNGEON_LEGEND = {
     wall:     { char: '#',  color: '#2a2f38', solid: true },
@@ -107,8 +107,8 @@
     // The generator only places torches on WALL cells adjacent to floor, so the fixture is
     // wall-mounted: base on `wall`, draw the torch sprite over it, then RK.fx animates the flame.
     torch:    { char: 'i',  color: '#d29922', solid: false, over: 'wall', fx: 'fire', fxScale: 0.34 },
-    // Hazard zones. The base tile stays walkable/ground; RK.fx paints the pulsing overlay. These
-    // render as soon as the dungeon generator emits their chars (L/P/^) in the tile stream.
+    // Hazard zones. The base tile stays walkable/ground; RK.fx paints the pulsing overlay.
+    // Keyed off the dungeon generator's chars (L/P/^) in the tile stream.
     lava:     { char: '≈',  color: '#7a2a0e', solid: false, hazard: 'lava' },
     poison:   { char: '≈',  color: '#1c4a24', solid: false, hazard: 'poison' },
     spikes:   { char: '^',  color: '#3a3f48', solid: false, hazard: 'spikes' },
@@ -130,7 +130,7 @@ function dungeonTileKind(ch) {
     return 'floor';
 }
 
-// Grid dimensions from array grids OR sparse {y:{x:v}} maps (the single-player client uses the
+// Grid dimensions from array grids or sparse {y:{x:v}} maps (the single-player client uses the
 // latter). Returns the max seen index + 1 across every supplied map.
 function maxDims(maps) {
     var rows = 0, cols = 0;
@@ -156,8 +156,8 @@ function maxDims(maps) {
 }
 
 function normalizeGameStateOpts(opts) {
-    // Older multiplayer callers passed a socket id directly. Keep that path working while the
-    // public API moves to an options object (`{ viewerId, playerAppearance, cryptoType }`).
+    // Accepts either a bare socket id (multiplayer callers) or an options object
+    // (`{ viewerId, playerAppearance, cryptoType }`).
     if (typeof opts === 'string') return { viewerId: opts };
     return (opts && typeof opts === 'object') ? opts : {};
 }
@@ -188,7 +188,7 @@ function pickCameraPlayer(players, state, opts) {
         p = players[i];
         if (p && state.winnerId && p.id === state.winnerId) return p;
     }
-    // Spectators follow a live contender by default, then gracefully fall back to the first racer.
+    // Spectators follow a live contender by default, then fall back to the first racer.
     for (i = 0; i < players.length; i++) {
         p = players[i];
         if (p && p.alive !== false && !p.finished) return p;
@@ -219,7 +219,7 @@ function sceneFromGameState(state, opts) {
     var visible = state.visibleTiles || {};
     var explored = state.exploredTiles || {};
     var lighting = state.lighting || {};
-    // Array grids expose .length; the SP client uses sparse {y:{x:v}} maps — fall back to the max
+    // Array grids expose .length; the SP client uses sparse {y:{x:v}} maps, so fall back to the max
     // seen index. Explicit dungeonRows/Cols (server) always win.
     var dims = maxDims([visible, explored, state.map]);
     var rows = state.dungeonRows || visible.length || dims.rows;
@@ -228,8 +228,8 @@ function sceneFromGameState(state, opts) {
     var matchPlayers = Array.isArray(state.players) ? state.players : [];
     var cameraPlayer = pickCameraPlayer(matchPlayers, state, opts);
 
-    // Player cell — explored MEMORY fades to black with distance from here (see below). Multiplayer
-    // states use `players[]`, while the original single-player protocol uses singular `player`.
+    // Player cell. Explored memory fades to black with distance from here. Multiplayer states use
+    // `players[]`; the single-player protocol uses singular `player`.
     var _pl = state.player || cameraPlayer || {};
     var _plx = typeof _pl.x === 'number' ? _pl.x : (cols / 2);
     var _ply = typeof _pl.y === 'number' ? _pl.y : (rows / 2);
@@ -256,9 +256,9 @@ function sceneFromGameState(state, opts) {
                 var la = (lighting[y] && lighting[y][x]) || 0;
                 lrow.push(Math.max(0.15, 1 - Math.min(la, 0.8)));
             } else {
-                // Explored MEMORY (seen before, not currently visible): dim, and fading toward black
-                // with distance from the player, so the remembered area melts into the dark instead
-                // of forming a hard-edged grey block that outlines the map's shape/edge (a FoW leak).
+                // Explored memory (seen before, not currently visible): dim, fading toward black with
+                // distance from the player. A flat dim value would form a hard-edged grey block that
+                // outlines the map's shape, leaking information through the fog of war.
                 row.push(dungeonTileKind(ch));
                 var _dx = x - _plx, _dy = y - _ply;
                 lrow.push(Math.max(0, 0.26 - Math.sqrt(_dx * _dx + _dy * _dy) * 0.019));
@@ -272,11 +272,11 @@ function sceneFromGameState(state, opts) {
 
     // Fog of war: a cell is `seen` once explored (grid isn't 'dark'); `inView` only while currently
     // visible. Features (exit/treasure/entrance) show once discovered; the monster only shows while
-    // in view — otherwise the exit stairs leak through the fog before you've found them.
+    // in view, so its position does not leak through the fog.
     function seen(x, y) { return !!(grid[y] && grid[y][x] && grid[y][x] !== 'dark'); }
     function inView(x, y) { return !!(visible[y] && visible[y][x] !== undefined); }
 
-    // Entrance / exit / treasure as entities (so they layer above tiles) — only once explored.
+    // Entrance / exit / treasure as entities (so they layer above tiles), only once explored.
     // Solo uses `[x,y]`; match state uses `{x,y}` for treasure, so accept both point shapes.
     var entrance = pointOf(state.entrance);
     var exit = pointOf(state.exit);
@@ -292,7 +292,7 @@ function sceneFromGameState(state, opts) {
         entities.push({ id: 'treasure', x: treasure.x, y: treasure.y, kind: 'feature', char: tChar, color: '#fbbf24', label: null });
     }
 
-    // Items — only once explored.
+    // Items, only once explored.
     if (state.items) {
         for (var key in state.items) {
             if (state.items.hasOwnProperty(key)) {
@@ -304,7 +304,7 @@ function sceneFromGameState(state, opts) {
         }
     }
 
-    // Monster — only while it's actually in view.
+    // Monster, only while it is in view.
     if (state.monster && inView(state.monster.x, state.monster.y)) {
         entities.push({
             id: 'monster', x: state.monster.x, y: state.monster.y,
@@ -331,13 +331,13 @@ function sceneFromGameState(state, opts) {
                 hasTreasure: !!rp.hasTreasure, placement: rp.placement == null ? null : rp.placement
             });
         }
-    // Original single-player protocol.
+    // Single-player protocol.
     } else if (state.player) {
         var playerEntity = {
             id: 'player', x: state.player.x, y: state.player.y,
             kind: 'player', char: '@', color: '#9aa4b2',
-            // No bogus default: the SP server doesn't send facing, so leave it null and let the iso/3D
-            // renderers INFER facing from movement. A hardcoded 'down' made them always face down/SW.
+            // The SP server does not send facing. Leaving it null lets the iso/3D renderers infer
+            // facing from movement; any hardcoded default would pin the sprite to one direction.
             facing: state.player.facing || null, label: null,
             you: !state.isSpectating, cameraTarget: true
         };
@@ -369,9 +369,9 @@ function sceneFromGameState(state, opts) {
 
     root.RK = root.RK || {};
     root.RK.scene = api;
-    // Convenience aliases on RK directly — several callers (matchClient, tavern spectator, the SP
-    // render bridge) reference RK.sceneFromGameState / RK.sceneFromTavern; without these they were
-    // silently undefined (guarded → no-op). Expose them so those paths actually render.
+    // Convenience aliases on RK directly. matchClient, the tavern spectator and the SP render bridge
+    // reference RK.sceneFromGameState / RK.sceneFromTavern; without these they are undefined and
+    // those guarded call sites silently render nothing.
     root.RK.sceneFromGameState = root.RK.sceneFromGameState || sceneFromGameState;
     if (api.sceneFromTavern) root.RK.sceneFromTavern = root.RK.sceneFromTavern || api.sceneFromTavern;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

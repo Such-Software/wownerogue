@@ -57,7 +57,6 @@ var GameState = {
             console.warn("Invalid or missing playerData.x/y, using default player position.", playerData);
             this._player = { x: 12, y: 12 }; // Default position
         }
-        // console.log("Player initialized to:", this._player);
         return this._player;
     },
 
@@ -68,7 +67,7 @@ var GameState = {
 
         let mapInitialized = false;
 
-        // Try to initialize from mapData.tiles
+        // Map source precedence: mapData.tiles, then array mapData, then initialVisibleTiles.
         if (mapData && mapData.tiles && typeof mapData.tiles === 'object' && Object.keys(mapData.tiles).length > 0) {
             for (var yKey in mapData.tiles) {
                 const y = parseInt(yKey);
@@ -79,8 +78,7 @@ var GameState = {
                 }
             }
             mapInitialized = true;
-        } 
-        // Try array-based mapData
+        }
         else if (mapData && Array.isArray(mapData) && mapData.length > 0) {
             for (let y = 0; y < mapData.length; y++) {
                 this._map[y] = {};
@@ -91,8 +89,7 @@ var GameState = {
                 }
             }
             mapInitialized = true;
-        } 
-        // Try initialVisibleTiles
+        }
         else if (initialVisibleTiles && typeof initialVisibleTiles === 'object' && Object.keys(initialVisibleTiles).length > 0) {
             this._visibleTiles = JSON.parse(JSON.stringify(initialVisibleTiles)); // Deep copy
 
@@ -107,7 +104,7 @@ var GameState = {
             mapInitialized = true;
         }
 
-        // Create default map if nothing worked
+        // Fallback: a bordered empty room so the client still renders without server map data.
         if (!mapInitialized) {
             console.warn("No valid mapData or initialVisibleTiles provided. Creating default map for testing.");
             const defaultMapWidth = screenWidth;
@@ -132,7 +129,6 @@ var GameState = {
     },
 
     validatePlayerPosition: function(screenWidth, screenHeight) {
-        // Validate player position against the map
         if (!this._map[this._player.y] || this._map[this._player.y][this._player.x] === undefined) {
             console.error(`Player position (${this._player.x}, ${this._player.y}) is invalid or outside map boundaries. Attempting to find fallback.`);
             let foundFallback = false;
@@ -140,7 +136,7 @@ var GameState = {
                 if (this._map[y_scan]) {
                     for (let x_scan = 0; x_scan < screenWidth; x_scan++) {
                         const tile = this._map[y_scan][x_scan];
-                        // Check for both legacy (0) and new ("'1", "'2") floor tiles
+                        // Floor is encoded either as 0 or as the tile ids "'1" / "'2".
                         if (tile === 0 || tile === "'1" || tile === "'2") {
                             this._player.x = x_scan;
                             this._player.y = y_scan;
@@ -160,18 +156,17 @@ var GameState = {
     },
 
     computeFieldOfView: function() {
-        // Initialize FOV with corrected wall detection callback
+        // The callback reports transparency: true for tiles that pass light, false for blockers.
         var fov = new ROT.FOV.PreciseShadowcasting(function(x, y) {
-            // Return true if the tile is transparent (walkable), false if it blocks light
             if (!this._map[y] || this._map[y][x] === undefined) {
                 return false; // Unknown tiles block light
             }
             const tile = this._map[y][x];
-            // Check for both legacy (0) and new ("'1", "'2") floor tiles
+            // Floor is encoded either as 0 or as the tile ids "'1" / "'2".
             return tile === 0 || tile === "'1" || tile === "'2";
         }.bind(this));
 
-        // If map was NOT built from initialVisibleTiles, compute FOV now
+        // A map built from initialVisibleTiles already carries visibility; only compute otherwise.
         if (!this._visibleTiles || Object.keys(this._visibleTiles).length === 0) {
             this._visibleTiles = {};
             fov.compute(this._player.x, this._player.y, 10, function(x, y, r, visibility) {
@@ -181,13 +176,12 @@ var GameState = {
                 }
             }.bind(this));
         }
-        
-        // NOTE: Don't call updateExploredTiles() here on initial game load
-        // Explored tiles should only be updated when player moves, not on first FOV computation
+
+        // Explored tiles accumulate on player movement, so the initial FOV pass does not call
+        // updateExploredTiles().
     },
 
     updateExploredTiles: function() {
-        // Add all currently visible tiles to explored tiles
         for (var yKey in this._visibleTiles) {
             const y = parseInt(yKey);
             if (!this._exploredTiles[y]) this._exploredTiles[y] = {};
@@ -211,9 +205,8 @@ var GameState = {
         try {
             let needsRedraw = false;
 
-            // Multi-level descent: a new depth means a brand-new level. The accumulated map /
-            // explored / visible tiles belong to the level we just left, so clear them — otherwise
-            // the old level's walls ghost through the fresh one.
+            // A new depth is a new level: the accumulated map, explored and visible tiles belong to
+            // the previous level and are cleared, otherwise its walls ghost through the fresh one.
             if (typeof data.depth === 'number' && data.depth !== this._depth) {
                 this._depth = data.depth;
                 if (typeof data.maxDepth === 'number') this._maxDepth = data.maxDepth;
@@ -223,25 +216,21 @@ var GameState = {
                 needsRedraw = true;
             }
 
-            // Update player state
             if (data.player) {
                 this._player = data.player;
                 needsRedraw = true;
             }
             
-            // Update monster state
             if (data.monster !== undefined) {
                 this._monster = data.monster;
                 needsRedraw = true;
             }
             
-            // Update items
             if (data.items !== undefined) {
                 this._items = data.items;
                 needsRedraw = true;
             }
             
-            // Update entrance, exit, treasure
             if (data.entrance !== undefined) {
                 this._entrance = data.entrance;
                 needsRedraw = true;
@@ -255,7 +244,6 @@ var GameState = {
                 needsRedraw = true;
             }
 
-            // Update lighting and torch data
             if (data.lighting !== undefined) {
                 this._lighting = data.lighting;
                 needsRedraw = true;
@@ -265,11 +253,10 @@ var GameState = {
                 needsRedraw = true;
             }
 
-            // Update visible tiles (most critical for movement feedback)
+            // Visible tiles drive movement feedback, so they also refresh the explored set.
             if (data.visibleTiles && typeof data.visibleTiles === 'object' && Object.keys(data.visibleTiles).length > 0) {
                 this._visibleTiles = data.visibleTiles;
-                
-                // Debug log for specific problematic coordinates 
+
                 if (this._visibleTiles[18] && (this._visibleTiles[18][36] !== undefined || this._visibleTiles[18][35] !== undefined)) {
                     const clientDebug = `🔍 CLIENT y=18: x=35: ${this._visibleTiles[18][35]}, x=36: ${this._visibleTiles[18][36]}`;
                     if (window.GameDebug) window.GameDebug.updateDebugDisplay(clientDebug);
@@ -296,19 +283,15 @@ var GameState = {
         const newX = this._player.x + dx;
         const newY = this._player.y + dy;
         
-        // Basic bounds checking
         if (newX < 0 || newY < 0 || newX >= screenWidth || newY >= screenHeight) {
             console.warn("Attempted to move player outside of bounds:", newX, newY);
             return;
         }
-        
-        // Check if the new position is a wall (1) or out of map bounds
+
+        // Tile value 1 is wall; undefined is off-map. Both block movement.
         if (this._map[newY] && this._map[newY][newX] !== undefined && this._map[newY][newX] !== 1) {
-            // Move the player
             this._player.x = newX;
             this._player.y = newY;
-            
-            // Update visibility and redraw
             this.updateExploredTiles();
             return true;
         } else {
@@ -316,9 +299,8 @@ var GameState = {
         }
     },
 
-    // Debug functions  
+    // Debug helpers: console output here is intentional.
     debugPrintMap: function(screenWidth, screenHeight) {
-        // Map debugging - preserve console.log for debug function
         console.log("Current game map:");
         for (let y = 0; y < screenHeight; y++) {
             let row = "";
@@ -334,7 +316,6 @@ var GameState = {
     },
 
     debugTileMapping: function() {
-        // Tile mapping debugging - preserve console.log for debug function
         const testValues = [0, 1, undefined, null];
         for (const val of testValues) {
             const char = (val === 1) ? '#' : "\'";
@@ -344,36 +325,33 @@ var GameState = {
         }
     },
 
-    // Compute field of view for the player (LOCAL TESTING ONLY - server handles FOV)
+    // Local FOV, used only when running without a server; in normal play the server owns FOV.
+    // This definition shadows the earlier computeFieldOfView on the same object literal.
     computeFieldOfView: function() {
         if (!this._player) {
             console.warn("Cannot compute FOV: player not initialized");
             return;
         }
 
-        // Warning for local FOV computation (keep for debugging)
-        // console.log("⚠️  LOCAL FOV COMPUTATION (should only be used for testing without server)");
-        
         const oldVisibleTiles = JSON.parse(JSON.stringify(this._visibleTiles));
         this._visibleTiles = {};
 
         const fov = new ROT.FOV.PreciseShadowcasting(function(x, y) {
             const tile = this._map[y] && this._map[y][x];
-            // Check for both legacy (0) and new ("'1", "'2") floor tiles
+            // Floor is encoded either as 0 or as the tile ids "'1" / "'2".
             return tile === 0 || tile === "'1" || tile === "'2";
         }.bind(this));
 
         fov.compute(this._player.x, this._player.y, 6, function(x, y, r, visibility) {
             if (!this._visibleTiles[y]) this._visibleTiles[y] = {};
             this._visibleTiles[y][x] = this._map[y] && this._map[y][x] !== undefined ? this._map[y][x] : 0;
-            
-            // Mark as explored
+
             if (!this._exploredTiles[y]) this._exploredTiles[y] = {};
             this._exploredTiles[y][x] = this._map[y] && this._map[y][x] !== undefined ? this._map[y][x] : 0;
         }.bind(this));
     },
 
-    // Get game state data for rendering
+    // Snapshot consumed by the render kit and the legacy render engine.
     getGameStateForRender: function() {
         const renderState = {
             map: this._map,
@@ -394,7 +372,7 @@ var GameState = {
         return renderState;
     },
 
-    // Move player and update game state
+    // This definition shadows the earlier movePlayer on the same object literal.
     movePlayer: function(dx, dy, screenWidth, screenHeight) {
         if (!this._player) {
             console.warn("Cannot move player: player not initialized");
@@ -404,23 +382,17 @@ var GameState = {
         const newX = this._player.x + dx;
         const newY = this._player.y + dy;
 
-        // Check bounds
         if (newX < 0 || newX >= screenWidth || newY < 0 || newY >= screenHeight) {
-            // console.log("Player move blocked: out of bounds");
             return false;
         }
 
-        // Check if the new position is passable
+        // Tile value 1 is wall and blocks movement.
         if (this._map[newY] && this._map[newY][newX] === 1) {
-            // console.log("Player move blocked: wall at", newX, newY);
             return false;
         }
 
-        // Update player position
         this._player.x = newX;
         this._player.y = newY;
-
-        // console.log("Player moved to:", this._player.x, this._player.y);
         return true;
     }
 };

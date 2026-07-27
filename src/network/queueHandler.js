@@ -21,14 +21,12 @@ class QueueHandler {
      */
     async handleGameQueue(socket, getUserBySocket, opts = {}) {
         try {
-            // The player explicitly chose FREE play (Pleb board). Only honoured when the instance
-            // allows free play; otherwise fall through to the paid eligibility check below. Mirrors
-            // the auto_start free path so the "Next block · Free Play" choice doesn't wrongly pop the
-            // payment modal for a free queued game.
+            // Explicit FREE play (Pleb board) intent, honoured only when the instance allows free
+            // play; otherwise the paid eligibility check below applies. Matches the auto_start free
+            // path so a free queued game never raises the payment modal.
             const wantsFree = opts.free === true && this.gameModeManager?.freePlayEnabled;
             let authorizedFairnessProof = opts.fairnessProof || null;
             let authorizedPaymentId = null;
-            // Rate limiting for queue attempts
             const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:queue');
             if (!rateLimitResult.allowed) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 
@@ -46,24 +44,21 @@ class QueueHandler {
                 return;
             }
 
-            // Check if already waiting
             const existingIndex = this.queueManager.getPlayerIndex(socket.id);
             if (existingIndex !== -1) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'info', 'You are already in the queue!');
                 return;
             }
 
-            // Check if already in a game
             if (this.activeGames.has(socket.id)) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You are already in a game!');
                 return;
             }
 
-            // Check payment eligibility and payout address requirements — SKIPPED for free play.
+            // Payment eligibility and payout address requirements do not apply to free play.
             if (!wantsFree) {
                 const paymentCheckResult = await this._checkPaymentEligibility(socket.id);
                 if (!paymentCheckResult.allowed) {
-                    // Handle the specific reason for denial
                     switch (paymentCheckResult.action) {
                         case 'set_address':
                             this.broadcastManager.sendStatusUpdate(socket.id, 'payment', '⚠️ Paste your payout address first, then type confirm.');
@@ -91,10 +86,8 @@ class QueueHandler {
                 }
             }
 
-            // Record the queue attempt
             await this.rateLimiter.recordAttempt(socket.id, 'game:queue');
 
-            // Get session info to pass userId
             let userId = null;
             if (this.paymentHandlers?.gameModeManager?.getOrCreateUser) {
                 try {
@@ -103,7 +96,7 @@ class QueueHandler {
                 } catch (e) {}
             }
 
-            // Add to waiting queue (in free mode or already authorized paid mode). `free` carries the
+            // Reached only in free mode or with an already authorized paid entry. `free` carries the
             // Pleb-board intent to processGameStart when the block lands, so no credit/payment is taken.
             this.queueManager.addPlayer({
                 serverId: socket.id,
@@ -151,7 +144,6 @@ class QueueHandler {
     getStats() {
         return {
             length: this.queueManager.getQueueLength(),
-            // Add more specific queue stats if needed
         };
     }
 
@@ -166,15 +158,13 @@ class QueueHandler {
 
         const config = this.gameModeManager.configSnapshot;
         const earlyEntry = config?.earlyEntry;
-        
-        // Check master toggle
+
         if (!earlyEntry?.enabled) {
             return { allowed: false, reason: 'Early entry is disabled' };
         }
 
         const mode = this.gameModeManager.gameMode;
-        
-        // Check mode-specific toggles
+
         if (mode === 'FREE' && !earlyEntry.allowInFreeMode) {
             return { allowed: false, reason: 'Early entry not allowed in free mode' };
         }
@@ -182,8 +172,8 @@ class QueueHandler {
         if (mode === 'PAID_CREDITS' && !earlyEntry.allowInCreditsMode) {
             return { allowed: false, reason: 'Early entry not allowed in credits mode' };
         }
-        
-        // PAID_SINGLE (direct payment) should NOT allow early entry - players paid for a full block
+
+        // Direct payment buys a full block, so PAID_SINGLE never allows early entry.
         if (mode === 'PAID_SINGLE') {
             return { allowed: false, reason: 'Early entry not allowed for direct payment games' };
         }
@@ -192,12 +182,11 @@ class QueueHandler {
     }
 
     /**
-     * Handle early entry request - start game immediately without waiting for next block
-     * Risk: Player will die if next block is found before they escape
+     * Handle early entry request: start the game immediately instead of waiting for the next block.
+     * The player dies if the next block is found before they escape.
      */
     async handleEarlyEntry(socket, getUserBySocket, opts = {}) {
         try {
-            // Rate limiting
             const rateLimitResult = await this.rateLimiter.checkLimit(socket.id, 'game:queue');
             if (!rateLimitResult.allowed) {
                 const msg = `Please wait ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds before trying again.`;
@@ -210,7 +199,6 @@ class QueueHandler {
                 console.log(`⚡ Player ${socket.id} requested early entry`);
             }
 
-            // Check if early entry is allowed
             const earlyEntryCheck = this.isEarlyEntryAllowed();
             if (!earlyEntryCheck.allowed) {
                 socket.emit('early_entry_error', { message: earlyEntryCheck.reason });
@@ -226,7 +214,6 @@ class QueueHandler {
                 return { success: false, reason: 'user_not_found' };
             }
 
-            // Check if already in queue
             if (this.queueManager.isPlayerQueued(socket.id)) {
                 const msg = 'You are already in the queue! Use early entry only when not queued.';
                 socket.emit('early_entry_error', { message: msg });
@@ -234,7 +221,6 @@ class QueueHandler {
                 return { success: false, reason: 'already_queued' };
             }
 
-            // Check if already in a game
             if (this.activeGames.has(socket.id)) {
                 const msg = 'You are already in a game!';
                 socket.emit('early_entry_error', { message: msg });
@@ -242,7 +228,6 @@ class QueueHandler {
                 return { success: false, reason: 'already_in_game' };
             }
 
-            // Check payment eligibility
             const paymentCheckResult = await this._checkPaymentEligibility(socket.id);
             if (!paymentCheckResult.allowed) {
                 switch (paymentCheckResult.action) {
@@ -261,20 +246,16 @@ class QueueHandler {
                 return { success: false, reason: paymentCheckResult.reason };
             }
 
-            // Record the attempt
             await this.rateLimiter.recordAttempt(socket.id, 'game:queue');
 
-            // Start the game immediately
+            // The player's blockRec is the current block, so they die when block currentBlock + 1
+            // is found.
             const currentBlock = this.debugManager.getCurrentBlockHeight();
-            
-            // For early entry, the player's blockRec is set to current block
-            // This means they will die when the NEXT block is found (currentBlock + 1)
             const result = await this.queueManager.startEarlyGame(socket.id, currentUser, currentBlock, {
                 fairnessProof: opts.fairnessProof || null
             });
             
             if (result.success) {
-                // Emit early entry success event
                 socket.emit('early_entry_success', { blockHeight: currentBlock });
                 
                 this.broadcastManager.sendStatusUpdate(socket.id, 'info', 
@@ -284,7 +265,6 @@ class QueueHandler {
                 }
                 return { success: true, blockHeight: currentBlock };
             } else {
-                // Emit early entry error event
                 socket.emit('early_entry_error', { message: result.reason || 'Failed to start early game' });
                 
                 this.broadcastManager.sendStatusUpdate(socket.id, 'error', result.reason || 'Failed to start early game');
@@ -313,9 +293,9 @@ class QueueHandler {
         }
 
         try {
-            // Resolve eligibility first: on a mixed instance the actual entry may consume a
-            // credit or a confirmed direct payment, and those modes can have different payout
-            // policies. Address-gate the mode that processGameStart will really use.
+            // Eligibility resolves first: on a mixed instance the entry may consume a credit or a
+            // confirmed direct payment, and those modes have different payout policies. The address
+            // gate applies to the mode processGameStart will actually use.
             const eligibility = await this.gameModeManager.canUserStartGame(socketId);
 
             if (!eligibility.allowed) {
@@ -362,7 +342,7 @@ class QueueHandler {
         } catch (error) {
             console.error('Error checking payment eligibility:', error);
             
-            // In paid mode, don't add to queue if payment check fails
+            // A failed payment check blocks queue entry in any paid mode.
             if (this.gameModeManager.gameMode !== 'FREE') {
                 return {
                     allowed: false,
@@ -370,7 +350,7 @@ class QueueHandler {
                 };
             }
             
-            // Only in FREE mode, continue to queue on payment system errors
+            // FREE mode degrades gracefully: queue entry continues when the payment system errors.
             if (this.debugManager.CONSOLE_LOGGING) {
                 console.log('Payment system unavailable, allowing free mode queue entry');
             }

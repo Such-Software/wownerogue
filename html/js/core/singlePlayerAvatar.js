@@ -95,7 +95,7 @@
             // 🎭 + this title) so it doesn't read like a mode/role button.
             label.textContent = (info && info.label ? info.label : 'CHARACTER').toUpperCase();
             btn.title = 'Create / customize your character'
-                + (info && info.label ? ' — currently ' + info.label : '')
+                + (info && info.label ? ': currently ' + info.label : '')
                 + (info && info.premium ? ' (premium)' : '');
         },
 
@@ -207,7 +207,7 @@
                 var px = viewport.screenX * cell + cell / 2;
                 var py = viewport.screenY * cell + cell / 2;
                 root.FX.renderLighting(px, py, cell);
-            } catch (_) { /* FX is purely additive — never let it break the avatar */ }
+            } catch (_) { /* FX is purely additive: never let it break the avatar */ }
         },
 
         drawLegendIcon: function (tileX, tileY, opts) {

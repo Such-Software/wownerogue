@@ -1,4 +1,4 @@
-// TileRenderer — draws a Scene as tiled sprites + entity sprites on a 2D canvas.
+// TileRenderer: draws a Scene as tiled sprites + entity sprites on a 2D canvas.
 // The default tier. Pulls tiles from the theme atlas (Kenney roguelikeSheet) when loaded,
 // with a flat-colour fallback for any unmapped kind. Adds torch-lit dungeon atmosphere:
 // per-cell tile variation, drop shadows, a warm torch light on the player + edge vignette,
@@ -90,10 +90,9 @@
         var tmap = (window.RK && RK.tileMap) ? RK.tileMap() : {};
         var useAtlas = !!(atlas && atlas.ready);
 
-        // The atlas image loads async. If you switch INTO this renderer (e.g. entering the tavern
-        // in Tiled mode) before it's ready, the first paint uses the flat-colour fallback — which
-        // looks like plain blocks. Without a re-render it stays stuck there until the next scene
-        // update. Hook the atlas so we repaint the moment it's ready.
+        // The atlas image loads async. Switching into this renderer before it is ready paints the
+        // flat-colour fallback, and nothing repaints until the next scene update. Hooking onReady
+        // forces a repaint as soon as the atlas is available.
         if (atlas && !atlas.ready && !this._atlasHooked && typeof atlas.onReady === 'function') {
             this._atlasHooked = true;
             var self = this;
@@ -101,7 +100,7 @@
         }
 
         if (!scene.isDungeon && window.RK && RK.roomReady && RK.roomReady()) {
-            // A designed room (imported .tmx) is loaded — draw its layered tiles.
+            // A designed room (imported .tmx) is loaded: draw its layered tiles.
             RK.drawRoomCanvas(ctx, cell);
         } else {
             for (var y = 0; y < scene.rows; y++) {
@@ -109,9 +108,11 @@
                     var kind = scene.grid[y][x];
                     var px = x * cell, py = y * cell;
                     var def = scene.legend[kind] || { color: '#333' };
-                    // Fire fixtures (torch/hearth) & hazard tiles (lava/poison/spikes) draw only
-                    // their ground base here; RK.fx paints the animated flame / pulse over the
-                    // snapshot in the flicker loop so they actually move. Skip the solid colour block.
+                    // Fire fixtures (torch/hearth) and hazard tiles (lava/poison/spikes) draw only
+                    // their ground base here (a wall for a dungeon torch); RK.fx paints the animated
+                    // flame / pulse over the snapshot in the flicker loop so they move. The pack's
+                    // torch SPRITE is deliberately skipped: several sheets place it off-center or
+                    // rotated, so a procedural flame on a plain base reads correctly in every pack.
                     if (def.fx === 'fire' || def.hazard) {
                         var baseKind = def.over || 'floor';
                         var bco = useAtlas ? pickVariant(tmap[baseKind], x, y) : null;
@@ -121,20 +122,15 @@
                             ctx.fillStyle = bdef.color || def.color;
                             ctx.fillRect(px, py, cell, cell);
                         }
-                        // Fire fixtures draw ONLY their base (wall for a dungeon torch) here; RK.fx
-                        // paints the animated flame + warm glow centered on the cell in the flicker
-                        // loop. We deliberately skip the pack's torch SPRITE — several sheets place it
-                        // off-center / rotated, which read as misaligned; the procedural flame on a wall
-                        // base is a clean wall-mounted torch that looks right in every pack.
                         applyCellLight(ctx, scene, x, y, px, py, cell);
                         continue;
                     }
                     var coord = useAtlas ? pickVariant(tmap[kind], x, y) : null;
                     if (coord) {
-                        // Object tiles (furniture, windows, torches, treasure…) are transparent
-                        // around the object. Legend `over` names the ground they sit on (floor/wall);
-                        // draw that first so the transparency shows the room, not the dark canvas.
-                        // Pipeline-level: any scene can declare it, not a tavern one-off.
+                        // Object tiles (furniture, windows, torches, treasure) are transparent around
+                        // the object. Legend `over` names the ground they sit on (floor/wall); drawing
+                        // that first makes the transparency show the room, not the dark canvas. Any
+                        // scene can declare `over`; it is not a tavern-only path.
                         if (def.over && tmap[def.over]) {
                             var base = pickVariant(tmap[def.over], x, y);
                             if (base) atlas.draw(ctx, base[0], base[1], px, py, cell);
@@ -177,7 +173,7 @@
         var now = Date.now();
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
-            // Dungeon features (entrance / exit / treasure) — real tiles, glyph fallback.
+            // Dungeon features (entrance / exit / treasure): real tiles, glyph fallback.
             if (e.kind === 'feature') {
                 var fpx = e.x * cell, fpy = e.y * cell;
                 var fc = useAtlas ? pickVariant(featureCoord(tmap, e), e.x, e.y) : null;
@@ -200,7 +196,6 @@
                 }
                 continue;
             }
-            // Dungeon items.
             if (e.kind === 'item') {
                 var ipx = e.x * cell, ipy = e.y * cell;
                 var ic = useAtlas ? pickVariant(tmap.treasure, e.x, e.y) : null;
@@ -212,12 +207,10 @@
                 }
                 continue;
             }
-            // Dungeon monster — draw the Goblin character sprite (same path the tavern draws
-            // characters through), falling back to a red orb only if the sprite is unavailable.
             if (e.kind === 'monster') {
                 drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.9, cell * 0.32, cell * 0.13);
-                // Prefer the active pack's monster TILE (e.g. the Original pack's ~ goblin) so a
-                // classic tile pack renders classic; else the character sprite; else a red orb.
+                // Preference order: the active pack's monster TILE, so a classic tile pack renders
+                // classic; then the Goblin character sprite; then a red orb.
                 var mCoord = useAtlas ? pickVariant(tmap.monster, e.x, e.y) : null;
                 if (mCoord) { atlas.draw(ctx, mCoord[0], mCoord[1], e.x * cell, e.y * cell, cell); continue; }
                 var mAvatar = e.avatar || 'char-goblin';
@@ -236,15 +229,15 @@
                 ctx.stroke();
                 continue;
             }
-            // Tavern cat — a standalone animated sprite (Pet Cats Pack), not a char-atlas avatar.
+            // Tavern cat: a standalone animated sprite (Pet Cats Pack), not a char-atlas avatar.
             if (e.kind === 'cat') {
                 drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.9, cell * 0.28, cell * 0.11);
                 if (window.RK && RK.drawCatCanvas && RK.drawCatCanvas(ctx, e, cell, now)) continue;
             }
             // Character-like entity: soft ground shadow, then the sprite (or fallback circle).
             drawEntityShadow(ctx, e.x * cell + cell / 2, e.y * cell + cell * 0.92, cell * 0.34, cell * 0.14);
-            // In the DUNGEON, prefer the active pack's player TILE (Original pack's @ hero) over the
-            // sprite so a classic pack is fully classic. The tavern keeps character sprites.
+            // In the dungeon the active pack's player TILE wins over the character sprite so a
+            // classic pack is fully classic. The tavern keeps character sprites.
             if (scene.isDungeon && (e.you || e.kind === 'player') && useAtlas) {
                 var pCoord = pickVariant(tmap.player, e.x, e.y);
                 if (pCoord) { atlas.draw(ctx, pCoord[0], pCoord[1], e.x * cell, e.y * cell, cell); continue; }
@@ -293,9 +286,9 @@
 
         // Snapshot the base scene, then composite the torch light + vignette on top, and keep
         // an animation loop running so the light flickers and embers drift between renders.
-        // Where the player is on this canvas — the SP camera centers on it. Sticky: keep the last
-        // point if the player is momentarily absent (level transition), so the view never snaps to
-        // the corner.
+        // focusPoint is where the player is on this canvas; the SP camera centers on it. It is
+        // sticky: while the player is momentarily absent (level transition) the last point stands,
+        // so the view never snaps to the corner.
         var _fp = findPlayer(scene);
         if (_fp) this.focusPoint = { x: (_fp.x + 0.5) * cell, y: (_fp.y + 0.5) * cell };
 
@@ -375,8 +368,8 @@
     };
 
     TileRenderer.prototype._ensureEmbers = function (scene) {
-        // Embers belong to the dungeon torch the player carries — never in the tavern (or any
-        // non-dungeon scene), where they'd make the "you" avatar look like a flaming dot.
+        // Embers belong to the dungeon torch the player carries, never to the tavern or any other
+        // non-dungeon scene, where they would make the "you" avatar look like a flaming dot.
         if (!scene || !scene.isDungeon) { this._embers = []; return; }
         var p = findPlayer(scene);
         if (!p) { this._embers = []; return; }
@@ -414,14 +407,15 @@
         }
     };
 
-    // Warm torch light on the player cell + drifting embers + an edge vignette. Ported from
-    // the FancyRenderer recipe to flat 2D canvas (no Pixi, no shaders).
+    // Warm torch light on the player cell + drifting embers + an edge vignette, on flat 2D
+    // canvas (no Pixi, no shaders).
     TileRenderer.prototype._composite = function (scene) {
         var ctx = this.ctx;
         if (!ctx) return;
         var w = this.canvas.width, h = this.canvas.height, cell = this.cell;
-        // The warm torch light + embers are a DUNGEON effect (the player carries the torch). In the
-        // tavern there's no torch, so skip it — otherwise the "you" cell glows like a flaming dot.
+        // The warm torch light + embers are a dungeon effect (the player carries the torch). The
+        // tavern has no torch, so it is skipped there; otherwise the "you" cell glows like a
+        // flaming dot.
         var p = (scene && scene.isDungeon) ? findPlayer(scene) : null;
         if (p) {
             var cx = p.x * cell + cell / 2, cy = p.y * cell + cell / 2;
@@ -437,7 +431,6 @@
             ctx.beginPath();
             ctx.arc(cx, cy, rad, 0, Math.PI * 2);
             ctx.fill();
-            // Embers.
             for (var i = 0; i < this._embers.length; i++) {
                 var m = this._embers[i];
                 var a = Math.max(0, Math.min(1, m.life / m.max)) * 0.6;
@@ -463,7 +456,7 @@
         ctx.fillRect(0, 0, w, h);
         ctx.restore();
 
-        // Animated fire fixtures + hazard tiles — drawn over the vignette so their light punches
+        // Animated fire fixtures + hazard tiles draw over the vignette so their light punches
         // through the dark edges rather than being dimmed by it.
         var em = this._emitters;
         if (em && em.length && root.RK && RK.fx) {

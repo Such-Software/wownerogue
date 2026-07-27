@@ -1,6 +1,6 @@
-// TavernLife — client-side NPCs (bartender, patrons, cat) + speech bubbles that make the
+// TavernLife: client-side NPCs (bartender, patrons, cat) + speech bubbles that make the
 // tavern feel alive. NPCs are decorative: they wander, sit, and chat. They're client-side
-// only (no server round-trips), so each client sees its own lively room — the real players
+// only (no server round-trips), so each client sees its own lively room; the real players
 // come from the server snapshot. Speech bubbles pop above any occupant (NPC or real player)
 // when they speak.
 (function (root) {
@@ -26,9 +26,9 @@
     // ---- Speech lines -----------------------------------------------------------
     var BARTENDER_LINES = [
         "What'll it be, traveler?", "Ale's fresh today.", "Tab's full, friend.",
-        "Watch the monsters out there.", "Block's coming — hurry back.",
+        "Watch the monsters out there.", "Block's coming, hurry back.",
         "I've seen braver than you not return.", "House special: liquid courage.",
-        "No credit — coin on the barrel.", "Heard someone found treasure last block.",
+        "No credit: coin on the barrel.", "Heard someone found treasure last block.",
         "The dungeon's hungry tonight.", "Keep your wits about you.", "One ale, coming up."
     ];
     var PATRON_LINES = [
@@ -40,7 +40,7 @@
         "You new here?", "Don't go in unprepared.", "The exit was so close..."
     ];
     var CAT_LINES = ["meow", "mrrrow", "prrrrp", "hisss", "...", "mew"];
-    var WELCOME_LINES = ["Welcome!", "Pull up a stool.", "New face — nice.", "Come in, sit down."];
+    var WELCOME_LINES = ["Welcome!", "Pull up a stool.", "New face, nice.", "Come in, sit down."];
 
     function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -80,7 +80,7 @@
         return { minY: 3, maxY: rows - 2, minX: 1, maxX: cols - 2 };
     }
     function catArea(cols, rows) {
-        // The customer floor (in front of the bar) — not behind the counter, not the walls.
+        // The customer floor (in front of the bar): not behind the counter, not the walls.
         return { minY: 4, maxY: rows - 2, minX: 1, maxX: cols - 2 };
     }
 
@@ -223,7 +223,7 @@
                 }));
         }
 
-        // A tavern cat — a random pixel cat from the Pet Cats Pack that wanders the floor.
+        // A tavern cat: a random pixel cat from the Pet Cats Pack that wanders the floor.
         var catSpot = findFloor(4, rows - 4);
         var cat = makeNPC('cat', 'cat', null, catSpot.x, catSpot.y, {
             label: null, color: '#e8a060', role: 'cat', roamArea: catArea(cols, rows)
@@ -281,7 +281,7 @@
             else if (stepY < 0) npc.facing = 'up';
             else if (stepY > 0) npc.facing = 'down';
         } else {
-            // Blocked — pick a new target.
+            // Blocked: pick a new target.
             this._pickTarget(npc, scene);
         }
         // Cat moves faster; bartender slower.
@@ -350,7 +350,7 @@
                 y: originY + (e.x + e.y) * tileH / 2
             };
         } else if (mode === '3d') {
-            // 3D renderer uses Three.js — we can't easily get screen coords.
+            // 3D renderer uses Three.js; we can't easily get screen coords.
             // Skip speech bubbles for 3D mode.
             return null;
         } else {
@@ -396,7 +396,7 @@
         }
     };
 
-    // Main update — called every frame via rAF.
+    // Main update: called every frame via rAF.
     TavernLife.prototype.update = function (scene, cell, mode) {
         if (!scene || !this._spawned) return;
         var now = Date.now();

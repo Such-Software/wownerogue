@@ -1,4 +1,4 @@
-// Homepage render picker — render mode (Tiled / ASCII / Iso / 3D) + tile-pack selector for the
+// Homepage render picker: render mode (Tiled / ASCII / Iso / 3D) + tile-pack selector for the
 // single-player dungeon, gated by entitlements. Free players see Tiled(Original) + ASCII; the credit
 // ladder unlocks the richer packs, iso, and 3D. Rebuilds itself whenever entitlements change.
 (function (root) {
@@ -54,8 +54,8 @@
             b.className = 'rp-btn' + (m.id === current ? ' active' : '') + (usable ? '' : ' locked');
             b.textContent = m.label + (!availability.runtimeAvailable ? ' ⛔' : (m.premium && !usable ? ' 🔒' : ''));
             b.title = !availability.runtimeAvailable
-                ? (m.label + ' — unavailable on this server (optional renderer dependency disabled)')
-                : (usable ? m.label : (m.label + ' — unlock with credits'));
+                ? (m.label + ': unavailable on this server (optional renderer dependency disabled)')
+                : (usable ? m.label : (m.label + ': unlock with credits'));
             b.setAttribute('aria-disabled', usable ? 'false' : 'true');
             b.onclick = function () {
                 if (!usable) return;
@@ -68,7 +68,7 @@
         });
         h.appendChild(modeRow);
 
-        // Pack row — only when the current projection has more than one UNLOCKED pack to pick from.
+        // Pack row: only when the current projection has more than one UNLOCKED pack to pick from.
         var proj = projForMode(current);
         var packs = (proj && RK.unlockedPacks) ? RK.unlockedPacks(proj) : [];
         if (packs.length > 1) {

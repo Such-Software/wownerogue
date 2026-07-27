@@ -5,14 +5,14 @@ const { TAVERN_LAYOUT, FLOOR_CHARS } = require('./tavernMap');
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
 
 /**
- * Room — a shared, real-time, multi-occupant world. Shared engine for both new modes:
+ * Room: a shared, real-time, multi-occupant world. Shared engine for both new modes:
  *
- *   • Tavern      (type 'tavern'): a peaceful room — walk around, chat, spectate.
+ *   • Tavern      (type 'tavern'): a peaceful room: walk around, chat, spectate.
  *   • Multiplayer (type 'match'):  the same engine with a dungeon, monsters, hazards and
  *                                  combat added (later milestones).
  *
  * Design invariants (kept transport-agnostic so the engine is testable and reusable):
- *   • No Socket.IO / DB / Wownerogue coupling here — game-state logic only. A manager layer
+ *   • No Socket.IO / DB / Wownerogue coupling here: game-state logic only. A manager layer
  *     owns transport (Socket.IO rooms, broadcasts) and the server-tick timer.
  *   • Server-authoritative movement: the client requests a step; the Room decides.
  *   • Serialisable: snapshot()/fullState() are broadcast-safe (no engine internals).
@@ -184,7 +184,7 @@ class Room {
         return { tick: this.tickCount, events: [] };
     }
 
-    /** Occupants-only snapshot — broadcast every tick/update. */
+    /** Occupants-only snapshot: broadcast every tick/update. */
     snapshot() {
         return {
             roomId: this.id,
@@ -194,7 +194,7 @@ class Room {
         };
     }
 
-    /** Full state including the static map — sent once when an occupant joins. */
+    /** Full state including the static map: sent once when an occupant joins. */
     fullState() {
         return {
             ...this.snapshot(),

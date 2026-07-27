@@ -51,8 +51,8 @@ const PROFILES = Object.freeze({
         legalPolicyVersion: '2026-07-23-v2',
         termsEffectiveDate: '2026-07-23',
         scopeNotice: 'Such Software operates monerogue.app only with direct-entry Monero stagenet test coins. Its single-player 2×/3× outcomes are test gambling mechanics; purchased-credit entry is disabled, and no real-money or mainnet gambling is offered.',
-        commerceSummary: 'NO REAL VALUE — monerogue.app uses direct-entry Monero stagenet test coins only. Single-player qualifying outcomes pay 2× or 3× in test coins. Purchased-credit entry is off. Never send mainnet XMR.',
-        noRealValueNotice: 'NO REAL VALUE — Monero stagenet coins are test data, not money, deposits, redeemable prizes, or a promise of value. Never send mainnet XMR to this service.'
+        commerceSummary: 'NO REAL VALUE: monerogue.app uses direct-entry Monero stagenet test coins only. Single-player qualifying outcomes pay 2× or 3× in test coins. Purchased-credit entry is off. Never send mainnet XMR.',
+        noRealValueNotice: 'NO REAL VALUE: Monero stagenet coins are test data, not money, deposits, redeemable prizes, or a promise of value. Never send mainnet XMR to this service.'
     })
 });
 

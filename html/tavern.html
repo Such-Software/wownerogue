@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Wownerogue — Tavern</title>
+    <title>Wownerogue: Tavern</title>
     <link rel="stylesheet" href="styles/commerce-consent.css">
     <script src="/socket.io/socket.io.js"></script>
     <script src="js/legal/commerceConsent.js"></script>
@@ -220,7 +220,7 @@
         var spectatorDpad = document.getElementById('spectatorDpad');
         var leaveSpectateBtn = document.getElementById('leaveSpectateBtn');
 
-        // Character customization — persisted appearance identity, chosen before entering.
+        // Character customization: persisted appearance identity, chosen before entering.
         var customizeBtn = document.getElementById('customizeBtn');
         var appearancePreview = document.getElementById('appearancePreview');
         var selectedAppearance = ((RK.loadIdentity && RK.loadIdentity()) || {}).appearance || RK.normalizeAppearance('default');
@@ -375,7 +375,7 @@
                 var active = activeMode;
                 setStatus(active === mode
                     ? 'Render mode: ' + active
-                    : '“' + mode + '” unavailable here — using “' + active + '”.');
+                    : '“' + mode + '” unavailable here, using “' + active + '”.');
             });
         }
         function buildModebar() {
@@ -398,7 +398,7 @@
         function projForMode(mode) {
             if (mode === 'iso') return 'iso';
             if (mode === '3d') return '3d';
-            if (mode === 'ascii') return null; // ASCII draws glyphs — it consumes no tile pack
+            if (mode === 'ascii') return null; // ASCII draws glyphs; it consumes no tile pack
             return 'topdown';
         }
 
@@ -555,7 +555,7 @@
             //
             // This used to key off `m.socketId`, which the chat provider deliberately stopped
             // sending (it publishes a short `publicId` instead so the raw socket id never leaves the
-            // server) — so the bubble branch simply never ran and nobody in the tavern ever spoke
+            // server), so the bubble branch simply never ran and nobody in the tavern ever spoke
             // visibly. Resolve the speaker from the occupant list by display name instead, which
             // needs no additional identity on the wire.
             if (tavernLife) {
@@ -576,7 +576,7 @@
         socket.on('tavern_notice', function (n) {
             if (n && n.message) addSystemLine(n.message);
         });
-        // Global chat backlog sent on join — render it so the tavern shows history, not a blank log.
+        // Global chat backlog sent on join: render it so the tavern shows history, not a blank log.
         socket.on('chat_history', function (payload) {
             var msgs = payload && payload.messages;
             if (!msgs || !msgs.length) return;

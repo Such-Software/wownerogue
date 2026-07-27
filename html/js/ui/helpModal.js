@@ -66,7 +66,7 @@ const HelpModal = {
             $container.html(`
                 <div style="padding:8px 10px; background:#0d3320; border:1px solid #4ade80; border-radius:6px;">
                     <strong style="color:#4ade80;">🆓 Free to play</strong><br>
-                    <span>No payment needed — just escape the dungeon.</span>
+                    <span>No payment needed: just escape the dungeon.</span>
                 </div>
             `);
             return;
@@ -86,13 +86,13 @@ const HelpModal = {
         const payoutsOn = !!(config.directPayoutsEnabled || config.creditsPayoutsEnabled);
 
         const buy = [];
-        if (directOn) buy.push(`<strong>1 credit</strong> — ${price} ${currency}`);
+        if (directOn) buy.push(`<strong>1 credit</strong>: ${price} ${currency}`);
         if (creditsOn && packages.length > 0) {
             const bundles = packages.map(pkg => {
                 const bonus = pkg.bonus > 0 ? ` +${pkg.bonus}` : '';
                 return `${pkg.credits}${bonus} for ${pkg.priceFormatted}`;
             }).join(' · ');
-            buy.push(`<strong>Bundles</strong> — ${bundles} ${currency}`);
+            buy.push(`<strong>Bundles</strong>: ${bundles} ${currency}`);
         }
 
         // Reward line is config-driven so it stays honest on prestige (no-payout) deployments.
@@ -100,7 +100,7 @@ const HelpModal = {
         if (payoutsOn) {
             reward = '<span style="color:#4ade80;">💰 Exact escape and treasure rewards are shown before entry and locked for that run.</span>';
         } else {
-            reward = `<span style="color:#fbbf24;">🏅 No crypto payout — escape for the win; top scores enter the <strong>Hall of Champions</strong>.</span>`;
+            reward = `<span style="color:#fbbf24;">🏅 No crypto payout: escape for the win; top scores enter the <strong>Hall of Champions</strong>.</span>`;
         }
 
         const freeLine = config.freePlayEnabled
@@ -115,7 +115,7 @@ const HelpModal = {
                     ${buy.map(b => '&nbsp;&nbsp;• ' + b).join('<br>')}
                 </div>
                 <div style="font-size:0.82em; color:#9aa4b2; margin-bottom:6px;">
-                    Spend a credit to enter — jump in immediately, or on the next block. Block timing
+                    Spend a credit to enter: jump in immediately, or on the next block. Block timing
                     is random, so your average wait is the same either way.
                 </div>
                 <div style="font-size:0.85em;">${reward}</div>

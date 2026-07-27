@@ -162,6 +162,6 @@ describe('NativeMoneroProvider wraps walletRPCService', () => {
         expect(w.startPaymentMonitoring).toHaveBeenCalledWith('Wo3xaddr', expect.any(Function), 2000);
         const raw = { in_mempool: true, confirmed: false, complete: false, amount: 42, required: 100, confirmations: 0 };
         captured(raw);
-        expect(seen[0]).toBe(raw); // same object, not normalized — callback sees exactly what the wallet emitted
+        expect(seen[0]).toBe(raw); // same object, not normalized: callback sees exactly what the wallet emitted
     });
 });

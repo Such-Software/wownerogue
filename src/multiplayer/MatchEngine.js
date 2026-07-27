@@ -1,5 +1,5 @@
 /**
- * MatchEngine — server tick driver for a MatchRoom.
+ * MatchEngine: server tick driver for a MatchRoom.
  *
  * The engine is intentionally thin: all state/rules live in MatchRoom, and this class owns
  * the timer that calls `room.resolveTick()` at a fixed interval. It also handles graceful

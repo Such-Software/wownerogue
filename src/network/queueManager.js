@@ -14,7 +14,7 @@ class QueueManager {
         this.debugManager = debugManager;
         this.broadcastManager = broadcastManager;
         this.io = io;
-        this.createGameForUser = createGameForUser; // (user, gameType, options) => Game
+        this.createGameForUser = createGameForUser; // (user, options) => Game
         this.getUserBySocket = getUserBySocket; // (socketId) => User
         this.activeGames = activeGames; // Map socketId -> Game
         this.gameModeManager = gameModeManager;
@@ -109,28 +109,25 @@ class QueueManager {
                 console.log(`[QueueManager] Player ${serverId} enters on block ${blockHeight} (dies after ${blockHeight + 1})`);
             }
             try {
-                const game = await this.createGameForUser(currentUser, 'standard', {
+                const game = await this.createGameForUser(currentUser, {
                     fairnessProof: entry.fairnessProof || null
                 });
                 const gameState = game.getState();
                 gameState.blockHeight = blockHeight;
-                // Include provably fair commitment
                 if (game.getProofCommitment) {
                     gameState.proof = game.getProofCommitment();
                 }
 
-                // Process game start (credits deduction / payment link). forceFree honours a queued
-                // Pleb-board entry so no credit/payment is taken when the block lands.
+                // forceFree honours a queued Pleb-board entry, so no credit or payment is taken
+                // when the block lands.
                 if (this.gameModeManager) {
                     const startRes = await this.gameModeManager.processGameStart(serverId, game.id, { forceFree: !!entry.free });
                     if (!startRes.success) {
-                        // Abort game + clean up orphaned DB record
                         if (this.activeGames) this.activeGames.delete(serverId);
                         await this._cleanupOrphanedGame(game);
                         this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
                         continue;
                     }
-                    // Emit credits_update if credits were spent
                     if (startRes.creditsRemaining !== undefined) {
                         this.io.to(serverId).emit('credits_update', { balance: startRes.creditsRemaining });
                     }
@@ -164,8 +161,8 @@ class QueueManager {
     }
 
     /**
-     * Immediately start a game for a single confirmed player (e.g. payment confirmed AFTER
-     * the block tick already processed). This prevents an additional full-block wait.
+     * Immediately start a game for a single confirmed player whose payment confirms after the
+     * block tick has already processed, avoiding an additional full-block wait.
      * Returns true if a game was started.
      */
     async startGameImmediately(serverId, blockHeight) {
@@ -173,37 +170,32 @@ class QueueManager {
         if (idx === -1) return false; // not queued
         const entry = this._waitingPlayers[idx];
         if (entry.requiresConfirmation && !entry.confirmed) {
-            // Still not confirmed; cannot start
             return false;
         }
-        // Remove from queue
         this._waitingPlayers.splice(idx, 1);
         const currentUser = this.getUserBySocket(serverId);
         if (!currentUser) return false;
         currentUser.blockRec = blockHeight; // lifetime until next block
         try {
-            const game = await this.createGameForUser(currentUser, 'standard', {
+            const game = await this.createGameForUser(currentUser, {
                 fairnessProof: entry.fairnessProof || null
             });
             const gameState = game.getState();
             gameState.blockHeight = blockHeight;
-            // Include provably fair commitment
             if (game.getProofCommitment) {
                 gameState.proof = game.getProofCommitment();
             }
 
-            // Process game start (credits deduction / payment link). forceFree honours a queued
-            // Pleb-board entry confirmed after the tick.
+            // forceFree honours a queued Pleb-board entry confirmed after the tick, so no
+            // credit or payment is taken.
             if (this.gameModeManager) {
                 const startRes = await this.gameModeManager.processGameStart(serverId, game.id, { forceFree: !!entry.free });
                 if (!startRes.success) {
-                    // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);
                     await this._cleanupOrphanedGame(game);
                     this.io.to(serverId).emit('message', 'Error starting game: ' + (startRes.reason || 'Payment processing failed'));
                     return false;
                 }
-                // Emit credits_update if credits were spent
                 if (startRes.creditsRemaining !== undefined) {
                     this.io.to(serverId).emit('credits_update', { balance: startRes.creditsRemaining });
                 }
@@ -221,8 +213,8 @@ class QueueManager {
     }
 
     /**
-     * Start a game immediately for early entry (not from queue)
-     * Used when player opts for early entry without waiting for block
+     * Start a game immediately for early entry, bypassing the queue, when a player opts in
+     * without waiting for the next block.
      * @param {string} serverId - Socket ID
      * @param {Object} currentUser - User object
      * @param {number} blockHeight - Current block height
@@ -233,17 +225,16 @@ class QueueManager {
             return { success: false, reason: 'User not found' };
         }
 
-        // Check if already in a game
         if (this.activeGames && this.activeGames.has(serverId)) {
             return { success: false, reason: 'Already in a game' };
         }
 
-        // Set blockRec to current block - player dies when next block (currentBlock + 1) is found
+        // blockRec is the entry block; the player dies when block blockHeight + 1 is found.
         currentUser.blockRec = blockHeight;
-        currentUser.isEarlyEntry = true; // Mark as early entry for potential special handling
+        currentUser.isEarlyEntry = true;
 
         try {
-            const game = await this.createGameForUser(currentUser, 'standard', {
+            const game = await this.createGameForUser(currentUser, {
                 earlyEntry: true,
                 fairnessProof: options.fairnessProof || null
             });
@@ -252,21 +243,18 @@ class QueueManager {
             gameState.isEarlyEntry = true;
             gameState.deathBlock = blockHeight + 1; // Explicit death block for client display
 
-            // Include provably fair commitment
             if (game.getProofCommitment) {
                 gameState.proof = game.getProofCommitment();
             }
 
-            // Process game start (credits deduction / payment link)
+            // Deducts credits or links the payment for this entry.
             if (this.gameModeManager) {
                 const startRes = await this.gameModeManager.processGameStart(serverId, game.id);
                 if (!startRes.success) {
-                    // Abort game + clean up orphaned DB record
                     if (this.activeGames) this.activeGames.delete(serverId);
                     await this._cleanupOrphanedGame(game);
                     return { success: false, reason: startRes.reason || 'Payment processing failed' };
                 }
-                // Emit credits_update if credits were spent
                 if (startRes.creditsRemaining !== undefined) {
                     this.io.to(serverId).emit('credits_update', { balance: startRes.creditsRemaining });
                 }
@@ -303,8 +291,8 @@ class QueueManager {
     }
 
     /**
-     * Get list of pending games (players waiting in queue)
-     * Used by spectator system to show upcoming games
+     * Anonymized view of players waiting in queue, used by the spectator system to show
+     * upcoming games.
      * @returns {Array} List of pending game entries
      */
     getPendingGamesList() {

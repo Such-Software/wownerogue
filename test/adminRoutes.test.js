@@ -2,7 +2,7 @@
  * Admin routes extraction smoke test (Phase 4.1).
  *
  * Verifies the extracted admin route factory loads and registers all expected routes
- * with a stub ctx — catches load-time/reference errors from the index.js -> routes/admin.js
+ * with a stub ctx: catches load-time/reference errors from the index.js -> routes/admin.js
  * split without needing a live server.
  */
 

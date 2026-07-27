@@ -239,12 +239,12 @@ describe('Payment & Payout Comprehensive Tests', () => {
 
     describe('Credits Package Confirmation', () => {
         test('adds credits from package info correctly', async () => {
-            // Step 1: db.query — SELECT payment lookup (has user_id, status='pending')
+            // Step 1: db.query runs the SELECT payment lookup (has user_id, status='pending')
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ user_id: 1, description: '', status: 'pending' }]
             });
 
-            // Step 2: withTransaction — client.query calls:
+            // Step 2: withTransaction runs these client.query calls:
             mockDb._mockClient.query
                 .mockResolvedValueOnce({ rows: [{ id: 123, status: 'pending' }] }) // snapshot product promise
                 .mockResolvedValueOnce({ rows: [{ id: 123 }] }) // mark payment confirmed
@@ -262,12 +262,12 @@ describe('Payment & Payout Comprehensive Tests', () => {
         });
 
         test('parses credits from payment description as fallback', async () => {
-            // Step 1: db.query — SELECT payment lookup with description
+            // Step 1: db.query runs the SELECT payment lookup with description
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ user_id: 1, description: 'Wowngeon 25 credits package (WOW)', status: 'pending' }]
             });
 
-            // Step 2: withTransaction — client.query calls:
+            // Step 2: withTransaction runs these client.query calls:
             mockDb._mockClient.query
                 .mockResolvedValueOnce({ rows: [{ id: 123, status: 'pending' }] })
                 .mockResolvedValueOnce({ rows: [{ id: 123 }] })
@@ -284,12 +284,12 @@ describe('Payment & Payout Comprehensive Tests', () => {
         });
 
         test('defaults to 10 credits when no info available', async () => {
-            // Step 1: db.query — SELECT payment lookup with non-matching description
+            // Step 1: db.query runs the SELECT payment lookup with non-matching description
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ user_id: 1, description: 'Some payment', status: 'pending' }]
             });
 
-            // Step 2: withTransaction — client.query calls:
+            // Step 2: withTransaction runs these client.query calls:
             mockDb._mockClient.query
                 .mockResolvedValueOnce({ rows: [{ id: 123, status: 'pending' }] })
                 .mockResolvedValueOnce({ rows: [{ id: 123 }] })
@@ -342,7 +342,7 @@ describe('Payment & Payout Comprehensive Tests', () => {
             expect(result.payout.payoutId).toBe(999);
             expect(result.payout.amount).toBe(200000000000);
             expect(result.payout.multiplier).toBe(2);
-            // processPayout is NOT called directly — payout is batched via _scheduleBatchPayout
+            // processPayout is NOT called directly: payout is batched via _scheduleBatchPayout
             expect(mockWalletService.processPayout).not.toHaveBeenCalled();
         });
 

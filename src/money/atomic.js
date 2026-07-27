@@ -1,5 +1,5 @@
 /**
- * Money — atomic-unit arithmetic on BigInt.
+ * Money: atomic-unit arithmetic on BigInt.
  *
  * The single source of truth for money math. All monetary values in this app are integer
  * atomic units (1 WOW = 10^11, 1 XMR = 10^12). JavaScript `number` is float64 and loses
@@ -59,7 +59,7 @@ function add(a, b) {
 
 /**
  * Multiply an atomic amount by a non-negative decimal multiplier (e.g. 2, 3, 1.5, 2.5)
- * using exact integer math with half-up rounding — no float multiplication.
+ * using exact integer math with half-up rounding: no float multiplication.
  * @param {string|number|bigint} atomic
  * @param {number|string} multiplier
  * @returns {bigint}

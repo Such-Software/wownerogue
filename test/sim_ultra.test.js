@@ -1,6 +1,6 @@
 // Guards the balance-sim harness: it must keep driving the REAL engine to terminal outcomes and
 // producing well-formed, in-range statistics. Not a balance assertion (those numbers are meant to
-// move) — a structural regression guard so the instrument can't silently rot.
+// move), a structural regression guard so the instrument can't silently rot.
 const { runOneGame, simulatePreset } = require('../src/sim/simulate');
 const { BOTS } = require('../src/sim/simBots');
 const { bfsField, stepDownField } = require('../src/sim/pathfind');

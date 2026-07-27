@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * splitOutputs.js — Split wallet outputs for concurrent payout capacity.
+ * splitOutputs.js: split wallet outputs for concurrent payout capacity.
  *
  * Wownero/Monero lock change outputs for several blocks after spending.
  * Pre-splitting one large output into many smaller ones allows the wallet
@@ -20,7 +20,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
-// Parse .env manually — no external dependencies needed
+// Parse .env manually so the script needs no external dependencies.
 function loadEnv() {
     const envPath = path.resolve(__dirname, '..', 'src', '.env');
     try {
@@ -35,7 +35,7 @@ function loadEnv() {
             if (!process.env[key]) process.env[key] = val;
         }
     } catch (e) {
-        // .env not found — that's fine, user can pass --endpoint
+        // .env not found. The caller can pass --endpoint instead.
     }
 }
 loadEnv();
@@ -76,7 +76,7 @@ function parseArgs() {
             case '--help':
             case '-h':
                 console.log(`
-splitOutputs.js — Split wallet outputs for concurrent payout capacity.
+splitOutputs.js: split wallet outputs for concurrent payout capacity.
 
 Usage: node scripts/splitOutputs.js [options]
 

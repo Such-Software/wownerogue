@@ -579,7 +579,7 @@ describe('EnvironmentValidator production launch gate', () => {
             'Production financial workers require WALLET_RPC_USER and WALLET_RPC_PASSWORD for wallet-rpc Digest authentication.'
         );
 
-        const remote = productionEnv({ PRIMARY_WALLET_ENDPOINT: 'http://10.42.1.20:38083' });
+        const remote = productionEnv({ PRIMARY_WALLET_ENDPOINT: 'http://192.0.2.20:38083' });
         const remoteResult = new EnvironmentValidator({ env: remote, logger: silentLogger }).validate(config());
         expect(remoteResult.errors).toContain(
             'Production wallet-rpc over plaintext HTTP must bind to a loopback address.'
@@ -603,7 +603,7 @@ describe('EnvironmentValidator production launch gate', () => {
             MONERO_NETWORK: 'mainnet',
             WALLET_RPC_USER: '',
             WALLET_RPC_PASSWORD: '',
-            PRIMARY_WALLET_ENDPOINT: 'http://10.42.1.20:38083'
+            PRIMARY_WALLET_ENDPOINT: 'http://192.0.2.20:38083'
         });
 
         const errors = new EnvironmentValidator({ env, logger: silentLogger })

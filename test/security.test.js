@@ -147,7 +147,7 @@ describe('SQL Injection Prevention', () => {
         // Only attempt a real DB connection when a usable password is configured. Without one,
         // node-postgres throws inside the SASL handshake *after* opening the TCP socket and
         // orphans that socket (it survives pool.end()), which would keep Jest from exiting. A
-        // missing password simply means "DB not available" here — and these tests already fall
+        // missing password simply means "DB not available" here, and these tests already fall
         // back to mocks in that case.
         const hasDbPassword = typeof process.env.DB_PASSWORD === 'string' && process.env.DB_PASSWORD.length > 0;
         if (hasDbPassword) {
@@ -273,7 +273,7 @@ describe('SQL Injection Prevention', () => {
             const firstToken = created.token;
             expect(firstToken).toBeTruthy();
 
-            // Resume with that token — should succeed and hand back a DIFFERENT token.
+            // Resume with that token: should succeed and hand back a DIFFERENT token.
             const resumed = await sessionManager.resumeOrCreate({
                 socketId: 'rotate-socket-2',
                 ipAddress: '127.0.0.1',

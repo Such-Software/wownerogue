@@ -1,6 +1,6 @@
 /**
  * Load nostr-tools in a way that works in BOTH runtimes (see the same shim in utils/nip98.js):
- *   - Production (plain Node >=22): a normal require() succeeds — Node natively require()s
+ *   - Production (plain Node >=22): a normal require() succeeds, because Node natively require()s
  *     nostr-tools' ESM-only transitive deps (@noble/*).
  *   - A CJS-only test runtime (Jest without --experimental-vm-modules) cannot parse those ESM
  *     deps, so we fall back to nostr-tools' pre-bundled self-contained IIFE build.

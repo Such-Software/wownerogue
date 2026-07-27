@@ -1,5 +1,5 @@
 /**
- * MatchState — serialization helpers for MatchRoom.
+ * MatchState: serialization helpers for MatchRoom.
  *
  * Produces renderer-agnostic and broadcast-safe state objects. The render kit already
  * understands the `gameState` shape from `sceneModel.js`, so the primary job here is to
@@ -11,7 +11,7 @@ class MatchState {
      * Build a spectator/client-friendly game-state object from a MatchRoom.
      * Compatible with `RK.sceneFromGameState()` in `html/js/render/sceneModel.js`.
      * @param {MatchRoom} room
-     * @param {string} [viewerId] — if provided, that player is marked `you`
+     * @param {string} [viewerId] if provided, that player is marked `you`
      * @returns {object}
      */
     static toGameState(room, viewerId = null) {
@@ -43,7 +43,7 @@ class MatchState {
     /**
      * Flatten a MatchRoom into the persistence shape for `match_events`.
      * @param {MatchRoom} room
-     * @param {Array} events — events from the last tick (or full match)
+     * @param {Array} events events from the last tick (or full match)
      * @returns {Array}
      */
     static toEventRows(room, events = []) {

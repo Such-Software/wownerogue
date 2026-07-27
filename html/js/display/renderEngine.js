@@ -268,7 +268,7 @@ var RenderEngine = {
             // because canDrawPlayer returned true, but the overlay draw may still fail.
             if (!drew) {
                 try { display.draw(centerX, centerY, playerTile, "#FFF", "transparent"); }
-                catch (_) { /* ignore — next frame will retry */ }
+                catch (_) { /* ignore: next frame will retry */ }
             }
         }
 
@@ -281,7 +281,7 @@ var RenderEngine = {
                 var _cellW = (window.options && window.options.tileWidth) || 32;
                 var _cellH = (window.options && window.options.tileHeight) || _cellW;
                 window.FX.renderLighting(centerX * _cellW + _cellW / 2, centerY * _cellH + _cellH / 2, _cellW);
-            } catch (_) { /* FX is purely cosmetic — never block the dungeon render */ }
+            } catch (_) { /* FX is purely cosmetic: never block the dungeon render */ }
         }
 
         // Render message at bottom if present

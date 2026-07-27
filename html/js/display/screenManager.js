@@ -158,7 +158,7 @@ var ScreenManager = {
             ? GameTiles.getTreasureTile() 
             : (this._cryptoType === 'XMR' ? '$M' : '$W');
         // Every row uses a uniform icon slot at `centerX` and a single fixed text column, so the
-        // icons share a left edge and all four descriptions line up — regardless of whether the
+        // icons share a left edge and all four descriptions line up, regardless of whether the
         // icon is a 1-cell glyph (>, ~, $) or the 2-cell player avatar sprite.
         const legendItems = [
             { tile: "@2", text: "This is you", role: "player" },
@@ -175,8 +175,8 @@ var ScreenManager = {
         const centerX = Math.floor(this._screenWidth / 2) - 10;
         const textX = centerX + ICON_COLS + 1;                   // one fixed text column for every row
         for (let item of legendItems) {
-            // Draw EVERY icon (incl. the player's original hero tile) as a grid tile — no avatar
-            // overlay — so all four share a left edge + baseline and the hero is the plain tile.
+            // Draw EVERY icon (incl. the player's original hero tile) as a grid tile, no avatar
+            // overlay, so all four share a left edge + baseline and the hero is the plain tile.
             const glyph = window.options?.tileMap?.hasOwnProperty(item.tile) ? item.tile : "?";
             const gx = centerX + Math.floor((ICON_COLS - (glyph.length || 1)) / 2);
             display.draw(gx, y, glyph, "transparent", "transparent");

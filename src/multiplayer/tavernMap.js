@@ -1,5 +1,5 @@
 /**
- * Default Tavern layout — a hand-built room rendered through the theme atlas. Every row is the same
+ * Default Tavern layout: a hand-built room rendered through the theme atlas. Every row is the same
  * width (ragged ASCII maps are a classic off-by-one collision bug), and the legend below drives both
  * the client tiles (sceneModel TAVERN_LEGEND/TILE_OF) and Room walkability.
  *
@@ -36,7 +36,7 @@ function buildDefaultTavern(cols = 28, rows = 15) {
 
     // The bar: a counter across the top interior (row 2), a shelf of bottles behind it (row 1),
     // and a keg (barrel) bracketing each end. Row 1 is the bartender's space, sealed off by the
-    // counter — players can't get behind it.
+    // counter; players can't get behind it.
     const barY = 2, barX0 = 3, barX1 = cols - 5;
     for (let x = barX0; x <= barX1; x++) set(x, barY, '=');
     for (let x = barX0; x <= barX1; x += 2) set(x, barY - 1, 'h'); // bottles behind the bar
@@ -46,13 +46,13 @@ function buildDefaultTavern(cols = 28, rows = 15) {
     const tables = [[5, 6], [12, 6], [19, 6], [5, 10], [12, 10], [19, 10]];
     for (const [tx, ty] of tables) { put(tx, ty, 'T'); put(tx, ty + 1, 'c'); }
 
-    // (No rug for now — the rug tile renders green, which reads wrong on the wood floor.)
+    // (No rug for now: the rug tile renders green, which reads wrong on the wood floor.)
 
-    // Corner decor — barrels and crates.
+    // Corner decor: barrels and crates.
     put(1, 1, 'B'); put(cols - 2, 1, 'C'); put(1, rows - 2, 'C'); put(cols - 2, rows - 2, 'B');
 
     // Fixtures lining the room so it reads lived-in instead of a big empty floor: barrels/crates
-    // (material variety) plus fire fixtures — braziers ('i') throwing flickering light in the
+    // (material variety) plus fire fixtures: braziers ('i') throwing flickering light in the
     // corners and a hearth ('F') anchoring the left wall. All solid, all clear of windows/spawn/
     // tables/aisles. The renderers paint the animated flame + glow on the fire tiles.
     const wallDecor = [

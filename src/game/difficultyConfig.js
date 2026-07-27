@@ -17,12 +17,12 @@
  * - Grin (GRIN): ~1 minute
  * - Monero (XMR): ~2 minutes
  * - Litecoin (LTC): ~2.5 minutes
- * - Wownero (WOW): ~5 minutes  (measured 5.01 min/block over 1000 blocks — an earlier "correction"
- *   to 2 min was WRONG; WOW is a SLOW chain, closer to BTC than XMR for calibration purposes)
+ * - Wownero (WOW): ~5 minutes (5.01 min/block over 1000 blocks; for calibration WOW is a slow
+ *   chain, closer to BTC than to XMR)
  * - Bitcoin (BTC): ~10 minutes
  *
- * Slow chains (WOW/BTC) can't get a timer-driven house edge from a single dungeon without it
- * becoming an unplayable slog → they want MULTI-LEVEL depth. See NETWORK_TUNING below.
+ * Slow chains (WOW/BTC) cannot get a timer-driven house edge from a single dungeon without it
+ * becoming an unplayable slog, so they use multi-level depth instead. See NETWORK_TUNING below.
  */
 
 const DIFFICULTY_PRESETS = {
@@ -50,7 +50,7 @@ const DIFFICULTY_PRESETS = {
         targetHouseWinRate: 0.3           // 30% house wins (player-friendly)
     },
 
-    // Normal - balanced baseline (~2 min blocks, i.e. XMR; WOW is actually ~5 min — see header)
+    // Normal - balanced baseline, calibrated for ~2 min blocks (XMR)
     normal: {
         dungeon: {
             width: 45,
@@ -101,23 +101,23 @@ const DIFFICULTY_PRESETS = {
     // Casino - high house edge for real money
     casino: {
         dungeon: {
-            width: 70,                     // Large dungeon (was 60)
-            height: 35,                    // (was 30)
-            roomWidthRange: [3, 4],        // Small rooms (was [3, 5])
+            width: 70,                     // Large dungeon
+            height: 35,
+            roomWidthRange: [3, 4],        // Small rooms
             roomHeightRange: [3, 4],
-            corridorLengthRange: [6, 15],  // Long corridors (was [5, 12])
-            dugPercentage: 0.10            // Very tight (was 0.12)
+            corridorLengthRange: [6, 15],  // Long corridors
+            dugPercentage: 0.10            // Very tight
         },
         monster: {
-            startDistanceFromPlayer: 0.30, // Close to player (was 0.35)
+            startDistanceFromPlayer: 0.30, // Close to player
             movesPerPlayerMove: 1.0,       // Monster matches player speed
-            chaseAggressiveness: 0.97,     // Nearly always chases (was 0.95)
-            visionRange: 22,               // Excellent vision (was 18)
+            chaseAggressiveness: 0.97,     // Nearly always chases
+            visionRange: 22,               // Excellent vision
             respawnOnDeath: false
         },
         treasure: {
-            roomPositionRatio: 0.20,       // Early room (was 0.25)
-            distanceFromExitRatio: 0.85    // Very far from exit (was 0.8)
+            roomPositionRatio: 0.20,       // Early room
+            distanceFromExitRatio: 0.85    // Very far from exit
         },
         targetHouseWinRate: 0.70           // 70% house wins
     }
@@ -147,24 +147,21 @@ function getDifficultyPreset(cryptoType = 'WOW', overridePreset = null) {
     return { ...DIFFICULTY_PRESETS.casino, presetName: 'casino' };
 }
 
-// Per-network tuning so cryptoType shapes difficulty (it used to be a dead parameter). The pacing
-// lever is LEVELS (multi-level depth ∝ block time): a run descends `levels` normal-sized dungeons,
-// so cumulative run length makes the block-timer bite on slow chains WITHOUT a giant single map or
-// a cheating-fast monster (the sim proved both fail — size self-cancels, and a 2.2× monster still
-// caps WOW ~64%). Each level is base-sized with a FAIR monster; the edge comes from racing the block
-// across the whole descent. Levels ≈ blockTime / ~75s (one normal level), clamped [1, 10].
-//   GRIN 1m → 1   XMR 2m → 2   LTC 2.5m → 2   WOW 5m → 4   BTC 10m → 8
-// NOTE: the exact per-network level counts are sim starting points (calibration re-run is pending
-// the sim's multi-level support). Operator env overrides (DUNGEON_LEVELS, DUNGEON_*, MONSTER_*) win.
-// Kill: NETWORK_TUNING_DISABLED=true.
-// Level counts trimmed from the first sim estimate — 4-8 levels in a single block deadline is too
-// punishing (you rarely clear them all before the block). Kept modest until a real multi-level
-// calibration run + the descent UX are in. Reach-exit-to-win stays intuitive with fewer levels.
+// Per-network tuning: cryptoType shapes difficulty through the level count, which scales with block
+// time. A run descends `levels` normal-sized dungeons, so cumulative run length is what makes the
+// block timer bite on slow chains. Dungeon size and monster speed are deliberately NOT the lever:
+// size self-cancels (a bigger map moves the exit and the monster equally far away), and even a 2.2x
+// monster caps WOW near a 64% house win rate. Each level is base-sized with a fair monster; the edge
+// comes from racing the block across the whole descent.
+// Counts stay modest (well under blockTime / ~75s per level) because 4-8 levels inside one block
+// deadline is rarely clearable, and reach-the-exit-to-win reads as intuitive only at low depth.
+// Operator env overrides (DUNGEON_LEVELS, DUNGEON_*, MONSTER_*) take precedence.
+// Set NETWORK_TUNING_DISABLED=true to bypass this table entirely.
 const NETWORK_TUNING = {
     GRIN: { levels: 1 }, // ~1 min blocks
     XMR:  { levels: 1 }, // ~2 min
     LTC:  { levels: 2 }, // ~2.5 min
-    WOW:  { levels: 2 }, // ~5 min (measured)
+    WOW:  { levels: 2 }, // ~5 min
     BTC:  { levels: 3 }  // ~10 min
 };
 
@@ -178,7 +175,7 @@ function applyNetworkTuning(preset, cryptoType) {
 
 /**
  * Merge difficulty config with custom overrides.
- * Precedence (low→high): preset → per-network tuning → env vars → explicit customOverrides.
+ * Precedence (lowest to highest): preset, per-network tuning, env vars, explicit customOverrides.
  */
 function getDifficultyConfig(cryptoType = 'WOW', customOverrides = {}) {
     const preset = applyNetworkTuning(getDifficultyPreset(cryptoType, customOverrides.preset), cryptoType);

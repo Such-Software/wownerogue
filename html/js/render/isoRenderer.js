@@ -1,4 +1,4 @@
-// IsoRenderer — canvas isometric projection using Kenney's Isometric Miniature Dungeon pack.
+// IsoRenderer: canvas isometric projection using Kenney's Isometric Miniature Dungeon pack.
 // It draws the same Scene as the top-down renderers, preserving the shared Room contract.
 (function (root) {
     'use strict';
@@ -75,7 +75,8 @@
     };
 
     // Map a dungeon FEATURE entity (entrance/exit/treasure/item) to a pack tile: stairs for the
-    // entrance/exit, a chest for treasure/items. Null if the pack has no fitting tile (→ glyph).
+    // entrance/exit, a chest for treasure/items. Null if the pack has no fitting tile, which falls
+    // back to a glyph.
     IsoRenderer.prototype._featureTileUrl = function (e) {
         var tiles = this.assets.tiles || {};
         var c = e.char;
@@ -84,8 +85,8 @@
         return null;
     };
 
-    // A stroked iso diamond outline — used to flag the floor cells the player can actually step to,
-    // so ambiguous wall gaps are never mistaken for openings.
+    // Stroked iso diamond outline, used to flag the floor cells the player can actually step to so
+    // ambiguous wall gaps are never mistaken for openings.
     IsoRenderer.prototype._diamondOutline = function (cx, cy, color) {
         var ctx = this.ctx, hw = this.tileW / 2, hh = this.tileH / 2;
         ctx.save();
@@ -109,8 +110,8 @@
         ctx.restore();
     };
 
-    // A flat iso diamond in the legend colour — the placeholder a tile draws while its pack image
-    // loads (or if an image is missing), so the view shows the dungeon shape instead of going black.
+    // Flat iso diamond in the legend colour: the placeholder a tile draws while its pack image loads
+    // (or if an image is missing), so the view shows the dungeon shape instead of going black.
     IsoRenderer.prototype._diamond = function (cx, cy, color) {
         var ctx = this.ctx, hw = this.tileW / 2, hh = this.tileH / 2;
         ctx.beginPath();
@@ -132,13 +133,13 @@
         ctx.restore();
     };
 
-    // Warm pool of light cast onto the scene by a torch / the player's lantern / a beacon. Drawn
-    // additively after the tiles so it lights the floor, the props AND the characters standing in
+    // Warm pool of light cast onto the scene by a torch, the player's lantern or a beacon. Drawn
+    // additively after the tiles so it lights the floor, the props and the characters standing in
     // it, which is what separates a lit room from a flat sprite collage.
     IsoRenderer.prototype._lightPool = function (cx, cy, radius, inner, outer) {
         var ctx = this.ctx;
-        // A non-finite emitter would throw out of createRadialGradient and abandon the frame
-        // half-drawn. Lighting is decoration — skip the bad pool, keep the dungeon.
+        // A non-finite emitter throws out of createRadialGradient and abandons the frame half-drawn.
+        // Lighting is decoration, so skip the bad pool and keep the dungeon.
         if (!isFinite(cx) || !isFinite(cy) || !isFinite(radius) || radius <= 0) return;
         var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
         g.addColorStop(0, inner);
@@ -177,7 +178,7 @@
         ctx.restore();
     };
 
-    // Crevice darkening on floor cells that touch a wall — a cheap ambient-occlusion cue. The
+    // Crevice darkening on floor cells that touch a wall: a cheap ambient-occlusion cue. The
     // gradient is clear in the middle of the cell and dark at its rim, so tiles tucked into a corner
     // sit in shadow instead of looking like stickers laid on top of the ground.
     IsoRenderer.prototype._wallAO = function (cx, cy, strength) {
@@ -195,8 +196,8 @@
         ctx.restore();
     };
 
-    // Warm radial vignette — an ambient tavern glow that darkens the edges and lifts the centre,
-    // the "juice" that makes the flat canvas feel lit rather than pasted.
+    // Warm radial vignette: an ambient tavern glow that darkens the edges and lifts the centre, so
+    // the flat canvas feels lit rather than pasted.
     IsoRenderer.prototype._vignette = function () {
         var ctx = this.ctx, w = this.canvas.width, h = this.canvas.height;
         var g = ctx.createRadialGradient(w / 2, h * 0.46, Math.min(w, h) * 0.18,
@@ -265,12 +266,10 @@
         return cv;
     };
 
-    // Darkened copy of a tile image, cached at quantized levels.
-    //
-    // Fog-of-war used to dim tiles with globalAlpha, which made remembered walls TRANSLUCENT — you
-    // could see the tiles behind them, so the dungeon read as a haze of overlapping ghosts instead
-    // of solid stone in the dark. Multiplying the sprite's own pixels toward black keeps every tile
-    // opaque and just unlit, which is what "you remember this room, it isn't lit" should look like.
+    // Darkened copy of a tile image, cached at quantized levels. Fog-of-war multiplies the sprite's
+    // own pixels toward black rather than dimming with globalAlpha: alpha makes remembered walls
+    // translucent, so the tiles behind them show through and the dungeon reads as a haze of
+    // overlapping ghosts. Shading keeps every tile opaque and merely unlit.
     IsoRenderer.prototype._shadedImage = function (img, level) {
         if (!img) return img;
         var step = Math.max(0, Math.min(5, Math.round(level * 5)));
@@ -284,7 +283,7 @@
         var ctx = cv.getContext('2d');
         ctx.drawImage(img, 0, 0);
         ctx.globalCompositeOperation = 'source-atop';
-        // A touch of blue in the shadow rather than flat black — unlit stone reads cold.
+        // A touch of blue in the shadow rather than flat black, so unlit stone reads cold.
         ctx.fillStyle = 'rgba(6,10,20,' + (1 - step / 5).toFixed(3) + ')';
         ctx.fillRect(0, 0, cv.width, cv.height);
         ctx.globalCompositeOperation = 'source-over';
@@ -307,7 +306,7 @@
         return tiles[kind] || tiles.fallback || tiles.floor;
     };
 
-    // Deterministic per-cell hash (no RNG — stable across frames/reloads).
+    // Deterministic per-cell hash: no RNG, so it is stable across frames and reloads.
     function cellHash(x, y) {
         var h = (x * 73856093) ^ (y * 19349663);
         h = (h ^ (h >>> 13)) >>> 0;
@@ -324,8 +323,8 @@
 
     // Iso walls have a facing. A segment running along grid-x uses the base (_S) rotation; one
     // running along grid-y uses the perpendicular (`<kind>Y`, _W) rotation; a true corner (both
-    // axes present) uses the corner tile. This is what makes enclosing walls read as continuous
-    // faces instead of thin disconnected slabs on the y-running edges.
+    // axes present) uses the corner tile. Without the per-axis rotation, enclosing walls read as
+    // thin disconnected slabs on the y-running edges instead of continuous faces.
     IsoRenderer.prototype._wallVariant = function (scene, x, y, kind) {
         var tiles = this.assets.tiles || {};
         var xRun = this._isWall(scene, x - 1, y) || this._isWall(scene, x + 1, y);
@@ -361,9 +360,8 @@
         var key = e.id || 'anon';
         var st = this.last[key] || (this.last[key] = { x: e.x, y: e.y, t: 0, facing: 'down' });
         if (st.x !== e.x || st.y !== e.y) {
-            // Infer facing from the actual movement delta — the SP game doesn't send player.facing
-            // (only the tavern does), so without this the character always faced 'down' (SW) no matter
-            // which way it moved. Explicit e.facing (tavern) still wins below.
+            // Facing is inferred from the movement delta because the SP game does not send
+            // player.facing; only the tavern does. Explicit e.facing (tavern) wins below.
             var ddx = e.x - st.x, ddy = e.y - st.y;
             if (Math.abs(ddx) >= Math.abs(ddy)) st.facing = ddx > 0 ? 'right' : 'left';
             else st.facing = ddy > 0 ? 'down' : 'up';
@@ -386,10 +384,10 @@
         var originY = margin + this.imageH;
         var wantW = Math.ceil((scene.cols + scene.rows) * this.tileW / 2 + margin * 2 + this.tileW * 2);
         var wantH = Math.ceil((scene.cols + scene.rows) * this.tileH / 2 + this.imageH + margin * 2);
-        // Only ASSIGN width/height when they actually change. Assigning either one reallocates and
+        // Assign width/height only when they actually change. Assigning either one reallocates and
         // clears the whole backing buffer, and this renderer re-runs every animation frame (the
-        // walkable pulse and the flames keep `_animating` set) — so the old unconditional assignment
-        // was throwing away and re-allocating a multi-megapixel canvas 60 times a second.
+        // walkable pulse and the flames keep `_animating` set), so an unconditional assignment
+        // re-allocates a multi-megapixel canvas 60 times a second.
         if (this.canvas.width !== wantW || this.canvas.height !== wantH) {
             this.canvas.width = wantW;
             this.canvas.height = wantH;
@@ -415,8 +413,8 @@
                 if (PROP[kind]) {
                     items.push({ type: 'prop', kind: kind, x: x, y: y, sx: p.x, sy: p.y, depth: x + y + 0.25 });
                 }
-                // Fire fixtures (torch/hearth) & hazard tiles (lava/poison/spikes): a floor tile is
-                // the base (drawn above via fallback); RK.fx paints the animated flame / pulse.
+                // Fire fixtures (torch/hearth) and hazard tiles (lava/poison/spikes): a floor tile is
+                // the base, drawn above via fallback; RK.fx paints the animated flame or pulse.
                 if (def && (def.fx === 'fire' || def.hazard)) {
                     items.push({ type: 'fx', def: def, x: x, y: y, sx: p.x, sy: p.y, depth: x + y + 0.3 });
                 }
@@ -426,21 +424,21 @@
             var e = scene.entities[i];
             p = this._project(e.x, e.y, originX, originY);
             items.push({ type: 'entity', e: e, sx: p.x, sy: p.y, depth: e.x + e.y + 0.55 });
-            // Sticky camera target (keep last if the player is momentarily absent). Multiplayer
-            // scenes explicitly mark one racer as cameraTarget; never let a later rival steal it.
+            // Sticky camera target: the last value is kept if the player is momentarily absent.
+            // Multiplayer scenes mark one racer as cameraTarget so a later rival cannot steal it.
             if (e.you || e.cameraTarget) { this.focusPoint = { x: p.x, y: p.y + this.tileH }; this._plx = e.x; this._ply = e.y; }
         }
         items.sort(function (a, b) { return a.depth === b.depth ? (a.y || 0) - (b.y || 0) : a.depth - b.depth; });
 
         var now = Date.now();
         // Light emitters collected while drawing, applied additively in one pass afterwards so the
-        // pools land on the floor, the props AND the characters standing in them.
+        // pools land on the floor, the props and the characters standing in them.
         var lights = [];
         for (i = 0; i < items.length; i++) {
             var it = items[i];
             if (it.type === 'tile') {
-                // FOG OF WAR: never render unexplored cells. Without this they fell back to the floor
-                // tile (`_tileUrl('dark')` → tiles.floor) and revealed the ENTIRE map from move 0.
+                // Fog of war: unexplored cells are never rendered. They would otherwise fall back to
+                // the floor tile (`_tileUrl('dark')` resolves to tiles.floor) and reveal the whole map.
                 if (it.kind === 'dark') continue;
                 var tileKind = PROP[it.kind] ? 'floor' : it.kind;
                 if (WALLISH[tileKind]) tileKind = this._wallVariant(scene, it.x, it.y, tileKind);
@@ -453,11 +451,11 @@
                     it.x >= this._plx && it.y >= this._ply &&
                     (it.x + it.y) > (this._plx + this._ply) &&
                     ((it.x - this._plx) + (it.y - this._ply)) <= 3;
-                // Fog fade: dim explored-but-distant tiles toward the (near-black) background so the
-                // remembered area melts into the dark with distance — parity with the 2D modes.
+                // Fog fade: dim explored-but-distant tiles toward the near-black background so the
+                // remembered area melts into the dark with distance, matching the 2D modes.
                 var lb = (scene.lightGrid && scene.lightGrid[it.y] && scene.lightGrid[it.y][it.x] != null) ? scene.lightGrid[it.y][it.x] : 1;
-                // Cutaway walls stay ALPHA-faded (you need to see the floor through them). Everything
-                // else is shaded opaque, so distant stone is dark stone rather than a ghost.
+                // Cutaway walls stay alpha-faded so the floor shows through them. Everything else is
+                // shaded opaque, so distant stone is dark stone rather than a ghost.
                 ctx.globalAlpha = cut ? 0.28 : 1;
                 if (rec && rec.ready) {
                     var img = cut ? rec.img : this._shadedImage(rec.img, Math.max(0.16, lb));
@@ -466,11 +464,11 @@
                     ctx.globalAlpha = cut ? 0.28 : Math.max(0.16, lb);
                     this._diamond(it.sx, it.sy + this.tileH * 0.5, (legend[it.kind] && legend[it.kind].color) || '#3a4048');
                 }
-                // Walkable-floor pip: mark every visible floor cell with a soft dot so the WALKABLE
-                // ground is explicit everywhere. A dark gap with no pip is unambiguously NOT floor —
-                // that's what stops iso wall-gaps/voids from reading as holes you can walk into.
+                // Walkable-floor pip: every visible floor cell gets a soft dot so walkable ground is
+                // explicit everywhere. A dark gap with no pip is unambiguously not floor, which stops
+                // iso wall gaps and voids from reading as holes you can walk into.
                 if (it.kind === 'floor' || it.kind === 'floor2') {
-                    // Crevice shadow where this floor cell abuts stone. Cheap AO — the more walls
+                    // Crevice shadow where this floor cell abuts stone. Cheap AO: the more walls
                     // around it, the deeper the cell sits in shadow.
                     var adj = (this._isWall(scene, it.x - 1, it.y) ? 1 : 0) + (this._isWall(scene, it.x + 1, it.y) ? 1 : 0) +
                               (this._isWall(scene, it.x, it.y - 1) ? 1 : 0) + (this._isWall(scene, it.x, it.y + 1) ? 1 : 0);
@@ -513,10 +511,9 @@
                     });
                 }
             } else if (it.type === 'entity') {
-                // Dungeon FEATURES/ITEMS (entrance/exit/treasure/items) are tiles/glyphs, NOT avatars.
-                // The iso renderer is shared with the tavern (where every entity is an avatar); without
-                // this branch the entrance was drawn as a male character — the "copy of the player at
-                // the start" the map origin showed.
+                // Dungeon features and items (entrance/exit/treasure/items) draw as tiles or glyphs,
+                // not avatars. The iso renderer is shared with the tavern, where every entity is an
+                // avatar, so without this branch the entrance draws as a character sprite.
                 if (it.e.kind === 'feature' || it.e.kind === 'item') {
                     var furl = this._featureTileUrl(it.e);
                     var frec = furl && this._load(furl);
@@ -524,14 +521,14 @@
                     else this._glyph(it.sx, it.sy + this.tileH * 0.4, it.e.char || '?', it.e.color || '#fff');
                     // Objectives beacon. Stairs and treasure are the only two things in the dungeon
                     // worth crossing a room for, so they get a slow breathing glow in their own
-                    // colour — findable from across a dark hall without leaking the layout.
+                    // colour: findable from across a dark hall without leaking the layout.
                     var beaconRGB = it.e.char === '<' ? '63,185,80'
                         : it.e.char === '>' ? '210,153,34'
                         : it.e.char && it.e.char.charAt(0) === '$' ? '251,191,36' : null;
                     if (beaconRGB) {
                         this._animating = true;
-                        // NB: entity items carry the cell on `it.e`, not `it.x` (that is only set on
-                        // tile items) — reading it.x here produced a NaN radius and threw.
+                        // Entity items carry the cell on `it.e`; `it.x` is set only on tile items, so
+                        // reading it here would give a NaN radius.
                         var breathe = 0.55 + Math.sin(now / 620 + it.e.x) * 0.45;
                         lights.push({
                             x: it.sx, y: it.sy + this.tileH, r: this.tileW * (1.1 + breathe * 0.35),
@@ -546,8 +543,8 @@
                 rec = this._load(frame && frame.url);
                 if (rec && rec.ready) {
                     var ch = frame.character || this.assets.character || {};
-                    // Monsters use the same character art — tint them RED so they don't read as a
-                    // second player following you around.
+                    // Monsters use the same character art, so they are tinted red to avoid reading as
+                    // a second player following you around.
                     var tint = it.e.kind === 'monster' ? '#f85149' : this._skinTintFor(frame.visual);
                     this._drawSpriteImage(this._tintedImage(rec.img, tint), it.sx, it.sy + this.tileH * 0.95, ch.imageH || 92);
                 } else {
@@ -573,9 +570,8 @@
         }
 
         // Walkability affordance: the iso wall tiles leave ambiguous gaps that read as doorways, so
-        // flag the floor cells the player can actually step to (orthogonally adjacent, walkable +
-        // explored) with a soft pulsing outline — a reliable "you can go here" cue independent of how
-        // the walls render.
+        // the floor cells the player can actually step to (orthogonally adjacent, walkable and
+        // explored) get a soft pulsing outline. That cue holds regardless of how the walls render.
         if (this._plx != null) {
             var pulse = 0.30 + Math.sin(now / 320) * 0.18;
             var nbrs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
@@ -605,9 +601,9 @@
             var L = lights[lg];
             this._lightPool(L.x, L.y, L.r, L.inner, L.outer);
         }
-        // Colour-temperature separation: everything the player can currently SEE is warm torchlight;
-        // the explored-but-remembered parts get a cold blue wash. Alpha alone made memory read as
-        // "far away"; the temperature shift makes it read as "remembered", which is what it is.
+        // Colour-temperature separation: everything the player can currently see is warm torchlight,
+        // while explored-but-remembered parts get a cold blue wash. Alpha alone reads as "far away";
+        // the temperature shift reads as "remembered".
         this._memoryWash(scene, originX, originY);
 
         this._vignette();
@@ -621,16 +617,16 @@
         var ctx = this.ctx, hw = this.tileW / 2, hh = this.tileH / 2;
         ctx.save();
         ctx.globalCompositeOperation = 'source-atop';
-        // A DARK blue. A mid-tone blue at 20% actually lifted the already-darkened memory tiles
-        // brighter than the torchlit centre, inverting the whole depth hierarchy — remembered rooms
-        // glowed and the room you were standing in receded.
+        // The wash must be a dark blue. A mid-tone blue lifts the already-darkened memory tiles
+        // brighter than the torchlit centre, inverting the depth hierarchy so remembered rooms glow
+        // and the room the player stands in recedes.
         ctx.fillStyle = 'rgba(16,28,52,1)';
         for (var y = 0; y < scene.rows; y++) {
             for (var x = 0; x < scene.cols; x++) {
                 var kind = scene.grid[y] && scene.grid[y][x];
                 if (!kind || kind === 'dark') continue;
                 var lb = (light[y] && light[y][x] != null) ? light[y][x] : 1;
-                if (lb >= 0.3) continue; // currently lit — leave it warm
+                if (lb >= 0.3) continue; // currently lit, so leave it warm
                 var p = this._project(x, y, originX, originY), cy = p.y + hh;
                 ctx.globalAlpha = 0.45 * (1 - lb / 0.3);
                 ctx.beginPath();

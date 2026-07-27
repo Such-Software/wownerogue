@@ -3,7 +3,7 @@
  *
  * Socket.IO invokes listeners WITHOUT a try/catch, and this process treats `uncaughtException` and
  * `unhandledRejection` as fatal (src/index.js calls gracefulShutdown and exits). That combination
- * made any unguarded throw in any listener an unauthenticated remote kill switch — the original
+ * made any unguarded throw in any listener an unauthenticated remote kill switch: the original
  * instance was `socket.emit('debug_ping')` with no argument, which dereferenced `data.time` on
  * `undefined` and took the whole server down. systemd restarts it, the attacker repeats.
  *
@@ -26,7 +26,7 @@ function fakeSocket() {
 }
 
 // The wrapper is a closure created per connection inside handleConnection, which needs the full
-// dependency graph. Rebuild the identical shape here and assert its behaviour directly — the source
+// dependency graph. Rebuild the identical shape here and assert its behaviour directly: the source
 // of truth is that handleConnection registers every listener through it (asserted below).
 function makeSafeDispatch(handlers, socket) {
     return (event, handler) => {

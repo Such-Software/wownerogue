@@ -18,7 +18,7 @@ describe('per-network difficulty tuning (multi-level)', () => {
   test('tuning sets LEVELS ∝ block time, leaving size + monster at the preset', () => {
     const w = applyNetworkTuning(casino(), 'WOW');
     expect(w.levels).toBe(NETWORK_TUNING.WOW.levels);
-    // Size and monster are untouched — depth is the pacing lever, not size/monster-speed.
+    // Size and monster are untouched: depth is the pacing lever, not size/monster-speed.
     expect(w.dungeon.width).toBe(DIFFICULTY_PRESETS.casino.dungeon.width);
     expect(w.monster.movesPerPlayerMove).toBe(DIFFICULTY_PRESETS.casino.monster.movesPerPlayerMove);
   });

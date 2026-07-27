@@ -1,7 +1,7 @@
 const ChatProvider = require('./ChatProvider');
 
 /**
- * SocketChatProvider — the default ChatProvider, backed by Socket.IO for delivery and (for
+ * SocketChatProvider: the default ChatProvider, backed by Socket.IO for delivery and (for
  * global chat) the Postgres-backed ChatHistoryManager for persistence.
  *
  * Behaviour matches the pre-seam chat exactly:
@@ -29,7 +29,7 @@ class SocketChatProvider extends ChatProvider {
     async publish(msg = {}) {
         const { scope = 'global', username, text, ts = Date.now(), socketId = null, userId = null } = msg;
 
-        // Defense in depth (S1): never broadcast the raw full socket.id to other clients — it is
+        // Defense in depth (S1): never broadcast the raw full socket.id to other clients; it is
         // a hijackable handle. Derive a short, non-sensitive public id for display/attribution.
         const publicId = userId != null ? String(userId) : (socketId ? String(socketId).substring(0, 6) : null);
 

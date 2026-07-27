@@ -725,7 +725,7 @@
             }
 
             // Sprite tinting (cloth / skin / hair / gear colour) is disabled for the top-down
-            // Tiles view — characters render in native Kenney art. Only equipment PIECE selection
+            // Tiles view: characters render in native Kenney art. Only equipment PIECE selection
             // remains here; the '@' colour for ASCII mode is still pickable in the ascii/colour
             // branch above.
             sectionTitle('Equipment', editSection);
@@ -791,7 +791,7 @@
         }
 
         function buildAvatarGrid() {
-            // Don't auto-switch the avatar when the render mode changes — only an explicit
+            // Don't auto-switch the avatar when the render mode changes; only an explicit
             // click on a different avatar card should change the saved identity. If the current
             // avatar isn't native to this projection, it stays selected (the resolver handles
             // fallback rendering) so browsing render modes never silently mutates the identity.

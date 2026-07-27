@@ -4,10 +4,10 @@
 // WHY THIS EXISTS: dungeon difficulty presets each *declare* a targetHouseWinRate, but nothing ever
 // MEASURED it, and single-player runs are bounded by a RANDOM block deadline (D ~ Exp(mean = the
 // network's block time)). So the real house edge is a convolution of the completion-time
-// distribution with the network's block cadence — un-guessable by hand, and different on every
+// distribution with the network's block cadence: un-guessable by hand, and different on every
 // chain even though dungeon size is currently identical across chains.
 //
-// WHAT IT DOES: drives the REAL engine (src/game/game.js — same dungeon generator, monster AI and
+// WHAT IT DOES: drives the REAL engine (src/game/game.js: same dungeon generator, monster AI and
 // movement as production) with headless bots to many terminal outcomes, then reports, per preset:
 //   • escape / treasure / caught / stuck rates
 //   • completion-move and completion-time percentiles
@@ -44,7 +44,7 @@ function parseArgs(argv) {
 }
 
 // Drive ONE game to a terminal outcome with the real engine. Returns {outcome, moves, treasure}.
-// outcome: 'escaped' (reached exit) | 'caught' (monster) | 'stuck' (bot gave up / hit move cap —
+// outcome: 'escaped' (reached exit) | 'caught' (monster) | 'stuck' (bot gave up / hit move cap,
 // treated as a timeout, i.e. a house win, since the player never got out).
 function runOneGame(botFactory, opts) {
     const game = new Game('sim', { id: 0, username: 'sim' }, opts.gameOptions || {});
@@ -124,7 +124,7 @@ function fmtNum(x) { return isNaN(x) ? '  --' : String(Math.round(x)).padStart(4
 
 function report(results, args) {
     const line = '─'.repeat(96);
-    console.log('\nWownerogue balance sim — bot=%s  runs/preset=%d  cadence=%dms/move', args.bot, args.runs, args.cadence);
+    console.log('\nWownerogue balance sim: bot=%s runs/preset=%d  cadence=%dms/move', args.bot, args.runs, args.cadence);
     console.log('Block times (min): ' + args.nets.map(n => `${n} ${(meanBlockTimeMsFor(n) / 60000)}`).join('  '));
     console.log(line);
     console.log(['preset'.padEnd(8), 'dims'.padEnd(8), 'esc%', 'trs%', 'cgt%', 'stk%',
@@ -153,7 +153,7 @@ function report(results, args) {
     console.log(line);
     console.log('esc%=escaped  trs%=escaped WITH treasure  cgt%=monster caught  stk%=never got out');
     console.log('escMv50=median moves to escape  escS50/90=escape seconds p50/p90 (moves×cadence)');
-    console.log('Note: NEITHER bot actively evades the monster, so both OVER-count catches — a');
+    console.log('Note: NEITHER bot actively evades the monster, so both OVER-count catches. A');
     console.log('skilled evading human wins more, so real house-win is likely BELOW these numbers.');
     console.log('explorer-* wanders (dodges the monster by luck, slower); omniscient-* beelines');
     console.log('(faster but walks into the monster). Read them as an upper band, not a tight bracket.\n');

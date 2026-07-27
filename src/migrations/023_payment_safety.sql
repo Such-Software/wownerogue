@@ -1,4 +1,4 @@
--- Migration 023: Payment safety — one game per confirmed single_game payment
+-- Migration 023: Payment safety: one game per confirmed single_game payment
 --
 -- M3: claiming a confirmed single_game payment must be atomic. The application locks the
 -- payment row FOR UPDATE while linking the game, but this partial unique index is the

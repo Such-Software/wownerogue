@@ -1,5 +1,5 @@
 // The single-player render-kit migration hinges on sceneFromGameState consuming the CLIENT state
-// shape — sparse {y:{x:v}} tile maps (vs the server's arrays). Guards that adapter + the RK alias.
+// shape: sparse {y:{x:v}} tile maps (vs the server's arrays). Guards that adapter + the RK alias.
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

@@ -1,7 +1,7 @@
 const Room = require('../src/multiplayer/Room');
 const Occupant = require('../src/multiplayer/Occupant');
 
-describe('Room — shared real-time engine (Tavern instance)', () => {
+describe('Room: shared real-time engine (Tavern instance)', () => {
     test('builds a rectangular walkable map with at least one spawn', () => {
         const room = new Room({ id: 'test-room', type: 'tavern' });
         expect(room.rows).toBeGreaterThan(0);

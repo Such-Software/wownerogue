@@ -1,5 +1,5 @@
 /**
- * Occupant — a player's avatar inside a real-time Room (Tavern or Multiplayer match).
+ * Occupant: a player's avatar inside a real-time Room (Tavern or Multiplayer match).
  *
  * The multiplayer analogue of game/player.js, but for a shared world: many Occupants
  * live in one Room and everyone sees everyone move. Kept small and dependency-free so the

@@ -1,10 +1,10 @@
 const { buildProviderRegistry, parseRouting } = require('../src/payments/providers');
 
 const fakeWallet = { createPaymentRequest: async () => ({}), checkPaymentStatus: async () => ({}), processBatchPayout: async () => ({}) };
-const CHECKOUT = { // full LAN infra: real BTCPay (BTC/LTC) + xmrcheckout + wowcheckout
-    BTCPAY_URL: 'http://10.42.1.33', BTCPAY_STORE_ID: 'b', BTCPAY_API_KEY: 'k',
-    XMRCHECKOUT_URL: 'http://10.42.1.33:8080', XMRCHECKOUT_STORE_ID: 'x', XMRCHECKOUT_API_KEY: 'k',
-    WOWCHECKOUT_URL: 'http://10.42.1.33:8180', WOWCHECKOUT_STORE_ID: 'w', WOWCHECKOUT_API_KEY: 'k'
+const CHECKOUT = { // full provider set (BTC/LTC) + xmrcheckout + wowcheckout
+    BTCPAY_URL: 'http://192.0.2.33', BTCPAY_STORE_ID: 'b', BTCPAY_API_KEY: 'k',
+    XMRCHECKOUT_URL: 'http://192.0.2.33:8080', XMRCHECKOUT_STORE_ID: 'x', XMRCHECKOUT_API_KEY: 'k',
+    WOWCHECKOUT_URL: 'http://192.0.2.33:8180', WOWCHECKOUT_STORE_ID: 'w', WOWCHECKOUT_API_KEY: 'k'
 };
 
 describe('parseRouting', () => {
@@ -17,7 +17,7 @@ describe('parseRouting', () => {
 });
 
 describe('buildProviderRegistry', () => {
-    test('native-only (no gateway env): every chain routes to native — behavior-preserving', () => {
+    test('native-only (no gateway env): every chain routes to native, behavior-preserving', () => {
         const reg = buildProviderRegistry({ env: {}, walletService: fakeWallet });
         expect(reg.getProvider('WOW').id).toBe('native-monero');
         expect(reg.getProvider('XMR').id).toBe('native-monero');
@@ -45,7 +45,7 @@ describe('buildProviderRegistry', () => {
 
     test('a checkout gateway wins over the native wallet for its chain', () => {
         const reg = buildProviderRegistry({
-            env: { XMRCHECKOUT_URL: 'http://10.42.1.33:8080', XMRCHECKOUT_STORE_ID: 'x', XMRCHECKOUT_API_KEY: 'k' },
+            env: { XMRCHECKOUT_URL: 'http://192.0.2.33:8080', XMRCHECKOUT_STORE_ID: 'x', XMRCHECKOUT_API_KEY: 'k' },
             walletService: fakeWallet
         });
         expect(reg.getProvider('XMR').id).toBe('xmrcheckout');

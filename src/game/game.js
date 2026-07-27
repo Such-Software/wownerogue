@@ -46,7 +46,7 @@ class Game {
     this.moveCount = 0;
     this.startedAt = Date.now();
     
-    // Provably fair: Generate game proof before anything else
+    // The fairness proof is built first; the seed it commits to drives all later generation.
     this.gameProof = createGameProof(
       this.id,
       fairnessProof?.clientSeed ?? optionClientSeed ?? '',
@@ -58,14 +58,11 @@ class Game {
     this.seededRNG = createSeededRNG(this.gameProof.seed);
     this.seedInt = seedToInt(this.gameProof.seed);
 
-    // Get default configuration from DungeonGenerator
     const dungeonConfig = DungeonGenerator.getConfig();
-    
-    // Determine dimensions - use provided options or defaults
+
     const width = dungeonOptions.width || dungeonConfig.DEFAULT_WIDTH;
     const height = dungeonOptions.height || dungeonConfig.DEFAULT_HEIGHT;
     
-    // Merge game configuration
     this.gameConfig = {
       width: width,
       height: height,
@@ -165,18 +162,6 @@ class Game {
     });
   }
 
-  /**
-   * Static factory method to create a legacy-sized game
-   */
-  static createLegacyGame(socketId, user, options = {}) {
-    const dungeonConfig = DungeonGenerator.getConfig();
-    const legacyOptions = {
-      width: dungeonConfig.LEGACY_WIDTH,
-      height: dungeonConfig.LEGACY_HEIGHT,
-      ...options
-    };
-    return new Game(socketId, user, legacyOptions);
-  }
 
   initializeGame() {
     if (CONSOLE_LOGGING) {
@@ -187,16 +172,14 @@ class Game {
       throw new Error(`Invalid game dimensions: width=${this.gameConfig.width}, height=${this.gameConfig.height}`);
     }
 
-    // Set game dimensions from config
     this.width = this.gameConfig.width;
     this.height = this.gameConfig.height;
-    
-    // Get difficulty settings
+
     const difficultyConfig = getDifficultyConfig(this.gameConfig.cryptoType || process.env.CRYPTO_TYPE || 'WOW');
     this.difficultyConfig = difficultyConfig;
 
-    // Multi-level descent: a run spans `maxDepth` levels (a pacing knob ∝ block time, from the
-    // per-network tuning). Reaching a non-final exit descends to a fresh level; only the final
+    // Multi-level descent: a run spans `maxDepth` levels, a pacing knob scaled to block time by
+    // the per-network tuning. Reaching a non-final exit descends to a fresh level; only the final
     // level's exit escapes. Defaults to 1 (single level) when no tuning is present.
     this.depth = 1;
     this.maxDepth = Math.max(1, parseInt(difficultyConfig.levels, 10) || 1);
@@ -207,25 +190,23 @@ class Game {
       console.log(`[Game.initializeGame] Levels this run: ${this.maxDepth}`);
     }
 
-    // Initialize game state
     this.gameState = 'waiting';
     this.startBlock = null;
     this.player = new Player();
-    this.monsterMoveAccumulator = 0; // For fractional monster moves
+    this.monsterMoveAccumulator = 0; // Carries fractional monster moves between turns.
     this.fee = 0;
 
-    // Generate the first level (also creates the monster + FOV for it).
+    // Also creates the monster and FOV for the level.
     this._generateLevel(1);
 
-    // Set game state to active
     this.gameState = 'active';
   }
 
   /**
    * Generate the dungeon for a given level and place the player + a fresh monster on it. The layout
-   * is deterministic from the committed seed via a per-level seed (level 1 = master seed, so
-   * single-level games are unchanged; deeper levels salt it), keeping the whole descent verifiable.
-   * Treasure lives only in the vault (the final level) — intermediate levels are a race to the stairs.
+   * is deterministic from the committed seed via a per-level seed (level 1 uses the master seed;
+   * deeper levels salt it), keeping the whole descent verifiable. Treasure lives only in the vault
+   * (the final level); intermediate levels are a race to the stairs.
    * @param {number} depth - 1-based level index
    */
   _generateLevel(depth) {
@@ -238,15 +219,14 @@ class Game {
       seedInt: isFirst ? this.seedInt : seedToInt(seed)
     });
 
-    // Only the final level holds the treasure — descend all the way for the reward.
+    // Only the final level holds the treasure, so the reward requires a full descent.
     if (depth < this.maxDepth) {
       dungeon.treasure = null;
     }
     this.dungeon = dungeon;
 
-    // Once the constructor has committed its all-level manifest, assert every actually played
-    // descent still matches it. This turns accidental generator drift within a live process into
-    // a hard failure rather than silently serving an unverifiable paid layout.
+    // Every played descent must match the all-level manifest the constructor committed. Generator
+    // drift within a live process fails hard rather than serving an unverifiable paid layout.
     const expected = this.gameProof.layoutFingerprints?.find(item => item.depth === depth);
     if (expected) {
       const actual = DungeonGenerator.layoutFingerprint(dungeon, expected.fingerprintVersion);
@@ -255,7 +235,6 @@ class Game {
       }
     }
 
-    // Place player at the entrance.
     if (dungeon.entrance) {
       this.player.moveTo(dungeon.entrance[0], dungeon.entrance[1]);
     }
@@ -268,12 +247,11 @@ class Game {
       const center = dungeon.rooms[idx].getCenter();
       this.monster.moveTo(center[0], center[1]);
     }
-    // ROT.Digger can legitimately produce <=2 rooms on the 30x15 easy profile. The old branch
-    // then left the monster at its constructor default (0,0), normally a wall, producing an
-    // effectively monsterless run. Also defend against a malformed room center. Choose the
-    // farthest passable non-objective tile deterministically; this consumes no RNG and dungeon
-    // generation/layout fingerprints remain byte-identical (monster execution is explicitly
-    // outside the published layout proof).
+    // ROT.Digger can legitimately produce <=2 rooms on the 30x15 easy profile, and a room center
+    // can be malformed; either case leaves the monster at its constructor default (0,0), normally
+    // a wall, giving an effectively monsterless run. The fallback picks the farthest passable
+    // non-objective tile deterministically. It consumes no RNG, so dungeon generation and layout
+    // fingerprints are unaffected; monster placement sits outside the published layout proof.
     const primaryFloor = this.gameConfig.primaryFloor || "'1";
     const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
     const monsterTilePassable = (x, y) => {
@@ -304,7 +282,7 @@ class Game {
       this.monster.moveTo(fallback[0], fallback[1]);
     }
 
-    // Reset lighting + FOV for the new level (a fresh descent is unexplored).
+    // A fresh descent is unexplored, so lighting and FOV reset with the level.
     this.lightingAndFov = new LightingAndFov(dungeon.map, dungeon.torches);
     this._fovInstance = LightingAndFov.initializeFOV(dungeon.map, this.gameConfig);
     const fovRadius = this.gameConfig.fovRadius || 10;
@@ -329,7 +307,7 @@ class Game {
       console.log(`Move: (${this.player.x},${this.player.y}) -> (${newX},${newY})`);
     }
     
-    // Check if the move is valid (not into a wall and within map bounds)
+    // A move is valid only onto a floor tile inside the map bounds.
     const primaryFloor = this.gameConfig.primaryFloor || "'1";
     const secondaryFloor = this.gameConfig.secondaryFloor || "'2";
     
@@ -344,10 +322,9 @@ class Game {
         console.log(`Player moved to ${newX},${newY} in game for socket ${this.socketId}`);
       }
       
-      // Update FOV after moving
       this.updateFOV();
-      
-      // Check if player walked into monster (death by collision)
+
+      // Walking into the monster is a collision death.
       if (this.monster && this.monster.x === newX && this.monster.y === newY) {
         this.gameState = 'lost';
         if (CONSOLE_LOGGING) {
@@ -363,10 +340,9 @@ class Game {
         };
       }
       
-      // Check for game events like finding treasure or exit
       if (this.dungeon.exit && this.player.isAt(this.dungeon.exit[0], this.dungeon.exit[1])) {
-        // Not at the bottom yet → take the stairs down to a fresh level (NOT a win). The new level
-        // is generated here, so the returned state (and the next getState) already reflects it.
+        // Above the bottom level the exit is stairs down, not a win. The new level is generated
+        // here, so the returned state and the next getState already reflect it.
         if (this.depth < this.maxDepth) {
           this._descend();
           return {
@@ -404,14 +380,12 @@ class Game {
       return { status: 'idle' };
     }
 
-    // Get monster movement rate from difficulty config
     const movesPerPlayerMove = this.difficultyConfig?.monster?.movesPerPlayerMove ?? 1.0;
     const chaseAggressiveness = this.difficultyConfig?.monster?.chaseAggressiveness ?? 0.8;
     
-    // Accumulate fractional moves
+    // Fractional rates accumulate until they buy at least one whole step.
     this.monsterMoveAccumulator = (this.monsterMoveAccumulator || 0) + movesPerPlayerMove;
-    
-    // Only move if accumulator >= 1
+
     while (this.monsterMoveAccumulator >= 1) {
       this.monsterMoveAccumulator -= 1;
 
@@ -420,15 +394,14 @@ class Game {
       if (this.seededRNG() < chaseAggressiveness) {
         this.monster.moveTowardPlayer(this.player, this.dungeon, this.seededRNG);
       } else {
-        // Random move - still try to move, just not toward player
+        // A null target still moves the monster, just not toward the player.
         this.monster.moveTowardPlayer(null, this.dungeon, this.seededRNG);
       }
 
-      // Collision check after EACH sub-step (Phase 3.3). With movesPerPlayerMove > 1
-      // (e.g. the casino preset's 1.5x speed) the monster takes multiple steps per turn;
-      // checking only after the loop let it step onto the player's tile and back off
-      // between checks, "phasing through" the player and missing the catch (a player-
-      // favorable bug). Checking each sub-step closes that gap.
+      // Collision is checked after each sub-step. With movesPerPlayerMove > 1 (the casino preset
+      // runs 1.5x) the monster takes several steps per turn, and a check only after the loop
+      // would let it step onto the player's tile and off again between checks, phasing through
+      // the player without catching them.
       if (this.monster.hasCaughtPlayer(this.player)) {
         this.gameState = 'lost';
         return {
@@ -470,12 +443,11 @@ class Game {
   /**
    * Sticky record of which dungeon features the player has actually laid eyes on.
    *
-   * Fog of war used to be enforced ONLY in the browser: the server put the absolute entrance, exit
-   * and treasure coordinates — plus the monster's exact position — into every `game_start` and
-   * `game_update`, and the client renderer simply declined to draw them. Anyone reading the socket
-   * frame in devtools could walk straight to the treasure and the exit from move 0, which in a
-   * paid mode is a direct attack on the payout. Discovery is sticky (matching the client's
-   * "explored memory") so a feature you have found stays on your map after you walk away.
+   * Fog of war is enforced server-side: undiscovered entrance, exit and treasure coordinates never
+   * enter a `game_start` or `game_update` frame. Client-side concealment alone is not enough,
+   * because reading the socket frame reveals the treasure and exit from move 0, which in a paid
+   * mode is a direct attack on the payout. Discovery is sticky, matching the client's explored
+   * memory, so a feature stays on the map once found.
    */
   _updateDiscovered() {
     if (!this._discovered) this._discovered = { entrance: false, exit: false, treasure: false };
@@ -491,8 +463,8 @@ class Game {
     const state = {
       gameState: this.gameState,
       player: this.player.getState(),
-      // The monster is concealed the same way the client conceals it — only while in view. Sending
-      // it always let a player track the hunter through walls.
+      // The monster ships only while in view, matching the client's concealment. Sending it
+      // unconditionally would let a player track the hunter through walls.
       monster: (this.monster && this._isVisible(this.monster)) ? this.monster.getState() : null,
       visibleTiles: { ...this.visibleTiles },
       lighting: this.calculateLighting(),

@@ -1,10 +1,10 @@
 /**
- * Ruleset — gameplay as a data object (Pillar 4).
+ * Ruleset: gameplay as a data object (Pillar 4).
  *
  * A Ruleset captures everything that makes one game mode different from another: the world it
  * generates, the entities in it, how many players, how someone wins, the clock, and the economy.
  * The match engine READS a ruleset instead of hardcoding rules, so new modes (PvP Last-Alive,
- * Score Attack, Co-op) are data — not new subsystems — and operators/players can later author their
+ * Score Attack, Co-op) are data, not new subsystems, and operators/players can later author their
  * own lobbies by supplying a ruleset object.
  *
  * defineRuleset normalizes a partial spec to a complete, frozen ruleset with safe defaults. The
@@ -38,7 +38,7 @@ function defineRuleset(spec = {}) {
     const rs = {
         id: String(s.id || 'custom'),
         label: String(s.label || s.id || 'Custom'),
-        mode: s.mode || 'race', // 'solo' | 'race' | 'pvp' | 'coop' — a coarse family label
+        mode: s.mode || 'race', // 'solo' | 'race' | 'pvp' | 'coop': a coarse family label
         world: Object.freeze({
             difficultyPreset: world.difficultyPreset || 'normal',
             maps: clampInt(world.maps, 1, 10, 1) // reserved for multi-level; engine uses 1 today

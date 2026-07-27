@@ -1,5 +1,5 @@
 /**
- * TavernMatchBridge — connects active match rooms to tavern spectators.
+ * TavernMatchBridge: connects active match rooms to tavern spectators.
  *
  * Subscribes to MatchManager match events and forwards a lightweight, public-only
  * snapshot of each active race to the tavern Socket.IO room. Tavern clients can then

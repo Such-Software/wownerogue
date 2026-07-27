@@ -1,4 +1,4 @@
-// AsciiRenderer — draws a Scene as a monospace glyph grid on a 2D canvas.
+// AsciiRenderer: draws a Scene as a monospace glyph grid on a 2D canvas.
 // The always-available fallback tier: tiny, legible, accessible.
 (function (root) {
     'use strict';
@@ -111,7 +111,7 @@
             }
         }
 
-        // Camera focus — centre the SP camera on the player cell (same convention as the tiled
+        // Camera focus: centre the SP camera on the player cell (same convention as the tiled
         // renderer). Sticky: only update when the player is present, so switching TO ascii mid-game
         // doesn't leave focusPoint null (which pinned the whole grid to the corner → black screen).
         var focusFallback = null;

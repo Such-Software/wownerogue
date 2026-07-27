@@ -1,5 +1,5 @@
 /**
- * Pillar 5 — global cross-server chat over nostr, layered on the ChatProvider seam.
+ * Pillar 5: global cross-server chat over nostr, layered on the ChatProvider seam.
  */
 const NostrChatProvider = require('../src/network/chat/NostrChatProvider');
 const { buildChatProvider } = require('../src/network/chat');

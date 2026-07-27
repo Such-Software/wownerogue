@@ -3,7 +3,7 @@
  *
  * A run's lifetime is measured in blocks and its entry block comes from the last SUCCESSFUL poll.
  * With every node down that value goes stale silently, so a game admitted during an outage was
- * anchored to an already-past block and killed as a timeout on the first recovered poll — the
+ * anchored to an already-past block and killed as a timeout on the first recovered poll: the
  * player lost a run, and in paid mode an entry, to our infrastructure. Refuse up front instead.
  */
 

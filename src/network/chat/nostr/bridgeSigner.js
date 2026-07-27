@@ -9,7 +9,7 @@ const { loadNostrTools } = require('../../../utils/nostrLoader');
  * ACCEPTED by relay.smirk.cash (default `inbox-outbox` policy → only registered npubs may publish),
  * this bridge pubkey must be registered as a Smirk npub (an ops step, like the BTCPay API key).
  * A future upgrade signs per-message with each player's OWN Smirk npub (window.smirk.signNostrEvent)
- * so chat identity == wallet identity cryptographically — the provider stays signer-agnostic, so
+ * so chat identity == wallet identity cryptographically; the provider stays signer-agnostic, so
  * that path only swaps the signer.
  *
  * Returns null when no key is configured → outbound nostr disabled (the provider still receives).
@@ -22,7 +22,7 @@ function createBridgeSigner(secret) {
         sk = normalizeSecret(secret, tools);
         pubkey = tools.getPublicKey(sk);
     } catch (err) {
-        console.error('[nostr] bridge signer disabled — bad NOSTR_BRIDGE_SK:', err.message);
+        console.error('[nostr] bridge signer disabled, bad NOSTR_BRIDGE_SK:', err.message);
         return null;
     }
     return {

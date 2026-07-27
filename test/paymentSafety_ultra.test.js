@@ -53,7 +53,7 @@ const ONE_PENDING = [
     { id: 42, user_id: 1, game_id: 7, payout_address: 'addrA', amount: '100000000000', multiplier: 2, reason: 'escape' }
 ];
 
-describe('M1 — single payout ambiguous failure', () => {
+describe('M1: single payout ambiguous failure', () => {
     test('is marked needs_review (never failed) and alerts', async () => {
         const walletService = {
             getBalance: jest.fn().mockResolvedValue({ unlocked_balance: '10000000000000' }),
@@ -95,7 +95,7 @@ describe('M1 — single payout ambiguous failure', () => {
     });
 });
 
-describe('M3 — atomic single_game payment claim', () => {
+describe('M3: atomic single_game payment claim', () => {
     test('aborts cleanly when the payment was already consumed (claim returns no row)', async () => {
         const { gmm } = buildGmm();
         // withTransaction runs cb with a client whose claim SELECT returns no rows.
@@ -125,7 +125,7 @@ describe('M3 — atomic single_game payment claim', () => {
     });
 });
 
-describe('M4 — completeGame durably records every committed liability', () => {
+describe('M4: completeGame durably records every committed liability', () => {
     test('quarantines a liability when the paying identity cannot be resolved', async () => {
         const { gmm, db } = buildGmm();
         db.withTransaction.mockImplementation(async (cb) => cb(db));
@@ -145,7 +145,7 @@ describe('M4 — completeGame durably records every committed liability', () => 
     });
 });
 
-describe('M5 — payout amount is clamped to configured bounds', () => {
+describe('M5: payout amount is clamped to configured bounds', () => {
     test('caps an over-max payout and alerts', async () => {
         const { gmm, db } = buildGmm();
         db.withTransaction.mockImplementation(async (cb) => cb(db));
@@ -188,7 +188,7 @@ describe('M5 — payout amount is clamped to configured bounds', () => {
     });
 });
 
-describe('C1 — getOrCreateUser create:false', () => {
+describe('C1: getOrCreateUser create:false', () => {
     test('returns null and never inserts when no user row exists', async () => {
         const { gmm, db } = buildGmm();
         db.query.mockResolvedValue({ rows: [] }); // socket lookup finds nothing

@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_cosmetic_catalog_active ON cosmetic_catalog(activ
 
 -- Seed the four packs that exist today so nothing regresses on first migration. These mirror the
 -- current hardcoded definitions (roguelike-interior free; the rest premium, credit-unlockable at
--- 1 lifetime credit — matching today's {kind:'credits_purchase', minTotalCreditsPurchased:1}).
+-- 1 lifetime credit, matching today's {kind:'credits_purchase', minTotalCreditsPurchased:1}).
 INSERT INTO cosmetic_catalog (pack_id, label, kind, projection, tier, unlock_min_credits, grant_only, sort_order) VALUES
     ('roguelike-interior',   'Kenney Roguelike Interior', 'render-pack', 'topdown', 0, NULL, FALSE, 0),
     ('generated-skins',      'Premium Generated Skins',   'render-pack', 'topdown', 1, 1,    FALSE, 1),

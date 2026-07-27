@@ -51,7 +51,7 @@ function daemonIdentityFromInfo(info = {}, genesisHeader = {}) {
     const knownGenesis = HASH_PATTERN.test(genesisHash)
         ? Object.entries(GENESIS_HASHES).find(([, hash]) => hash === genesisHash)
         : null;
-    // nettype/target are useful consistency signals, but only the pinned genesis hash
+    // nettype/target are consistency signals only; the pinned genesis hash is what
     // distinguishes XMR mainnet from a Monero-derived mainnet without trusting daemon labels.
     const cryptoType = knownGenesis ? knownGenesis[0].split(':')[0] : null;
 
@@ -127,9 +127,9 @@ class RPCService {
         const env = options.env || process.env;
         this.http = options.http || axios;
         // Ordered preference list. `RPC_ENDPOINTS` (comma/whitespace separated) declares any number
-        // of daemons and, when present, its ORDER is the preference order. PRIMARY/FALLBACK remain
-        // supported and are appended when explicitly configured. Deduped — the stock configuration
-        // pointed both at the same host, which looked like redundancy and was none.
+        // of daemons and, when present, its order is the preference order. PRIMARY/FALLBACK are
+        // appended when explicitly configured. The list is deduped so a configuration pointing
+        // primary and fallback at the same host does not read as redundancy it does not have.
         const declaredEndpoints = options.endpoints || parseEndpointList(env.RPC_ENDPOINTS);
         const configuredPrimary = options.primaryEndpoint || env.PRIMARY_RPC_ENDPOINT || null;
         const configuredFallback = options.fallbackEndpoint || env.FALLBACK_RPC_ENDPOINT || null;
@@ -245,10 +245,9 @@ class RPCService {
     /**
      * The order to try endpoints in for one logical call.
      *
-     * Normally: whichever node we are already on, then every other node in declared preference
-     * order. Periodically the PREFERRED node goes first instead, so recovering from a blip does not
-     * require a restart — previously `failoverActive` was a one-way latch and the process stayed on
-     * the backup forever.
+     * The current node first, then every other node in declared preference order. Every
+     * preferredRetryMs the preferred node takes the first slot instead, so recovery from a blip
+     * happens without a restart rather than pinning the process to a backup indefinitely.
      */
     _attemptOrder() {
         const preferred = this.endpoints[0];
@@ -268,8 +267,8 @@ class RPCService {
         const wasFailedOver = this.failoverActive;
         this.currentEndpoint = endpoint;
         this.failoverActive = endpoint !== this.endpoints[0];
-        // Start the re-test clock AT the moment of failover. Leaving it at 0 meant the very next
-        // call re-probed the dead preferred node, paying its timeout on every request.
+        // The re-test clock starts at the moment of failover. Left at 0, the next call would
+        // re-probe the dead preferred node and pay its timeout on every request.
         if (this.failoverActive && !wasFailedOver) this._preferredProbedAt = Date.now();
         if (!this.failoverActive) this._preferredProbedAt = 0;
     }
@@ -306,7 +305,7 @@ class RPCService {
         }
 
         // Every configured node refused or was unreachable. Callers must degrade gracefully from
-        // here — nothing downstream may treat a stale cached height as live chain state.
+        // here: nothing downstream may treat a stale cached height as live chain state.
         this.consecutiveFailures++;
         this.healthy = false;
         this.lastFailureAt = Date.now();
@@ -315,10 +314,8 @@ class RPCService {
     }
 
     /**
-     * Retained for callers that explicitly ask for a failover attempt.
-     *
-     * makeRPCCall now walks every configured endpoint within a single call, so this is simply that
-     * walk. It no longer latches `failoverActive`, and it no longer gives up after two endpoints.
+     * Alias for callers that explicitly ask for a failover attempt. makeRPCCall already walks every
+     * configured endpoint within a single call, so this is that same walk.
      */
     async tryFailover(method, params) {
         return this.makeRPCCall(method, params);
@@ -345,7 +342,7 @@ class RPCService {
     }
 
     /**
-     * Get current block count, retaining the historical cached fallback for non-financial UI and
+     * Get current block count, falling back to the last known height for non-financial UI and
      * polling callers. Paid match fairness uses getBlockCountStrict() directly.
      */
     async getBlockHeight() {
@@ -355,7 +352,7 @@ class RPCService {
             if (CONSOLE_LOGGING) {
                 console.error('❌ Failed to get block height:', error.message);
             }
-            return this.lastBlockHeight; // Return last known height on failure
+            return this.lastBlockHeight;
         }
     }
 
@@ -363,8 +360,8 @@ class RPCService {
      * Cosmetic chain tip (top block hash + difficulty) for the Tavern's ambient chain display.
      *
      * Deliberately non-authoritative: it never throws and never feeds fairness, payouts, or match
-     * seeding — those use getBlockCountStrict()/matchFairness, which must not accept a cached or
-     * best-effort value. On any RPC failure this returns null and the UI simply shows nothing new.
+     * seeding. Those use getBlockCountStrict()/matchFairness, which must not accept a cached or
+     * best-effort value. On any RPC failure this returns null and the UI shows nothing new.
      */
     async getChainTipInfo() {
         try {
@@ -475,7 +472,7 @@ class RPCService {
             if (!selectedEndpoint && result.status === 'healthy') selectedEndpoint = endpoint;
         }
 
-        // `primary` / `fallback` remain in the payload for existing readiness consumers.
+        // `primary` / `fallback` stay in the payload for readiness consumers that read those keys.
         const byEndpoint = new Map(this.endpoints.map((e, i) => [e, checks.endpoints[i]]));
         checks.primary = byEndpoint.get(this.primaryEndpoint) || checks.primary;
         checks.fallback = byEndpoint.get(this.fallbackEndpoint) || { ...checks.primary };

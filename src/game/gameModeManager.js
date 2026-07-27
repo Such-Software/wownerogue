@@ -26,9 +26,9 @@ const { isSmirkEnabled } = require('../auth/smirkPolicy');
 const { reservePayoutCapacity } = require('../services/payoutAdmissionService');
 const { getOperatedProductProfile } = require('../config/operatedProductProfiles');
 
-// A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it
-// is SAFE to retry (no double-pay risk) — unlike an ambiguous post-broadcast failure. Monero
-// locks spent outputs (incl. change) for ~10 blocks, so this is the expected error when all
+// A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it is
+// safe to retry (no double-pay risk), unlike an ambiguous post-broadcast failure. Monero locks
+// spent outputs (including change) for ~10 blocks, so this is the expected error when all
 // outputs are temporarily locked.
 function payoutErrorText(error, depth = 0) {
     if (depth > 4 || error == null) return '';
@@ -41,9 +41,9 @@ function payoutErrorText(error, depth = 0) {
 /**
  * A batch that wallet-rpc legitimately broadcast as MORE THAN ONE transaction.
  *
- * Not an error in the usual sense — the money is out. It is raised so the existing quarantine path
- * records the batch for attribution review while carrying the transaction hashes with it, instead
- * of the previous behaviour of discarding them and leaving the rows with tx_hash NULL.
+ * Not an error in the usual sense: the money is out. It is raised so the quarantine path records
+ * the batch for attribution review while carrying the transaction hashes with it, rather than
+ * leaving the rows with tx_hash NULL.
  */
 class BatchSplitEvidence extends Error {
     constructor(hashes, totalFee) {
@@ -75,10 +75,10 @@ class GameModeManager {
         this.debugManager = debugManager;
         this.paymentConfigManager = paymentConfigManager || null;
 
-        // Modular payment providers (Pillar 3). Defaults to a registry whose only member is the
-        // native Monero/Wownero provider wrapping this walletService — so with no gateway env set
-        // every chain routes to the existing wallet-RPC path and behavior is unchanged. Injectable
-        // for tests. See src/payments/providers/index.js + the btcpay-infra-topology memo.
+        // Modular payment providers. Defaults to a registry whose only member is the native
+        // Monero/Wownero provider wrapping this walletService, so with no gateway env set every
+        // chain routes to the wallet-RPC path. Injectable for tests.
+        // See src/payments/providers/index.js.
         this.paymentProviders = paymentProviders || buildProviderRegistry({ walletService: walletRPCService });
 
         this.cryptoType = process.env.CRYPTO_TYPE || 'XMR';
@@ -139,8 +139,8 @@ class GameModeManager {
         return inferCurrencyDecimalsForSymbol(symbol);
     }
 
-    // Product name (Monerogue/Wownerogue) and network-aware currency label (sXMR on
-    // stagenet, XMR on mainnet, WOW for Wownero) — derived so they always track config.
+    // Product name (Monerogue/Wownerogue) and network-aware currency label (sXMR on stagenet,
+    // XMR on mainnet, WOW for Wownero), derived so they always track config.
     get gameName() { return gameNameFor(this.cryptoType); }
     get currencyLabel() { return currencyLabelFor(this.cryptoType, this.network); }
 
@@ -753,9 +753,9 @@ class GameModeManager {
             ? (multipliers.escapeWithTreasure ?? multipliers.escape ?? 0)
             : (multipliers.escape ?? 0);
 
-        // Exact integer math: base (atomic units) * decimal multiplier via BigInt, then
-        // narrow back to a number only when exactly representable. Avoids float precision
-        // loss on large atomic amounts (the old `Math.round(base * multiplier)`).
+        // Exact integer math: base (atomic units) * decimal multiplier via BigInt, then narrow
+        // back to a number only when exactly representable. Float arithmetic would lose
+        // precision on large atomic amounts.
         const amount = money.toSafe(money.mulByDecimal(base, multiplier));
 
         if (this.debugManager?.CONSOLE_LOGGING) {
@@ -768,17 +768,17 @@ class GameModeManager {
     }
 
     /**
-     * Process a confirmed credits package payment - add credits to user
-     * SECURITY: Uses atomic check-and-update to prevent double-crediting on server restart
+     * Apply a confirmed product payment: credits, premium tier, race entries and pack grants.
+     * SECURITY: uses atomic check-and-update so a restart cannot double-credit.
      * @param {string} socketId - Socket ID of the user
      * @param {number} paymentId - Payment record ID
-     * @param {object} packageInfo - Package info (credits, bonus, etc.)
+     * @param {object} productInfo - Catalog product info (credits, bonus, grants)
      * @returns {object} Result with success, creditsAdded, newBalance, alreadyProcessed
      */
     async processProductPaymentConfirmation(socketId, paymentId, productInfo = null, receivedAmount = null, receipts = []) {
         try {
-            // Look up user from payment record's user_id (stable across socket reconnects)
-            // This avoids the bug where socket ID changes if user refreshes during confirmation
+            // Resolve the user from the payment record's user_id, which is stable across socket
+            // reconnects: a refresh during confirmation changes the socket ID.
             const paymentLookup = await this.db.query(`
                 SELECT user_id, description, status, payment_type, product_id, product_grants,
                        received_amount, expected_amount, provider_id, provider_invoice_id,
@@ -865,8 +865,8 @@ class GameModeManager {
                 throw new Error(`Race-entry product ${productId} lacks confirmed per-ticket payout backing`);
             }
 
-            // CRITICAL: Wrap all three operations in a transaction.
-            // If any step fails, the payment stays 'pending' and can be recovered.
+            // Every grant runs in one transaction: if any step fails the payment stays 'pending'
+            // and can be recovered.
             const result = await this.db.withTransaction(async (client) => {
                 // Lock and finalize the durable product promise before inserting append-only
                 // receipt evidence. New invoices already contain this snapshot; this also gives
@@ -1087,11 +1087,10 @@ class GameModeManager {
 
     /**
      * Record a direct/single_game entry as "buy 1 credit and immediately spend it on this game":
-     * the balance nets to zero but total_credits_purchased advances, so a direct payment unlocks the
-     * SAME tier/threshold cosmetics as buying credits (the first step of unifying everything to
-     * credits). Idempotent by the caller — the single_game confirmation runs once per payment via
-     * its status='pending' -> 'confirmed' guard. Returns { totalCreditsPurchased, balance,
-     * entitlements } or null.
+     * the balance nets to zero but total_credits_purchased advances, so a direct payment unlocks
+     * the same tier/threshold cosmetics as buying credits. Idempotency is the caller's: the
+     * single_game confirmation runs once per payment via its status='pending' -> 'confirmed'
+     * guard. Returns { totalCreditsPurchased, balance, entitlements } or null.
      */
     async recordDirectEntryPurchase(socketId) {
         try {
@@ -1307,7 +1306,7 @@ class GameModeManager {
 
             const options = [];
 
-            // Free play (Pleb board, no payout) — offered alongside paid options when enabled.
+            // Free play (Pleb board, no payout) is offered alongside paid options when enabled.
             if (this.freePlayEnabled && this.paymentsEnabled) {
                 options.push({
                     type: 'play_free',
@@ -1405,7 +1404,7 @@ class GameModeManager {
                     };
                 }
                 
-                // Option 2: User has confirmed single_game payment
+                // Otherwise an unclaimed confirmed single_game payment admits the player.
                 const pendingPayment = await this.db.query(`
                     SELECT * FROM payments 
                     WHERE user_id = $1 AND status = 'confirmed'
@@ -1887,10 +1886,10 @@ class GameModeManager {
             return this._financialRecoveryPendingResult();
         }
         const snap = this._computePayoutSnapshot('PAID_SINGLE');
-        // M3: claiming a confirmed single_game payment must be atomic. Re-verify the payment
-        // is still unclaimed and lock it FOR UPDATE inside the transaction, so two concurrent
-        // starts can't both consume the same payment. The unique index on games.payment_id
-        // (migration 023) is the final backstop; a 23505 there is treated as "already consumed".
+        // Claiming a confirmed single_game payment must be atomic: the payment is re-verified as
+        // unclaimed and locked FOR UPDATE inside the transaction so two concurrent starts cannot
+        // both consume it. The unique index on games.payment_id (migration 023) is the final
+        // backstop; a 23505 there means "already consumed".
         try {
             const result = await this.db.withTransaction(async (client) => {
                 if (snap.eligible) {
@@ -2035,9 +2034,6 @@ class GameModeManager {
         }
     }
 
-    // processGameCompletion() removed — dead code, never called.
-    // Only completeGame() (below) is used for game completion/payouts.
-
     /**
      * Create payment request
      */
@@ -2140,11 +2136,11 @@ class GameModeManager {
             `, [user.id]);
             const expiredAddresses = expiredResult.rows.map(r => r.subaddress);
 
-            // Create the payment request through the routed provider. The native provider (default
-            // for every chain when no gateway env is set) delegates to walletService.createPaymentRequest,
-            // so this is byte-for-byte the legacy path for the shipped single-chain config — same
-            // subaddress, same walletService monitoring maps. A BTCPay/xmrcheckout/wowcheckout gateway
-            // takes over only when the operator routes this.cryptoType to it.
+            // Create the payment request through the routed provider. The native provider (the
+            // default for every chain when no gateway env is set) delegates to
+            // walletService.createPaymentRequest, giving the single-chain config the same
+            // subaddress and the same walletService monitoring maps. A BTCPay/xmrcheckout/
+            // wowcheckout gateway takes over only when the operator routes this.cryptoType to it.
             const provider = this.paymentProviders && this.paymentProviders.getProvider(this.cryptoType);
             let paymentResult;
             if (provider) {
@@ -2233,18 +2229,14 @@ class GameModeManager {
     }
 
     /**
-     * Get or create user record
-     */
-    /**
      * Resolve the database user for a socket.
      *
-     * IDENTITY (Phase 2.1): The stable identity is `users.id`, established from the
-     * client's `anon_token` by SessionManager at connection time. This method resolves
-     * through that session identity FIRST, so every money/credit/payout path operates on
-     * the same stable row. It only falls back to the legacy `socket_id` lookup-or-create
-     * when no session exists (e.g. SessionManager not wired, or a REST call for a socket
-     * with no live session) — `socket_id` is mutable and non-unique and must never be the
-     * primary money key.
+     * The stable identity is `users.id`, established from the client's `anon_token` by
+     * SessionManager at connection time. Resolution goes through that session identity first,
+     * so every money/credit/payout path operates on the same stable row. The legacy `socket_id`
+     * lookup-or-create is used only when no session exists (SessionManager not wired, or a REST
+     * call for a socket with no live session): `socket_id` is mutable and non-unique, so it must
+     * never be the primary money key.
      */
     async getOrCreateUser(socketId, { create = true } = {}) {
         try {
@@ -2280,22 +2272,22 @@ class GameModeManager {
                 return userResult.rows[0];
             }
 
-            // Read-only callers (REST reads) pass { create: false }: never mint an orphan
-            // row for a socket that has no user yet — return null and let them 404/handle it.
+            // Read-only callers (REST reads) pass { create: false }: never mint an orphan row
+            // for a socket that has no user yet. They get null and handle it themselves.
             if (!create) {
                 return null;
             }
 
-            // 3. Last resort: create a new user. This only fires when no session was
-            // established for the socket (abnormal in normal flow, since every connection
-            // creates a session) — log it so orphan-row creation is visible.
+            // 3. Last resort: create a new user. Every connection creates a session, so this
+            // only fires when none was established for the socket; it is logged to make
+            // orphan-row creation visible.
             userResult = await this.db.query(`
                 INSERT INTO users (socket_id, ip_address)
                 VALUES ($1, $2)
                 RETURNING *
             `, [socketId, null]);
 
-            console.warn(`👤 Created new user without a session (socket ${socketId}) — no anon_token identity resolved.`);
+            console.warn(`👤 Created new user without a session (socket ${socketId}): no anon_token identity resolved.`);
             return userResult.rows[0];
 
         } catch (error) {
@@ -2306,7 +2298,7 @@ class GameModeManager {
     }
 
     /**
-     * Set user payout address
+     * Validate a candidate payout address for the configured chain and network.
      */
     async validatePayoutAddress(payoutAddress) {
         const address = typeof payoutAddress === 'string' ? payoutAddress.trim() : '';
@@ -2342,13 +2334,14 @@ class GameModeManager {
                 : (addressText ? '[redacted]' : '[cleared]');
             console.log(`💰 Set payout address for user ${user.id}: ${redactedAddress}`);
 
-            // Reconcile any claimable match winnings this user earned with no address on file.
-            // A match winner without a payout address is recorded as a durable 'needs_review'
-            // liability (reason 'match_winner_no_address', sentinel address 'PENDING_NO_ADDRESS');
-            // now that a real address exists, convert those to sendable 'pending' payouts and kick
-            // the batcher. The reason filter is deliberately narrow so this NEVER touches the
-            // ambiguous-broadcast 'needs_review' rows from the single-payout path (which have a real
-            // address and a different reason) — converting those could double-pay.
+            // Reconcile any claimable winnings this user earned with no address on file. A winner
+            // without a payout address is recorded as a durable 'needs_review' liability (reason
+            // 'match_winner_no_address' or 'solo_winner_no_address', sentinel address
+            // 'PENDING_NO_ADDRESS'); with a real address on file those become sendable 'pending'
+            // payouts and the batcher is kicked. The reason filter is deliberately narrow so this
+            // never touches the ambiguous-broadcast 'needs_review' rows from the payout paths
+            // (which carry a real address and a different reason): converting those could
+            // double-pay.
             if (typeof payoutAddress === 'string' && payoutAddress.trim().length > 0) {
                 try {
                     const reconciled = await this.db.query(`
@@ -2413,7 +2406,6 @@ class GameModeManager {
      * Get game mode info for frontend
      */
     getGameModeInfo() {
-        // Debug: Log credits payout base value being sent
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`📤 getGameModeInfo: creditsPayoutBaseValue = ${this.creditsPayoutBaseValue} (${this.formatAtomic(this.creditsPayoutBaseValue)} ${this.cryptoType})`);
         }
@@ -2888,12 +2880,12 @@ class GameModeManager {
 
             if (pending.rows.length === 0) return;
 
-            // MONERO OUTPUT LOCKING: a spent output (incl. the change output) is locked for
-            // ~10 blocks. If we don't have enough UNLOCKED balance to cover this batch right
-            // now, DEFER it (revert to pending) instead of attempting a transfer that would
-            // fail — the next batch interval and every new-block tick re-check, so it sends as
-            // soon as outputs unlock. Batching already minimises how many change outputs we
-            // create; this handles the "all outputs currently locked" window.
+            // Monero output locking: a spent output (including change) is locked for ~10 blocks.
+            // When the unlocked balance does not cover this batch, the rows are deferred (reverted
+            // to pending) rather than attempting a transfer that would fail. The next batch
+            // interval and every new-block tick re-check, so it sends as soon as outputs unlock.
+            // Batching already minimises how many change outputs are created; this handles the
+            // "all outputs currently locked" window.
             try {
                 const totalNeeded = money.sum(pending.rows.map(p => p.amount)); // BigInt atomic
                 const bal = await this.walletService.getBalance();
@@ -2950,7 +2942,7 @@ class GameModeManager {
             const batchId = require('uuid').v4();
 
             if (pending.rows.length === 1) {
-                // Single payout — use processPayout for simpler flow
+                // Single payout: processPayout is the simpler flow
                 const p = pending.rows[0];
                 let observedTxHash = null;
                 try {
@@ -2980,19 +2972,17 @@ class GameModeManager {
                     });
                     console.log(`💸 Single payout ${p.id} completed: ${txHash}`);
                 } catch (err) {
-                    // Insufficient-unlocked-funds is a pre-broadcast error -> retry on the next
-                    // batch run (revert to pending). ANY OTHER error is ambiguous: processPayout
-                    // (transfer_split) may have broadcast on-chain even though the RPC response
-                    // errored, and this row has a null tx_hash so the retry service's blockchain
-                    // guard can't protect it — an auto-retry could DOUBLE-PAY. Mark 'needs_review'
-                    // (retry service skips it) + alert, mirroring the batch path below.
-                    // Once a valid hash was observed, broadcast is proven even if the following
-                    // DB transaction failed. Preserve that evidence and never return the row to
-                    // the automatic retry pool.
-                    // Provably pre-broadcast failures (transfer gate, identity check, address
-                    // validation — all strictly before transfer_split) are safe to retry: nothing
-                    // was sent, so returning them to 'pending' cannot double-pay. Only genuinely
-                    // ambiguous post-broadcast failures may quarantine the batch.
+                    // Retryable only when nothing can have been broadcast: insufficient unlocked
+                    // funds, or a failure flagged preBroadcast (transfer gate, identity check,
+                    // address validation, all strictly before transfer_split). Those revert to
+                    // 'pending' and cannot double-pay.
+                    // Any other error is ambiguous: transfer_split may have broadcast on-chain
+                    // even though the RPC response errored, and the row has a null tx_hash so the
+                    // retry service's blockchain guard cannot protect it. Those go to
+                    // 'needs_review' (the retry service skips it) plus an alert.
+                    // Once a valid hash is observed, broadcast is proven even if the following DB
+                    // transaction failed, so that evidence is preserved and the row never returns
+                    // to the automatic retry pool.
                     const preBroadcast = !observedTxHash && err?.preBroadcast === true;
                     const fundsIssue = !observedTxHash && isInsufficientFundsError(err);
                     const retryable = fundsIssue || preBroadcast;
@@ -3007,14 +2997,14 @@ class GameModeManager {
                     ).catch(() => {});
                     if (!fundsIssue && this.alertService && typeof this.alertService.sendAlert === 'function') {
                         this.alertService.sendAlert('single_payout_failed', {
-                            subject: '⚠️ Payout failed — manual review required',
+                            subject: '⚠️ Payout failed: manual review required',
                             html: `<p>Single payout <b>${p.id}</b> failed and was marked <b>needs_review</b> to avoid a possible double-payout.</p>`
                                 + `<p>Amount: ${p.amount} → ${p.payout_address}</p><p>Error: ${err.message}</p>`
                         }).catch(() => {});
                     }
                 }
             } else {
-                // Multiple payouts — batch via transfer_split with multiple destinations
+                // Multiple payouts: batch via transfer_split with multiple destinations
                 const ids = pending.rows.map(p => p.id);
                 let observedTxHash = null;
                 try {
@@ -3030,13 +3020,12 @@ class GameModeManager {
                         throw new Error('Wallet returned ambiguous batch transaction-hash evidence');
                     }
                     if (hashes.length > 1) {
-                        // wallet-rpc SPLIT the send — which is exactly what transfer_split exists to
-                        // do when the destination set does not fit one transaction. The coins are
-                        // already broadcast, so this is not a failure; but the response does not say
-                        // which destination landed in which tx, so per-row attribution stays a human
-                        // decision (the operator's documented policy). What must NOT happen is what
-                        // used to: throwing here sent every row to needs_review with tx_hash NULL,
-                        // discarding the only evidence that the money left the wallet.
+                        // wallet-rpc split the send, which is what transfer_split does when the
+                        // destination set does not fit one transaction. The coins are already
+                        // broadcast, so this is not a failure; the response does not say which
+                        // destination landed in which tx, so per-row attribution stays a human
+                        // decision. BatchSplitEvidence carries the hashes into the quarantine
+                        // path so the evidence that the money left the wallet is preserved.
                         observedTxHash = hashes[0];
                         throw new BatchSplitEvidence(hashes, result.totalFee);
                     }
@@ -3047,9 +3036,8 @@ class GameModeManager {
                             / BigInt(pending.rows.length))
                         : null;
 
-                    // Mark the ENTIRE batch completed in a SINGLE transaction so we never
-                    // leave some rows completed and others stranded mid-batch (which the old
-                    // per-row loop did when the shared tx_hash hit the unique index).
+                    // The entire batch is marked completed in one transaction. A per-row loop
+                    // would strand rows mid-batch if the shared tx_hash hit the unique index.
                     await this.db.withTransaction(async (client) => {
                         await client.query(
                             `UPDATE payouts SET tx_hash = $1, fee = $2, batch_id = $3, status = 'completed', processed_at = NOW() WHERE id = ANY($4)`,
@@ -3066,18 +3054,19 @@ class GameModeManager {
                     });
                     console.log(`💸 Batch payout completed: ${pending.rows.length} payouts in tx ${txHash}`);
                 } catch (err) {
-                    // An insufficient-unlocked-funds error is raised BEFORE broadcast (no tx
-                    // went out), so it's safe to retry: revert to 'pending' and let the next
-                    // run send it once outputs unlock — no operator alert needed (transient).
+                    // An insufficient-unlocked-funds error is raised before broadcast (no tx went
+                    // out), so the rows revert to 'pending' and the next run sends them once
+                    // outputs unlock. This is transient and raises no operator alert.
                     //
-                    // ANY OTHER error is ambiguous: transfer_split may have broadcast on-chain
+                    // The same holds for failures flagged preBroadcast (transfer gate, identity
+                    // check, address validation, all strictly before transfer_split): nothing was
+                    // sent, so returning them to 'pending' cannot double-pay.
+                    //
+                    // Any other error is ambiguous: transfer_split may have broadcast on-chain
                     // even though the RPC response errored. Those rows have no tx_hash, so the
-                    // retry service's blockchain guard can't protect them and an auto-retry
-                    // could DOUBLE-PAY. Mark 'needs_review' (retry service skips it) + alert.
-                    // Provably pre-broadcast failures (transfer gate, identity check, address
-                    // validation — all strictly before transfer_split) are safe to retry: nothing
-                    // was sent, so returning them to 'pending' cannot double-pay. Only genuinely
-                    // ambiguous post-broadcast failures may quarantine the batch.
+                    // retry service's blockchain guard cannot protect them and an auto-retry
+                    // could double-pay. They go to 'needs_review' (the retry service skips it)
+                    // plus an alert.
                     const preBroadcast = !observedTxHash && err?.preBroadcast === true;
                     const fundsIssue = !observedTxHash && isInsufficientFundsError(err);
                     const retryable = fundsIssue || preBroadcast;
@@ -3094,8 +3083,8 @@ class GameModeManager {
                         const split = err instanceof BatchSplitEvidence;
                         this.alertService.sendAlert('batch_payout_failed', {
                             subject: split
-                                ? '⚠️ Batch payout SPLIT — attribution review required'
-                                : '⚠️ Batch payout failed — manual review required',
+                                ? '⚠️ Batch payout SPLIT: attribution review required'
+                                : '⚠️ Batch payout failed: manual review required',
                             html: split
                                 ? `<p>A batch of ${pending.rows.length} payout(s) was <b>broadcast as ${err.hashes.length} transactions</b>.`
                                     + ` The funds have been sent; only the per-row attribution needs confirming.</p>`

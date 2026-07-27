@@ -5,11 +5,11 @@
     // signed by this session's authenticated npub, then relays it to nostr under that npub.
     //
     // Returns a Promise<boolean>: true if it signed + emitted, false if Smirk signing is
-    // unavailable or declined — in which case the caller falls back to the normal unsigned send.
+    // unavailable or declined, in which case the caller falls back to the normal unsigned send.
     // Feature-detected end to end, so it's a no-op (always false) until the page has a connected
     // Smirk wallet; wiring it into a send site is therefore always safe.
     // Sign an event, granting the Nostr scope on demand. Signing FIRST means a returning user
-    // (scope already granted for this origin — e.g. from the game's NIP-98 login) gets a single
+    // (scope already granted for this origin, e.g. from the game's NIP-98 login) gets a single
     // approval; only a first-time origin hits NOT_AUTHORIZED and needs the one-time scope grant.
     // Same pattern as SmirkAuth (html/js/network/smirkAuth.js).
     function signWithScope(smirk, tmpl) {

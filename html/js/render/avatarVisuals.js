@@ -91,7 +91,7 @@
         // A player who never customized arrives as avatar 'default' (or an unknown id), which is not
         // a char/skin/model and would fall to the grey circle. On the TAVERN canvas path, coerce it
         // to a real Kenney character so nobody is a grey dot in a room of people. But NOT on
-        // 'legacy-rot' (the single-player dungeon) — there RenderEngine falls back to the original @
+        // 'legacy-rot' (the single-player dungeon): there RenderEngine falls back to the original @
         // hero TILE, which is what an un-customized player expects (grey circle was a canvas-only
         // problem). iso/3d keep their own fallbacks below.
         if (ap && projection !== 'iso' && projection !== '3d' && projection !== 'legacy-rot') {

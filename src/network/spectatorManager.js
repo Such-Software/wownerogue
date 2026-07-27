@@ -48,7 +48,6 @@ class SpectatorManager {
      * Initialize the manager - start periodic broadcasts
      */
     initialize() {
-        // Start periodic game list broadcasting
         this._broadcastInterval = setInterval(() => {
             this._broadcastGameListToLobby();
         }, this._broadcastIntervalMs);
@@ -66,13 +65,11 @@ class SpectatorManager {
     getActiveGamesList(options = {}) {
         const { page = 1, pageSize = 20, sortBy = 'newest' } = options;
         
-        // Check cache
         const now = Date.now();
         if (now - this._gameListLastUpdate < this._gameListCacheTimeout && this._cachedGameList.length > 0) {
             return this._applyPagination(this._cachedGameList, page, pageSize);
         }
         
-        // Build fresh list of active games
         const games = [];
         for (const [socketId, game] of this.activeGames.entries()) {
             if (game && game.gameState === 'active') {
@@ -80,10 +77,8 @@ class SpectatorManager {
             }
         }
         
-        // Sort games
         this._sortGames(games, sortBy);
-        
-        // Cache the list
+
         this._cachedGameList = games;
         this._gameListLastUpdate = now;
         
@@ -115,7 +110,7 @@ class SpectatorManager {
             moveCount: game.moveCount || 0,
             hasTreasure: game.isComplete ? (game.player?.hasTreasure || false) : undefined,
             spectatorCount: spectatorCount,
-            // Don't expose exact positions - let spectators get that when they join
+            // Exact positions are withheld here; spectators receive them on joining a game.
             dungeonSize: {
                 width: game.width || 25,
                 height: game.height || 19
@@ -178,7 +173,6 @@ class SpectatorManager {
      * @returns {Object} Result with success status and initial game state
      */
     addSpectator(spectatorSocketId, gameId) {
-        // Find the game by gameId
         let targetGame = null;
         let playerSocketId = null;
         
@@ -198,7 +192,6 @@ class SpectatorManager {
             return { success: false, reason: 'Game is no longer active' };
         }
         
-        // Check if already spectating this game
         const currentlyWatching = this._spectatorWatching.get(spectatorSocketId);
         if (currentlyWatching === gameId) {
             return { success: false, reason: 'Already spectating this game' };
@@ -209,16 +202,13 @@ class SpectatorManager {
             this.removeSpectator(spectatorSocketId);
         }
         
-        // Add to spectators set for this game
         if (!this._spectatorsByGame.has(gameId)) {
             this._spectatorsByGame.set(gameId, new Set());
         }
         this._spectatorsByGame.get(gameId).add(spectatorSocketId);
         
-        // Track what this spectator is watching
         this._spectatorWatching.set(spectatorSocketId, gameId);
-        
-        // Join Socket.IO room for this game
+
         const spectatorSocket = this._getSocket(spectatorSocketId);
         if (spectatorSocket) {
             spectatorSocket.join(`spectate:${gameId}`);
@@ -228,7 +218,6 @@ class SpectatorManager {
             console.log(`👁️ Spectator ${spectatorSocketId.substring(0,6)} joined game ${gameId.substring(0,8)}`);
         }
         
-        // Get initial game state for spectator
         const initialState = this._getSpectatorGameState(targetGame, playerSocketId);
         
         return { 
@@ -249,7 +238,6 @@ class SpectatorManager {
         const gameId = this._spectatorWatching.get(spectatorSocketId);
         if (!gameId) return false;
         
-        // Remove from game's spectator set
         const spectators = this._spectatorsByGame.get(gameId);
         if (spectators) {
             spectators.delete(spectatorSocketId);
@@ -258,10 +246,8 @@ class SpectatorManager {
             }
         }
         
-        // Remove from watching map
         this._spectatorWatching.delete(spectatorSocketId);
-        
-        // Leave Socket.IO room
+
         const spectatorSocket = this._getSocket(spectatorSocketId);
         if (spectatorSocket) {
             spectatorSocket.leave(`spectate:${gameId}`);
@@ -321,10 +307,10 @@ class SpectatorManager {
     /**
      * Notify spectators that a game has ended and release them.
      *
-     * MUST be called for every way a game can leave `activeGames`, not just committed settlement.
-     * A game that vanishes via disconnect/suspension used to leave its spectators sitting in the
-     * `spectate:<gameId>` room — still tracked, already removed from the lobby room, receiving no
-     * further updates and no `spectate_ended`, i.e. permanently stuck on a dead view.
+     * Must be called for every way a game can leave `activeGames`, not just committed settlement.
+     * Spectators of a game that vanishes any other way stay in the `spectate:<gameId>` room,
+     * still tracked and already out of the lobby room, so they receive neither further updates
+     * nor `spectate_ended` and are stuck on a dead view.
      *
      * @param {string} gameId - Game ID
      * @param {Object} gameOverData - Game over information
@@ -333,7 +319,6 @@ class SpectatorManager {
     notifyGameEnded(gameId, gameOverData, reason = 'game_over') {
         const spectators = this._spectatorsByGame.get(gameId);
         
-        // Emit game over to spectators if any
         if (spectators && spectators.size > 0) {
             this.io.to(`spectate:${gameId}`).emit('spectate_ended', {
                 gameId: gameId,
@@ -341,7 +326,6 @@ class SpectatorManager {
                 gameOverData: gameOverData
             });
             
-            // Remove all spectators from this game's tracking
             for (const spectatorId of spectators) {
                 this._spectatorWatching.delete(spectatorId);
                 const sock = this._getSocket(spectatorId);
@@ -350,7 +334,7 @@ class SpectatorManager {
             this._spectatorsByGame.delete(gameId);
         }
         
-        // Invalidate cache and immediately broadcast updated game list
+        // Zeroing the timestamp invalidates the cache so the lobby broadcast rebuilds the list.
         this._gameListLastUpdate = 0;
         this._broadcastGameListToLobby();
     }
@@ -360,7 +344,6 @@ class SpectatorManager {
      * @private
      */
     _getSpectatorGameState(game, playerSocketId) {
-        // Return a sanitized version of the game state
         if (typeof game.getState === 'function') {
             const state = game.getState();
             return {
@@ -394,16 +377,11 @@ class SpectatorManager {
      * @private
      */
     _broadcastGameListToLobby() {
-        // Get fresh game list
         const gameListData = this.getActiveGamesList({ page: 1, pageSize: 50 });
-        
-        // Get pending games
         const pendingGames = this.getPendingGamesList();
-        
-        // Add pending games to the response
         gameListData.pendingGames = pendingGames;
         
-        // Always broadcast, even when empty — clients need to clear their lists
+        // Always broadcast, even when empty: clients need to clear their lists
         this.io.to('lobby').emit('active_games', gameListData);
     }
 
@@ -460,9 +438,8 @@ class SpectatorManager {
      * @param {string} socketId - Socket ID that disconnected
      */
     handleDisconnect(socketId) {
-        // Remove from spectating if applicable
         this.removeSpectator(socketId);
-        // Leave lobby is automatic when socket disconnects
+        // The lobby room is left automatically on disconnect, so only spectator state needs clearing.
     }
 
     /**

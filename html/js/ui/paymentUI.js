@@ -20,7 +20,7 @@ const PaymentUI = {
         $('#payment-ui').on('click', '.mode-option', function() {
             // The "Buy Selected Package" button ALSO carries .mode-option (for styling) but has its
             // own handler below; without this guard it double-fired here with NO data attrs, defaulting
-            // to single_game — so buying a 10-credit pack ALSO created a spurious 1-credit invoice.
+            // to single_game, so buying a 10-credit pack ALSO created a spurious 1-credit invoice.
             if (this.id === 'buy-credits-btn') return;
             const mode = $(this).data('mode');
             const action = $(this).data('action');
@@ -163,7 +163,7 @@ const PaymentUI = {
     render: function() {
         if (!this.config) return;
 
-        // Display label (sXMR on stagenet) — distinct from cryptoType, which formatPrice
+        // Display label (sXMR on stagenet): distinct from cryptoType, which formatPrice
         // still uses for decimals.
         const currency = this.config.currencyLabel || this.config.cryptoType || 'WOW';
         const hasCredits = this.userCredits >= (this.config.creditsPerGame || 1);
@@ -185,7 +185,7 @@ const PaymentUI = {
             $container.append(
                 '<div style="margin-bottom:14px;padding:10px;background:rgba(245,158,11,0.08);border:1px solid #92400e;border-radius:6px;font-size:0.85em;line-height:1.5;">' +
                     '🏅 <strong style="color:#fbbf24;">Pay</strong> (' + this.escapeHtml(paidEntryCopy) + ') to put your high scores in the <strong style="color:#fbbf24;">Hall of Champions</strong>.<br>' +
-                    '🪙 <strong style="color:#8ab4f8;">Play free</strong> — high scores go to the <strong style="color:#8ab4f8;">Pleb leaderboard</strong> instead.' +
+                    '🪙 <strong style="color:#8ab4f8;">Play free</strong>: high scores go to the <strong style="color:#8ab4f8;">Pleb leaderboard</strong> instead.' +
                 '</div>'
             );
         }
@@ -366,7 +366,7 @@ const PaymentUI = {
         // alongside paid (freePlayEnabled). Free games go to the Pleb leaderboard.
         if (this.config.freePlayEnabled) {
             const note = this.config.paymentsEnabled
-                ? '🪙 Free — high scores go to the Pleb leaderboard'
+                ? '🪙 Free: high scores go to the Pleb leaderboard'
                 : 'No payments required';
             $container.append(`
                 <button class="mode-option" data-mode="FREE" data-action="free"

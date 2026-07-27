@@ -405,12 +405,12 @@ describe('GameModeManager', () => {
 
     describe('processCreditsPackageConfirmation', () => {
         test('adds correct credits from package info', async () => {
-            // Step 1: db.query — SELECT payment lookup
+            // Step 1: db.query, the SELECT payment lookup
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ user_id: 1, description: '', status: 'pending' }]
             });
 
-            // Step 2: withTransaction — client.query calls
+            // Step 2: withTransaction, then client.query calls
             mockClient.query.mockImplementation(async (sql) => {
                 if (/UPDATE payments/i.test(sql)) return { rows: [{ id: 123 }], rowCount: 1 };
                 if (/SELECT id, premium_level/i.test(sql)) return { rows: [{ id: 1, premium_level: 'free' }], rowCount: 1 };
@@ -590,12 +590,12 @@ describe('GameModeManager', () => {
         });
 
         test('falls back to default credits when package info missing and no description', async () => {
-            // Step 1: db.query — SELECT payment lookup with no credits in description
+            // Step 1: db.query, the SELECT payment lookup with no credits in description
             mockDb.query.mockResolvedValueOnce({
                 rows: [{ user_id: 1, description: 'Some payment', status: 'pending' }]
             });
 
-            // Step 2: withTransaction — client.query calls
+            // Step 2: withTransaction, then client.query calls
             mockClient.query.mockImplementation(async (sql) => {
                 if (/UPDATE payments/i.test(sql)) return { rows: [{ id: 123 }], rowCount: 1 };
                 if (/SELECT id, premium_level/i.test(sql)) return { rows: [{ id: 1, premium_level: 'free' }], rowCount: 1 };

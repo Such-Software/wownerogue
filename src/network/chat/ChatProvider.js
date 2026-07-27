@@ -1,8 +1,8 @@
 /**
- * ChatProvider — abstraction over chat message delivery and history.
+ * ChatProvider: abstraction over chat message delivery and history.
  *
  * The seam that lets the chat backend be swapped (e.g. for a Nostr channel) without changing
- * callers. Application concerns — commands, moderation, rate limiting, XSS escaping — stay in
+ * callers. Application concerns (commands, moderation, rate limiting, XSS escaping) stay in
  * the caller (ChatHandler / TavernManager); a provider only delivers and (optionally) stores.
  *
  * Scopes:
@@ -40,7 +40,7 @@ class ChatProvider {
 
     /**
      * Deliver a message whose nostr event was signed by the CLIENT (per-player identity, Phase 2).
-     * The base/local provider has no relay, so it just delivers the message in-game — the signed
+     * The base/local provider has no relay, so it just delivers the message in-game: the signed
      * `event` is ignored. NostrChatProvider overrides this to ALSO publish the pre-signed event.
      * @param {object} req  { event, scope, username, text, ts, socketId, userId }
      */

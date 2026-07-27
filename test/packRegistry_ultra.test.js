@@ -1,5 +1,5 @@
 /**
- * Pack registry — the engine for multi-pack, interchangeable render environments (products).
+ * Pack registry: the engine for multi-pack, interchangeable render environments (products).
  */
 describe('pack registry', () => {
     let RK;

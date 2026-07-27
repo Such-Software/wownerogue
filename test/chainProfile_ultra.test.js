@@ -1,5 +1,5 @@
 /**
- * ChainProfile registry (Pillar 3 foundation) — one source for chain params across Smirk's five
+ * ChainProfile registry (Pillar 3 foundation): one source for chain params across Smirk's five
  * PoW chains, and the fix for decimals silently defaulting to 12 for anything but WOW/XMR.
  */
 const ChainProfile = require('../src/chain/chainProfile');

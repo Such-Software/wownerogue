@@ -120,11 +120,10 @@ class EnvironmentValidator {
         //
         // Every fail-closed gate in the app (chain/wallet identity verification, secret-strength
         // checks, the simulated-block prohibition, HSTS, the readiness identity requirement) tests
-        // for the literal string 'production'. DebugManager, meanwhile, defaults an UNSET NODE_ENV
-        // *to* production — so it suppresses console logging and reports IS_PRODUCTION while every
-        // safety gate silently reads false. A missing or misspelled NODE_ENV therefore produced a
-        // quiet, worst-of-both-worlds deployment: hardening off, diagnostics off, no warning. Rather
-        // than reconcile nine call sites, make the ambiguous state impossible to boot.
+        // for the literal string 'production'. DebugManager instead treats an unset NODE_ENV as
+        // production, so it suppresses console logging and reports IS_PRODUCTION while every safety
+        // gate reads false. Rejecting a missing or unrecognized value at startup makes that
+        // ambiguous state unbootable rather than requiring agreement across all those call sites.
         const RECOGNIZED_ENVS = ['production', 'development', 'debug', 'test'];
         const declaredEnv = typeof env.NODE_ENV === 'string' ? env.NODE_ENV.trim() : '';
         if (!declaredEnv) {

@@ -1,5 +1,5 @@
 // Grid BFS used by the balance-sim bots. Kept dependency-free (no ROT) so the sim is a thin,
-// auditable layer over the REAL game engine — it never reimplements game rules, only navigation.
+// auditable layer over the REAL game engine: it never reimplements game rules, only navigation.
 
 // Breadth-first distance field from one or more source cells over a passability predicate.
 // Returns a rows×cols Int32Array-of-arrays where unreachable = -1. 4-connected (the game moves

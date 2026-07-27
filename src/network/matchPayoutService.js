@@ -1,5 +1,5 @@
 /**
- * MatchPayoutService — crypto-race pot accounting and winner payout.
+ * MatchPayoutService: crypto-race pot accounting and winner payout.
  *
  * On match start: commit each entrant's held ticket to the match and lock the pot (the ACTUAL
  * atomic amount collected), computing the house fee with exact integer math.
@@ -7,7 +7,7 @@
  * minus the house fee, then hand it to the existing GameModeManager batch/retry machinery.
  *
  * This service does not send on-chain transactions itself; it reuses the existing payout retry
- * / batching path in GameModeManager. All pot/fee arithmetic is BigInt — no float precision
+ * / batching path in GameModeManager. All pot/fee arithmetic is BigInt: no float precision
  * loss on large atomic amounts.
  */
 
@@ -17,7 +17,7 @@ const { reservePayoutCapacity } = require('../services/payoutAdmissionService');
 
 // Sentinel address for a winner who has not set a payout address yet. The payout row is stored
 // as 'needs_review' so the pot is a durable, queryable liability the winner can claim once they
-// provide an address — the house never silently keeps it, and the batcher never sends to this.
+// provide an address; the house never silently keeps it, and the batcher never sends to this.
 const NO_ADDRESS_SENTINEL = 'PENDING_NO_ADDRESS';
 
 class MatchPayoutService {
@@ -70,7 +70,7 @@ class MatchPayoutService {
      * Called by MatchScheduler BEFORE a crypto_race match is announced/started. Commits each
      * entrant's held queue-join ticket to this match, records the ACTUAL collected pot, and
      * computes the house fee via exact integer (BigInt) math. Throws on DB failure so the
-     * caller can abort + refund (the transaction rolls back — no tickets are consumed).
+     * caller can abort + refund (the transaction rolls back: no tickets are consumed).
      */
     async collectEntryTickets(room, entrants) {
         if (!this.db || !room || room.economy !== 'crypto_race') return;
@@ -169,7 +169,7 @@ class MatchPayoutService {
             };
 
             for (const entrant of (entrants || [])) {
-                // Commit the held ticket to this match (delta 0 — it was already deducted at
+                // Commit the held ticket to this match (delta 0: it was already deducted at
                 // queue-join; this row records the commitment for the audit trail).
                 await client.query(`
                     INSERT INTO race_entry_transactions (user_id, delta, balance_after, reason, match_id)

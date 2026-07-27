@@ -17,8 +17,8 @@ describe('cosmetic entitlements', () => {
     expect(entitlements.premium).toBe(true);
     expect(entitlements.level).toBe('free'); // spend unlocks packs by threshold, but isn't a premium tier
     expect(entitlements.packs['generated-skins']).toBe(true);         // threshold 1
-    expect(entitlements.packs['iso-dungeon']).toBe(true);            // threshold 10 — just reached
-    expect(entitlements.packs['kenney-3d-characters']).toBe(false);  // threshold 25 — not yet
+    expect(entitlements.packs['iso-dungeon']).toBe(true);            // threshold 10: just reached
+    expect(entitlements.packs['kenney-3d-characters']).toBe(false);  // threshold 25: not yet
     expect(Entitlements.normalizeAppearance({ avatar: 'monero-knight' }, entitlements).avatar).toBe('monero-knight');
   });
 

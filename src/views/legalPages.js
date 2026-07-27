@@ -86,7 +86,7 @@ function shell({ title, disclosure, body }) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(title)} — ${gameName}</title>
+  <title>${escapeHtml(title)}: ${gameName}</title>
   <link rel="stylesheet" href="/styles/legal.css">
 </head>
 <body>
@@ -126,7 +126,7 @@ function renderPrivacy(disclosure) {
         body: `
 <section><h2>Data the service handles</h2><ul><li>A random browser session token stored in local storage and the matching account record.</li><li>Network and security data such as IP address, connection identifiers, rate-limit events, user agent information available to the web stack, and application logs.</li><li>Chosen display name, avatar/loadout, scores, game proofs, gameplay, leaderboard records, credit and ticket ledgers, and support evidence.</li><li>Payment addresses, payout addresses, invoice/subaddress records, transaction hashes, amounts, confirmations, and payout status. Public blockchain activity remains public independently of this service.</li><li>Chat messages and, when enabled, public keys or signed events. Global chat may be relayed to public Nostr infrastructure and should be treated as public.</li></ul></section>
 <section><h2>Why it is used</h2><p>The application uses this data to resume anonymous sessions, run games, separate leaderboards, verify payments and payouts, prevent duplicate claims and abuse, investigate failures, reconcile financial records, support players, and secure the service.</p></section>
-<section><h2>Where it goes</h2><p>Data is processed by the operator's hosting, reverse-proxy, database, blockchain node or wallet infrastructure, backups, and monitoring. Optional integrations shown in the product may send the necessary data to their operators—for example, public chat relays or a wallet extension. Operator-alert email receives operational alerts, not a player mailing list.</p></section>
+<section><h2>Where it goes</h2><p>Data is processed by the operator's hosting, reverse-proxy, database, blockchain node or wallet infrastructure, backups, and monitoring. Optional integrations shown in the product may send the necessary data to their operators, for example public chat relays or a wallet extension. Operator-alert email receives operational alerts, not a player mailing list.</p></section>
 <section><h2>Storage and retention</h2><p>Session and preference data is stored in your browser. Server records and backups are retained for operations, security, dispute handling, financial reconciliation, and applicable recordkeeping. This version does not promise a fixed deletion schedule. Blockchain and public-relay records may be impossible for the operator to delete.</p></section>
 <section><h2>Your choices</h2><p>You may play free without creating a paid invoice when free play is offered. Do not put private information in a display name or chat. You may clear local storage, but doing so can permanently lose access to the anonymous account, credits, payout address, and history associated with its token. Contact the operator to ask about access, correction, or deletion where applicable; provide only enough evidence to locate the record.</p></section>
 <section><h2>Security limits</h2><p>The application uses technical safeguards, but no online or cryptocurrency system is risk-free. Never share the browser session token, wallet seed, wallet password, or private key with the site or support.</p></section>`

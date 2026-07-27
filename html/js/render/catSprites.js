@@ -28,7 +28,7 @@
         var frame = Math.floor((now || 0) / FRAME_MS) % FRAMES;
         var sx = frame * FW;
         // The cat occupies only ~40% of its 50x50 frame (lots of transparent padding), so scale
-        // the frame well past the cell and centre it — the visible cat then reads about tile-sized.
+        // the frame well past the cell and centre it; the visible cat then reads about tile-sized.
         var size = cell * 2.7;
         var dx = e.x * cell + (cell - size) / 2;
         var dy = e.y * cell + (cell - size) / 2 + cell * 0.28;  // centred, nudged down onto the tile

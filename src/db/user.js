@@ -1,18 +1,16 @@
-const Game = require('../game/game'); // Ensure Game is required
+const Game = require('../game/game');
 
-// Environment-based console logging control
+// Verbose logging is limited to debug and development environments.
 const CONSOLE_LOGGING = process.env.NODE_ENV === 'debug' || process.env.NODE_ENV === 'development';
 
-// User class definition
 class User {
     constructor(id, address) {
-        this.id = id; // This is the socket.id
+        this.id = id; // socket.id
         this.address = address;
-        this.currentGame = null; // Reference to current game instance
-        this.blockRec = 0; // Block record for game entry timing
-        this.clientId = null; // To store socket.client.id if different
-        
-        // User statistics
+        this.currentGame = null;
+        this.blockRec = 0; // Block height used for game entry timing
+        this.clientId = null; // socket.client.id, a distinct value from socket.id
+
         this.stats = {
             gamesPlayed: 0,
             gamesWon: 0,
@@ -22,8 +20,8 @@ class User {
             treasuresFound: 0,
             monstersDefeated: 0
         };
-        
-        // Add user to the registry upon creation
+
+        // Registration happens in the constructor so every User is reachable by socket id.
         userRegistry.set(id, this);
         if (CONSOLE_LOGGING) {
             console.log(`User created and registered: ${id}`);
@@ -43,7 +41,8 @@ class User {
     }
 
     /**
-     * Game ended - update user statistics
+     * Record the end of a game and fold its results into the user statistics.
+     * Does nothing when the user has no current game.
      * @param {string} result - 'won', 'lost', or 'abandoned'
      * @param {number} score - Final score
      * @param {object} gameStats - Additional game statistics
@@ -51,8 +50,7 @@ class User {
     endGame(result, score = 0, gameStats = {}) {
         if (this.currentGame) {
             this.currentGame = null;
-            
-            // Update statistics
+
             if (result === 'won') {
                 this.stats.gamesWon++;
             } else if (result === 'lost') {
@@ -78,31 +76,24 @@ class User {
     }
 
     /**
-     * Get user statistics
+     * @returns {object} A copy of the stats, so callers cannot mutate the user's own counters.
      */
     getStats() {
         return { ...this.stats };
     }
 
-    /**
-     * Get user's current game status
-     */
     isInGame() {
         return this.currentGame !== null;
     }
-
-    // ... other User methods ...
 }
 
-// User registry (maps socketId to User objects)
+// Maps socket.id to User. Declared after the class body; the constructor only reads it at call time,
+// which is always after this binding is initialised.
 const userRegistry = new Map();
 
-// ... (rest of the file, e.g., getUserBySocketId, removeUser, module.exports)
-// Ensure these functions and module.exports are correctly placed relative to the class definition.
-// For example:
 module.exports = {
     User,
     getUserBySocketId: (socketId) => userRegistry.get(socketId),
     removeUser: (socketId) => userRegistry.delete(socketId),
-    getAllUsers: () => Array.from(userRegistry.values()) // If you need to iterate over users
+    getAllUsers: () => Array.from(userRegistry.values())
 };

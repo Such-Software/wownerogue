@@ -18,11 +18,11 @@
         return true;
     };
 
-    // Render tiers. `premium` marks modes intended to be unlocked with credits — a cosmetic
+    // Render tiers. `premium` marks modes intended to be unlocked with credits: a cosmetic
     // entitlement gated by Operator Policy, the same pattern as avatar unlocks. NOTE: rendering
     // is client-side, so this is a soft/honour gate for cosmetics, not a hard security boundary.
     // Modes are TECHNIQUES (how a scene is drawn). Packs are the SETS/styles within a projection
-    // (chosen via the pack picker) — so "Fancy" (tiles + FX) is a topdown PACK, not a mode. A
+    // (chosen via the pack picker), so "Fancy" (tiles + FX) is a topdown PACK, not a mode. A
     // premium mode unlocks once the user has ANY unlocked pack for its projection.
     RK.RENDER_MODES = [
         { id: 'tiles', label: 'Tiled', premium: false, projection: 'topdown' },
@@ -33,7 +33,7 @@
 
     RK.entitlements = RK.entitlements || { premium: false, level: 'free', packs: {} };
     // Per-session QA bypass for premium render-mode gating (Fancy/Iso/3D). Default OFF. A tester
-    // opts IN for their own browser only via ?unlock=1 (persisted) — nobody else is affected:
+    // opts IN for their own browser only via ?unlock=1 (persisted); nobody else is affected:
     //   ?unlock=1  -> on (sticky)     ?unlock=0  -> off
     RK.RENDER_MODE_TEST_UNLOCKS = false;
     try {

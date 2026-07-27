@@ -98,7 +98,7 @@ class SocketHandlers {
             gameModeManager: this.gameModeManager
         });
 
-        // Legacy WAITING_PLAYERS removed; queueManager owns queue state
+        // queueManager owns all queue state
 
         // Initialize session manager first
         if (this.gameModeManager && this.gameModeManager.db) {
@@ -108,8 +108,8 @@ class SocketHandlers {
                 gameModeManager: this.gameModeManager,
                 io: this.io
             });
-            // IDENTITY (Phase 2.1): give GameModeManager the session manager so getOrCreateUser
-            // resolves through the stable anon_token identity instead of the mutable socket_id.
+            // GameModeManager needs the session manager so getOrCreateUser resolves through the
+            // stable anon_token identity instead of the mutable socket_id.
             this.gameModeManager.sessionManager = this.sessionManager;
             // Initialize cleanup timers
             this.sessionManager.initialize().catch(err => {
@@ -130,12 +130,12 @@ class SocketHandlers {
             debugManager: this.debugManager,
             broadcastManager: this.broadcastManager,
             io: this.io,
-            createGameForUser: async (userObj, gameType, options) => {
-                const game = await this.gameManager.createGameForUser(userObj, gameType, options);
+            createGameForUser: async (userObj, options) => {
+                const game = await this.gameManager.createGameForUser(userObj, options);
                 // Stamp the stable DB user id onto the game at creation. Suspend/restore keys
-                // on this id; capturing it now (when we reliably have the session) means the
-                // disconnect path never needs a fresh, failure-prone DB lookup to preserve a
-                // game — so ANY game, paid or free, is reconnectable.
+                // on this id; capturing it here, where the session is reliably available, keeps
+                // the disconnect path free of a failure-prone DB lookup, so any game, paid or
+                // free, is reconnectable.
                 try {
                     const sid = userObj?.id;
                     const dbUid = sid != null ? this.sessionManager?.sessions?.get(sid)?.id : null;
@@ -233,8 +233,8 @@ class SocketHandlers {
         let tavernRoomData = null;
         const tavernRoomUrl = 'assets/kenney/tavern_room.json';
         // The imported .tmx room renders as a block-scatter in the browser (the client falls back to
-        // the walkable grid), so use the hand-built procedural tavern (tavernMap.js) — which renders
-        // reliably through the theme atlas — by default. Opt back into the .tmx with TAVERN_DESIGNED_ROOM=true.
+        // the walkable grid), so the default is the hand-built procedural tavern (tavernMap.js),
+        // which renders reliably through the theme atlas. TAVERN_DESIGNED_ROOM=true opts into the .tmx.
         if (process.env.TAVERN_DESIGNED_ROOM === 'true') {
             try {
                 const roomPath = require('path').join(__dirname, '../../html', tavernRoomUrl);
@@ -252,8 +252,8 @@ class SocketHandlers {
             // Share the lobby's global chat provider so the tavern joins one global chat with
             // persistent history (and nostr fan-out when enabled), instead of ephemeral room chat.
             globalChatProvider: this.chatHandler.chatProvider,
-            // Publishing into GLOBAL chat must carry the same guards the lobby path applies —
-            // otherwise `tavern_chat` is an unauthenticated bypass of the chat ban list, the
+            // Publishing into GLOBAL chat must carry the same guards the lobby path applies.
+            // Without them `tavern_chat` is an unauthenticated bypass of the chat ban list, the
             // reconnect-proof rate limiter, and user_id attribution, reaching every connected
             // client and the persisted history under a name the client picked.
             chatModeration: {
@@ -283,9 +283,9 @@ class SocketHandlers {
             matchManager: this.matchManager,
             debugManager: this.debugManager
         });
-        // Database connection + migrations happen later in startServer(). Initializing the
-        // durable queue here raced that lifecycle and silently left production match mode dead.
-        // initializeMatchMode() is awaited after DatabaseManager.initialize() instead.
+        // Database connection + migrations happen later in startServer(), so the durable queue
+        // cannot be initialized here. initializeMatchMode() is awaited after
+        // DatabaseManager.initialize() instead.
         this._matchInitializePromise = null;
 
 
@@ -365,11 +365,10 @@ class SocketHandlers {
      * Refuse admission while no blockchain node is reachable.
      *
      * A run's lifetime is measured in blocks, and its entry block comes from the last SUCCESSFUL
-     * poll. With every node unreachable that value silently goes stale, so a game admitted during an
-     * outage was anchored to an already-past block and `checkGamesTimeout` killed it as a timeout on
-     * the first recovered poll — the player lost a run (and in paid mode, an entry) to our
-     * infrastructure. Failing the entry up front is the honest outcome: nothing is charged and the
-     * player is told why.
+     * poll. With every node unreachable that value silently goes stale, so a game admitted during
+     * an outage is anchored to an already-past block and `checkGamesTimeout` kills it as a timeout
+     * on the first recovered poll, costing the player a run (and in paid mode, an entry). Failing
+     * the entry up front is the honest outcome: nothing is charged and the player is told why.
      *
      * Deliberately conservative: it only fires when the health check explicitly reports false.
      * Simulated blocks report healthy, and a runtime without the probe is left alone.
@@ -378,11 +377,11 @@ class SocketHandlers {
         if (this.debugManager?.isChainHealthy?.() !== false) return false;
         const chain = String(process.env.CRYPTO_TYPE || 'WOW').toUpperCase().slice(0, 8);
         const message = `Can't reach a ${chain} node right now, so entries are paused. `
-            + 'Nothing was charged — please try again shortly.';
+            + 'Nothing was charged; please try again shortly.';
         try { socket?.emit?.('chain_unavailable', { code: 'NODE_UNREACHABLE', kind, message }); } catch (_) {}
         try { this.broadcastManager?.sendStatusUpdate?.(socket?.id, 'error', message); } catch (_) {}
         if (this.debugManager?.CONSOLE_LOGGING) {
-            console.warn(`[SocketHandlers] '${kind}' refused — no daemon reachable.`);
+            console.warn(`[SocketHandlers] '${kind}' refused: no daemon reachable.`);
         }
         return true;
     }
@@ -393,7 +392,7 @@ class SocketHandlers {
      * Deliberately NOT a failover. Two `wallet-rpc` processes serving one wallet file can build
      * transactions from the same outputs and corrupt the wallet cache, so a standby wallet is an
      * operator decision about custody, not something this code may take on its own. Daemons are
-     * read-only and interchangeable — wallets are neither. The safe behaviour when the wallet is
+     * read-only and interchangeable; wallets are neither. The safe behaviour when the wallet is
      * down is therefore to decline the invoice cleanly rather than to route around it.
      *
      * Only gates kinds that actually need the wallet: credits/free entry runs off the database and
@@ -403,12 +402,12 @@ class SocketHandlers {
         if (kind !== 'request_payment') return false;
         // Only meaningful once a wallet has been wired up and has reported at least once.
         if (!this.walletService || this.walletService.isHealthy !== false) return false;
-        const message = 'Payments are temporarily unavailable — the wallet is unreachable. '
+        const message = 'Payments are temporarily unavailable: the wallet is unreachable. '
             + 'Nothing was charged. Credits and free play still work.';
         try { socket?.emit?.('payment_unavailable', { code: 'WALLET_UNREACHABLE', kind, message }); } catch (_) {}
         try { this.broadcastManager?.sendStatusUpdate?.(socket?.id, 'error', message); } catch (_) {}
         if (this.debugManager?.CONSOLE_LOGGING) {
-            console.warn(`[SocketHandlers] '${kind}' refused — wallet unreachable.`);
+            console.warn(`[SocketHandlers] '${kind}' refused: wallet unreachable.`);
         }
         return true;
     }
@@ -588,10 +587,8 @@ class SocketHandlers {
      * Register memory cleanup functions to prevent memory leaks
      */
     _registerMemoryCleanups() {
-        // (mempool-notification dedup + TTL eviction lives in PaymentHandlers, which owns
-        // the actual dedup set; the old SocketHandlers copy here was unused and is removed.)
-
-        // Let other components register their cleanups
+        // Mempool-notification dedup + TTL eviction lives in PaymentHandlers, which owns the
+        // dedup set.
         if (this.rateLimiter) {
             this.memoryManager.registerCleanup(
                 'rateLimiterCleanup',
@@ -620,9 +617,9 @@ class SocketHandlers {
             return;
         }
 
-        // Player took the stairs down to a deeper level — the fresh level was already generated in
-        // movePlayer and rides out in the normal game_update. Don't end the game, and don't advance
-        // the new level's monster on the arrival turn.
+        // Player took the stairs down to a deeper level. The fresh level is generated in
+        // movePlayer and rides out in the normal game_update, so don't end the game and don't
+        // advance the new level's monster on the arrival turn.
         if (moveResult && moveResult.event === 'descend') {
             return;
         }
@@ -734,12 +731,12 @@ class SocketHandlers {
                     restoredGame = restored.game;
                     const suspendedState = restored.suspendedState;
 
-                    // G1/C3: resume the block-timeout clock from the ORIGINAL entry block,
-                    // not the reconnect height. suspendedGameManager persists the entry block
-                    // and hands it back here; restore it onto the in-memory user so
-                    // checkGamesTimeout continues counting from where it left off. If it's
-                    // missing, leave blockRec unset — checkGamesTimeout records the first
-                    // observed height rather than treating the game as instant-death.
+                    // Resume the block-timeout clock from the ORIGINAL entry block, not the
+                    // reconnect height. suspendedGameManager persists the entry block and hands
+                    // it back here; restoring it onto the in-memory user lets checkGamesTimeout
+                    // continue counting from where it left off. When it is missing, blockRec
+                    // stays unset and checkGamesTimeout records the first observed height
+                    // rather than treating the game as instant-death.
                     const entryBlock = (restored.blockRec ?? suspendedState?.blockRec ?? null);
                     if (memUser && entryBlock != null) {
                         memUser.blockRec = entryBlock;
@@ -834,13 +831,13 @@ class SocketHandlers {
         // consult the dynamic shutdown flag, so existing connections cannot race the snapshot.
         const runAdmission = (kind, task) => this._runAdmission(socket, kind, task);
 
-        // SAFE DISPATCH — every listener below is registered through `on`, never `socket.on`.
+        // SAFE DISPATCH: every listener below is registered through `on`, never `socket.on`.
         //
         // Socket.IO invokes listeners without a try/catch, and this process treats
         // `uncaughtException` and `unhandledRejection` as fatal (see the handlers in src/index.js,
         // which call gracefulShutdown and exit). That combination makes ONE unguarded throw in ANY
-        // listener an unauthenticated remote kill switch: a client sends a malformed — or entirely
-        // absent — payload and the whole server exits, taking live games and payment monitoring
+        // listener an unauthenticated remote kill switch: a client sends a malformed, or entirely
+        // absent, payload and the whole server exits, taking live games and payment monitoring
         // with it. Containing the fault to the offending socket is the invariant; individual
         // handlers hardening their own inputs is defence in depth, not a substitute.
         const on = (event, handler) => {
@@ -866,7 +863,7 @@ class SocketHandlers {
             handleCancelEntry: (socket) => this.queueHandler.handleCancelEntry(socket),
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
-        // Phase 2: a client-signed global chat event (posts under the player's own Smirk npub).
+        // Client-signed global chat event (posts under the player's own Smirk npub).
         on('chat_signed', (payload) => this.chatHandler.handleSignedChatMessage(socket, payload));
     on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         on('disconnect', () => this.handleDisconnect(socket));
@@ -874,11 +871,12 @@ class SocketHandlers {
         on('register_client', async (data) => {
             this.connectionHandler.handleRegisterClient(socket, data);
             this._emitFairnessOffer(socket);
-            // Re-send game mode info after client registers handlers (fixes race condition)
+            // Re-send after the client registers its handlers: the connection-time emit can
+            // arrive before those listeners exist.
             if (this.gameModeManager) {
                 socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
             }
-            // Re-send credits_update (same race condition — event may arrive before handlers register)
+            // Re-sent for the same reason as game_mode_info above.
             if (this.sessionManager) {
                 try {
                     const sessionUser = await this.sessionManager.getBySocket(socket.id);
@@ -889,20 +887,22 @@ class SocketHandlers {
                             creditsPerGame: this.gameModeManager?.creditsPerGameCost || 1
                         });
                     }
-                } catch (e) { /* ignore — credits will update on next action */ }
+                } catch (e) { /* credits refresh on the next action */ }
             }
             this._emitIdentity(socket).catch(err => {
                 if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to re-send identity snapshot:', err.message);
             });
         });
         on('auto_start', (data) => runAdmission('auto_start',
-            () => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {}))); // New handler for start button
+            () => this.handleAutoStart(socket, (data && typeof data === 'object') ? data : {})));
         on('play_free', (data) => runAdmission('play_free',
-            () => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true }))); // Explicit free-play choice
+            () => this.handleAutoStart(socket, { ...((data && typeof data === 'object') ? data : {}), free: true })));
+        // { free: true } selects Pleb-board free play.
         on('join_queue', (data) => runAdmission('join_queue',
-            () => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {}))); // Queue instead of auto-start ({ free: true } for Pleb-board free play)
+            () => this.handleJoinQueue(socket, (data && typeof data === 'object') ? data : {})));
+        // Entry without waiting for the next block.
         on('early_entry', (data) => runAdmission('early_entry',
-            () => this.handleEarlyEntry(socket, (data && typeof data === 'object') ? data : {}))); // Early entry without waiting for block
+            () => this.handleEarlyEntry(socket, (data && typeof data === 'object') ? data : {})));
         on('fairness_offer_request', () => this._emitFairnessOffer(socket));
         on('address:prompt', () => this._withIdentityReadLimit(socket, () => this.handleAddressPrompt(socket)));
         
@@ -930,10 +930,10 @@ class SocketHandlers {
         on('tavern_move', (data) => this.tavernManager.move(socket, data));
         on('tavern_chat', (data) => this.tavernManager.chat(socket, data));
         on('tavern_leave', () => this.tavernManager.leave(socket));
-        // Match mode handlers. Every match listener is wrapped so a match-layer fault can
-        // never crash the connection or leak a stack to the client — it logs and emits a
-        // benign 'match_error' instead (C5). Identity is always resolved from the CONNECTION,
-        // never from the client payload.
+        // Match mode handlers. Every match listener is wrapped so a match-layer fault can never
+        // crash the connection or leak a stack to the client; it logs and emits a benign
+        // 'match_error' instead. Identity is always resolved from the CONNECTION, never from the
+        // client payload.
         on('match_queue', (data) => runAdmission('match_queue',
             () => this._handleMatchQueue(socket, data)));
         on('match_move', (data) => {
@@ -1030,7 +1030,7 @@ class SocketHandlers {
             // honoured when the instance allows free play; otherwise fall through to paid.
             const wantsFree = wantsExplicitFree;
 
-            // Rate limiting for game starts — keyed on stable identity + IP so reconnecting
+            // Rate limiting for game starts, keyed on stable identity + IP so reconnecting
             // (new socket.id) can't reset the limit.
             const rlId = stableId(socket, this.sessionManager);
             const rlIp = clientIp(socket);
@@ -1118,7 +1118,7 @@ class SocketHandlers {
             // Create game immediately
             const blockHeight = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
             memUser.blockRec = blockHeight; // keep legacy timeout logic consistent
-            const game = await this.gameManager.createGameForUser(memUser, 'standard', {
+            const game = await this.gameManager.createGameForUser(memUser, {
                 fairnessProof: gameFairnessProof
             });
             const state = game.getState();
@@ -1163,7 +1163,7 @@ class SocketHandlers {
     }
 
     /**
-     * Handle join_queue request — adds player to block queue instead of starting immediately
+     * Handle join_queue request: adds the player to the block queue instead of starting immediately
      */
     async handleJoinQueue(socket, opts = {}) {
         if (this._isShuttingDown === true) {
@@ -1222,16 +1222,16 @@ class SocketHandlers {
             return;
         }
         try {
-            // Early entry CREATES A GAME and may consume a credit, so it must carry the same
-            // reconnect-proof admission budget as auto_start / join_queue / request_payment. It
-            // previously had none of its own: the only limiter downstream keyed on the raw, volatile
-            // socket.id with no IP bucket, so simply reconnecting reset the allowance.
+            // Early entry CREATES A GAME and may consume a credit, so it carries the same
+            // reconnect-proof admission budget as auto_start / join_queue / request_payment.
+            // The downstream limiter keys on the raw, volatile socket.id with no IP bucket, so
+            // it alone would let a reconnect reset the allowance.
             const rlId = stableId(socket, this.sessionManager);
             const rlIp = clientIp(socket);
             const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'game:queue', rlIp);
             if (!rateLimitResult.allowed) {
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning',
-                    `Slow down — try entering again in ${Math.ceil(rateLimitResult.retryAfter / 1000)}s.`);
+                    `Slow down; try entering again in ${Math.ceil(rateLimitResult.retryAfter / 1000)}s.`);
                 return;
             }
             await this.rateLimiter.recordAttempt(rlId, 'game:queue', rlIp);
@@ -1319,9 +1319,9 @@ class SocketHandlers {
 
     /**
      * Resolve the stable match session/identity for a connection. Identity is derived ONLY
-     * from the CONNECTION (the session cache, then a DB lookup by socket) — never from any
-     * client-supplied payload — so a client can't act on another user's behalf (C5). Mirrors
-     * how other handlers resolve identity via sessionManager.
+     * from the CONNECTION (the session cache, then a DB lookup by socket), never from any
+     * client-supplied payload, so a client can't act on another user's behalf. Mirrors how
+     * other handlers resolve identity via sessionManager.
      * @returns {Promise<{userId:number, socketId:string, sessionToken:(string|null), user:Object}|null>}
      */
     async _resolveMatchSession(socket) {
@@ -1343,8 +1343,8 @@ class SocketHandlers {
     }
 
     /**
-     * Handle a match-mode queue join/leave (C5/S4). The economy comes from the payload but
-     * the IDENTITY is resolved from the connection, never from data. Never throws: any fault
+     * Handle a match-mode queue join/leave. The economy comes from the payload but the
+     * IDENTITY is resolved from the connection, never from data. Never throws: any fault
      * is logged and reported to the client via 'match_error'. If match mode is disabled /
      * the queue is absent, respond benignly and return.
      * @param {Object} socket
@@ -1416,7 +1416,7 @@ class SocketHandlers {
     }
 
     /**
-     * Handle a match-mode reconnect (C5). Resolves identity from the connection and hands the
+     * Handle a match-mode reconnect. Resolves identity from the connection and hands the
      * live socket + session to the match manager. Same never-throw discipline as the other
      * match listeners; benign no-op when match mode is disabled.
      */
@@ -1442,7 +1442,7 @@ class SocketHandlers {
     }
 
     /**
-     * Handle game entry request (legacy method - now delegates to queue)
+     * Handle game entry request (delegates to the queue)
      */
     handleGameEntry(socket) {
         return this.handleGameQueue(socket);
@@ -1511,10 +1511,10 @@ class SocketHandlers {
 
             // Resolve the stable DB user id that suspend/restore keys on. Preference order:
             //   1. the id stamped on the game at creation (always present for any game
-            //      started with a session) — no lookup, can't fail,
+            //      started with a session; no lookup, can't fail),
             //   2. the in-memory session cache,
             //   3. a DB lookup as a last resort.
-            // Every game — paid or free — is preserved and reconnectable as long as a stable
+            // Every game, paid or free, is preserved and reconnectable as long as a stable
             // id resolves, which it does whenever a session was ever established.
             let dbUserId = activeGame?.dbUserId || null;
             if (!dbUserId && this.sessionManager) {
@@ -1544,10 +1544,10 @@ class SocketHandlers {
                 }
             } else {
                 if (activeGame) {
-                    // Reachable only when no stable identity resolved at all — i.e. a session
+                    // Reachable only when no stable identity resolved at all, i.e. a session
                     // was never established (e.g. DB unavailable at connect), so there is
                     // genuinely no id to restore the game under. Record it for auditing.
-                    console.error(`[SocketHandlers] Active game dropped without suspension — no stable user id `
+                    console.error(`[SocketHandlers] Active game dropped without suspension, no stable user id `
                         + `(socket=${socketId}, mode=${activeGame.paymentMode || activeGame.gameMode || 'unknown'}, `
                         + `gameId=${activeGame.id || 'unknown'}). Cannot restore a game without a session identity.`);
                 }
@@ -1613,8 +1613,8 @@ class SocketHandlers {
                 this.tavernManager.handleDisconnect(socketId);
             }
 
-            // Clean up match presence (starts the AFK grace timer). New signature takes the
-            // live socket (C5). Guarded so a match-layer fault can't abort disconnect cleanup.
+            // Clean up match presence (starts the AFK grace timer). Takes the live socket.
+            // Guarded so a match-layer fault can't abort disconnect cleanup.
             if (this.matchManager) {
                 try {
                     this.matchManager.handleDisconnect(socket);
@@ -1681,7 +1681,7 @@ class SocketHandlers {
         console.error(`❌ Socket handler '${event}' faulted:`, (err && err.message) || err);
         if (err && err.stack && this.debugManager?.CONSOLE_LOGGING) console.error(err.stack);
         try {
-            // Deliberately generic — a client must never learn where in the server it broke.
+            // Deliberately generic: a client must never learn where in the server it broke.
             socket.emit('error_message', { message: 'That request could not be processed.' });
         } catch (_) { /* socket already gone */ }
     }
@@ -1690,10 +1690,9 @@ class SocketHandlers {
      * Gate a cheap-looking read that actually hits the database.
      *
      * `identity:get` and `address:prompt` each run getOrCreateUser (a users SELECT plus an
-     * UPDATE ... SET last_active) and an entitlements SELECT, but unlike their sibling
-     * `identity:update` neither had any limit — so a single socket could pipeline them at packet
-     * rate. Uses the reconnect-proof stable id + IP buckets, so dropping and re-opening the socket
-     * does not reset the budget.
+     * UPDATE ... SET last_active) and an entitlements SELECT, so without a limit a single socket
+     * can pipeline them at packet rate. Uses the reconnect-proof stable id + IP buckets, so
+     * dropping and re-opening the socket does not reset the budget.
      */
     async _withIdentityReadLimit(socket, task) {
         const rlId = stableId(socket, this.sessionManager);
@@ -1841,11 +1840,9 @@ class SocketHandlers {
                 });
             }
 
-            // Restart payment monitoring
-            // First stop any existing monitoring (unlikely but safe)
+            // Clear any monitoring already attached to this socket before restarting it.
             this.paymentHandlers.stopMonitoringForSocket(socket.id);
 
-            // Restart monitoring via paymentHandlers internal method
             if (typeof this.paymentHandlers._monitorAddress === 'function') {
                 this.paymentHandlers._monitorAddress(
                     socket, 
@@ -1887,8 +1884,8 @@ class SocketHandlers {
     /**
      * Create a new game for a user (delegates to GameManager)
      */
-    createGameForUser(user, gameType = 'standard', options = {}) {
-        return this.gameManager.createGameForUser(user, gameType, options);
+    createGameForUser(user, options = {}) {
+        return this.gameManager.createGameForUser(user, options);
     }
 
     /**
@@ -1937,7 +1934,7 @@ class SocketHandlers {
             // entry), so iterating the live Map could skip games. Process sequentially and
             // await each game-over rather than firing them all off concurrently on one tick.
             // Anti-instant-death guard ONLY (default 2s, set 0 to disable). Random block timing
-            // is the game's core mechanic and is deliberately preserved — this is not a fairness
+            // is the game's core mechanic and is deliberately preserved; this is not a fairness
             // floor. It only avoids the degenerate case where a block lands in the same instant
             // the game starts and the player dies before the dungeon even renders / before their
             // first move is possible (100ms move cooldown).
@@ -1952,7 +1949,7 @@ class SocketHandlers {
                 // while settling an earlier game. Never let it install a later terminal intent
                 // after the shutdown producer drain has begun.
                 if (this._isShuttingDown) break;
-                // G3: the snapshot can go stale while we await a previous game-over. If this game
+                // The snapshot can go stale while awaiting a previous game-over. If this game
                 // was concurrently won or otherwise ended (removed from activeGames on another
                 // async path), never re-end it here as a loss/timeout.
                 if (!this.activeGames.has(socketId)) continue;
@@ -1963,10 +1960,10 @@ class SocketHandlers {
                 const user = this.connectionHandler.getUserBySocket(socketId);
                 if (!user) continue;
 
-                // G1/C3: only end when the entry block is DEFINED and a later block has arrived.
-                // If we've never recorded an entry block for this player, record the current
-                // height as the first observation instead of treating a missing value as either
-                // immortal (never times out) or instant-death (times out on the first tick).
+                // Only end when the entry block is DEFINED and a later block has arrived. With no
+                // entry block recorded for this player, the current height becomes the first
+                // observation, so a missing value means neither immortal (never times out) nor
+                // instant-death (times out on the first tick).
                 if (user.blockRec == null) {
                     user.blockRec = currentHeight;
                     continue;
@@ -1992,7 +1989,7 @@ class SocketHandlers {
         });
     }
 
-    // Payment system handlers (placeholder for compatibility)
+    // Payment system handlers (delegated to PaymentHandlers when present)
     async handleCheckPaymentStatus(socket, data) {
         if (this.paymentHandlers && typeof this.paymentHandlers.handleCheckPaymentStatus === 'function') {
             return this.paymentHandlers.handleCheckPaymentStatus(socket, data);

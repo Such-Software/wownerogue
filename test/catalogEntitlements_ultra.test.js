@@ -10,7 +10,7 @@ const Entitlements = require('../src/multiplayer/entitlements');
 const CatalogService = require('../src/services/catalogService');
 const { snapshotForUser, DEFAULT_CATALOG } = Entitlements;
 
-describe('three-way unlock — default (seed) catalog', () => {
+describe('three-way unlock: default (seed) catalog', () => {
     test('free pack is always unlocked; premium packs are locked with no spend', () => {
         const s = snapshotForUser({ credits: 0, total_credits_purchased: 0 });
         expect(s.packs['original']).toBe(true);             // free baseline
@@ -55,7 +55,7 @@ describe('three-way unlock — default (seed) catalog', () => {
     });
 });
 
-describe('THE bug fix — differentiated thresholds', () => {
+describe('THE bug fix: differentiated thresholds', () => {
     const catalog = {
         'skin-a': { id: 'skin-a', label: 'A', tier: 0, unlockMinCredits: 1, grantOnly: false },
         'pack-b': { id: 'pack-b', label: 'B', tier: 0, unlockMinCredits: 10, grantOnly: false }
@@ -92,7 +92,7 @@ describe('grant-only packs', () => {
     const catalog = {
         'exclusive': { id: 'exclusive', label: 'X', tier: 0, unlockMinCredits: null, grantOnly: true }
     };
-    test('grant-only is not unlocked by spend or tier — only an explicit grant', () => {
+    test('grant-only is not unlocked by spend or tier: only an explicit grant', () => {
         expect(snapshotForUser({ total_credits_purchased: 9999, premium_level: 'operator' }, [], catalog).packs['exclusive']).toBe(false);
         expect(snapshotForUser({}, [{ pack_id: 'exclusive' }], catalog).packs['exclusive']).toBe(true);
     });

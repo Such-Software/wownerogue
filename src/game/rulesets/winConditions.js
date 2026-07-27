@@ -2,9 +2,9 @@
  * Win-condition strategies. Each is a small object the MatchRoom consults at three decision points,
  * so the room no longer hardcodes "first to the exit wins":
  *
- *   onExit(room, id)  — a player reached the exit. Decide whether that ends the match / sets a winner.
- *   onDeath(room)     — a player just died. Decide whether the match is now over.
- *   rank(room)        — final ordering used for placement and competitive winnerId.
+ *   onExit(room, id):  a player reached the exit. Decide whether that ends the match / sets a winner.
+ *   onDeath(room):     a player just died. Decide whether the match is now over.
+ *   rank(room):        final ordering used for placement and competitive winnerId.
  *
  * FIRST_TO_EXIT reproduces the classic race behavior byte-for-byte (so existing matches are
  * unchanged); LAST_ALIVE and HIGH_SCORE are the new PvP / score modes.
@@ -126,7 +126,7 @@ const HIGH_SCORE = {
     }
 };
 
-// ALL_ESCAPE (co-op) — a lightweight variant of race: the match ends when everyone still alive has
+// ALL_ESCAPE (co-op) is a lightweight variant of race: the match ends when everyone still alive has
 // escaped (or all died). Ranking falls back to the race ordering.
 const ALL_ESCAPE = {
     onExit(room) {

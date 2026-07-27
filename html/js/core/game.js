@@ -1,15 +1,14 @@
-// Refactored Game Object - Main game controller using modular architecture
-// This provides a mock socket when the real one isn't available
+// Main game controller. Modules (DisplayManager, ScreenManager, RenderEngine, GameState) hold the
+// implementation; this object wires them together and owns the game lifecycle.
+// Stub socket so emit() is always callable when the real socket has not been created yet.
 if (typeof window !== 'undefined' && !window.socket) {
     window.socket = {
-        emit: function(event, data) {
-            // Mock socket emit - removed debug logging
-        }
+        emit: function(event, data) {}
     };
 }
 
 var Game = {
-    _screenWidth: 25, // Default values, will be updated from options
+    _screenWidth: 25, // Overridden from options when available
     _screenHeight: 19,
     _inputEnabled: true,
     _messageLog: [],
@@ -21,13 +20,11 @@ var Game = {
     _gameActive: false, // True when game is running (playing or spectating)
 
     init: function() {
-        // Update screen dimensions from options
         if (typeof options !== 'undefined') {
             this._screenWidth = options.width || 25;
             this._screenHeight = options.height || 19;
         }
         
-        // Initialize all modules
         if (!DisplayManager.init(this._screenWidth, this._screenHeight)) {
             return false;
         }
@@ -35,8 +32,7 @@ var Game = {
         ScreenManager.init(this._screenWidth, this._screenHeight);
         RenderEngine.init(this._screenWidth, this._screenHeight);
         GameState.init();
-        
-        // Draw welcome screen
+
         ScreenManager.drawWelcomeScreen();
         
         return true;
@@ -58,12 +54,12 @@ var Game = {
 
         DisplayManager.clearDisplay();
         
-        // Force clear all display caches and artifacts
+        // Drop cached display glyphs so no welcome-screen artifacts survive into the level.
         if (typeof DisplayManager !== 'undefined' && DisplayManager.forceClearToBlack) {
             DisplayManager.forceClearToBlack();
         }
-        
-        // Stop the block simulation to prevent welcome screen from interfering
+
+        // The welcome screen's block simulation draws on the same display and must be stopped first.
         if (typeof ScreenManager !== 'undefined' && ScreenManager.stopBlockSimulation) {
             ScreenManager.stopBlockSimulation();
         }
@@ -71,9 +67,9 @@ var Game = {
         try {
             GameState.setGameActive(true);
 
-            // Clear any previous game state but preserve what we need for initialization
+            // Clear previous game state. _visibleTiles is left alone: initializeMap seeds it from
+            // the server's initial visible set.
             GameState._exploredTiles = {};
-            // Don't clear _visibleTiles yet - let initializeMap handle it properly
             GameState._map = {};
             GameState._items = {};
             GameState._monster = null;
@@ -81,17 +77,14 @@ var Game = {
             GameState._exit = null;
             GameState._treasure = null;
 
-            // Initialize player
             GameState.initializePlayer(playerData);
 
-            // Initialize other game objects
             GameState._monster = monsterData;
             GameState._items = itemData;
             GameState._entrance = null;
             GameState._exit = null;
             GameState._treasure = null;
 
-            // Initialize lighting and torch data
             if (lightingData) {
                 GameState._lighting = lightingData;
             }
@@ -99,7 +92,6 @@ var Game = {
                 GameState._torches = torchData;
             }
 
-            // Initialize map and validate player position
             GameState.initializeMap(mapData, initialVisibleTiles, this._screenWidth, this._screenHeight);
             
             if (!GameState.validatePlayerPosition(this._screenWidth, this._screenHeight)) {
@@ -107,10 +99,8 @@ var Game = {
                 return false;
             }
 
-            // Compute field of view
             GameState.computeFieldOfView();
 
-            // Setup scheduler and engine
             if (!GameState._scheduler) GameState._scheduler = new ROT.Scheduler.Simple();
             else GameState._scheduler.clear();
             if (!GameState._engine) GameState._engine = new ROT.Engine(GameState._scheduler);
@@ -125,8 +115,7 @@ var Game = {
 
             this._drawGameScreen();
 
-            // JUICE: kick off the FX overlay (ambient embers + flicker + particle loop).
-            // Purely additive; all calls are no-ops if the FX overlay module is absent.
+            // Starts the FX overlay (ambient embers, flicker, particle loop). No-op without window.FX.
             this._fxStart();
 
             return true;
@@ -147,44 +136,41 @@ var Game = {
         }
     },
     
-    // Update game state with new data from server
+    // Apply a state update pushed by the server.
     updateGameState: function(data) {
-        // JUICE: snapshot treasure/item count so we can detect a server-driven pickup below.
+        // Snapshot of the treasure/item count; a drop after the update means a pickup happened.
         const prevTreasureCount = (window.FX) ? this._fxTreasureCells().length : 0;
 
         const needsRedraw = GameState.updateGameState(data);
 
-        // Redraw the game screen if any relevant data changed
         if (needsRedraw) {
             this._drawGameScreen();
         }
 
-        // JUICE: react to server-driven changes (pickups, proximity) with FX.
         if (window.FX && needsRedraw) {
             try {
                 const newTreasureCount = this._fxTreasureCells().length;
                 if (newTreasureCount < prevTreasureCount) {
-                    // A treasure/item vanished near us -> gold burst (pickup).
+                    // An item vanished: gold burst for the pickup.
                     const pp = this._playerScreenPixel();
                     window.FX.burst(pp.x, pp.y, '#ffd700', 28);
                 } else {
-                    // Otherwise run proximity effects for server-authoritative moves.
+                    // Proximity effects for server-authoritative moves.
                     this._fxOnPlayerMoved();
                 }
             } catch (e) { /* FX is best-effort; never break gameplay */ }
         }
     },
 
-    // Legacy alias (some handlers referenced updateGame previously)
+    // Alias kept for handlers that call updateGame.
     updateGame: function(data) {
         return this.updateGameState(data);
     },
 
-    // Handle game over event from server
+    // Handle the game-over event from the server.
     endGame: function(data) {
         try {
             GameState.setGameActive(false);
-            // Decide which screen to draw
             if (data && data.reason === 'monster') {
                 if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('monster');
             } else if (data && data.reason === 'escaped') {
@@ -195,34 +181,31 @@ var Game = {
                 if (ScreenManager.drawLoseScreen) ScreenManager.drawLoseScreen('other');
             }
 
-            // JUICE: celebratory or fatal FX on the outcome. Loop keeps running so the
-            // burst/shake actually renders; it is torn down on return-to-title (below).
+            // Outcome FX. The loop stays running so the burst/shake renders; it is torn down on
+            // return-to-title below.
             if (window.FX) {
                 try {
                     const pp = this._playerScreenPixel();
                     const escaped = !!(data && data.reason === 'escaped');
                     if (escaped) {
-                        // Win: gold burst + brief bright flash.
                         window.FX.burst(pp.x, pp.y, '#ffd700', 40);
                         window.FX.flash('rgba(255,215,0,1)', 0.35, 400);
                         if (data && data.treasure) {
                             window.FX.burst(pp.x, pp.y, '#fbbf24', 24);
                         }
                     } else {
-                        // Loss (monster / timeout / other): shake + red flash.
+                        // Monster, timeout or other loss.
                         window.FX.shake(12, 500);
                         window.FX.flash('rgba(255,0,0,1)', 0.4, 450);
                     }
-                    // Gameplay is over: quiet the ambient torch embers.
+                    // Gameplay is over, so quiet the ambient torch embers.
                     if (window.FX.setAmbient) window.FX.setAmbient(false);
                 } catch (e) { /* best-effort */ }
             }
 
-            // After short delay, allow user to return to title with Enter/start
             const score = data && typeof data.score === 'number' ? data.score : 0;
             const treasure = !!(data && data.treasure);
 
-            // Display score / treasure info overlay
             if (ScreenManager && ScreenManager.drawCenteredText && DisplayManager.ensureDisplay()) {
                 const baseY = Math.floor(ScreenManager._screenHeight / 2) + 5;
                 ScreenManager.drawCenteredText(baseY, `Score: ${score}`);
@@ -231,37 +214,37 @@ var Game = {
                 }
             }
 
-            // Debounce + delayed activation of restart
+            // Restart accepts Enter only after activateDelay, so a keypress in flight at game over
+            // cannot skip the outcome screen.
             this._awaitingRestart = false;
-            const activateDelay = 800; // ms before we accept Enter
-            const autoReturnDelay = 10000; // auto return after 10s
+            const activateDelay = 800;
+            const autoReturnDelay = 10000;
 
-            // Show hint after activation delay
             setTimeout(() => {
                 this._awaitingRestart = true;
                 if (ScreenManager && ScreenManager.drawCenteredText && DisplayManager.ensureDisplay()) {
                     const y = ScreenManager._screenHeight - 2;
                     const fullHint = 'Press Enter to return to title';
                     const shortHint = 'Press Enter';
-                    const maxLen = ScreenManager._screenWidth - 2; // leave small margin
+                    const maxLen = ScreenManager._screenWidth - 2; // Leaves a one-cell margin each side
                     const hint = fullHint.length > maxLen ? shortHint : fullHint;
                     ScreenManager.drawCenteredText(y, hint);
                 }
             }, activateDelay);
 
-            // Auto return timer
             clearTimeout(this._autoReturnTimer);
             this._autoReturnTimer = setTimeout(() => {
                 if (this._awaitingRestart) {
                     this._awaitingRestart = false;
-                    this._fxStop(); // JUICE: tear down FX loop so it never leaks
+                    this._fxStop(); // Tears down the FX loop so requestAnimationFrame does not leak
                     if (ScreenManager && ScreenManager.drawWelcomeScreen) {
                         ScreenManager.drawWelcomeScreen();
                     }
                 }
             }, autoReturnDelay);
 
-            // One-time listener setup
+            // The keydown listener is attached once and gated on _awaitingRestart, so repeated
+            // game-overs do not stack handlers.
             if (!this._restartListenerAttached) {
                 this._restartListenerAttached = true;
                 document.addEventListener('keydown', (e) => {
@@ -269,7 +252,7 @@ var Game = {
                     if (e.key === 'Enter') {
                         this._awaitingRestart = false;
                         clearTimeout(this._autoReturnTimer);
-                        this._fxStop(); // JUICE: tear down FX loop so it never leaks
+                        this._fxStop(); // Tears down the FX loop so requestAnimationFrame does not leak
                         if (ScreenManager && ScreenManager.drawWelcomeScreen) {
                             ScreenManager.drawWelcomeScreen();
                         }
@@ -289,9 +272,9 @@ var Game = {
 
     _drawGameScreen: function() {
         const gameState = GameState.getGameStateForRender();
-        // Render the dungeon through the render kit (Tiled / ASCII / Iso / 3D + unlocked packs) with
-        // a player-centered camera + goblin monster sprite. The legacy RenderEngine remains a HARD
-        // fallback (used only if the kit is unavailable or a render throws), so the game never blanks.
+        // The dungeon renders through the render kit (Tiled / ASCII / Iso / 3D plus unlocked packs)
+        // with a player-centered camera. RenderEngine is the fallback path, used only when the kit
+        // is unavailable or a render fails, so a live game never blanks.
         var rk = false;
         if (window.RK && RK.SPGame && RK.SPGame.available()) {
             RK.SPGame.show();
@@ -312,7 +295,7 @@ var Game = {
         }
     },
 
-    // Screen drawing methods - delegate to ScreenManager
+    // Screen drawing delegates to ScreenManager.
     _drawWelcomeScreen: function() {
         ScreenManager.drawWelcomeScreen();
     },
@@ -327,16 +310,14 @@ var Game = {
 
     drawWaitingScreen: function() {
         ScreenManager.drawWaitingScreen();
-        // Overlay unconfirmed payment badge if present
         if (this._unconfirmedPayment && typeof ScreenManager !== 'undefined' && DisplayManager.ensureDisplay()) {
             const display = DisplayManager.getDisplay();
             const badgeText = 'Unconfirmed (mempool)';
             const xStart = Math.max(1, Math.floor((this._screenWidth - badgeText.length) / 2));
-            const y = 1; // top line inside border
+            const y = 1; // First row inside the border
             for (let i = 0; i < badgeText.length; i++) {
                 display.draw(xStart + i, y, badgeText[i], 'rgba(180,230,255,0.9)', 'transparent');
             }
-            // Small pulsing dot
             const pulse = 0.4 + Math.sin(Date.now()/300)*0.4;
             display.draw(xStart - 2, y, '*', `rgba(120,200,255,${pulse})`, 'transparent');
         }
@@ -348,7 +329,7 @@ var Game = {
         ScreenManager.stopWaitingScreen();
     },
 
-    // Display mode switching - delegate to DisplayManager
+    // Display mode switching delegates to DisplayManager.
     switchToAsciiMode: function() {
         DisplayManager.switchToAsciiMode();
     },
@@ -357,12 +338,11 @@ var Game = {
         DisplayManager.switchToTileMode();
     },
 
-    // Player movement - delegate to GameState
+    // Player movement delegates to GameState.
     movePlayer: function(dx, dy) {
         const moved = GameState.movePlayer(dx, dy, this._screenWidth, this._screenHeight);
         if (moved) {
             this._drawGameScreen();
-            // JUICE: sparkle near treasure, gold burst on pickup, red edge pulse near monsters.
             if (window.FX) {
                 try { this._fxOnPlayerMoved(); } catch (e) { /* best-effort */ }
             }
@@ -370,21 +350,20 @@ var Game = {
     },
 
     // ------------------------------------------------------------------
-    // JUICE / FX helpers. These ONLY call the window.FX overlay API (GFX1);
-    // they never define it. Every call is guarded so the game stays fully
-    // functional when the FX module is absent (match.html / tavern.html).
-    // Coordinates are computed with the SAME camera-centered mapping the
-    // renderer uses (the player is always drawn at the screen center).
+    // FX helpers. These only consume the window.FX overlay API and never define it. Every call is
+    // guarded, so the game stays fully functional where the FX module is absent (match.html,
+    // tavern.html). Coordinates use the same camera-centered mapping as the renderer: the player is
+    // always drawn at the center of the view.
     // ------------------------------------------------------------------
 
-    // The ROT.js display container is the base canvas FX layers above.
+    // The ROT.js display container is the base canvas that FX layers sit above.
     _baseCanvas: function() {
         if (typeof DisplayManager === 'undefined' || !DisplayManager.getDisplay) return null;
         var display = DisplayManager.getDisplay();
         return (display && display.getContainer) ? display.getContainer() : null;
     },
 
-    // Convert a world cell -> center pixel in base-canvas space.
+    // Convert a world cell to its center pixel in base-canvas space.
     _cellToScreenPixel: function(wx, wy) {
         var cell = (window.options && window.options.tileWidth) ? window.options.tileWidth : 32;
         var centerX = Math.floor(this._screenWidth / 2);
@@ -401,7 +380,7 @@ var Game = {
         return this._cellToScreenPixel(p.x, p.y);
     },
 
-    // Chebyshev (king-move) distance — matches the grid feel.
+    // Chebyshev (king-move) distance, matching movement on the grid.
     _fxDist: function(ax, ay, bx, by) {
         return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
     },
@@ -436,7 +415,7 @@ var Game = {
 
         var pp = this._playerScreenPixel();
 
-        // Treasure proximity: on-cell => gold burst, nearby => sparkle.
+        // Treasure proximity: on the cell gives a gold burst, within two cells gives a sparkle.
         var cells = this._fxTreasureCells();
         var onTreasure = false, nearTreasure = false;
         for (var i = 0; i < cells.length; i++) {
@@ -450,10 +429,9 @@ var Game = {
             window.FX.sparkle(pp.x, pp.y, '#fbbf24');
         }
 
-        // NOTE: removed the monster-proximity red screen flash — it fired on nearly every step
-        // (monster usually within 3 tiles) and read as a constant annoying pulse. The monster is
-        // already visible on-screen, so proximity needs no full-screen flash. Reserve FX.flash for
-        // genuine one-shot events (win/lose in handleGameOver).
+        // Monster proximity deliberately triggers no screen flash: the monster is usually within a
+        // few tiles and already visible on screen, so a per-step flash would fire almost constantly.
+        // FX.flash is reserved for one-shot events such as win and lose.
     },
 
     // Attach + start the FX loop for a fresh game.
@@ -468,7 +446,7 @@ var Game = {
         } catch (e) { /* best-effort */ }
     },
 
-    // Stop + clear the FX loop so requestAnimationFrame never leaks.
+    // Stop and clear the FX loop so requestAnimationFrame does not leak.
     _fxStop: function() {
         if (!window.FX) return;
         try {
@@ -490,7 +468,7 @@ var Game = {
         }
     },
 
-    // Debug functions - delegate to GameState
+    // Debug helpers delegate to GameState.
     debugPrintMap: function() {
         GameState.debugPrintMap(this._screenWidth, this._screenHeight);
     },
@@ -499,7 +477,7 @@ var Game = {
         GameState.debugTileMapping();
     },
 
-    // Properties for backward compatibility
+    // Accessors forwarding to GameState, kept for callers that read Game.* directly.
     get _gameActive() {
         return GameState.isGameActive();
     },
@@ -537,7 +515,7 @@ var Game = {
 Game._pendingPaymentDetected = function(info) {
     this._unconfirmedPayment = true;
     this._unconfirmedPaymentInfo = info || {};
-    this._awaitingPayment = false; // no longer just awaiting creation; we've seen a tx
+    this._awaitingPayment = false; // A transaction exists, so this is no longer awaiting creation
 };
 
 Game._pendingPaymentConfirmed = function() {
@@ -550,7 +528,7 @@ Game._paymentRequested = function() {
     this._awaitingPayment = true;
 };
 
-// Debug utility functions (keep as-is for compatibility)
+// Debug utilities: log to console, to the on-page debug panel, and to the server.
 const GameDebug = {
     log: function(message) {
         console.log(message);
@@ -563,12 +541,11 @@ const GameDebug = {
         if (debugContent) {
             const timestamp = new Date().toLocaleTimeString();
             debugContent.innerHTML += `<div>[${timestamp}] ${message}</div>`;
-            // Keep only last 10 debug messages
+            // Cap the panel at the ten most recent messages.
             const lines = debugContent.children;
             if (lines.length > 10) {
                 debugContent.removeChild(lines[0]);
             }
-            // Auto-scroll to bottom
             const debugDisplay = document.getElementById('debug-display');
             debugDisplay.scrollTop = debugDisplay.scrollHeight;
         }
@@ -583,15 +560,14 @@ const GameDebug = {
                 },
                 body: JSON.stringify({ message: message })
             }).catch(err => {
-                // Silently fail if server unavailable
+                // Debug reporting is best-effort; an unavailable server must not surface an error.
             });
         } catch (err) {
-            // Silently fail
+            // Debug reporting is best-effort.
         }
     }
 };
 
-// Make them available globally
 if (typeof window !== 'undefined') {
     window.Game = Game;
     window.GameDebug = GameDebug;

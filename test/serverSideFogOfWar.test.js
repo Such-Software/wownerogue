@@ -4,7 +4,7 @@
  * `Game.getState()` used to put the absolute entrance/exit/treasure coordinates AND the monster's
  * exact position into every `game_start` / `game_update` frame, relying entirely on the browser
  * renderer to decline to draw them. Anyone reading the socket payload in devtools could walk
- * straight to the treasure and the exit from move 0 — in a paid mode, a direct attack on the payout,
+ * straight to the treasure and the exit from move 0: in a paid mode, a direct attack on the payout,
  * and the same frame is forwarded verbatim to spectators.
  *
  * Concealment is now enforced where it is authoritative: the server. Discovery is STICKY so a
@@ -48,7 +48,7 @@ describe('server-side fog of war', () => {
         const state = game.getState();
         expect(state.exit).toBeNull();
         expect(state.treasure).toBeNull();
-        // The dungeon itself still knows — only the wire frame is redacted.
+        // The dungeon itself still knows; only the wire frame is redacted.
         expect(game.dungeon.exit).toEqual(expect.any(Array));
     });
 
@@ -81,7 +81,7 @@ describe('server-side fog of war', () => {
         expect(seen.x).toBe(game.monster.x);
         expect(seen.y).toBe(game.monster.y);
 
-        // Unlike features, the monster moves — concealment is NOT sticky, or you could track the
+        // Unlike features, the monster moves: concealment is NOT sticky, or you could track the
         // hunter through walls for the rest of the run.
         setVisible(game, game.monster, false);
         expect(game.getState().monster).toBeNull();

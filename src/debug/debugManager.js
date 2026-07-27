@@ -149,7 +149,7 @@ class DebugManager {
                     this.onNewBlock(currentHeight);
 
                     this.lastProductionBlockHeight = currentHeight;
-                    // Refresh the cosmetic tip (hash/difficulty) only on an actual new block — this
+                    // Refresh the cosmetic tip (hash/difficulty) only on an actual new block: this
                     // is decoration for the Tavern, not something worth an extra RPC every 2s.
                     this._refreshChainTip(currentHeight);
                 }

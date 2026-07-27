@@ -15,13 +15,13 @@ function decimalToAtomic(dec, decimals) {
 }
 
 /**
- * BTCPay Greenfield provider — the first payment plugin. One client class serves every endpoint
+ * BTCPay Greenfield provider: the first payment plugin. One client class serves every endpoint
  * that speaks the BTCPay Greenfield API. On the operator's LAN that is THREE endpoints (see the
  * btcpay-infra-topology memo): real BTCPay Server for BTC/LTC, plus the `xmrcheckout` and
  * `wowcheckout` shims which expose Greenfield-compatible `/api/v1/stores/{id}/invoices` routes for
  * XMR and WOW. So the same class is registered up to three times with different `id`/baseUrl/store/
  * key/chains (id defaults to 'btcpay'). Grin is not deployed yet. The invoice is denominated by
- * `currency` — pass the chain ticker (e.g. 'XMR') for a native-crypto amount. Auth is
+ * `currency`: pass the chain ticker (e.g. 'XMR') for a native-crypto amount. Auth is
  * `Authorization: token <apiKey>` on all three.
  *
  * fetchImpl is injectable for tests; defaults to the global fetch (Node >= 18).

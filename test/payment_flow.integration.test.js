@@ -126,7 +126,7 @@ describe('Payment flow integration: confirm-after-block immediate start', () => 
     expect(queueManager.getQueueLength()).toBe(1);
 
     // Confirmation after the block. `complete: true` means the received amount covers
-    // the expected amount — required for a game to start (Phase 0.1 gate).
+    // the expected amount: required for a game to start (Phase 0.1 gate).
     await monitorCallback({ in_mempool: true, confirmed: true, complete: true, amount: 1000, required: 1000, confirmations: 1 });
 
     const gameStarts = events.filter(e => e.event === 'game_start');

@@ -1,8 +1,8 @@
 /**
- * Public stats strip — light "social proof" shown in the status area: games and escapes in
+ * Public stats strip: light "social proof" shown in the status area: games and escapes in
  * the last 24h, and total paid out (only where payouts are enabled). Polls /api/stats, which
  * is cached server-side (10s), so a 30s poll is cheap. Online-player count is intentionally
- * NOT shown here — it already updates live via the 'user_count' socket event.
+ * NOT shown here; it already updates live via the 'user_count' socket event.
  */
 (function () {
     var EL_ID = 'publicStats';

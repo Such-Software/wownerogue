@@ -29,10 +29,10 @@ class ChatHandler {
         });
 
         // Chat delivery + history go through a ChatProvider seam so the backend is swappable.
-        // The local provider shares the ChatHistoryManager instance above, so ban checks / stats
+        // The local provider shares the ChatHistoryManager instance above, so ban checks and stats
         // that read this.chatHistory keep working and lifecycle stays owned here. buildChatProvider
-        // optionally wraps it with a NostrChatProvider for global cross-server chat (Pillar 5) when
-        // NOSTR_CHAT_ENABLED is set; otherwise it returns this local provider unchanged.
+        // wraps it with a NostrChatProvider for global cross-server chat when NOSTR_CHAT_ENABLED is
+        // set; otherwise it returns this local provider unchanged.
         const localChatProvider = new SocketChatProvider({
             io: this.io,
             broadcastManager: this.broadcastManager,
@@ -84,7 +84,7 @@ class ChatHandler {
      */
     async handleChatMessage(socket, msg, additionalHandlers = {}) {
         try {
-            // Rate limiting for chat messages — stable id + IP so reconnecting can't reset it.
+            // Rate limiting keys on stable id + IP so reconnecting can't reset the counter.
             const rlId = stableId(socket, this.gameModeManager?.sessionManager);
             const rlIp = clientIp(socket);
             const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'chat:message', rlIp);
@@ -95,7 +95,6 @@ class ChatHandler {
                 return;
             }
 
-            // Record the chat attempt
             await this.rateLimiter.recordAttempt(rlId, 'chat:message', rlIp);
 
             if (this.debugManager.CONSOLE_LOGGING) {
@@ -104,14 +103,13 @@ class ChatHandler {
             
             const command = msg.toLowerCase();
             
-            // Check for XMR/WOW payout address in the message using AddressManager
+            // A pasted XMR/WOW payout address takes priority over command and chat handling.
             const detected = this.addressManager.detectInText(msg);
             if (detected) {
                 await this._handleAddressDetection(socket, detected);
                 return;
             }
             
-            // Handle game commands
             const handled = await this._handleGameCommand(socket, command, additionalHandlers);
             if (handled) {
                 return;
@@ -127,12 +125,11 @@ class ChatHandler {
     }
 
     /**
-     * Handle a CLIENT-signed global chat event (Phase 2 per-player nostr identity). The client signs
-     * with the player's OWN Smirk npub (window.smirk.signNostrEvent) and sends the finished event;
-     * the server verifies it's authentic AND signed by THIS session's authenticated npub
-     * (users.smirk_public_key from NIP-98 login), moderates, then relays it — the provider publishes
-     * the pre-signed event to nostr under the player's npub (not the bridge). Serves lobby + tavern:
-     * it delivers to global, which both render.
+     * Handle a client-signed global chat event. The client signs with the player's own Smirk npub
+     * (window.smirk.signNostrEvent) and sends the finished event; the server verifies it is
+     * authentic and signed by this session's authenticated npub (users.smirk_public_key from NIP-98
+     * login), moderates, then relays it: the provider publishes the pre-signed event to nostr under
+     * the player's npub, not the bridge. Serves lobby and tavern, both of which render global scope.
      */
     async handleSignedChatMessage(socket, payload) {
         try {
@@ -232,7 +229,7 @@ class ChatHandler {
     }
 
     async _handleAddressDetection(socket, detected) {
-        // Rate limiting for address setting — stable id + IP.
+        // Rate limiting keys on stable id + IP.
         const rlId = stableId(socket, this.gameModeManager?.sessionManager);
         const rlIp = clientIp(socket);
         const rateLimitResult = await this.rateLimiter.checkLimit(rlId, 'address:set', rlIp);
@@ -286,7 +283,6 @@ class ChatHandler {
                 
             case 'payment':
             case 'pay':
-                // Legacy payment command path removed; auto-create request if needed
                 if (this.gameModeManager) {
                     await this.paymentHandlers.createAndShowPaymentRequest(socket);
                 } else {
@@ -301,7 +297,7 @@ class ChatHandler {
                 return true;
                 
             default:
-                // Check for /nick command (case-sensitive prefix)
+                // command is already lowercased by the caller, so the prefix match is case-insensitive.
                 if (command.startsWith('/nick ') || command === '/nick') {
                     await this._handleNickCommand(socket, command);
                     return true;
@@ -363,7 +359,6 @@ class ChatHandler {
                 const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
                 userId = userRow?.id || null;
 
-                // Check if user is chat banned
                 if (userId && await this.chatHistory.isUserChatBanned(userId)) {
                     this.broadcastManager.sendStatusUpdate(socket.id, 'error',
                         'You have been banned from chat.');
@@ -401,8 +396,7 @@ class ChatHandler {
             .slice(0, MAX_MESSAGE_LENGTH);
         const username = socket.id.substring(0, 6);
 
-        // Deliver + persist through the chat provider (global scope). The provider saves to
-        // history (fire-and-forget) and broadcasts, matching the previous inline behaviour.
+        // The provider broadcasts and saves to history (fire-and-forget).
         await this.chatProvider.publish({
             scope: 'global',
             username: username,

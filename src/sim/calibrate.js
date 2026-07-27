@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 // Per-network difficulty calibrator (v2), rebuilt around what the size-probe revealed:
 //
-//   Dungeon SIZE trades one edge-source for another — a bigger map lengthens the run (timer edge
+//   Dungeon SIZE trades one edge-source for another: a bigger map lengthens the run (timer edge
 //   UP) but gives the player more room to dodge (monster edge DOWN), so house-win self-cancels
 //   around ~60% until you go monstrous (210x105, 650-move slogs). Size is therefore NOT a clean
 //   house-edge lever.
 //
 // So we split the two concerns:
-//   • SIZE ∝ √(blockTime)  — pure PACING. A run's completion time stays a consistent fraction of
+//   • SIZE ∝ √(blockTime):   pure PACING. A run's completion time stays a consistent fraction of
 //     the block interval, so it feels chain-appropriate (GRIN sprint … BTC epic) and the timer
 //     contributes a stable baseline. Clamped to stay playable.
-//   • MONSTER speed         — the house EDGE lever (monotonic: meaner monster → more catches),
+//   • MONSTER speed:         the house EDGE lever (monotonic: meaner monster → more catches),
 //     solved per network to hit the target house-win at the pacing size.
 //
 // CAVEAT: the bots don't actively evade the monster, so the solved monster-speed is a STARTING
-// POINT that under-provisions vs skilled humans — validate/retune the monster with real telemetry.
+// POINT that under-provisions vs skilled humans; validate/retune the monster with real telemetry.
 // The SIZE∝blockTime half is bot-robust (it keys off completion TIME, which the explorer models).
 //
 // USAGE: node src/sim/calibrate.js [--target 0.70] [--preset casino] [--runs 160] [--cadence 320]
@@ -24,7 +24,7 @@ const { BOTS } = require('./simBots');
 const { meanBlockTimeMsFor } = require('../chain/chainProfile');
 const { DIFFICULTY_PRESETS } = require('../game/difficultyConfig');
 
-const BASE_BLOCK_MS = 120000; // XMR (2-min) — the reference the size scale is relative to
+const BASE_BLOCK_MS = 120000; // XMR (2-min): the reference the size scale is relative to
 
 function parseArgs(argv) {
     const a = { target: 0.70, preset: 'casino', bot: 'explorer-greedy', runs: 160, cadence: 320,

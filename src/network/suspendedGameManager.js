@@ -45,7 +45,6 @@ class SuspendedGameManager {
             return false;
         }
 
-        // Store the suspended game state
         const suspendedState = {
             game: game,
             originalSocketId: oldSocketId,
@@ -55,10 +54,10 @@ class SuspendedGameManager {
             hasTreasure: game.player?.hasTreasure || false,
             moveCount: game.moveCount || 0,
             blockHeight: game.blockHeight || null,
-            // Entry block height (blockRec) for reconnect timeout continuity (C3).
-            // Prefer an explicit value from the caller, then the value captured on the
-            // game object at creation. Never invent one — a missing value stays null so
-            // the timeout logic treats it as "not yet observed" rather than instant-death.
+            // Entry block height, used to keep the reconnect block-timeout continuous.
+            // Prefers an explicit value from the caller, then the value captured on the
+            // game object at creation. A missing value stays null so the timeout logic
+            // treats it as "not yet observed" rather than as an immediate expiry.
             blockRec: (additionalState.blockRec !== undefined && additionalState.blockRec !== null)
                 ? additionalState.blockRec
                 : (game.blockRec ?? game.blockHeight ?? null),
@@ -68,11 +67,10 @@ class SuspendedGameManager {
         this.suspendedGames.set(dbUserId, suspendedState);
         this.stats.gamesSuspended++;
 
-        // Ordinary network disconnects retain the existing bounded in-memory grace period.
-        // A durable restart snapshot is different: PostgreSQL is the authority and the process
-        // must keep the reconstructed object available until its owner reconnects (or an operator
-        // explicitly resolves the active row). Expiring only the Map entry would strand the
-        // durable active game and silently make it unresumable.
+        // Ordinary network disconnects get a bounded in-memory grace period. A durable restart
+        // snapshot does not: PostgreSQL is the authority, and the reconstructed object must stay
+        // available until its owner reconnects or an operator resolves the active row. Expiring
+        // the Map entry alone would strand the durable active game as unresumable.
         if (additionalState.durableRestartSnapshot !== true) {
             this._scheduleCleanup(dbUserId);
         }
@@ -172,20 +170,18 @@ class SuspendedGameManager {
             }
         }
 
-        // Only mutate the cache/object after the durable claim succeeds. A transient database
-        // failure therefore leaves the suspended entry intact for a later reconnect attempt.
+        // Cache and game object are mutated only after the durable claim succeeds, so a transient
+        // database failure leaves the suspended entry intact for a later reconnect attempt.
         this._cancelCleanup(dbUserId);
 
-        // Update game with new socket ID
         game.socketId = newSocketId;
 
         // Keep a stable DB user id on the game object so completeGame can key on it
-        // without any socket_id lookup. It is normally stamped at creation; backfill
-        // from the alias just in case an older game object only carries one of them.
+        // without any socket_id lookup. It is normally stamped at creation; the backfill
+        // covers game objects that carry only one of the two aliases.
         if (game.userId == null && game.dbUserId != null) game.userId = game.dbUserId;
         if (game.dbUserId == null && game.userId != null) game.dbUserId = game.userId;
 
-        // Update the user reference if provided
         if (newUser) {
             game.user = newUser;
             // A terminal-pending object is restored only as an ownership lock while its DB
@@ -194,10 +190,7 @@ class SuspendedGameManager {
             if (!game.settlementPending && !game.settlementCommitted) newUser.joinGame(game);
         }
 
-        // Re-add to active games with new socket ID
         this.activeGames.set(newSocketId, game);
-
-        // Remove from suspended
         this.suspendedGames.delete(dbUserId);
         this.stats.gamesRestored++;
 
@@ -210,8 +203,8 @@ class SuspendedGameManager {
         return {
             game,
             suspendedState: suspended,
-            // Expose the entry block height so the reconnect path can restore
-            // memUser.blockRec and keep the block-timeout logic continuous (C3).
+            // Exposed so the reconnect path can restore memUser.blockRec and keep the
+            // block-timeout logic continuous.
             blockRec: suspended.blockRec ?? null
         };
     }
@@ -246,7 +239,6 @@ class SuspendedGameManager {
      * @private
      */
     _scheduleCleanup(dbUserId) {
-        // Cancel any existing timer
         this._cancelCleanup(dbUserId);
 
         const timer = setTimeout(() => {
@@ -261,7 +253,7 @@ class SuspendedGameManager {
             }
         }, this.cleanupTimeoutMs);
 
-        // Don't prevent process exit
+        // Unref so a pending grace period never holds the process open.
         if (timer.unref) timer.unref();
 
         this.cleanupTimers.set(dbUserId, timer);

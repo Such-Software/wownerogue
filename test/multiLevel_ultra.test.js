@@ -19,18 +19,18 @@ describe('multi-level descent', () => {
     expect(game.maxDepth).toBe(3);
     expect(game.depth).toBe(1);
     expect(game.gameState).toBe('active');
-    expect(game.dungeon.treasure).toBeNull();      // level 1/3 — no treasure
+    expect(game.dungeon.treasure).toBeNull();      // level 1/3: no treasure
 
     game._descend();
     expect(game.depth).toBe(2);
     expect(game.gameState).toBe('active');          // descending is NOT winning
-    expect(game.dungeon.treasure).toBeNull();       // level 2/3 — still no treasure
+    expect(game.dungeon.treasure).toBeNull();       // level 2/3: still no treasure
     expect(game.dungeon.entrance).toBeTruthy();
     expect(game.dungeon.exit).toBeTruthy();
 
     game._descend();
     expect(game.depth).toBe(3);
-    expect(game.dungeon.treasure).not.toBeNull();   // the vault — treasure present
+    expect(game.dungeon.treasure).not.toBeNull();   // the vault: treasure present
   });
 
   test('every level is reproducible from the committed seed + depth (provably fair)', () => {
@@ -62,7 +62,7 @@ describe('multi-level descent', () => {
     game.player.moveTo(ex - 1, ey);                // stand next to the exit on a floor cell if possible
     // Force the player adjacent by teleporting onto an exit-adjacent floor, then step in. If the
     // left neighbour isn't floor, just teleport onto the exit-1 and assert via a direct exit check.
-    game.player.moveTo(ex, ey);                    // already on exit — re-derive win via a no-op-ish move
+    game.player.moveTo(ex, ey);                    // already on exit: re-derive win via a no-op-ish move
     // A fresh move INTO the exit from a neighbour: place on a known floor neighbour of the exit.
     const map = game.dungeon.map;
     const nbrs = [[ex - 1, ey], [ex + 1, ey], [ex, ey - 1], [ex, ey + 1]];
@@ -73,7 +73,7 @@ describe('multi-level descent', () => {
       expect(res.event).toBe('escaped');
       expect(game.gameState).toBe('won');
     } else {
-      // Degenerate layout (exit fully walled) — the descent path is still covered by other tests.
+      // Degenerate layout (exit fully walled): the descent path is still covered by other tests.
       expect(game.maxDepth).toBe(1);
     }
   });

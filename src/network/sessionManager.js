@@ -12,30 +12,27 @@ class SessionManager {
     this.debugManager = debugManager;
     this.gameModeManager = gameModeManager;
     this.io = io;
-    this.sessions = new Map(); // Memory cache
+    this.sessions = new Map(); // Keyed by socket id
     this.cleanupInterval = null;
   }
 
   async initialize() {
-    // Start cleanup timer for expired sessions
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredSessions();
-    }, 3600000); // Every hour
+    }, 3600000); // Hourly
   }
 
   async resumeOrCreate({ socketId, ipAddress, resumeToken }) {
     try {
-      // SECURE: Using parameterized query
       if (resumeToken) {
         const result = await this.db.query(
           'SELECT * FROM users WHERE anon_token = $1',
-          [resumeToken]  // Parameterized to prevent injection
+          [resumeToken]
         );
 
         if (result.rows.length > 0) {
           const selectedUser = result.rows[0];
 
-          // Check for unprocessed payments (payment recovery)
           const recovered = await this.recoverPendingPayments(selectedUser.id, socketId);
 
           // Compare-and-swap the bearer credential and socket ownership in one UPDATE. Two
@@ -73,13 +70,11 @@ class SessionManager {
         }
       }
 
-      // Create new user with secure token
       const newToken = this.generateSecureToken();
-      
-      // SECURE: Using parameterized query for INSERT
+
       const result = await this.db.query(
         'INSERT INTO users (socket_id, ip_address, anon_token, created_at, last_seen) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING *',
-        [socketId, ipAddress, newToken]  // All parameterized
+        [socketId, ipAddress, newToken]
       );
 
       const newUser = result.rows[0];
@@ -100,15 +95,13 @@ class SessionManager {
   }
 
   async getBySocket(socketId) {
-    // Check cache first
     if (this.sessions.has(socketId)) {
       return this.sessions.get(socketId);
     }
 
-    // SECURE: Parameterized query
     const result = await this.db.query(
       'SELECT * FROM users WHERE socket_id = $1',
-      [socketId]  // Parameterized
+      [socketId]
     );
 
     if (result.rows.length > 0) {
@@ -121,7 +114,7 @@ class SessionManager {
   }
 
   async updateUser(userId, updates) {
-    // Build safe UPDATE query with parameterized values
+    // Column names come from this allowlist only; values are always parameterized.
     const allowedFields = ['credits', 'payout_address', 'last_seen'];
     const updateFields = [];
     const values = [];
@@ -139,12 +132,11 @@ class SessionManager {
     }
 
     values.push(userId);
-    
-    // SECURE: Fully parameterized UPDATE
+
     const query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`;
     await this.db.query(query, values);
 
-    // Clear cache to force refresh
+    // Evict the cached row so the next getBySocket re-reads the updated columns.
     for (const [socketId, user] of this.sessions.entries()) {
       if (user.id === userId) {
         this.sessions.delete(socketId);
@@ -154,15 +146,15 @@ class SessionManager {
   }
 
   /**
-   * Recover unprocessed confirmed payments for a user who disconnected
-   * This handles credits_package payments that were confirmed but credits weren't added
+   * Recover confirmed payments whose entitlement was never delivered: credits_package
+   * invoices confirmed without credits added, and unconsumed single_game invoices.
    */
   async recoverPendingPayments(userId, socketId) {
     const result = { creditsRecovered: 0, paymentsProcessed: 0 };
 
     try {
-      // Find confirmed credits_package payments that have no credits_purchased or 0
-      // These are payments where the user disconnected before confirmation was processed
+      // Confirmed credits_package payments with credits_purchased null or 0: confirmation
+      // was never processed through to a credit grant.
       const unprocessedPayments = await this.db.query(`
         SELECT p.id, p.payment_type, p.description, p.expected_amount, p.confirmed_at
         FROM payments p
@@ -174,9 +166,8 @@ class SessionManager {
         ORDER BY p.confirmed_at ASC
       `, [userId]);
 
-      // Also find payments where credits_purchased was set but credits were never
-      // actually added to the user (e.g., crash/disconnect between payment update
-      // and user credit update before transaction wrapping was added)
+      // Payments where credits_purchased is set but no matching ledger row exists, so the
+      // balance was never actually moved.
       const orphanedPayments = await this.db.query(`
         SELECT p.id, p.credits_purchased, p.confirmed_at
         FROM payments p
@@ -195,7 +186,7 @@ class SessionManager {
         ORDER BY p.confirmed_at ASC
       `, [userId]);
 
-      // Merge orphaned payments into unprocessed list (they need recovery too)
+      // Both sets take the same recovery path.
       for (const orphan of orphanedPayments.rows) {
         unprocessedPayments.rows.push({
           id: orphan.id,
@@ -203,18 +194,18 @@ class SessionManager {
           description: null,
           expected_amount: null,
           confirmed_at: orphan.confirmed_at,
-          _creditsFromRecord: orphan.credits_purchased // use stored value
+          _creditsFromRecord: orphan.credits_purchased
         });
       }
 
-      // NOTE: do not early-return when there are no credits_package payments — the
-      // single_game recovery below must still run.
+      // An empty credits_package set must not short-circuit the method: the single_game
+      // recovery below still has to run.
       for (const payment of (unprocessedPayments.rows.length === 0 ? [] : unprocessedPayments.rows)) {
         try {
-          // Determine credits: use stored value from orphaned record, or parse from description
+          // Prefer the stored credit count; otherwise parse it out of the description.
           let creditsToAdd = payment._creditsFromRecord || 0;
           if (!creditsToAdd) {
-            creditsToAdd = 10; // Default fallback
+            creditsToAdd = 10; // Fallback when the description carries no count
             const desc = payment.description || '';
             const match = desc.match(/(\d+)\s*credits?/i);
             if (match) {
@@ -223,10 +214,9 @@ class SessionManager {
           }
           const isOrphaned = !!payment._creditsFromRecord;
 
-          // CRITICAL: Use transaction with row lock to prevent double-credit race condition
-          // This ensures only one instance can process a payment at a time
+          // The row lock serializes recovery of a payment across instances, so a payment
+          // cannot be credited twice.
           const recovered = await this.db.withTransaction(async (client) => {
-            // Lock the payment row and re-check status
             const lockResult = await client.query(`
               SELECT id, credits_purchased
               FROM payments
@@ -236,14 +226,13 @@ class SessionManager {
 
             if (!lockResult.rows[0]) return null;
 
-            // For normal recovery: skip if credits_purchased already set
-            // For orphaned recovery: skip if a credit_transaction already exists
+            // Idempotency marker differs per case: credits_purchased for a plain
+            // unprocessed payment, an existing ledger row for an orphaned one.
             if (!isOrphaned) {
               if (lockResult.rows[0].credits_purchased && lockResult.rows[0].credits_purchased > 0) {
                 return null; // Already processed
               }
             } else {
-              // Double-check: does a credit_transaction already exist for this?
               const txCheck = await client.query(`
                 SELECT 1 FROM credit_transactions
                 WHERE user_id = $1
@@ -257,7 +246,6 @@ class SessionManager {
               }
             }
 
-            // Add credits to user
             const updateResult = await client.query(`
               UPDATE users
               SET credits = credits + $1,
@@ -268,14 +256,14 @@ class SessionManager {
 
             const newBalance = updateResult.rows[0]?.credits ?? 0;
 
-            // Mark payment as processed (atomically with credit add)
+            // Marking the payment and writing the ledger row share the transaction with
+            // the balance update, so all three commit together or not at all.
             await client.query(`
               UPDATE payments
               SET credits_purchased = $1
               WHERE id = $2
             `, [creditsToAdd, payment.id]);
 
-            // Record credit transaction
             await client.query(`
               INSERT INTO credit_transactions (user_id, amount, reason, balance_after, transaction_type)
               VALUES ($1, $2, 'package_purchase_recovered', $3, 'purchase')
@@ -296,11 +284,9 @@ class SessionManager {
         }
       }
 
-      // PHASE 0.5: Recover confirmed single_game payments that were never consumed.
-      // If a user paid for a single game and disconnected before a game started (no
-      // games row references the payment), the money was taken with nothing given and
-      // there was previously no recovery path. Grant the equivalent credits (one paid
-      // game) so they get what they paid for. Idempotent via a per-payment reason key.
+      // Confirmed single_game payments no games row references were paid for but never
+      // played. Grant the equivalent of one paid game in credits instead. Idempotent via
+      // the per-payment entitlement grant and reason key.
       try {
         const creditsPerGame = (this.gameModeManager && this.gameModeManager.creditsPerGameCost) || 1;
         const unconsumed = await this.db.query(`
@@ -324,8 +310,8 @@ class SessionManager {
         for (const payment of unconsumed.rows) {
           try {
             const recovered = await this.db.withTransaction(async (client) => {
-              // Lock the payment and re-check under the lock that it is still unconsumed
-              // and not already recovered (prevents double-credit across instances/races).
+              // Re-check ownership, status and consumption under the lock so concurrent
+              // instances cannot both credit the same invoice.
               const lock = await client.query(`
                 SELECT id, user_id, status, payment_type
                 FROM payments
@@ -338,7 +324,7 @@ class SessionManager {
                   || lock.rows[0].payment_type !== 'single_game') return null;
 
               const gameCheck = await client.query(`SELECT 1 FROM games WHERE payment_id = $1 LIMIT 1`, [payment.id]);
-              if (gameCheck.rows.length > 0) return null; // a game was started for it after all
+              if (gameCheck.rows.length > 0) return null; // A game consumed it in the meantime
 
               const existingGrant = await client.query(
                 `SELECT payment_id FROM payment_entitlement_grants WHERE payment_id = $1 FOR UPDATE`,
@@ -352,9 +338,9 @@ class SessionManager {
                 [userId, reason]
               );
               if (dup.rows.length > 0) {
-                // Compatibility with rows written before migration 035. Make the legacy
-                // ledger reason authoritative by materializing the canonical marker, but do
-                // not grant anything again.
+                // Ledger rows written before migration 035 carry only the reason key. Treat
+                // that key as authoritative: materialize the canonical grant marker for it
+                // without granting credits again.
                 await client.query(`
                   INSERT INTO payment_entitlement_grants (
                     payment_id, user_id, source, credits_granted, metadata
@@ -414,11 +400,10 @@ class SessionManager {
 
   async cleanupExpiredSessions() {
     try {
-      // Only delete truly disposable anonymous users: long-idle, zero credits, no payout
-      // address, and — critically — NO history in any table that references users via a
-      // RESTRICT/NO ACTION foreign key. Guarding with NOT EXISTS means the DELETE can never
-      // abort on an FK violation, and we never remove a user who has payments, payouts, or
-      // games on record (chat_messages / credit_transactions are optional extra guards).
+      // Only disposable anonymous users are deleted: long-idle, zero credits, no payout
+      // address, and no history in any table referencing users through a RESTRICT/NO ACTION
+      // foreign key. The NOT EXISTS guards keep the DELETE from aborting on an FK violation
+      // and keep users with payments, payouts, or games on record.
       const result = await this.db.query(
         `DELETE FROM users u
          WHERE u.last_seen < NOW() - INTERVAL '90 days' AND u.credits = 0 AND u.payout_address IS NULL
@@ -426,7 +411,7 @@ class SessionManager {
            AND NOT EXISTS (SELECT 1 FROM payouts po WHERE po.user_id = u.id)
            AND NOT EXISTS (SELECT 1 FROM games g WHERE g.user_id = u.id)
          RETURNING u.id`,
-        []  // No parameters needed
+        []
       );
 
       if (result.rowCount > 0) {
@@ -439,14 +424,13 @@ class SessionManager {
   }
 
   /**
-   * C6/G6: Recover games left stuck at status='active' when the server was killed
-   * mid-run. On a fresh boot no game can legitimately still be running, so every such row
-   * is an orphan: idempotently restore an exact, durably recorded PAID_CREDITS debit and
-   * then finalize the game's status. A mode label, payment link, or current entry price is
-   * never treated as debit evidence; direct-payment refunds require the explicit refund
-   * workflow. Safe to run repeatedly — each game is locked FOR UPDATE and skipped unless
-   * still 'active', and each credit restoration has a per-game ledger key. index.js calls
-   * this at startup right after recoverPendingPayments.
+   * Finalize games left at status='active' by a server kill. On a fresh boot no game can
+   * legitimately still be running, so every such row is an orphan: restore an exact,
+   * durably recorded PAID_CREDITS debit and then settle the game's status. A mode label,
+   * payment link, or current entry price is not debit evidence; direct-payment refunds go
+   * through the explicit refund workflow. Repeat runs are safe: each game is locked FOR
+   * UPDATE and skipped unless still 'active', and each restoration has a per-game ledger
+   * key. index.js calls this at startup right after recoverPendingPayments.
    */
   async recoverOrphanedGames() {
     const summary = {
@@ -483,8 +467,8 @@ class SessionManager {
     for (const orphan of rows) {
         try {
           const outcome = await this.db.withTransaction(async (client) => {
-            // Lock the game row and re-check under the lock: another instance (or a prior
-            // run) may already have finalized it.
+            // Re-check under the lock: another instance or a prior run may already have
+            // finalized this game.
             const lock = await client.query(
               `SELECT g.id, g.user_id, g.game_mode, g.payment_id, g.status,
                       g.entry_consumed_at, g.entry_credits_spent
@@ -497,24 +481,24 @@ class SessionManager {
               [orphan.id]
             );
             const game = lock.rows[0];
-            if (!game || game.status !== 'active') return null; // already handled
+            if (!game || game.status !== 'active') return null;
 
             const reason = `orphan_game_refunded:${game.id}`;
             let refunded = false;
             let creditsRefunded = 0;
 
             if (game.user_id) {
-              // Dedup: never refund the same orphaned game twice.
+              // The per-game reason key makes the refund idempotent.
               const dup = await client.query(
                 `SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reason = $2 LIMIT 1`,
                 [game.user_id, reason]
               );
 
               if (dup.rows.length === 0) {
-                // Refund only durable debit evidence. Merely inserting an active row with a
-                // PAID_CREDITS label does not prove a credit was taken (start can fail after
-                // game persistence but before its transaction commits). Never use the current
-                // configured cost: it may have changed since this entry was accepted.
+                // Refund only against durable debit evidence. An active row labelled
+                // PAID_CREDITS is not proof a credit was taken: a start can persist the game
+                // and then fail before its transaction commits. The current configured cost
+                // is not used either, since it may have changed since entry was accepted.
                 const spent = Number(game.entry_credits_spent || 0);
                 const doRefund = game.game_mode === 'PAID_CREDITS'
                   && game.entry_consumed_at != null
@@ -538,7 +522,6 @@ class SessionManager {
               }
             }
 
-            // Finalize the game: refunded games are marked 'refunded', the rest 'expired'.
             const newStatus = refunded ? 'refunded' : 'expired';
             await client.query(
               `UPDATE games SET status = $1, completed_at = COALESCE(completed_at, NOW()) WHERE id = $2`,
@@ -581,8 +564,8 @@ class SessionManager {
 
   /**
    * Evict and disconnect cached sockets belonging to one or more stable users. Extra socket ids
-   * cover pre-cache/legacy rows. Used by token rotation and wallet-account adoption so an old
-   * live socket cannot keep exercising paid actions from a stale in-memory session.
+   * cover sockets not present in the cache. Token rotation and wallet-account adoption call this
+   * so an old live socket cannot keep exercising paid actions from a stale in-memory session.
    */
   disconnectUserSessions(userIds, extraSocketIds = [], { exceptSocketId = null } = {}) {
     const targetUsers = new Set((Array.isArray(userIds) ? userIds : [userIds])
@@ -632,9 +615,9 @@ class SessionManager {
   }
 
   /**
-   * Evict a socket's cached session row. Called on disconnect so the in-memory
-   * `sessions` map doesn't grow unbounded with every socket ever seen (and so stale
-   * cached rows aren't served on reconnect). Safe: a later getBySocket re-reads from DB.
+   * Evict a socket's cached session row. Called on disconnect to bound the `sessions` map
+   * and to keep stale rows from being served on reconnect. A later getBySocket re-reads
+   * from the database.
    */
   removeSocket(socketId) {
     this.sessions.delete(socketId);

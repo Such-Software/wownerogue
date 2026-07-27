@@ -3,7 +3,7 @@ const { defineRuleset, WIN, ECONOMY } = require('./Ruleset');
 /**
  * Built-in rulesets. `race` reproduces the current match behavior exactly (so nothing changes for
  * existing matches). `last-alive` and `score-attack` are the new PvP / score modes the match engine
- * now supports as data. `solo-classic` describes the live single-player escape for catalog/parity —
+ * now supports as data. `solo-classic` describes the live single-player escape for catalog/parity:
  * the single-player engine isn't refactored to consume it yet, so it's a descriptor, not wired.
  */
 const BUILTINS = {
@@ -80,7 +80,7 @@ function resolveMatchRuleset(id) {
 
 /**
  * Map the legacy MatchRoom option bag ({economy, variant, difficultyPreset, maxPlayers}) to a
- * ruleset that preserves the current race behavior — win condition stays first-to-exit regardless
+ * ruleset that preserves the current race behavior: win condition stays first-to-exit regardless
  * of `variant` (which was a stored-but-unused label), so wiring the engine to rulesets changes
  * nothing until a caller explicitly asks for a different ruleset by id.
  */

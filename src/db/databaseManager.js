@@ -13,7 +13,7 @@ const path = require('path');
 class QueryValidator {
     isSafe(text, params) {
         // Check if using parameterized query properly
-        // Count unique placeholders ($1, $2, etc.) — PostgreSQL allows reusing $1 multiple times
+        // Count unique placeholders ($1, $2, etc.): PostgreSQL allows reusing $1 multiple times
         const placeholders = text.match(/\$\d+/g) || [];
         const uniquePlaceholders = new Set(placeholders);
         const placeholderCount = uniquePlaceholders.size;

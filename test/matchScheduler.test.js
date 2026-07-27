@@ -100,7 +100,7 @@ describe('MatchScheduler', () => {
         await scheduler.onBlock(100);
         const { room } = manager.attached[0];
         // MP-H6: the scheduler creates the engine and hands it to the manager (setEngine) but
-        // does NOT start it. The room stays in 'starting' — moves are rejected — until the
+        // does NOT start it. The room stays in 'starting', moves are rejected, until the
         // manager's countdown elapses, so honest and modified clients always start together.
         expect(manager.engines.size).toBe(1);
         expect(room.status).toBe('starting');

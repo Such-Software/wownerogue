@@ -1,5 +1,5 @@
-// Load .env before reading any process setting (notably TRUST_PROXY). systemd's
-// EnvironmentFile masked this ordering bug in production, while `npm run dev` did not.
+// .env must load before any process setting is read (notably TRUST_PROXY). Under systemd the
+// EnvironmentFile supplies those values already, so only non-systemd runs depend on this ordering.
 require('dotenv').config();
 
 const express = require('express');
@@ -22,7 +22,6 @@ var io = require('socket.io')(http, {
     allowRequest: createSocketOriginAllowRequest(process.env)
 });
 
-// Import payment system components
 const DatabaseManager = require('./db/databaseManager');
 const WalletRPCService = require('./payments/walletRPCService');
 const PayoutRetryService = require('./payments/payoutRetryService');
@@ -42,7 +41,6 @@ const { createCanaryDatabaseIdentityHandler } = require('./services/canaryDataba
 const { AppError, ValidationError, NotFoundError } = require('./utils/errors');
 const money = require('./money/atomic');
 
-// Import modular components
 const BroadcastManager = require('./network/broadcastManager');
 const DebugManager = require('./debug/debugManager');
 const SocketHandlers = require('./network/socketHandlers');
@@ -57,7 +55,6 @@ const createAuthRoutes = require('./routes/auth');
 const { createLeaderboardHandler } = require('./routes/leaderboard');
 const { isSmirkEnabled } = require('./auth/smirkPolicy');
 
-// Initialize payment configuration
 const paymentConfigManager = new PaymentConfigManager({ logger: console });
 const environmentValidator = new EnvironmentValidator({ logger: console });
 let releaseIdentity;
@@ -70,21 +67,20 @@ try {
 }
 process.env.GAME_MODE = paymentConfigManager.getLegacyGameMode();
 
-// Initialize modular components first
+// Constructed before the payment components below, which take debugManager as a dependency.
 const broadcastManager = new BroadcastManager(io);
 const debugManager = new DebugManager(broadcastManager);
 broadcastManager.setDebugManager(debugManager);
 
-// Initialize payment system components (debugManager is now available)
 const databaseManager = new DatabaseManager();
-const db = databaseManager; // Alias for convenience in API endpoints
+const db = databaseManager; // Alias used by the API endpoints
 const financialEventExporter = new FinancialEventExporter({ db: databaseManager });
 const walletRPCService = new WalletRPCService(debugManager, {
     minConfirmations: paymentConfigManager.getConfig().payouts.processing.confirmations
 });
 const gameModeManager = new GameModeManager(databaseManager, walletRPCService, debugManager, paymentConfigManager);
 gameModeManager.releaseIdentity = releaseIdentity;
-// Provide io reference so GameModeManager can emit events (e.g., credits_update)
+// GameModeManager emits socket events (such as credits_update) through this reference.
 gameModeManager.io = io;
 
 // One effective payout gate used by every dispatcher. PAYOUTS_ENABLED is the master switch;
@@ -123,12 +119,11 @@ gameModeManager.financialAdmissionAllowed = isFinancialRecoveryReady;
 // Dispatchers still check earlier so they do not claim durable rows while the gate is closed.
 walletRPCService.transferAllowed = canDispatchPayouts;
 
-// Initialize remaining components
 const activeGames = new Map(); // Maps socketId to Game objects
-let alertService = null; // Initialized later when payment system starts
-let payoutRetryService = null; // Initialized later when payment system starts
-let batchPayoutInterval = null; // Initialized later when payment system starts
-let paymentExpiryInterval = null; // Initialized later when payment system starts
+let alertService = null; // Set when the payment system starts
+let payoutRetryService = null; // Set when the payment system starts
+let batchPayoutInterval = null; // Set when the payment system starts
+let paymentExpiryInterval = null; // Set when the payment system starts
 let latePaymentReconciler = null;
 let walletHealthInterval = null; // Keeps readiness tied to a live wallet, not startup state
 let databaseHealthInterval = null; // Detects a database outage after startup
@@ -145,12 +140,12 @@ const rendererCdnEnabled = /^true$/i.test(String(process.env.RENDERER_CDN_ENABLE
 if (rendererCdnEnabled && process.env.NODE_ENV === 'production') {
     console.warn('⚠️ RENDERER_CDN_ENABLED=true: third-party jsDelivr code is trusted by the production CSP');
 }
-// Security headers (defense in depth alongside output escaping).
-// CSP locks down where scripts/styles/connections may come from. Inline scripts/styles
-// are still permitted ('unsafe-inline') because the current pages rely on them heavily;
-// removing that is tracked as Phase 4.4 (nonce-based CSP). connect-src 'self' covers
-// same-origin Socket.IO websockets under CSP Level 3. blob: is limited to render-kit
-// GLB texture decoding; GLTFLoader turns embedded textures into blob URLs.
+// Security headers, defense in depth alongside output escaping.
+// CSP constrains where scripts, styles, and connections may come from. Inline scripts and styles
+// are permitted ('unsafe-inline') because the pages rely on them; a nonce-based policy requires
+// reworking those pages first. connect-src 'self' covers same-origin Socket.IO websockets under
+// CSP Level 3. blob: serves render-kit GLB texture decoding, where GLTFLoader turns embedded
+// textures into blob URLs.
 app.use((req, res, next) => {
     const scriptSources = ["'self'", "'unsafe-inline'"];
     const connectSources = ["'self'", 'blob:', 'https://smirk.cash'];
@@ -220,7 +215,6 @@ app.use(
     express.static(path.join(threePackagePath, 'build'), rendererVendorStaticOptions)
 );
 
-// Configure static file serving
 const htmlPath = path.join(__dirname, '../html');
 app.use(express.static(htmlPath, {
     etag: true,
@@ -231,9 +225,8 @@ app.use(express.static(htmlPath, {
         }
     }
 }));
-app.use(express.json()); // Parse JSON for API endpoints
+app.use(express.json());
 
-// Serve main page
 app.get('/', function(req, res) {
    res.sendFile('index.html', { root: htmlPath });
 });
@@ -278,12 +271,11 @@ app.get(['/tavern', '/tavern/'], function(req, res) {
    res.sendFile('tavern.html', { root: htmlPath });
 });
 
-// Serve admin panel
 app.get('/admin', function(req, res) {
    res.sendFile('admin.html', { root: htmlPath });
 });
 
-// Debug endpoint to receive client-side debug info
+// Receives client-side debug info.
 app.post('/debug', (req, res) => {
   if (debugManager.CONSOLE_LOGGING) {
     console.log('📝 CLIENT DEBUG INFO:', req.body);
@@ -291,7 +283,6 @@ app.post('/debug', (req, res) => {
   res.json({ received: true, timestamp: Date.now() });
 });
 
-// Payment system API endpoints
 app.post('/api/payment/create', asyncHandler(async (req, res) => {
   const { userId, gameMode } = req.body || {};
   if (!userId || !gameMode) {
@@ -322,13 +313,12 @@ app.get('/api/payment/status/:paymentId', asyncHandler(async (req, res) => {
 }));
 
 // =============================================================================
-// /api/user/* protection (S1 / S2 / S3, contract C2)
+// /api/user/* protection
 // =============================================================================
 
-// S3: simple in-memory IP rate limiter for the /api/user/* REST surface. Each of these
-// endpoints hits the DB, so cap requests per IP over a short window. Best-effort only (the
-// socket layer has its own limiter and nginx can add another); the map is pruned lazily so
-// it can't grow unbounded.
+// In-memory IP rate limiter for the /api/user/* REST surface. Each of these endpoints hits the
+// DB, so requests per IP are capped over a short window. Best-effort only: the socket layer has
+// its own limiter and nginx can add another. The map is pruned lazily so it cannot grow unbounded.
 const _userApiHits = new Map(); // ip -> { count, windowStart }
 const USER_API_WINDOW_MS = 60 * 1000;
 const USER_API_MAX = Number(process.env.USER_API_RATE_MAX) || 120;
@@ -353,13 +343,12 @@ function userApiRateLimit(req, res, next) {
 }
 app.use('/api/user', userApiRateLimit);
 
-// C2: session-ownership guard for /api/user/:socketId/*. The caller must present the session
-// token (users.anon_token — emitted to the client as the 'session_token'/'session_resumed'
-// event and stored as localStorage['wownerogue_token']) via the 'X-Session-Token' header.
-// Tokens are never accepted in URLs because reverse proxies and browser history log them.
-// We only proceed for the row whose socket_id AND anon_token both match, so
-// one client can't read or mutate another player's payments/payouts/address. failStatus is
-// 403 for mutations, 401 for reads.
+// Session-ownership guard for /api/user/:socketId/*. The caller must present the session token
+// (users.anon_token, emitted to the client as the 'session_token'/'session_resumed' event and
+// stored as localStorage['wownerogue_token']) via the 'X-Session-Token' header. Tokens are never
+// accepted in URLs because reverse proxies and browser history log them. Only the row whose
+// socket_id AND anon_token both match proceeds, so one client cannot read or mutate another
+// player's payments, payouts, or address. failStatus is 403 for mutations, 401 for reads.
 function requireSessionOwnership(failStatus) {
   return async (req, res, next) => {
     try {
@@ -393,7 +382,7 @@ app.get('/api/user/:socketId/credits', requireSessionOwnership(401), asyncHandle
   }
 
   try {
-    // C1: read-only route — never mint a user row for a stranger's socketId.
+    // Read-only route: never mint a user row for a stranger's socketId.
     const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
     if (!user) {
       return res.json({});
@@ -421,7 +410,7 @@ app.get('/api/user/:socketId/mode', requireSessionOwnership(401), asyncHandler(a
   }
 
   try {
-    // C1: read-only route — do not create a user row here.
+    // Read-only route: no user row is created here.
     const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
     if (!user) {
       return res.json({});
@@ -533,7 +522,6 @@ app.get('/health/ready', (req, res) => {
   res.status(health.ready ? 200 : 503).json(health);
 });
 
-// Get payment options for a user (mixed mode support)
 app.get('/api/user/:socketId/payment-options', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   if (!socketId) {
@@ -554,7 +542,6 @@ app.get('/api/user/:socketId/payment-options', requireSessionOwnership(401), asy
   }
 }));
 
-// Get payment history for a user
 app.get('/api/user/:socketId/payments', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
@@ -567,7 +554,7 @@ app.get('/api/user/:socketId/payments', requireSessionOwnership(401), asyncHandl
   }
 
   try {
-    // C1: read-only route — do not create a user row here.
+    // Read-only route: no user row is created here.
     const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
     if (!user) {
       return res.json({ payments: [], total: 0, totalPaid: 0, limit, offset });
@@ -625,7 +612,6 @@ app.get('/api/user/:socketId/payments', requireSessionOwnership(401), asyncHandl
   }
 }));
 
-// Get payout history for a user
 app.get('/api/user/:socketId/payouts', requireSessionOwnership(401), asyncHandler(async (req, res) => {
   const { socketId } = req.params;
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
@@ -638,7 +624,7 @@ app.get('/api/user/:socketId/payouts', requireSessionOwnership(401), asyncHandle
   }
 
   try {
-    // C1: read-only route — do not create a user row here.
+    // Read-only route: no user row is created here.
     const user = await gameModeManager.getOrCreateUser(socketId, { create: false });
     if (!user) {
       return res.json({ payouts: [], total: 0, totalReceived: 0, limit, offset });
@@ -666,7 +652,7 @@ app.get('/api/user/:socketId/payouts', requireSessionOwnership(401), asyncHandle
       [user.id]
     );
     
-    // Calculate total received (confirmed payouts)
+    // Total received counts only payouts that completed on chain.
     const totalResult = await db.query(
       `SELECT COALESCE(SUM(amount), 0) as total_received FROM payouts WHERE user_id = $1 AND status = 'completed'`,
       [user.id]
@@ -716,7 +702,7 @@ if (smirkEnabled) {
 
 
 // =============================================================================
-// Admin API Endpoints (see src/routes/admin.js) — DI ctx; alertService is set later
+// Admin API endpoints (see src/routes/admin.js). Injected ctx; alertService is set later.
 // =============================================================================
 const adminRouteCtx = {
   db,
@@ -802,7 +788,6 @@ app.get('/api/game-modes', (req, res) => {
   const directMode = config.modes.direct;
   const creditsMode = config.modes.credits;
 
-  // Include hosted by info if configured
   let hostedBy = null;
   if (process.env.HOSTED_BY) {
     try {
@@ -876,7 +861,7 @@ app.get('/api/game-modes', (req, res) => {
 app.get('/verify/:gameId', asyncHandler(async (req, res) => {
   const { gameId } = req.params;
   
-  // Try to look up the game in the database
+  // The page still renders for an unknown gameId, so the lookup is optional.
   let gameRecord = null;
   try {
     const result = await databaseManager.query(
@@ -990,11 +975,8 @@ app.get('/api/verify', (req, res) => {
   res.json(result);
 });
 
-// Initialize debug manager with new block callbacks
 debugManager.onNewBlockCallback((blockHeight) => {
-    // Start games for waiting players when new block detected
     socketHandlers.startGamesForWaiting(blockHeight);
-    // Check active games for timeout
     Promise.resolve(socketHandlers.checkGamesTimeout(blockHeight)).catch(err => {
         console.error('❌ checkGamesTimeout error:', err.message);
     });
@@ -1006,7 +988,6 @@ debugManager.onNewBlockCallback((blockHeight) => {
     }
 });
 
-// Initialize payment system
 async function initializePaymentSystem() {
     try {
         const production = process.env.NODE_ENV === 'production';
@@ -1066,7 +1047,7 @@ async function initializePaymentSystem() {
             console.log('ℹ️ Payments disabled; wallet RPC initialization skipped.');
         }
         
-        // Initialize database connection and run migrations
+        // Opens the connection and runs pending migrations.
         await databaseManager.initialize();
         if (!databaseManager.isConnected()) {
             throw new Error('PostgreSQL is unavailable.');
@@ -1105,10 +1086,8 @@ async function initializePaymentSystem() {
     }
 }
 
-// Start the debug/production system
 debugManager.initialize();
 
-// Debug function for registered users
 function debugRegisteredUsers() {
     if (debugManager.CONSOLE_LOGGING) {
         console.log("📊 REGISTERED USERS DEBUG:");
@@ -1122,13 +1101,10 @@ function debugRegisteredUsers() {
     }
 }
 
-// Regular debug logging
 setInterval(debugRegisteredUsers, 10000);
 
-// Start server
 async function startServer() {
     try {
-        // Initialize payment system first
         const financialRuntime = await initializePaymentSystem();
         const { paymentSystemReady } = financialRuntime;
 
@@ -1155,18 +1131,17 @@ async function startServer() {
         payoutDispatchReady = financialRuntime.walletReady && isPayoutProcessingEnabled();
         financialEventExporter.start();
 
-        // Socket.io connection handler - ONLY after payment system is ready
+        // Connections are accepted only once the payment system is ready.
         io.on('connection', function(socket) {
             socketHandlers.handleConnection(socket);
         });
         
-        // Start HTTP server.
-        // Bind all interfaces by default: the reverse proxy (Nginx Proxy Manager) is off-host /
-        // containerized and reaches this app over a non-loopback address, so a loopback-only bind
-        // makes the public site 502. Operators whose proxy runs on THIS host can set HOST=127.0.0.1.
-        // The real "don't expose :3000" hardening is a firewall rule limiting the port to the
-        // proxy's source, not the bind address; and X-Forwarded-For is already validated (rightmost
-        // hop) so a direct hit can't spoof the client IP.
+        // All interfaces are bound by default: the reverse proxy (Nginx Proxy Manager) is off-host
+        // or containerized and reaches this app over a non-loopback address, so a loopback-only
+        // bind makes the public site 502. Operators whose proxy runs on this host can set
+        // HOST=127.0.0.1. Restricting exposure of :3000 is a firewall rule limiting the port to
+        // the proxy's source, not a bind address; X-Forwarded-For is validated at the rightmost
+        // hop, so a direct hit cannot spoof the client IP.
         const PORT = process.env.PORT || 3000;
         const HOST = process.env.HOST || '0.0.0.0';
         http.listen(PORT, HOST, function() {
@@ -1205,19 +1180,17 @@ async function startServer() {
                 }
             }, payoutIntervalMs);
 
-            // Start payout retry service for failed/stuck payouts
             const maxRetries = Number(process.env.PAYOUT_MAX_RETRIES) || 3;
             const retryIntervalMs = Number(process.env.PAYOUT_RETRY_INTERVAL_MS) || 300000; // 5 minutes
-            // Initialize alert service for email notifications
             alertService = new AlertService({
                 walletService: walletRPCService,
                 db: databaseManager,
                 debugManager
             });
 
-            // Make alertService available to gameModeManager/paymentHandlers for balance checks
+            // gameModeManager and paymentHandlers use this for balance-check alerts.
             gameModeManager.alertService = alertService;
-            // And to the admin routes (late-bound via the shared ctx object)
+            // Admin routes read it late-bound through the shared ctx object.
             adminRouteCtx.alertService = alertService;
 
             payoutRetryService = new PayoutRetryService({
@@ -1226,13 +1199,12 @@ async function startServer() {
                 debugManager,
                 maxRetries,
                 retryIntervalMs,
-                alertService, // Pass alert service for failure notifications
+                alertService,
                 isEnabled: canDispatchPayouts
             });
             payoutRetryService.start();
 
-            // Start periodic alert checks (every 5 minutes)
-            alertService.startPeriodicChecks(300000);
+            alertService.startPeriodicChecks(300000); // 5 minutes
         }
 
         // Reconcile transfers that mined just after invoice expiry into durable manual review.
@@ -1278,7 +1250,7 @@ async function startServer() {
     }
 }
 
-// Attach 404 and error handlers last
+// The 404 and error handlers must be registered after every route.
 app.use((req, res, next) => {
   next(new NotFoundError(`Route not found: ${req.method} ${req.originalUrl}`, {
     safeMessage: 'The requested resource was not found.'
@@ -1289,7 +1261,7 @@ app.use(createErrorMiddleware({ logger: console }));
 
 startServer();
 
-// Graceful shutdown — clean up timers, wait for in-flight payouts, close DB pool
+// Graceful shutdown: clean up timers, wait for in-flight payouts, close the DB pool.
 let shutdownStarted = false;
 async function gracefulShutdown(signal, exitCode = 0) {
     if (shutdownStarted) return;
@@ -1309,10 +1281,8 @@ async function gracefulShutdown(signal, exitCode = 0) {
     }, 15000);
     forcedExit.unref?.();
 
-    // Stop accepting new connections
     http.close();
 
-    // Stop scheduled timers
     if (batchPayoutInterval) clearInterval(batchPayoutInterval);
     if (paymentExpiryInterval) clearInterval(paymentExpiryInterval);
     if (walletHealthInterval) clearInterval(walletHealthInterval);
@@ -1358,7 +1328,7 @@ async function gracefulShutdown(signal, exitCode = 0) {
     if (payoutRetryService) payoutRetryService.stop();
     if (alertService) alertService.stopPeriodicChecks?.();
 
-    // Wait for in-flight batch processing to finish (up to 10 seconds)
+    // Waits up to 10 seconds for in-flight batch processing to finish.
     let waitMs = 0;
     while (gameModeManager._isBatchProcessing && waitMs < 10000) {
         await new Promise(r => setTimeout(r, 500));
@@ -1368,7 +1338,6 @@ async function gracefulShutdown(signal, exitCode = 0) {
         console.log(`  Waited ${waitMs}ms for in-flight payout processing`);
     }
 
-    // Close database pool
     try {
         await databaseManager.close();
         console.log('  Database pool closed');

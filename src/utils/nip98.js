@@ -7,41 +7,19 @@
  * signed event is well-formed, authentic, fresh, and bound to the expected
  * method/URL/challenge.
  *
- * SECURITY — why we do NOT rely on nostr-tools verifyEvent() alone:
- *   nostr-tools memoizes its result on the event object via an internal
- *   Symbol(verified). A caller that reuses/mutates an already-"verified" object in
- *   the same process could otherwise bypass a re-check. We defend two ways:
- *     1. We rebuild a CLEAN event object from only the canonical primitive fields,
- *        so it can never carry a stamped verified-symbol (freshly-parsed wire JSON
- *        can't carry a JS Symbol either, but this makes the guarantee explicit).
- *     2. We INDEPENDENTLY recompute the event id (getEventHash) and compare it to
- *        the claimed id. This catches any content/tag tampering with zero reliance
- *        on verifyEvent's memoization, before we ever check the schnorr signature.
+ * Security: nostr-tools verifyEvent() alone is not sufficient, because it memoizes
+ * its result on the event object via an internal Symbol(verified), so a reused or
+ * mutated already-"verified" object in the same process could bypass a re-check.
+ * Two defences:
+ *   1. A clean event object is rebuilt from only the canonical primitive fields, so
+ *      it can never carry a stamped verified-symbol. Freshly-parsed wire JSON cannot
+ *      carry a JS Symbol either; the rebuild makes the guarantee explicit.
+ *   2. The event id is recomputed independently (getEventHash) and compared to the
+ *      claimed id, catching content/tag tampering with no reliance on verifyEvent's
+ *      memoization, ahead of the schnorr signature check.
  */
 
-/**
- * Load nostr-tools in a way that works in BOTH runtimes:
- *   - Production (plain Node >=22): a normal require() succeeds — Node natively
- *     require()s nostr-tools' ESM-only transitive deps (@noble/*).
- *   - A CJS-only test runtime (Jest without --experimental-vm-modules) cannot parse
- *     those ESM deps, so we fall back to nostr-tools' pre-bundled build, which is a
- *     single self-contained esbuild IIFE with every dependency inlined (no import /
- *     no external require) and is therefore safe to evaluate in-process.
- * Same public API either way (getEventHash, verifyEvent, ...).
- */
-function loadNostrTools() {
-  try {
-    return require('nostr-tools');
-  } catch (_e) {
-    const fs = require('fs');
-    const path = require('path');
-    const cjsIndex = require.resolve('nostr-tools'); // .../nostr-tools/lib/cjs/index.js
-    const bundlePath = path.join(path.dirname(cjsIndex), '..', 'nostr.bundle.js');
-    const src = fs.readFileSync(bundlePath, 'utf8');
-    // eslint-disable-next-line no-new-func
-    return new Function(`${src}\nreturn NostrTools;`)();
-  }
-}
+const { loadNostrTools } = require('./nostrLoader');
 
 const { getEventHash, verifyEvent } = loadNostrTools();
 
@@ -99,8 +77,8 @@ function verifyNip98Event(event, opts = {}) {
   // (b) Must be a NIP-98 HTTP Auth event.
   if (event.kind !== NIP98_KIND) return fail('wrong-kind');
 
-  // Rebuild a clean event from primitives only — strips any inherited verified-symbol
-  // and any extra properties, so verifyEvent() below is forced to actually verify.
+  // Primitives only: strips any inherited verified-symbol and any extra properties,
+  // so verifyEvent() below is forced to actually verify.
   const clean = {
     kind: event.kind,
     created_at: event.created_at,
@@ -111,7 +89,7 @@ function verifyNip98Event(event, opts = {}) {
     tags: event.tags.map((t) => t.slice()),
   };
 
-  // (c) Independently recompute the id. Defeats content/tag tampering regardless of
+  // (c) Recomputing the id independently defeats content/tag tampering regardless of
   // any memoization inside verifyEvent.
   let recomputedId;
   try {
@@ -130,7 +108,7 @@ function verifyNip98Event(event, opts = {}) {
   }
   if (!sigOk) return fail('bad-signature');
 
-  // (e) Freshness — reject clock skew / replayed-late events.
+  // (e) Freshness: rejects clock skew and replayed-late events.
   if (Math.abs(now - Number(clean.created_at)) > maxSkewSec) {
     return fail('expired');
   }
@@ -157,7 +135,7 @@ function verifyNip98Event(event, opts = {}) {
   if (challengeTags.length !== 1) return fail('challenge-tag-count');
   if (challengeTags[0][1] !== challenge) return fail('challenge-mismatch');
 
-  // (g) Success — return the proven x-only pubkey, lowercased.
+  // (g) Returns the proven x-only pubkey, lowercased.
   return { ok: true, pubkey: clean.pubkey.toLowerCase() };
 }
 

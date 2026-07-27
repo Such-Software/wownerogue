@@ -35,11 +35,11 @@ function parseChains(raw, fallback) {
 
 /**
  * Assemble the payment-provider registry from environment/config. Single wiring seam for Pillar 3,
- * shaped to the operator's real infra (see btcpay-infra-topology memo): three Greenfield endpoints
- * — real BTCPay (BTC/LTC), xmrcheckout (XMR), wowcheckout (WOW) — plus the native wallet-RPC.
+ * shaped to the operator's real infra (see btcpay-infra-topology memo): three Greenfield endpoints:
+ * real BTCPay (BTC/LTC), xmrcheckout (XMR), and wowcheckout (WOW), plus the native wallet-RPC.
  *
  * Behavior-preserving: with NO gateway env set (prod today) only the native Monero/Wownero provider
- * is registered and every chain routes to it — identical to the current flow. Each endpoint
+ * is registered and every chain routes to it, identical to the current flow. Each endpoint
  * activates independently when its *_URL/_STORE_ID/_API_KEY trio is present:
  *   BTCPAY_URL/BTCPAY_STORE_ID/BTCPAY_API_KEY            -> id 'btcpay'      (BTCPAY_CHAINS, default BTC,LTC)
  *   XMRCHECKOUT_URL/XMRCHECKOUT_STORE_ID/..._API_KEY     -> id 'xmrcheckout' (XMR)
@@ -66,7 +66,7 @@ function buildProviderRegistry({ env = process.env, walletService = null } = {})
         for (const c of chains) routing[c] = 'btcpay';
     }
 
-    // xmrcheckout / wowcheckout — Greenfield-compatible shims, same provider class, different id.
+    // xmrcheckout / wowcheckout: Greenfield-compatible shims, same provider class, different id.
     const shims = [
         { prefix: 'XMRCHECKOUT', id: 'xmrcheckout', chain: 'XMR' },
         { prefix: 'WOWCHECKOUT', id: 'wowcheckout', chain: 'WOW' }

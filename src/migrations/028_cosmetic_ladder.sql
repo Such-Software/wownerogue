@@ -1,4 +1,4 @@
--- 028: lock the cosmetic ladder (loyalty model — unlock by lifetime credits purchased, cumulative).
+-- 028: lock the cosmetic ladder (loyalty model: unlock by lifetime credits purchased, cumulative).
 -- Adds the FREE `original` bare-tiles baseline and reprices the ladder: Interior 1, skins 5, iso 10,
 -- +tilepack 20, +iso 40, 3D 50. Mirrors DEFAULT_CATALOG in src/multiplayer/entitlements.js.
 -- Idempotent. See docs/MONETIZATION.md.

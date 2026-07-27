@@ -2,7 +2,7 @@ const ChatProvider = require('./ChatProvider');
 const { escapeChatText } = require('../../utils/escapeChat');
 
 /**
- * NostrChatProvider — global cross-server chat over nostr, layered on the existing ChatProvider seam.
+ * NostrChatProvider: global cross-server chat over nostr, layered on the existing ChatProvider seam.
  *
  * It DECORATES a local provider (SocketChatProvider): every message is still delivered in-game +
  * persisted exactly as before, and on top of that a global message is fanned out to nostr relays
@@ -15,7 +15,7 @@ const { escapeChatText } = require('../../utils/escapeChat');
  * Topology: client → server → relay. The server stays the moderation authority (bans, rate-limit,
  * history in Postgres via the local provider); the relay is transport + fan-out. Signing with a
  * registered Smirk npub (the bridge key, or later each player's own) is what the relay's
- * inbox-outbox policy requires to publish — so global chat is a concrete reason to sign in with Smirk.
+ * inbox-outbox policy requires to publish, so global chat is a concrete reason to sign in with Smirk.
  *
  * Behavior-preserving: with no transport/signer (nostr disabled) this is exactly the local provider.
  */
@@ -58,7 +58,7 @@ class NostrChatProvider extends ChatProvider {
         await this.local.initialize();
         if (!this._globalEnabled()) return;
         const since = Math.floor(this.now() / 1000);
-        // Only future messages — no history flood on connect (local history covers the past).
+        // Only future messages: no history flood on connect (local history covers the past).
         this.transport.subscribe([{ kinds: [this.kind], '#t': [this.channelTag], since }], (ev) => this._onRemote(ev));
         if (this.debugManager?.CONSOLE_LOGGING) {
             console.log(`[nostr] chat subscribed: tag=${this.channelTag} kind=${this.kind} publish=${this.signer ? 'on' : 'read-only'}`);
@@ -70,7 +70,7 @@ class NostrChatProvider extends ChatProvider {
         await this.local.publish(msg);
 
         // 2) Fan out global messages to nostr (skip room-scoped and skip messages we received
-        //    from the relay, which arrive here only via local delivery — never through publish).
+        //    from the relay, which arrive here only via local delivery, never through publish).
         if (msg.remote || msg.scope !== 'global' || !this._globalEnabled() || !this.signer) return;
         try {
             const template = {
@@ -131,7 +131,7 @@ class NostrChatProvider extends ChatProvider {
 
     // Relay a CLIENT-signed event (per-player identity, Phase 2). Delivers the message in-game
     // (escaped text, exactly like a normal global message) and publishes the pre-signed event to
-    // the relays WITHOUT re-signing — so it carries the player's OWN npub, not the bridge. The
+    // the relays WITHOUT re-signing, so it carries the player's OWN npub, not the bridge. The
     // signed id is marked seen so the relay round-trip doesn't re-deliver it.
     async relaySignedEvent({ event, username, text, ts, socketId, userId } = {}) {
         await this.local.publish({ scope: 'global', username, text, ts, socketId, userId });

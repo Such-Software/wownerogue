@@ -14,7 +14,7 @@ describe('renderVerifyPage social card meta', () => {
             ogImage: 'og-card-xmr.png'
         });
         expect(html).toContain('property="og:title"');
-        expect(html).toContain('Monero Roguelike — Dungeon Layout Verification');
+        expect(html).toContain('Monero Roguelike: Dungeon Layout Verification');
         expect(html).toContain('<meta property="og:image" content="https://monerogue.app/og-card-xmr.png">');
         expect(html).toContain('content="summary_large_image"');
         expect(html).toContain('<meta property="og:url" content="https://monerogue.app/verify/seedABC">');

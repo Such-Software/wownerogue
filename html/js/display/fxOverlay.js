@@ -1,15 +1,15 @@
-// FXOverlay — dependency-free 2D-canvas FX layer for the FREE ROT.js dungeon (Pipeline A).
+// FXOverlay: dependency-free 2D-canvas FX layer for the FREE ROT.js dungeon (Pipeline A).
 // Ports the premium FancyRenderer look (warm flickering torch light, screen-edge vignette,
 // drifting-ember particle field, transient sparkles/bursts, full-screen color flash and a
 // decaying screen shake) using plain <canvas> radial gradients instead of Pixi.
 //
 // Exposes a single global `window.FX`. EVERY method is a no-op when there is no
-// #game-display / ROT base canvas present (so match.html & tavern.html — which never
-// include this file — and any early-boot call are safe). It draws onto its OWN
+// #game-display / ROT base canvas present (so match.html & tavern.html, which never
+// include this file, and any early-boot call are safe). It draws onto its OWN
 // absolutely-positioned canvas layered just above the avatar overlay (z-index 7,
 // pointer-events:none) and reuses the same overlay-sync math as
 // SinglePlayerAvatar._syncOverlay. It runs its own requestAnimationFrame loop for
-// flicker/embers/particles, and self-suspends (cancelAnimationFrame — no leaks) once the
+// flicker/embers/particles, and self-suspends (cancelAnimationFrame: no leaks) once the
 // scene is idle; stop() hard-cancels it. Coordinates are in base-canvas pixel space.
 (function (root) {
     'use strict';
@@ -116,7 +116,7 @@
         },
 
         // Returns the 2D context of a correctly sized/positioned overlay, or null
-        // (which makes every public method a no-op — keeps other pages unaffected).
+        // (which makes every public method a no-op: keeps other pages unaffected).
         _ensure: function () {
             if (!doc) return null;
             var base = this._resolveBase();
@@ -396,7 +396,7 @@
                 this._raf = root.requestAnimationFrame(this._frameBound);
             } else {
                 // Idle (game over / title, nothing animating): suspend the loop
-                // entirely — no lingering rAF, no leak. A future call restarts it.
+                // entirely: no lingering rAF, no leak. A future call restarts it.
                 this._running = false;
                 this._raf = 0;
                 this._active = false;

@@ -146,7 +146,7 @@ describe('render pack visual resolver', () => {
 
     // With test unlocks on, ALL premium modes and packs are available for QA
     RK.RENDER_MODE_TEST_UNLOCKS = true;
-    expect(RK.canUseMode('iso')).toBe(true);   // 'fancy' is no longer a mode — it's a topdown pack
+    expect(RK.canUseMode('iso')).toBe(true);   // 'fancy' is no longer a mode; it's a topdown pack
     expect(RK.canUseMode('3d')).toBe(true);
     expect(RK.canUsePack('iso-dungeon')).toBe(true);
     expect(RK.canUsePack('kenney-3d-characters')).toBe(true);

@@ -1,4 +1,4 @@
-// Designed room — loads an imported Tiled room (from tmx_import.py): layered tile-index grids
+// Designed room: loads an imported Tiled room (from tmx_import.py): layered tile-index grids
 // + a tileset, and draws the layers (back-to-front) beneath the avatars. The server uses the
 // same room's walkability/dims for collision, so visuals and movement match.
 (function (root) {

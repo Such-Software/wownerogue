@@ -1,9 +1,9 @@
-// SP game render bridge (RK.SPGame) — renders the single-player DUNGEON through the render kit
-// (Tiled / ASCII / Iso / 3D + unlocked packs) instead of the legacy ROT display, so a pack you
-// bought applies in actual gameplay, not just the tavern. It mounts a renderer in a dedicated host
+// SP game render bridge (RK.SPGame): renders the single-player dungeon through the render kit
+// (Tiled / ASCII / Iso / 3D + unlocked packs) rather than the legacy ROT display, so a purchased
+// pack applies in gameplay and not only in the tavern. It mounts a renderer in a dedicated host
 // inside #game-display and hides the legacy ROT canvases while a game is live; the retro splash /
-// win / lose text screens still use ROT. If anything here is unavailable it returns false and the
-// caller falls back to the legacy RenderEngine, so the live game can never hard-break.
+// win / lose text screens still use ROT. When anything here is unavailable it returns false and the
+// caller falls back to the legacy RenderEngine, so a live game can never hard-break.
 (function (root) {
     'use strict';
     var RK = root.RK = root.RK || {};
@@ -29,9 +29,8 @@
         return doc().activeElement === gd;
     };
 
-    // A dedicated, SELF-SIZING child host so the RK canvas doesn't collide with the ROT canvas and
-    // doesn't depend on the ROT canvas for its dimensions (it's an aspect-ratio viewport the camera
-    // transform is clipped to).
+    // A dedicated, self-sizing child host so the RK canvas neither collides with the ROT canvas nor
+    // depends on it for dimensions; it is the viewport the camera transform is clipped to.
     function rkHost() {
         var gd = gameDisplay();
         if (!gd) return null;
@@ -39,12 +38,12 @@
         if (!host) {
             host = doc().createElement('div');
             host.id = 'rk-game-host';
-            // FILL #game-display exactly (inset:0). #game-display is a definite, grid-bounded height
-            // (the .container is height:100vh; overflow:hidden), so filling it gives the camera
-            // reliable clientWidth/clientHeight every frame. The earlier `min(78vh)` + translate(-50%)
-            // centering could resolve to a wrong/transient size, stranding the view in a top band.
-            // Pure-black background so the area BEYOND the map edge is the SAME black as an
-            // unexplored ('dark') in-bounds tile — otherwise the shade difference outlines the map.
+            // inset:0 fills #game-display exactly. #game-display is a definite, grid-bounded height
+            // (.container is height:100vh; overflow:hidden), so filling it gives the camera reliable
+            // clientWidth/clientHeight every frame. Height caps plus translate(-50%) centering resolve
+            // to a wrong or transient size and strand the view in a top band, so avoid them.
+            // Pure-black background keeps the area beyond the map edge the same black as an
+            // unexplored ('dark') in-bounds tile; any shade difference outlines the map.
             host.style.cssText = 'display:none; position:absolute; inset:0;' +
                 ' overflow:hidden; background:#000; z-index:6; touch-action:none; cursor:grab;';
             gd.appendChild(host);
@@ -131,8 +130,8 @@
         if (!host || !RK.createRenderer) return null;
         var mode = SP.mode();
         // 3D needs THREE, lazy-loaded from the pinned same-origin vendor route (or the explicitly
-        // enabled CDN fallback). The sync createRenderer() returns Tiled until it is ready; remount
-        // as real 3D after loading so the screen never goes blank.
+        // enabled CDN fallback). The sync createRenderer() returns Tiled until it is ready, so the
+        // renderer is remounted as real 3D once loading finishes and the screen never goes blank.
         if (mode === '3d' && RK.ensureThree && RK.threeReady && !RK.threeReady()) {
             if (!SP._threePending) {
                 SP._threePending = true;
@@ -146,17 +145,17 @@
             }
         }
         SP._renderer = RK.createRenderer(mode, host, { cell: 24 });
-        // The camera owns the canvas transform (centre on the player), so position it absolutely
-        // and let it overflow — do NOT use RK.attachZoom (it fights this transform).
+        // The camera owns the canvas transform (centre on the player), so the canvas is positioned
+        // absolutely and allowed to overflow. RK.attachZoom fights this transform; do not use it.
         if (SP._renderer && SP._renderer.canvas) {
             var c = SP._renderer.canvas;
             c.style.position = 'absolute'; c.style.top = '0'; c.style.left = '0';
-            // Beat the `.rotdis canvas { max-width/height:100%; object-fit:contain }` rules (meant for
-            // the legacy ROT canvas) so the render-kit buffer maps 1:1 to the element and the CAMERA
-            // transform is the SOLE controller of scale/position. WITHOUT the max-height/object-fit
-            // override, a canvas TALLER than the host got object-fit-shrunk and the camera translate —
-            // computed in buffer space — pushed the player far off-screen (iso went fully BLACK; tiled's
-            // shorter canvas usually fit the host so it escaped the bug).
+            // Overrides the `.rotdis canvas { max-width/height:100%; object-fit:contain }` rules meant
+            // for the legacy ROT canvas, so the render-kit buffer maps 1:1 to the element and the
+            // camera transform is the sole controller of scale and position. Without these overrides a
+            // canvas taller than the host is object-fit-shrunk while the camera translate is computed
+            // in buffer space, pushing the player off-screen (iso canvases are tall enough to hit this;
+            // tiled canvases usually fit the host).
             c.style.setProperty('max-width', 'none', 'important');
             c.style.setProperty('max-height', 'none', 'important');
             c.style.setProperty('object-fit', 'fill', 'important');
@@ -166,9 +165,9 @@
             host._rkZoomBound = true;
             host.addEventListener('wheel', function (ev) {
                 ev.preventDefault();
-                // Base the step on the CURRENT effective zoom (mode-aware default if not yet set),
-                // NOT a hardcoded 1.7 — otherwise the first scroll on iso (default 1.0) jumped up to
-                // 1.7 and BOTH directions read as "zoom in".
+                // The step is based on the current effective zoom (mode-aware default when unset).
+                // A hardcoded base makes the first scroll in a mode with a different default jump to
+                // that base, so both directions read as "zoom in".
                 var base = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
                 SP._setZoom(base * Math.exp(-ev.deltaY * 0.0015));
             }, { passive: false });
@@ -208,14 +207,14 @@
         return 1.7;
     };
 
-    // Centre the (whole-scene) canvas on the player via a CSS transform, clipped to the host —
-    // renderer-agnostic (works for tiled / iso / 3d, each of which reports its own focusPoint).
+    // Centre the whole-scene canvas on the player via a CSS transform, clipped to the host. This is
+    // renderer-agnostic: tiled, iso and 3d each report their own focusPoint.
     SP._applyCamera = function () {
         var r = SP._renderer;
         var host = doc() && doc().getElementById('rk-game-host');
         if (!r || !r.canvas || !host) return;
-        // The 3D renderer fills the host itself (setSize) and its OWN THREE camera follows the
-        // player — so DON'T apply a CSS transform (it would double-transform the WebGL view).
+        // The 3D renderer fills the host itself (setSize) and its own THREE camera follows the
+        // player, so it takes no CSS transform; one would double-transform the WebGL view.
         if (r.name === '3d') {
             if (r.setZoom) r.setZoom((SP._zoom != null) ? SP._zoom : SP._defaultZoom());
             r.canvas.style.transform = 'none';
@@ -225,10 +224,10 @@
         }
         var scale = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
         var fp = r.focusPoint;
-        // ROBUSTNESS: if the renderer hasn't reported a focus this frame — a race at game start, or a
-        // camera tick reading a just-(re)created renderer instance before its first render — derive the
-        // focus straight from the last known player cell (tiled coords). Without this the camera falls
-        // back to a scale-only transform that pins the whole level to the top-left corner.
+        // A renderer can lack a focus for a frame: at game start, or when a camera tick reads a
+        // just-created renderer instance before its first render. In that case the focus is derived
+        // from the last known player cell (tiled coords); otherwise the camera falls back to a
+        // scale-only transform that pins the whole level to the top-left corner.
         if (!fp && (r.name === 'tiles' || r.name === 'ascii') && SP._lastState && SP._lastState.player &&
             typeof SP._lastState.player.x === 'number') {
             var _c = r.cell || 24;
@@ -238,8 +237,8 @@
         if (!fp) { r.canvas.style.transform = 'scale(' + scale + ')'; return; }
         var w = host.clientWidth || host.offsetWidth || 640, h = host.clientHeight || host.offsetHeight || 400;
         var tx = w / 2 - fp.x * scale, ty = h / 2 - fp.y * scale;
-        // Smooth follow: glide toward the target so single steps aren't jerky; SNAP on a big jump
-        // (level-change teleport / a stale-then-updated focus) rather than slowly panning the map.
+        // Smooth follow: glide toward the target so single steps aren't jerky, but snap on a big jump
+        // (level-change teleport, or a stale focus that then updates) rather than panning the map.
         if (SP._camX == null || Math.abs(tx - SP._camX) > w || Math.abs(ty - SP._camY) > h) {
             SP._camX = tx; SP._camY = ty;
         } else {
@@ -272,8 +271,8 @@
         return true;
     };
 
-    // Re-apply the camera every frame while live — robust against the renderer resizing its canvas
-    // or a transient focusPoint, which was making the view snap to the corner mid-run.
+    // Re-applies the camera every frame while live, so a renderer resizing its canvas or a transient
+    // focusPoint cannot leave the view snapped to a corner mid-run.
     SP._startCameraLoop = function () {
         if (SP._camRaf != null) return;
         function tick() {

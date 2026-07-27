@@ -210,8 +210,8 @@ class FinancialEventExporter {
     }
 
     // Safe for the unauthenticated liveness payload: no endpoint, token, account reference,
-    // row/event identifiers, error text, or timestamps.  These counters are informational and
-    // deliberately do not participate in application readiness.
+    // row/event identifiers, error text, or timestamps. These counters are informational and
+    // do not participate in application readiness.
     getPublicHealth() {
         const health = this.getHealth();
         return {
@@ -435,8 +435,8 @@ class FinancialEventExporter {
     }
 
     start() {
-        // Poll even without a sink: public health must show a real backlog, and non-mainnet
-        // deployments must continuously suppress newly appended rows.
+        // Polls even without a sink configured: public health must report a real backlog, and
+        // non-mainnet deployments must continuously suppress newly appended rows.
         if (this.timer) return false;
         this.runOnce().catch((error) => this.logger.warn?.(`[FinancialEvent] Export tick failed: ${error.message}`));
         this.timer = setInterval(() => {

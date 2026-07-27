@@ -518,7 +518,7 @@ function capturePageHtml() {
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wownerogue — Deterministic PvP Capture</title>
+<title>Wownerogue: Deterministic PvP Capture</title>
 <style>
 @font-face{font-family:PixelOperator;src:url('/styles/fonts/pixel-operator/PixelOperator.ttf') format('truetype');font-display:swap}
 @font-face{font-family:PixelOperator;src:url('/styles/fonts/pixel-operator/PixelOperator-Bold.ttf') format('truetype');font-weight:700;font-display:swap}
@@ -566,7 +566,7 @@ var socket=io({auth:{role:'spectator',token:token},transports:['websocket'],reco
 function byId(id){return document.getElementById(id);}
 function applyPresentation(next){
  if(!next)return;presentation=next;byId('eyebrow').textContent=next.eyebrow;byId('mode-title').textContent=next.title;
- byId('status-copy').textContent=next.footer;document.title='Wownerogue — '+next.title+' Capture';
+ byId('status-copy').textContent=next.footer;document.title='Wownerogue: '+next.title+' Capture';
 }
 function playerState(player){
  if(finalWinnerId&&player.id===finalWinnerId)return finalWinnerStatus;

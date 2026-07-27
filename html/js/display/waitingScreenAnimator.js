@@ -144,7 +144,7 @@ var WaitingScreenAnimator = {
     },
 
     // JUICE: a one-shot particle burst at a grid cell (treasure grab / escape / death). Purely
-    // additive over window.FX — no-op if FX is absent — and tile-agnostic, so it works identically
+    // additive over window.FX, no-op if FX is absent, and tile-agnostic, so it works identically
     // in every pack (it draws particles, never tiles). `spread` in grid cells, `count` particles.
     _burst: function(gridX, gridY, color, count, screenWidth, screenHeight, spread) {
         if (!window.FX || !window.FX.sparkle) return;
@@ -182,7 +182,7 @@ var WaitingScreenAnimator = {
         }
         
         // Fixed-position animated text. The label reflects the ACTUAL wait state, not this function's
-        // historical name — the two animations were wired to the opposite labels. This branch runs
+        // historical name: the two animations were wired to the opposite labels. This branch runs
         // while genuinely awaiting a payment.
         let y = Math.floor(screenHeight / 2) - 8;
         let baseText = (typeof Game !== 'undefined' && Game._awaitingPayment) ? 'Awaiting payment' : 'Awaiting next block';
@@ -275,7 +275,7 @@ var WaitingScreenAnimator = {
         const anim = this._waitingAnimation;
 
         // JUICE: a SUBTLE, tight sparkle when the hero breaks for the exit with the loot. No red
-        // "caught" burst — keep it a small glint, not an explosion near the torches.
+        // "caught" burst: keep it a small glint, not an explosion near the torches.
         if (this._epicPhase !== anim.phase) {
             if (anim.phase === 'escape') this._burst(anim.playerX, anim.playerY, 'rgba(255,220,90,0.9)', 6, screenWidth, screenHeight, 0.7);
             this._epicPhase = anim.phase;
@@ -414,7 +414,7 @@ var WaitingScreenAnimator = {
         
         // Fixed-position animated text. This treasure-hunt animation runs for the block-QUEUE wait
         // (see drawAnimatedWaitingScreen routing), so show the block label unless we're genuinely
-        // awaiting a payment. (Function name is historical — do not trust it for the label.)
+        // awaiting a payment. (Function name is historical: do not trust it for the label.)
         let y = Math.floor(screenHeight / 2) - 8;
         const dots = ".".repeat((Math.floor(time / 500) % 4));
         const paddedDots = dots.padEnd(3, " ");
@@ -498,7 +498,7 @@ var WaitingScreenAnimator = {
         this.updatePaymentAnimation();
 
         // JUICE: a SUBTLE, tight one-shot sparkle on the treasure grab / clean escape. Kept small and
-        // low-spread so it reads as a glint on the hero, not an explosion — and never sprays onto the
+        // low-spread so it reads as a glint on the hero, not an explosion, and never sprays onto the
         // wall torches. No red "death" burst (the animation's own red shockwave already covers that).
         if (this._payPhase !== anim.phase) {
             if (anim.phase === 'grab')         this._burst(anim.treasureX, anim.treasureY, 'rgba(255,220,90,0.9)', 6, screenWidth, screenHeight, 0.6);

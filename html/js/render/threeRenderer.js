@@ -1,5 +1,5 @@
-// ThreeRenderer — a lit, textured 3D projection of the shared Scene. It uses generated GLB avatars
-// when available and falls back to low-poly pieces so the mode remains usable during asset work.
+// ThreeRenderer: a lit, textured 3D projection of the shared Scene. It uses GLB avatars when
+// available and falls back to low-poly pieces so the mode stays usable without them.
 //
 // The level is drawn with three InstancedMeshes (walls / ground / props) so a 70x35 dungeon costs
 // three draw calls instead of ~2500 individual meshes, and per-instance colour carries the same
@@ -16,8 +16,8 @@
         return fallback || null;
     }
 
-    // Deterministic PRNG — generated textures are byte-identical every session, so the dungeon
-    // doesn't subtly re-skin itself on reload.
+    // Deterministic PRNG: generated textures are byte-identical every session, so the dungeon
+    // does not subtly re-skin itself on reload.
     function lcg(seed) {
         var s = seed >>> 0;
         return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
@@ -55,7 +55,7 @@
         });
     }
 
-    // Irregular flagstones — a broken grout grid plus grain, so a large floor never shows an
+    // Irregular flagstones: a broken grout grid plus grain, so a large floor never shows an
     // obvious repeat.
     function groundCanvas(size) {
         return makeCanvas(size, function (c, s) {
@@ -115,7 +115,7 @@
     };
     var HAZARD_GLOW = { lava: 0.85, poison: 0.5, spikes: 0.12 };
     // Ground tints. The scene legend colours are tuned for flat 2D fills and read almost black in a
-    // lit 3D scene, so wall/floor use material-appropriate values and everything else falls back to
+    // lit 3D scene, so wall/floor use material-appropriate values; everything else falls back to
     // the legend.
     var KIND_TINT = {
         wall: '#a49a8b', window: '#7d94a8', door: '#9c7a4a', archway: '#a49a8b',
@@ -153,9 +153,9 @@
         // Fog-of-war parity with the 2D modes: the camera follows the player, so distance fog fades
         // explored tiles to black away from you, and _buildTiles skips unexplored ('dark') tiles so
         // they never render. Together: unexplored = hidden, explored fades with distance, no map leak.
-        // Fog is measured from the CAMERA, which sits ~17 units back along the isometric offset —
-        // not from the player. A band tuned as if it started at the player put the player themselves
-        // a quarter of the way into fog and crushed the whole scene to near-black.
+        // The fog band is measured from the CAMERA, which sits ~17 units back along the isometric
+        // offset, not from the player. Tuning it as if it started at the player puts the player a
+        // quarter of the way into fog and crushes the scene to near-black.
         this.scene.fog = new T.Fog(0x05060a, 21, 46);
         this.camera = new T.OrthographicCamera(-10, 10, 10, -10, 0.1, 120);
         this.camera.position.set(9, 11, 9);
@@ -180,7 +180,7 @@
         var hemi = new T.HemisphereLight(0x9fb4d8, 0x161a24, 0.5);
         this.scene.add(hemi);
         this.keyLight = new T.DirectionalLight(0xffd9a8, 2.3);
-        this.keyLight.position.set(10, 8.5, 4); // low sun — long, readable wall shadows
+        this.keyLight.position.set(10, 8.5, 4); // low sun: long, readable wall shadows
         this.keyLight.castShadow = true;
         this.keyLight.shadow.mapSize.set(1024, 1024);
         this.keyLight.shadow.camera.near = 1;
@@ -250,7 +250,7 @@
             map: groundMap, bumpMap: groundBump, bumpScale: 0.35, roughness: 0.96, metalness: 0.0
         });
         this.propMat = new T.MeshStandardMaterial({ roughness: 0.8, metalness: 0.05 });
-        // Hazards/fire glow on their own so they stay legible in an unlit corridor.
+            // Hazards/fire glow on their own so they stay legible in an unlit corridor.
         this.glowMat = new T.MeshStandardMaterial({
             roughness: 0.55, metalness: 0.0, emissive: new T.Color(0xffffff), emissiveIntensity: 0.9
         });
@@ -282,16 +282,16 @@
         this.scene.add(this.motes);
     };
 
-    // Fill the host and frame a fixed "screenful" around the player. The camera FOLLOWS the player
+    // Fill the host and frame a fixed "screenful" around the player. The camera follows the player
     // (see _animate) instead of framing the whole level, so 3D behaves like the other modes. Only
-    // does work when the host size actually changed (cheap to call every frame).
+    // does work when the host size actually changed, so it is cheap to call every frame.
     ThreeRenderer.prototype._fitToHost = function () {
         var host = this.host;
         var w = (host && (host.clientWidth || host.offsetWidth)) || 640;
         var h = (host && (host.clientHeight || host.offsetHeight)) || 400;
         if (w === this._cw && h === this._ch) return;
         this._cw = w; this._ch = h;
-        this.renderer.setSize(w, h, true); // updateStyle:true → the canvas CSS-fills the host
+        this.renderer.setSize(w, h, true); // updateStyle:true so the canvas CSS-fills the host
         var aspect = w / h, span = 6.6 / (this.zoom || 1); // fixed screenful, user-adjustable zoom
         this.camera.left = -span * aspect;
         this.camera.right = span * aspect;
@@ -308,9 +308,9 @@
         this._fitToHost();
     };
 
-    // `attachCamera` reports drag pan in viewport pixels. Keep that contract for 3D and convert the
+    // `attachCamera` reports drag pan in viewport pixels. 3D keeps that contract and converts the
     // offset to ground-plane world units in _animate(), where the followed player's current smoothed
-    // position is available. Bound it to one viewport so a stray gesture cannot lose the dungeon.
+    // position is available. The bound of one viewport keeps a stray gesture from losing the dungeon.
     ThreeRenderer.prototype.setPan = function (x, y) {
         var w = (this.host && (this.host.clientWidth || this.host.offsetWidth)) || 640;
         var h = (this.host && (this.host.clientHeight || this.host.offsetHeight)) || 400;
@@ -336,8 +336,8 @@
         });
     };
 
-    // One InstancedMesh per bucket, grown geometrically. Reusing the mesh across rebuilds is what
-    // keeps a fog-of-war update from re-allocating the whole level every time the player steps.
+    // One InstancedMesh per bucket, grown geometrically. Reusing the mesh across rebuilds keeps a
+    // fog-of-war update from re-allocating the whole level every time the player steps.
     ThreeRenderer.prototype._bucket = function (name, geom, mat, needed) {
         var T = this.THREE;
         var b = this.buckets[name];
@@ -374,13 +374,13 @@
         for (y = 0; y < scene.rows; y++) {
             for (x = 0; x < scene.cols; x++) {
                 kind = scene.grid[y] && scene.grid[y][x];
-                if (!kind || kind === 'dark') continue; // unexplored — never render it (fog-of-war)
+                if (!kind || kind === 'dark') continue; // unexplored: never rendered (fog-of-war)
                 var def = legend[kind] || {};
                 var lb = (light && light[y] && light[y][x] != null) ? light[y][x] : 1;
-                // Unlike the 2D modes — where lightGrid IS the lighting — 3D has real point lights
-                // doing the falloff, so applying the grid at full strength to the albedo as well
-                // double-darkened every surface into near-black. Compress it into a gentle range and
-                // let the lamps shape the scene.
+                // In the 2D modes lightGrid IS the lighting; here real point lights do the falloff.
+                // Applying the grid at full strength to the albedo as well would double-darken every
+                // surface into near-black, so it is compressed into a gentle range and the lamps
+                // shape the scene.
                 var b = 0.38 + 0.62 * Math.max(0, Math.min(1, lb));
                 var tint = KIND_TINT[kind] || def.color || '#6d6558';
                 var cell = { x: x - cx, z: y - cz, gx: x, gy: y, b: b, tint: tint, kind: kind };
@@ -427,7 +427,7 @@
             p.set(cell.x, h / 2, cell.z);
             m.compose(p, q, s);
             b.mesh.setMatrixAt(i, m);
-            // Hazards keep near-full brightness — a lava pool you can barely see is a trap, not a
+            // Hazards keep near-full brightness: a lava pool you can barely see is a trap, not a
             // difficulty curve.
             var hb = cell.hazard ? Math.max(0.7, cell.b) : cell.b;
             c.set(colorNum(cell.tint)).multiplyScalar(hb);
@@ -438,7 +438,7 @@
         if (b.mesh.instanceColor) b.mesh.instanceColor.needsUpdate = true;
     };
 
-    // Walls are rewritten whenever the player's cell changes so the cutaway can follow them: walls
+    // Walls are rewritten whenever the player's cell changes so the cutaway follows them: walls
     // sitting between the isometric camera (+x/+z) and the player are squashed and darkened, the 3D
     // equivalent of the iso renderer's fade. Without it the near wall of every corridor hides you.
     ThreeRenderer.prototype._writeWalls = function () {
@@ -467,9 +467,9 @@
         if (b.mesh.instanceColor) b.mesh.instanceColor.needsUpdate = true;
     };
 
-    // Braziers on the torch walls. Only the cells that newly appeared get geometry — the tile
-    // buckets are rewritten on every move (that is how remembered tiles keep dimming), and building
-    // a fresh mesh per torch per step would churn the GPU for no visual gain.
+    // Braziers on the torch walls. Only newly appeared cells get geometry: the tile buckets are
+    // rewritten on every move (that is how remembered tiles keep dimming), and building a fresh mesh
+    // per torch per step would churn the GPU for no visual gain.
     ThreeRenderer.prototype._syncFixtures = function () {
         var T = this.THREE;
         this._flames = this._flames || {};
@@ -550,9 +550,8 @@
         return g;
     };
 
-    // Dungeon FEATURES/ITEMS (entrance/exit/treasure/pickups) are set dressing, not avatars. Before
-    // this branch existed every one of them was drawn as a humanoid capsule, so the entrance looked
-    // like a second player standing at the map origin.
+    // Dungeon features and items (entrance/exit/treasure/pickups) are set dressing, not avatars, so
+    // they get their own geometry rather than the humanoid capsule an avatar would draw.
     ThreeRenderer.prototype._makeFeature = function (e) {
         var T = this.THREE;
         var g = new T.Group();
@@ -771,10 +770,10 @@
         if (pcell) { this._plx = pcell.x; this._ply = pcell.y; }
 
         // Rewrite the level every render. `render` is called on game updates (a keypress), not per
-        // frame, and the buckets are three reused InstancedMeshes — so this is a few thousand matrix
+        // frame, and the buckets are three reused InstancedMeshes, so this is a few thousand matrix
         // writes, not an allocation. It has to be unconditional: `lightGrid` re-shades remembered
-        // tiles on EVERY step, so keying the rebuild on the grid alone froze the fog-of-war fade at
-        // whatever it was when a cell was first seen.
+        // tiles on every step, so keying the rebuild on the grid alone would freeze the fog-of-war
+        // fade at whatever it was when a cell was first seen.
         this._buildTiles(scene);
 
         var seen = {}, cx = (scene.cols - 1) / 2, cz = (scene.rows - 1) / 2;
@@ -866,7 +865,7 @@
             }
             this._playAction(o, moving ? 'run' : 'idle');
             // Face the way you move. Prefer explicit facing (tavern); else infer from the world delta
-            // (the SP game doesn't send player.facing). world x=grid x, world z=grid y.
+            // (the SP game does not send player.facing). world x=grid x, world z=grid y.
             var face = ent.e && ent.e.facing;
             if (!face && moving) { face = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 'right' : 'left') : (dz > 0 ? 'down' : 'up'); ent._face = face; }
             face = face || ent._face;
@@ -877,7 +876,7 @@
         }
         // Player-follow camera: keep the fixed iso offset but re-target the player's world position
         // each frame. The player mesh itself lerps, so the camera glides smoothly with it.
-        this._fitToHost(); // pick up any host resize
+        this._fitToHost(); // picks up any host resize
         var pcam = null;
         for (var pid in this.entities) {
             var pen = this.entities[pid];

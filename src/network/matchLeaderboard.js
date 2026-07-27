@@ -1,5 +1,5 @@
 /**
- * MatchLeaderboard — post-race leaderboard integration.
+ * MatchLeaderboard: post-race leaderboard integration.
  *
  * At the end of every match, this module decides which leaderboard each entrant's score
  * belongs to:
@@ -65,7 +65,7 @@ class MatchLeaderboard {
     async _postFreeToPleb(room) {
         // Insert synthetic solo-style records so free races show up on the Pleb board.
         // Columns are the REAL games columns (treasure_found, moves_made); dungeon_seed is the
-        // match UUID (36 chars, fits VARCHAR(50)) — never the 64-char seedHash which overflows.
+        // match UUID (36 chars, fits VARCHAR(50)), never the 64-char seedHash which overflows.
         await this.db.withTransaction(async (client) => {
             for (const [socketId, state] of room.playerStates.entries()) {
                 if (!state.userId || state.score <= 0) continue;

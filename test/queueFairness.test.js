@@ -14,7 +14,7 @@ function buildManager() {
         debugManager: { getCurrentBlockHeight: () => 10 },
         broadcastManager: {},
         io,
-        createGameForUser: jest.fn(async (_user, _type, options) => { captured.push(options); return game; }),
+        createGameForUser: jest.fn(async (_user, options) => { captured.push(options); return game; }),
         getUserBySocket: () => user,
         activeGames: new Map(),
         gameModeManager: { processGameStart: jest.fn().mockResolvedValue({ success: true }) },

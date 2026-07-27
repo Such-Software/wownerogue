@@ -1,5 +1,5 @@
 /**
- * MatchScheduler — block-cadence match maker.
+ * MatchScheduler: block-cadence match maker.
  *
  * Subscribes to the same block event as the solo queue handler. Free matches may drain and start
  * immediately. Paid matches first persist an exact FIFO entrant freeze, then wait for their
@@ -8,7 +8,7 @@
  *
  * MatchScheduler creates MatchRooms but does not own Socket.IO broadcasting; it delegates the
  * started room to MatchManager for transport, the real countdown, persistence, and finish
- * handling. It does NOT start the engine directly — the manager's countdown does — so honest
+ * handling. It does NOT start the engine directly, the manager's countdown does, so honest
  * and modified clients always start together.
  */
 
@@ -257,7 +257,7 @@ class MatchScheduler {
         }
         // getblockcount is the number of blocks, while get_block(height) is zero-based. Every
         // persisted/disclosed fairness height below is the actual header height whose hash is
-        // requested—not the count emitted by DebugManager.
+        // requested, not the count emitted by DebugManager.
         const observedHeaderHeight = count - 1;
 
         // A hot economy/payout disable must release both queued and already-frozen escrow.
@@ -665,7 +665,7 @@ class MatchScheduler {
         }
 
         // MP-C4: collect the crypto pot / commit entry tickets BEFORE notifying players or
-        // starting the engine. If collection fails, ABORT and REFUND every entrant — never
+        // starting the engine. If collection fails, ABORT and REFUND every entrant: never
         // consume tickets for a race that did not start.
         if (economy === 'crypto_race') {
             const payoutService = this.matchManager?.matchPayoutService;
@@ -698,7 +698,7 @@ class MatchScheduler {
             }
         }
 
-        // Create the engine and hand it to the manager, but DO NOT start it here — the manager's
+        // Create the engine and hand it to the manager, but DO NOT start it here: the manager's
         // countdown starts it once the pre-race timer elapses (server-authoritative start).
         const engine = new MatchEngine({
             room,

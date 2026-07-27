@@ -45,10 +45,10 @@
         data = data || {};
         var prev = RK.entitlements || {};
 
-        // Consume the server-authoritative catalog (migration 024). This retires the hardcoded
-        // client pack list as the source of truth: operator-added packs appear, and existing packs
-        // pick up server definitions (label/projection/tier). Merged (not replaced) so any client
-        // fallback a render mode relies on is preserved if the operator's catalog omits it.
+        // The server catalog is authoritative over the client pack list: operator-added packs
+        // appear, and existing packs pick up server definitions (label/projection/tier). Merged
+        // rather than replaced so a client fallback a render mode relies on survives an operator
+        // catalog that omits it.
         if (Array.isArray(data.catalog) && data.catalog.length) {
             var merged = {};
             for (var k in RK.PACKS) merged[k] = RK.PACKS[k];
@@ -130,15 +130,15 @@
     };
 
     RK.THEMES = {
-        // FREE baseline pack — the game's original bare tiles. Only the essentials are mapped
-        // (floor/wall/door/torch/features); furniture kinds (bar/keg/table/chair/…) are absent, so
-        // they fall back to floor and the free tavern reads plain — the intended "reason to unlock".
+        // Free baseline pack: the game's bare tiles. Only the essentials are mapped
+        // (floor/wall/door/torch/features); furniture kinds (bar/keg/table/chair, ...) are absent,
+        // so they fall back to floor and the free tavern reads plain, which is the reason to unlock.
         'original': {
             id: 'original',
             label: 'Original Tiles',
-            // The game's ORIGINAL tileset (html/tiles.png, 32px, no spacing) — the exact tiles the
-            // ROT instructions + waiting screens use, so the free pack IS the classic look. Grid
-            // coords = the legacy pixel coords / 32 (see options.js tileMap).
+            // html/tiles.png, 32px, no spacing: the same tiles the ROT instructions and waiting
+            // screens use, so the free pack carries the classic look. Grid coords are the legacy
+            // pixel coords divided by 32 (see options.js tileMap).
             tileset: { url: 'tiles.png', tile: 32, spacing: 0 },
             tiles: {
                 floor: [0, 0],
@@ -149,58 +149,57 @@
                 exit: [1, 0],
                 treasure: [30, 0],  // $W gold coin
                 torch: [32, 1],
-                // Classic entities too (the tiled renderer prefers a pack's player/monster tile over
-                // the sprite when present) — the blue-robe @ hero and the green ~ goblin.
+                // The tiled renderer prefers a pack's player/monster tile over the sprite when
+                // present: the blue-robe @ hero and the green ~ goblin.
                 player: [2, 0],
                 monster: [31, 1]
-                // No furniture kinds → tavern furniture falls back to floor (bare, as intended).
+                // No furniture kinds, so tavern furniture falls back to floor.
             }
         },
         'roguelike-interior': {
             id: 'roguelike-interior',
             label: 'Kenney Roguelike Interior',
             tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
-            // Default tile picks from the sheet metadata ( roguelikeSheet_meta.json).
+            // Default tile picks from the sheet metadata (roguelikeSheet_meta.json).
             // The tile-picker overlay can override these per-user via localStorage.
-            // Each kind maps to a single [col,row] on the sheet (cols = 57). Per-cell "variant"
-            // arrays were tried but mixing wood/stone/plank tiles per cell read as noise, so we
-            // keep one coherent tile per kind. (TileRenderer still accepts an array here if a
-            // future theme wants subtle, same-material variation.)
+            // Each kind maps to a single [col,row] on the sheet (cols = 57). One coherent tile per
+            // kind: mixing wood/stone/plank variants per cell reads as noise. TileRenderer still
+            // accepts an array here for a theme wanting subtle, same-material variation.
             tiles: {
-                floor: [5, 2],      // 119 — wood floor
-                floor2: [6, 2],     // 120 — stone floor (accent)
-                wall: [13, 12],     // 697 — stone masonry
+                floor: [5, 2],      // 119 wood floor
+                floor2: [6, 2],     // 120 stone floor (accent)
+                wall: [13, 12],     // 697 stone masonry
                 // Tavern furnishings (coords from roguelikeSheet_meta.json labels: index -> [i%57, i/57]).
-                window: [42, 2],    // 156 — window (in the wall)
-                bar: [29, 0],       // 29  — bar counter
-                keg: [23, 0],       // 23  — barrel / beer keg (behind the bar)
-                shelf: [30, 1],     // 87  — shelf of bottles (behind the bar)
-                table: [20, 3],     // 191 — table (191 reads wooden; 312 rendered green)
-                chair: [19, 3],     // 190 — chair
-                barrel: [23, 0],    // 23  — barrel (decor)
-                crate: [25, 0],     // 25  — crate (decor)
-                rug: [11, 16],      // 923 — rug
-                door: [37, 9],      // 550 — door
+                window: [42, 2],    // 156 window (in the wall)
+                bar: [29, 0],       // 29  bar counter
+                keg: [23, 0],       // 23  barrel / beer keg (behind the bar)
+                shelf: [30, 1],     // 87  shelf of bottles (behind the bar)
+                table: [20, 3],     // 191 table, reads wooden; 312 renders green
+                chair: [19, 3],     // 190 chair
+                barrel: [23, 0],    // 23  barrel (decor)
+                crate: [25, 0],     // 25  crate (decor)
+                rug: [11, 16],      // 923 rug
+                door: [37, 9],      // 550 door
                 // Dungeon features drawn as real tiles instead of monospace glyphs.
-                entrance: [37, 9],  // 550 — door
-                exit: [37, 9],      // 550 — door
-                treasure: [42, 15], // 897 — item
-                torch: [50, 10]     // 620 — rubble / prop
+                entrance: [37, 9],  // 550 door
+                exit: [37, 9],      // 550 door
+                treasure: [42, 15], // 897 item
+                torch: [50, 10]     // 620 rubble / prop
             }
         },
-        // Second topdown pack — same sheet, a DUNGEON palette (stone floors, barrels/crates instead
-        // of the wood-interior furniture). A distinct look with zero new assets, and it's the
-        // "interchangeable dungeon" style (the tiled renderer's lighting/shadows are the built-in FX).
+        // Second topdown pack: same sheet, dungeon palette (stone floors, barrels/crates instead of
+        // the wood-interior furniture). A distinct look with zero new assets; the tiled renderer's
+        // lighting/shadows supply the FX.
         'roguelike-dungeon': {
             id: 'roguelike-dungeon',
             label: 'Roguelike Dungeon',
             tileset: { url: 'assets/kenney/roguelikeSheet.png', tile: 16, spacing: 1 },
             fx: true,
             tiles: {
-                floor: [6, 2],      // 120 — stone floor
-                floor2: [13, 17],   // 982 — plank accent
-                wall: [13, 12],     // 697 — masonry
-                window: [42, 2],    // 156 — window
+                floor: [6, 2],      // 120 stone floor
+                floor2: [13, 17],   // 982 plank accent
+                wall: [13, 12],     // 697 masonry
+                window: [42, 2],    // 156 window
                 bar: [23, 0],       // barrels (a dungeon has no bar)
                 keg: [23, 0],
                 shelf: [25, 0],     // crate
@@ -315,15 +314,15 @@
         tile: { w: 84, h: 42, imageW: 92, imageH: 184 },
         tiles: {
             // Floors / ground
-            floor:  'assets/kenney/iso-dungeon/tiles/planks_S.png',     // wood — tavern interior
-            floor2: 'assets/kenney/iso-dungeon/tiles/stone_S.png',      // stone — dungeon
+            floor:  'assets/kenney/iso-dungeon/tiles/planks_S.png',     // wood, tavern interior
+            floor2: 'assets/kenney/iso-dungeon/tiles/stone_S.png',      // stone, dungeon
             dirt:   'assets/kenney/iso-dungeon/tiles/dirt_S.png',
             rug:    'assets/kenney/iso-dungeon/tiles/planks_S.png',
             // Architecture (full-height tiles). Iso walls have a facing: a wall running along the
             // grid-x axis needs the _S rotation, one running along grid-y needs the perpendicular
             // _W rotation, and true corners get the corner tile. The renderer picks per-cell from
-            // neighbours, choosing `<kind>Y` for y-running segments (that's what fixes the "thin
-            // slabs" look on the top-left / bottom-right edges).
+            // neighbours, choosing `<kind>Y` for y-running segments; without that the top-left and
+            // bottom-right edges read as thin slabs.
             wall:    'assets/kenney/iso-dungeon/tiles/stoneWall_S.png',
             wallY:   'assets/kenney/iso-dungeon/tiles/stoneWall_W.png',
             wallCorner: 'assets/kenney/iso-dungeon/tiles/stoneWallCorner_S.png',
@@ -332,15 +331,15 @@
             door:    'assets/kenney/iso-dungeon/tiles/stoneWallDoorOpen_S.png',
             doorY:   'assets/kenney/iso-dungeon/tiles/stoneWallDoorOpen_W.png',
             archway: 'assets/kenney/iso-dungeon/tiles/stoneWallArchway_S.png',
-            // Floor variety — the renderer sprinkles these deterministically so the ground isn't a
+            // Floor variety: the renderer sprinkles these deterministically so the ground isn't a
             // flat sea of identical planks.
             floorAlt:  'assets/kenney/iso-dungeon/tiles/planksBroken_S.png',
             floor2Alt: 'assets/kenney/iso-dungeon/tiles/stoneUneven_S.png',
             stoneTile: 'assets/kenney/iso-dungeon/tiles/stoneTile_S.png',
             column: 'assets/kenney/iso-dungeon/tiles/stoneColumnWood_S.png',
             stairs: 'assets/kenney/iso-dungeon/tiles/stairs_S.png',
-            // Furniture props (drawn over a floor base) — each kind now has distinct art.
-            bar:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',   // stacked barrels = the bar counter
+            // Furniture props, drawn over a floor base; each kind has distinct art.
+            bar:    'assets/kenney/iso-dungeon/tiles/barrelsStacked_S.png',   // stacked barrels as the bar counter
             keg:    'assets/kenney/iso-dungeon/tiles/barrel_S.png',
             barrel: 'assets/kenney/iso-dungeon/tiles/barrel_S.png',
             table:  'assets/kenney/iso-dungeon/tiles/tableShortChairs_S.png', // real table + chairs
@@ -350,11 +349,11 @@
             chest:  'assets/kenney/iso-dungeon/tiles/chestClosed_S.png',
             fallback: 'assets/kenney/iso-dungeon/tiles/planks_S.png'
         },
-        // The Kenney files named Male_0..Male_7 are directional renders of the same body,
-        // not different character classes. The customizer exposes one honest Iso body for now.
-        // These sprites are angled CLOCKWISE from NE: 0=NE, 2=SE, 4=SW, 6=NW (verified against live
-        // movement). In this iso projection a grid step moves visually up->NE, down->SW, left->NW,
-        // right->SE, so each facing uses the sprite pointing that way — face the way you move.
+        // The Kenney files named Male_0..Male_7 are directional renders of the same body, not
+        // different character classes, so the customizer exposes one Iso body. The sprites are
+        // angled clockwise from NE: 0=NE, 2=SE, 4=SW, 6=NW. In this iso projection a grid step
+        // moves visually up->NE, down->SW, left->NW, right->SE, so each facing uses the sprite
+        // pointing that way and the character faces its direction of travel.
         character: isoMale(3),          // idle faces roughly toward the camera (S)
         directions: {
             up:    isoMale(0),   // NE (up-right)
@@ -368,10 +367,10 @@
         }
     };
 
-    // Second iso pack — Kenney Isometric Medieval Town (a coherent, DIFFERENT environment). Strong on
-    // architecture (floor/walls/door/window/banner); no medieval furniture at this scale, so furniture
-    // kinds fall back to floor for now. Reuses the dungeon-pack characters. Its tiles are shorter
-    // (210x244) than the dungeon set, so its own tile geometry.
+    // Second iso pack: Kenney Isometric Medieval Town, a separate environment. Strong on
+    // architecture (floor/walls/door/window/banner); it has no medieval furniture at this scale, so
+    // furniture kinds fall back to floor. Reuses the dungeon-pack characters. Its tiles are shorter
+    // (210x244) than the dungeon set, hence its own tile geometry.
     RK.isoMedievalAssets = {
         pack: 'iso-medieval',
         avatar: 'char-villager',
@@ -408,10 +407,10 @@
         }
     };
 
-    // Register the built-in RENDER packs in the pack registry (packRegistry.js) so iso/3D become
-    // multi-pack like topdown themes already are. Each maps to its catalog id; the active pack per
-    // projection is entitlement-gated + user-selectable. Adding a pack later = registerPack(...) +
-    // assets + a catalog row. Backward-compatible: one pack per projection resolves to these.
+    // Register the built-in render packs in the pack registry (packRegistry.js) so iso and 3D are
+    // multi-pack like topdown themes. Each maps to its catalog id; the active pack per projection
+    // is entitlement-gated and user-selectable. Adding a pack takes registerPack(...), assets, and
+    // a catalog row. With one pack per projection, resolution falls through to these.
     if (RK.registerPack) {
         RK.registerPack({ id: 'original', label: 'Original Tiles', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['original'] });
         RK.registerPack({ id: 'roguelike-interior', label: 'Roguelike Interior', projection: 'topdown', kind: 'tiles', assets: RK.THEMES['roguelike-interior'] });

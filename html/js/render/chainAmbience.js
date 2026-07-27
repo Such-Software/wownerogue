@@ -1,9 +1,7 @@
-// ChainAmbience — the live chain, drifting around the edges of a stage.
+// ChainAmbience: the live chain, drifting around the edges of a stage.
 //
-// The Tavern sits on top of a real blockchain, and the game's whole clock is "when does the next
-// block land". This makes that visible without putting a dashboard on screen: fragments of the top
-// block hash fade in around the border and drift away, a corner readout tracks the height, and a
-// new block sends a ripple around the frame.
+// Fragments of the top block hash fade in around the border and drift away, a corner readout
+// tracks the height, and a new block sends a ripple around the frame.
 //
 // Purely decorative. It reads the public `blockheight` broadcast and never influences gameplay, so
 // a missing or stale tip just means fewer motes.
@@ -85,11 +83,10 @@
         var self = this;
         this.timer = root.setInterval(function () { self._spawn(); }, this.spawnMs);
 
-        // A hidden tab pauses CSS animations, so `animationend` never fires and nothing is ever
-        // removed — while the spawn interval keeps ticking. Left alone, a tavern tab parked in the
-        // background accrues motes indefinitely and then plays a pile of stale ones all at once when
-        // the player comes back. Spawning is skipped while hidden (below) and the backlog is dropped
-        // here; these are decorations, so discarding them costs nothing.
+        // A hidden tab pauses CSS animations, so `animationend` never fires and motes are never
+        // removed. Spawning is skipped while hidden and any backlog is dropped here, otherwise a
+        // backgrounded tab accrues motes indefinitely and replays them all at once on return.
+        // These are decorations, so discarding them costs nothing.
         this._onVisibility = function () {
             if (!self.el || !self.doc.hidden) return;
             self._clearMotes();
@@ -121,9 +118,9 @@
 
     ChainAmbience.prototype._spawn = function (burst) {
         if (!this.el || reducedMotion()) return;
-        if (this.doc.hidden) return; // paused animations would never clean themselves up
-        // Count the DOM, not a counter: a missed animationend must not permanently inflate the tally
-        // and silently stop all further spawning.
+        if (this.doc.hidden) return; // paused animations never clean themselves up
+        // Count the DOM, not `this.motes`: a missed animationend would permanently inflate the
+        // tally and silently stop all further spawning.
         if (!burst && this.el.querySelectorAll('.rk-cm').length >= this.maxMotes) return;
         var text = this._fragment();
         if (!text) return;
@@ -132,8 +129,8 @@
         m.className = 'rk-cm rk-drift';
         m.textContent = text;
 
-        // Hug the border: pick an edge, then a position along it. The middle of the stage is where
-        // the game is — the chain lives in the margins.
+        // Hug the border: pick an edge, then a position along it. The middle of the stage belongs
+        // to the game, so the chain lives in the margins.
         var edge = Math.floor(Math.random() * 4);
         var along = 6 + Math.random() * 84;
         var dx = 0, dy = 0;

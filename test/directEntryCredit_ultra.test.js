@@ -1,6 +1,6 @@
 /**
  * Credits unification, step ②: a direct/single_game entry is recorded as "buy 1 credit and
- * spend it" — the balance nets to zero but total_credits_purchased advances, so direct play
+ * spend it": the balance nets to zero but total_credits_purchased advances, so direct play
  * unlocks the same tier/threshold cosmetics as buying credits.
  */
 
@@ -40,7 +40,7 @@ describe('recordDirectEntryPurchase', () => {
         const rec = await gmm.recordDirectEntryPurchase('sock');
         expect(rec).toBeTruthy();
         expect(rec.totalCreditsPurchased).toBe(1);
-        expect(rec.balance).toBe(0); // net zero — bought and spent
+        expect(rec.balance).toBe(0); // net zero: bought and spent
 
         const insert = client.query.mock.calls.find(c => /INSERT INTO credit_transactions/i.test(c[0]));
         expect(insert).toBeTruthy();

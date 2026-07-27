@@ -1,6 +1,5 @@
 /**
- * Smirk wallet auth routes (extracted from index.js).
- * DI via ctx so handler bodies stay identical. ctx: { db }
+ * Smirk wallet auth routes. Dependencies arrive via ctx: { db, sessionManager }.
  */
 const express = require('express');
 const crypto = require('crypto');
@@ -15,7 +14,7 @@ const AUTH_RATE_MAX_KEYS = 10000;
  * The host a NIP-98 auth event must be signed for.
  *
  * `HOSTED_BY` is the operator's canonical public origin and is contract-enforced in operated
- * production profiles, so it is the authority whenever it is set — that keeps verification correct
+ * production profiles, so it is the authority whenever it is set: that keeps verification correct
  * behind a proxy and immune to a spoofed Host header. Unconfigured (dev / self-host) deployments
  * fall back to the request's own host, which still binds the event to the origin it was sent to.
  */
@@ -25,7 +24,7 @@ function expectedAuthHost(req) {
     try {
       const parsed = new URL(configured);
       if (parsed.host) return parsed.host;
-    } catch (_) { /* malformed HOSTED_BY — fall through to the request host */ }
+    } catch (_) { /* malformed HOSTED_BY: fall through to the request host */ }
   }
   return (req && (req.get('host') || req.headers?.host)) || null;
 }
@@ -33,11 +32,11 @@ function expectedAuthHost(req) {
 /**
  * Per-IP auth rate limiter with a bounded key map.
  *
- * The bound must be enforced by EVICTION, never by refusing new keys. Refusing turned the memory
- * cap into a denial-of-service primitive: an attacker sourcing from many addresses could hold the
- * map at capacity and every legitimate first-time caller of /challenge or /verify got a 429, locking
- * the whole population out of Smirk login. Eviction keeps the same memory ceiling while leaving the
- * limiter functional — the worst case is that a very old window's count is forgotten, which grants
+ * The bound is enforced by EVICTION, never by refusing new keys. Refusing would make the memory cap
+ * a denial-of-service primitive: an attacker sourcing from many addresses could hold the map at
+ * capacity so every legitimate first-time caller of /challenge or /verify gets a 429, locking the
+ * whole population out of Smirk login. Eviction keeps the same memory ceiling while leaving the
+ * limiter functional; the worst case is that a very old window's count is forgotten, which grants
  * one extra window to an attacker who was already being counted.
  */
 function createIpRateLimiter({ max }) {
@@ -257,7 +256,6 @@ router.post('/api/auth/smirk/challenge', challengeRateLimit, asyncHandler(async 
 
   const session = await resolveSessionOwner(req, socketId);
 
-  // Generate a cryptographically secure challenge
   const challenge = crypto.randomBytes(32).toString('hex');
 
   // Store a stable user binding as well as the current socket. The user binding is what
@@ -271,7 +269,7 @@ router.post('/api/auth/smirk/challenge', challengeRateLimit, asyncHandler(async 
   `, [challenge, socketId, session.userId, session.token]);
   if (inserted.rows.length !== 1) throw unauthorized();
 
-  // Clean up old/expired challenges periodically
+  // Opportunistic cleanup of expired and long-used challenges.
   await db.query(`
     DELETE FROM smirk_challenges
     WHERE expires_at < NOW() OR (used = TRUE AND created_at < NOW() - INTERVAL '1 hour')
@@ -301,9 +299,7 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
   }
   const session = await resolveSessionOwner(req, socketId);
 
-  // ---------------------------------------------------------------------------
-  // NIP-98 path — a nostr event object is present.
-  // ---------------------------------------------------------------------------
+  // NIP-98 path: a nostr event object is present.
   if (body.event && typeof body.event === 'object' && !Array.isArray(body.event)) {
     // Extract the challenge carried by the event's 'challenge' tag WITHOUT trusting
     // the rest of the event yet. We consume the server nonce single-use FIRST, then
@@ -318,7 +314,7 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
       });
     }
 
-    // Atomic single-use consume (bound to this socket) — prevents replay/double-use.
+    // Atomic single-use consume, bound to this socket, so the event cannot be replayed.
     const consumed = await consumeChallenge(challenge, session);
     if (!consumed) {
       throw new ValidationError('Invalid or expired challenge', {
@@ -329,10 +325,9 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
     const now = Math.floor(Date.now() / 1000);
     // Bind the signed event to THIS deployment's host. The 'u' tag path check alone is not an
     // authentication boundary: a kind:27235 event the same wallet signed for any other site whose
-    // path happens to end in /api/auth/smirk/verify would otherwise verify here — and because the
+    // path happens to end in /api/auth/smirk/verify would otherwise verify here, and because the
     // link step ADOPTS whatever account already owns that pubkey and returns its session token, a
-    // borrowed event is a full account takeover. Prefer the operator's configured HOSTED_BY origin;
-    // fall back to the request host only when it is not configured (dev/self-host).
+    // borrowed event would be a full account takeover.
     const result = verifyNip98Event(body.event, {
       challenge,
       expectedPathSuffix: '/api/auth/smirk/verify',
@@ -347,9 +342,8 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
       });
     }
 
-    // NOTE: result.pubkey is a nostr x-only secp256k1 key (64-hex) — a DIFFERENT
-    // key namespace than the legacy Ed25519 spend key. A NIP-98 login therefore
-    // re-registers the account under the nostr key (acceptable per the cutover spec).
+    // result.pubkey is a nostr x-only secp256k1 key (64-hex), a different key namespace than the
+    // legacy Ed25519 spend key, so a NIP-98 login registers the account under the nostr key.
     const outcome = await linkSmirkKey(result.pubkey, session);
     if (outcome.adopted) {
       res.json({
@@ -370,9 +364,7 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
     return;
   }
 
-  // ---------------------------------------------------------------------------
-  // Legacy Ed25519 path — { challenge, publicKey, signature }.
-  // ---------------------------------------------------------------------------
+  // Legacy Ed25519 path: { challenge, publicKey, signature }.
   const { challenge, publicKey, signature } = body;
 
   if (!challenge || !publicKey || !signature) {
@@ -389,9 +381,8 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
     });
   }
 
-  // Verify Ed25519 signature over the RAW UTF-8 challenge bytes (RFC 8032).
-  // The deprecated SHA256(challenge) pre-hash fallback was removed (past its
-  // 2026-07-01 removal date) — only the raw-bytes verify remains.
+  // Ed25519 verification is over the RAW UTF-8 challenge bytes (RFC 8032). There is no
+  // SHA256(challenge) pre-hash fallback.
   let isValidSignature = false;
   try {
     const nacl = require('tweetnacl');
@@ -436,12 +427,9 @@ router.post('/api/auth/smirk/verify', verifyRateLimit, asyncHandler(async (req, 
  * Check if a session has a linked Smirk wallet.
  * Query: socketId=string ; Auth: X-Session-Token header.
  *
- * BOLA fix: previously this disclosed { linked, hasPayoutAddress } for ANY socketId
- * with no auth, letting anyone probe another player's wallet-link state. We now
- * require the caller to prove ownership of the socketId via the session token
- * (users.anon_token) — the same guard used by /api/user/:socketId/* in index.js
- * (requireSessionOwnership). We only resolve the row whose socket_id AND anon_token
- * both match; a mismatch/absent token gets 401/403 and learns nothing.
+ * { linked, hasPayoutAddress } is owner-only state, so the caller must prove ownership with the
+ * session token (users.anon_token), the same guard requireSessionOwnership applies to
+ * /api/user/:socketId/* in index.js. An absent or unmatched token gets 401/403 and learns nothing.
  */
 router.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
   const { socketId } = req.query;
@@ -457,12 +445,11 @@ router.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
     return res.status(401).json({ error: 'Session token required' });
   }
 
-  // Identify the caller by anon_token ALONE — it is the ownership secret. The previous query also
-  // required socket_id = current socket.id, but socket_id is VOLATILE (changes on every refresh /
-  // reconnect), so after a refresh the row's stored socket_id no longer matched and this 403'd —
-  // which left the client's _isLinked=false and silently disabled Smirk one-click payment. Matching
-  // on the unguessable token is the same guarantee (you can only read your OWN state) without the
-  // socket_id fragility. (socketId is still required in the query string for API shape.)
+  // The caller is identified by anon_token ALONE: it is the unguessable ownership secret, so
+  // matching on it already guarantees you can only read your OWN state. socket_id is deliberately
+  // NOT part of the match because it is volatile (it changes on every refresh / reconnect), and
+  // requiring it would 403 every post-refresh caller, leaving the client unlinked and disabling
+  // Smirk one-click payment. socketId stays required in the query string for API shape.
   const result = await db.query(`
     SELECT smirk_public_key, payout_address
     FROM users
@@ -470,7 +457,7 @@ router.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
   `, [token]);
 
   if (result.rows.length === 0) {
-    // Unknown/again-rotated token — ownership check failed; disclose nothing.
+    // Unknown or rotated token: ownership is unproven, so disclose nothing.
     return res.status(403).json({ error: 'Session ownership verification failed' });
   }
 

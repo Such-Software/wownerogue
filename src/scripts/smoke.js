@@ -17,9 +17,9 @@ const nt = require('nostr-tools');
 let pass = 0, fail = 0, warn = 0;
 const rid = () => 'smoke-' + Math.random().toString(16).slice(2, 12);
 
-function ok(name, detail)   { pass++; console.log('  \x1b[32mPASS\x1b[0m ' + name + (detail ? '  — ' + detail : '')); }
-function bad(name, detail)  { fail++; console.log('  \x1b[31mFAIL\x1b[0m ' + name + (detail ? '  — ' + detail : '')); }
-function meh(name, detail)  { warn++; console.log('  \x1b[33mWARN\x1b[0m ' + name + (detail ? '  — ' + detail : '')); }
+function ok(name, detail)   { pass++; console.log('  \x1b[32mPASS\x1b[0m ' + name + (detail ? ': ' + detail : '')); }
+function bad(name, detail)  { fail++; console.log('  \x1b[31mFAIL\x1b[0m ' + name + (detail ? ': ' + detail : '')); }
+function meh(name, detail)  { warn++; console.log('  \x1b[33mWARN\x1b[0m ' + name + (detail ? ': ' + detail : '')); }
 
 async function req(method, path, { body, headers } = {}) {
   const res = await fetch(BASE + path, {
@@ -58,17 +58,17 @@ async function run() {
   try {
     const p = await req('GET', '/api/user/' + rid() + '/payments');
     p.status === 401 ? ok('GET /api/user/:id/payments without token', '401 (gated)')
-      : bad('GET /api/user/:id/payments without token', 'expected 401, got ' + p.status + ' — endpoint NOT gated');
+      : bad('GET /api/user/:id/payments without token', 'expected 401, got ' + p.status + ': endpoint NOT gated');
   } catch (e) { bad('/api/user/:id/payments', e.message); }
 
   try {
     const st = await req('GET', '/api/auth/smirk/status?socketId=' + rid());
     st.status === 401 ? ok('GET /api/auth/smirk/status without token', '401 (BOLA closed)')
-      : bad('GET /api/auth/smirk/status without token', 'expected 401, got ' + st.status + ' — BOLA still open');
+      : bad('GET /api/auth/smirk/status without token', 'expected 401, got ' + st.status + ': BOLA still open');
   } catch (e) { bad('/api/auth/smirk/status', e.message); }
 
   // ---- C. NIP-98 verify path (non-mutating: reject cases only) ------------
-  await section('C. NIP-98 sign-in path (reject cases — no linking)');
+  await section('C. NIP-98 sign-in path (reject cases, no linking)');
   let challenge = null;
   try {
     const c = await req('POST', '/api/auth/smirk/challenge', { body: { socketId: rid() } });
@@ -94,7 +94,7 @@ async function run() {
     }, sk);
     const r = await req('POST', '/api/auth/smirk/verify', { body: { socketId: rid(), event: evt } });
     (r.status >= 400 && r.status < 500) ? ok('POST /verify valid sig + unissued challenge', 'rejected ' + r.status + ' (challenge binding enforced)')
-      : bad('POST /verify valid sig + unissued challenge', 'expected 4xx, got ' + r.status + ' — challenge binding NOT enforced');
+      : bad('POST /verify valid sig + unissued challenge', 'expected 4xx, got ' + r.status + ': challenge binding NOT enforced');
   } catch (e) { bad('POST /verify unissued challenge', e.message); }
 
   // ---- D. match_queue crash-DoS fix (server must survive) -----------------
@@ -111,8 +111,8 @@ async function run() {
       try {
         const h = await req('GET', '/health');
         h.status === 200 ? ok('server alive after match_queue emit', 'GET /health 200 (no crash)')
-          : bad('server alive after match_queue emit', '/health status ' + h.status + ' — possible crash!');
-      } catch (e) { bad('server alive after match_queue emit', e.message + ' — possible crash!'); }
+          : bad('server alive after match_queue emit', '/health status ' + h.status + ': possible crash!');
+      } catch (e) { bad('server alive after match_queue emit', e.message + ': possible crash!'); }
       resolve();
     };
     socket.on('connect', () => {

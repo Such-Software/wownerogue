@@ -1,4 +1,4 @@
-// TilesetAtlas — loads a tileset image and serves individual tiles to either a 2D canvas
+// TilesetAtlas: loads a tileset image and serves individual tiles to either a 2D canvas
 // (TileRenderer) or PixiJS (FancyRenderer). Source-agnostic: any pack's sheet loads through it.
 (function (root) {
     'use strict';

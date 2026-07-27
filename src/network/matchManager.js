@@ -1,5 +1,5 @@
 /**
- * MatchManager — Socket.IO transport and lifecycle for match mode.
+ * MatchManager: Socket.IO transport and lifecycle for match mode.
  *
  * Owns active MatchRooms, their MatchEngines, socket/user-to-match mappings, broadcasts, the
  * real pre-race countdown, and end-of-match finalization (payout, persistence, leaderboard,
@@ -218,7 +218,7 @@ class MatchManager {
 
         // MP-H6: REAL countdown. The room stays in 'starting' (moves rejected) until this
         // fires; only then does the engine begin ticking, so honest and modified clients start
-        // together — no head-start cheat is possible.
+        // together: no head-start cheat is possible.
         const startTimer = setTimeout(() => {
             const r = this.rooms.get(room.id);
             if (!r || r.status !== 'starting') return; // expired/finalized during the countdown
@@ -701,7 +701,7 @@ class MatchManager {
         if (userId == null) return false;
         const newId = socket.id;
 
-        // Find the match this user belongs to (user map first — socket id has changed).
+        // Find the match this user belongs to (user map first: socket id has changed).
         let matchId = this.userToMatch.get(userId);
         if (!matchId) matchId = this.socketToMatch.get(newId) || null;
         if (!matchId) return false;

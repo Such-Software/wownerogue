@@ -1,6 +1,6 @@
 /**
  * Provably-fair verification page (server-rendered HTML).
- * Extracted from index.js. Interpolated values are HTML-escaped (defense in depth — the
+ * Extracted from index.js. Interpolated values are HTML-escaped (defense in depth: the
  * game-record block only renders for a seed that matched a real game, but escape anyway).
  */
 
@@ -24,7 +24,7 @@ function renderVerifyPage(gameId, gameRecord, opts = {}) {
     const gameIdJson = JSON.stringify(String(gameId)).replace(/</g, '\\u003c');
 
     // Social card description reflects the actual result when we have a record.
-    let ogDescription = `Committed-layout roguelike — verify the published seed generated the recorded dungeon depths.`;
+    let ogDescription = `Committed-layout roguelike: verify the published seed generated the recorded dungeon depths.`;
     if (gameRecord) {
         const escaped = gameRecord.status === 'won';
         const bag = gameRecord.treasure_found ? ' with the treasure bag' : '';
@@ -32,7 +32,7 @@ function renderVerifyPage(gameId, gameRecord, opts = {}) {
             ? `Escaped the dungeon${bag} in ${gameRecord.moves_made || '?'} moves. Verify the committed dungeon layout.`
             : `A run that didn't make it out. Verify the committed seed generated its recorded dungeon layout.`;
     }
-    const ogTitle = `${name} — Dungeon Layout Verification`;
+    const ogTitle = `${name}: Dungeon Layout Verification`;
     const metaTags = `
   <meta property="og:type" content="website">
   <meta property="og:title" content="${esc(ogTitle)}">

@@ -23,14 +23,15 @@ class PaymentHandlers {
         this.queueManager = queueManager;
         this.broadcastManager = broadcastManager;
         this.sessionManager = sessionManager;
-        // Address -> timestamp of the first mempool notification, so we notify/queue once
-        // per payment address. A Map with TTL eviction (below) instead of an unbounded Set.
+        // Address -> timestamp of the first mempool notification, so notification and queueing
+        // happen once per payment address. A Map, not a Set, so the sweep below can evict by TTL
+        // and the collection stays bounded.
         this.mempoolNotified = new Map();
         this._mempoolNotifiedTtlMs = 60 * 60 * 1000; // 1 hour
-        // Track underpaid payments we've already warned about (notify once, keep monitoring for top-up)
+        // Payment ids already warned about as underpaid: warn once, keep monitoring for a top-up.
         this.underpaidNotified = new Set();
         this.paymentMonitors = new Map();
-        // Track pending payment metadata per socket (may reuse existing)
+        // Pending payment metadata per socket; a reused request replaces the entry in place.
         this.socketPaymentMap = new Map(); // socketId -> { address, paymentId, amount, cryptoType, createdAt }
         // A single-game fairness offer may arrive before payout-address confirmation. Preserve
         // the already-consumed proof across that prompt; never fall back to generating a layout
@@ -40,17 +41,17 @@ class PaymentHandlers {
         // bounded, expire quickly, and are cleared on disconnect; raw client objects never enter
         // this map.
         this.pendingCommerceAcknowledgement = new Map();
-        // Track paymentIds already confirmed (avoid duplicate emits / queue actions)
+        // Payment ids already confirmed, so duplicate emits and queue actions are suppressed.
         this.confirmedPayments = new Set();
-        // Periodic cleanup (confirmed payment IDs older than retention window)
+        // Confirmation times, so the sweep can drop ids past the retention window.
         this._confirmedTimestamps = new Map();
         this._confirmedRetentionMs = 6 * 60 * 60 * 1000; // 6 hours
-        // Track expiry timeouts so they can be cleared / unref'd to avoid keeping process open
+        // Expiry timeouts, retained so they can be cleared on shutdown.
         this._expiryTimeouts = new Map(); // socketId -> timeout
         this._isShuttingDown = false;
         this._statusUpdatesInFlight = new Set();
         this._invoiceCreationsInFlight = new Set();
-        // Keep reference so tests can dispose / and unref so it doesn't keep event loop alive
+        // Retained so dispose() can clear it.
         this._cleanupInterval = setInterval(() => {
             const now = Date.now();
             for (const [pid, ts] of this._confirmedTimestamps.entries()) {
@@ -59,7 +60,7 @@ class PaymentHandlers {
                     this.confirmedPayments.delete(pid);
                 }
             }
-            // TTL-evict stale mempool-notified addresses (replaces the old random eviction).
+            // TTL-evict stale mempool-notified addresses.
             for (const [addr, ts] of this.mempoolNotified.entries()) {
                 if (now - ts > this._mempoolNotifiedTtlMs) {
                     this.mempoolNotified.delete(addr);
@@ -68,7 +69,7 @@ class PaymentHandlers {
             this._sweepPendingCommerceAcknowledgements(now);
         }, 30 * 60 * 1000); // sweep every 30 min
         if (this._cleanupInterval && this._cleanupInterval.unref) {
-            // Allow process (including Jest) to exit naturally without waiting for this interval
+            // Unref'd so the interval alone never keeps the event loop alive.
             this._cleanupInterval.unref();
         }
     }
@@ -181,8 +182,8 @@ class PaymentHandlers {
 
     /**
      * Fail closed before creating an invoice when the resulting entry mode can pay out and the
-     * operator requires an address. The primary browser flow calls handlePaymentRequest directly,
-     * so this cannot live only in the legacy createAndShowPaymentRequest path.
+     * operator requires an address. The browser flow calls handlePaymentRequest directly, so this
+     * check cannot live only in the createAndShowPaymentRequest path.
      */
     async _ensureRequiredPayoutAddress(socket, paymentType) {
         const mode = this._entryModeForPaymentType(paymentType);
@@ -284,8 +285,7 @@ class PaymentHandlers {
             };
             const paymentRequest = await this.gameModeManager.createPaymentRequest(socket.id, paymentType, options);
             const cryptoType = this.gameModeManager.cryptoType;
-            
-            // Generate QR code
+
             let qrDataUrl = null;
             try {
                 const { generatePaymentQR } = require('../payments/qrService');
@@ -326,15 +326,13 @@ class PaymentHandlers {
             });
             this.clearPendingCommerceAcknowledgement(socket.id);
             
-            // CRITICAL: Start payment monitoring!
-            // Stop any existing monitoring for this socket first
+            // Drop any monitor left over from an earlier request on this socket so only one
+            // watcher runs per socket.
             this.stopMonitoringForSocket(socket.id);
-            
-            // Get current user for queue management
-            const currentUser = this.queueManager?.getUserBySocket ? 
+
+            const currentUser = this.queueManager?.getUserBySocket ?
                 this.queueManager.getUserBySocket(socket.id) : { serverId: socket.id };
-            
-            // Start monitoring for payment
+
             this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser,
                 paymentType, paymentRequest.fairnessProof || options.fairnessProof || null);
             if (paymentType === 'single_game') this.pendingEntryFairness.delete(socket.id);
@@ -374,12 +372,11 @@ class PaymentHandlers {
             return;
         }
 
-        // If both direct and credits modes are enabled, let the user choose
+        // With both direct and credits modes enabled the user picks the method.
         const bothModesEnabled = this.gameModeManager.directModeEnabled && this.gameModeManager.creditsModeEnabled;
         const forceShowOptions = options.showOptions === true;
         
         if (bothModesEnabled && !options.paymentType) {
-            // Send event to show payment options modal on client
             this.io.to(socket.id).emit('show_payment_options', {
                 reason: 'choose_payment_method',
                 message: 'Choose how you want to play'
@@ -390,14 +387,13 @@ class PaymentHandlers {
         
         try {
             const currentUser = socket.id && this.queueManager.getUserBySocket ? this.queueManager.getUserBySocket(socket.id) : null;
-            // caller (SocketHandlers) will handle user existence; keep method generic
+            // The caller (SocketHandlers) owns user existence; this method stays generic.
             const gameMode = this.gameModeManager.gameMode;
             const cryptoType = this.gameModeManager.cryptoType;
             let paymentType = options.paymentType;
             let amount;
             let description;
 
-            // Determine payment type if not specified
             if (!paymentType) {
                 if (gameMode === 'PAID_SINGLE' || this.gameModeManager.directModeEnabled) {
                     paymentType = 'single_game';
@@ -450,7 +446,7 @@ class PaymentHandlers {
                 return;
             }
 
-            // Resolve authoritative userId from session manager (stable across socket reconnects)
+            // Session userId is stable across socket reconnects; socket.id is not.
             let sessionUserId = null;
             if (this.sessionManager?.sessions?.has(socket.id)) {
                 sessionUserId = this.sessionManager.sessions.get(socket.id).id;
@@ -465,7 +461,7 @@ class PaymentHandlers {
             });
             const reused = !!paymentRequest.reused;
 
-            // Stop monitoring any expired addresses from previous payment requests
+            // Release watchers and address maps for requests this one superseded.
             if (paymentRequest.expiredAddresses?.length > 0) {
                 for (const addr of paymentRequest.expiredAddresses) {
                     this.walletService.stopPaymentMonitoring(addr);
@@ -528,7 +524,7 @@ class PaymentHandlers {
                 `${statusHeader}${statusBody}`
             );
 
-            // If we reused an existing request, ensure we refresh monitoring to avoid duplicate watchers
+            // A reused request already has a watcher; stop it so monitoring is not duplicated.
             this.stopMonitoringForSocket(socket.id);
             this._monitorAddress(socket, paymentRequest, paymentRequest.amount, cryptoType, currentUser,
                 paymentType, paymentRequest.fairnessProof || fairnessProof);
@@ -551,7 +547,7 @@ class PaymentHandlers {
         const isGateway = !!(provider && provider.id !== 'native-monero');
         const watchRef = isGateway ? (paymentRequest.invoiceId || paymentRequest.address) : paymentRequest.address;
 
-        // Record mapping so we can stop later (replace existing entry)
+        // Mapping is required to stop the watcher later; it replaces any existing entry.
         this.socketPaymentMap.set(socket.id, {
             address: paymentRequest.address,
             paymentId: paymentRequest.id,
@@ -568,19 +564,19 @@ class PaymentHandlers {
         // Expire request after 30 minutes if not confirmed
         const expiryTimeout = setTimeout(() => {
             const mapping = this.socketPaymentMap.get(socket.id);
-            if (mapping && mapping.address === paymentRequest.address) { // still active and not replaced
+            if (mapping && mapping.address === paymentRequest.address) { // still active, not replaced
                 this.stopMonitoringForSocket(socket.id);
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Payment request expired. Type \'enter\' again to create a new payment request.');
             }
         }, 30 * 60 * 1000);
-        // Store & unref so tests / process can exit (the 30-min timer must never keep the
-        // event loop alive on its own — in production the server keeps the process running).
+        // Unref'd so the 30-minute timer never keeps the event loop alive on its own; the server
+        // itself keeps the process running.
         if (expiryTimeout && expiryTimeout.unref) expiryTimeout.unref();
         this._expiryTimeouts.set(socket.id, expiryTimeout);
 
-        // Start watching. onUpdate delivers a raw wallet-style status; for native that IS the
-        // walletService status (unchanged legacy path), for a gateway it's mapped from the
-        // Greenfield invoice. Fall back to direct wallet monitoring when no provider is registered.
+        // The status callback receives a raw wallet-style status: for native that is the
+        // walletService status directly, for a gateway it is mapped from the Greenfield invoice.
+        // With no provider registered, watch the wallet directly.
         const onStatus = (status) => this._handlePaymentStatus(socket, paymentRequest, currentUser, status);
         if (provider && typeof provider.startWatch === 'function') {
             provider.startWatch(watchRef, onStatus, 2000);
@@ -604,10 +600,10 @@ class PaymentHandlers {
         return { pending: 0 };
     }
 
-    // Handle one payment status update (raw wallet-style shape: in_mempool/confirmed/complete/
-    // amount/required/confirmations). A callback that began before the synchronous shutdown gate
-    // is tracked to completion; later callbacks do no admission work and startup recovery observes
-    // the underlying durable payment state.
+    // Handles one payment status update (raw wallet-style shape: in_mempool/confirmed/complete/
+    // amount/required/confirmations). A callback that begins before the synchronous shutdown gate
+    // is tracked to completion; later callbacks do no admission work, and startup recovery
+    // observes the underlying durable payment state.
     async _handlePaymentStatus(socket, paymentRequest, currentUser, status) {
         if (this._isShuttingDown) return;
         const update = this._handlePaymentStatusActive(socket, paymentRequest, currentUser, status);
@@ -627,9 +623,9 @@ class PaymentHandlers {
                 const mapping = this.socketPaymentMap.get(socket.id);
                 const isGameEntry = !mapping || mapping.paymentType === 'single_game';
 
-                // A production paid entry is only usable with the proof durably bound to its
-                // invoice. Never put a legacy/corrupt unbound payment into the queue merely
-                // because its transaction appeared in the mempool.
+                // A paid entry is only usable with its fairness proof durably bound to the
+                // invoice. An unbound payment is never queued merely because its transaction
+                // appeared in the mempool.
                 if (isGameEntry && this._requiresBoundPaidFairness() && !mapping?.fairnessProof) {
                     console.error(`[PaymentHandlers] Refusing to queue unbound paid entry ${paymentRequest.id}`);
                     socket.emit('payment_review_required', {
@@ -654,7 +650,6 @@ class PaymentHandlers {
                 if (isGameEntry) {
                     const existingIdx = this.queueManager.getPlayerIndex(socket.id);
                     if (existingIdx === -1) {
-                        // Try to get DB userId from session
                         let userId = null;
                         if (this.sessionManager?.sessions?.has(socket.id)) {
                             userId = this.sessionManager.sessions.get(socket.id).id;
@@ -673,19 +668,19 @@ class PaymentHandlers {
                     socket.emit('queue_joined', { position: (existingIdx === -1 ? this.queueManager.getQueueLength() : existingIdx + 1), message: 'Payment received! Waiting for next block to start game...', currentBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null, nextBlock: this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() + 1 : null });
                 }
             } else if (status.confirmed) {
-                // SECURITY (Phase 0.1): A confirmed transaction is NOT sufficient to grant a
-                // game/credits — we must verify the RECEIVED amount covers what was expected.
-                // checkPaymentStatus() sets `confirmed` for ANY incoming tx on the subaddress,
-                // while `complete` means totalReceived >= required. Without this gate a player
-                // could send a single atomic unit and play (or buy credits) for free.
+                // A confirmed transaction alone does not grant a game or credits; the received
+                // amount must cover what was expected. checkPaymentStatus() sets `confirmed` for
+                // any incoming tx on the subaddress, while `complete` means
+                // totalReceived >= required. Without this gate a single atomic unit would buy a
+                // game or credits.
                 let exactCoverage = false;
                 try {
                     exactCoverage = money.toBig(status.amount || 0)
                         >= money.toBig(paymentRequest.amount);
                 } catch (_) { exactCoverage = false; }
                 if (!status.complete || !exactCoverage) {
-                    // Underpaid. Keep monitoring so a later top-up to the same address can
-                    // complete it; warn the user once to avoid spamming on every 2s poll.
+                    // Underpaid: monitoring continues so a later top-up to the same address can
+                    // complete it. The warning fires once, not on every 2s poll.
                     if (!this.underpaidNotified.has(paymentRequest.id)) {
                         this.underpaidNotified.add(paymentRequest.id);
                         const required = status.required || 0;
@@ -710,10 +705,9 @@ class PaymentHandlers {
                     return;
                 }
 
-                // SECURITY: Use in-memory Set as fast-path, but DB is source of truth
-                // This prevents double-processing on server restart
+                // In-memory fast path against double-processing; the DB remains the source of
+                // truth, so a restart that empties this Set is still safe.
                 if (this.confirmedPayments.has(paymentRequest.id)) {
-                    // Already processed in this session, skip
                     this.stopMonitoringForSocket(socket.id);
                     return;
                 }
@@ -735,7 +729,6 @@ class PaymentHandlers {
                     return;
                 }
 
-                // Mark in memory to prevent duplicate processing within this session
                 this.confirmedPayments.add(paymentRequest.id);
                 this._confirmedTimestamps.set(paymentRequest.id, Date.now());
 
@@ -773,7 +766,6 @@ class PaymentHandlers {
                             this.broadcastManager.sendStatusUpdate(socket.id, 'success',
                                 `✅ PURCHASE CONFIRMED!\n\n+${creditsResult.creditsAdded} credits added.\nNew balance: ${creditsResult.newBalance} credits.${packText}\n\nType 'enter' to start a game!`);
                         } else if (creditsResult.alreadyProcessed) {
-                            // Payment was already confirmed (e.g., after server restart) - just notify user
                             console.log(`[PaymentHandlers] Payment ${paymentRequest.id} already processed, skipping duplicate`);
                             socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment already processed.', confirmations: status.confirmations });
                         } else {
@@ -796,12 +788,12 @@ class PaymentHandlers {
                         this.broadcastManager.sendStatusUpdate(socket.id, 'error',
                             'Payment received, but no entitlement was applied. Contact support for review.');
                     }
-                    // Defensively remove from queue — credits purchases should never be queued
+                    // Credit and product purchases are never queue entries.
                     this.queueManager.removePlayer(socket.id);
                 } else {
-                    // single_game payment - standard flow
-                    // CRITICAL: Atomically update payment status and check if we actually updated it
-                    // This prevents double-processing on server restart
+                    // single_game entry. The status update is conditional on status='pending',
+                    // so the returned row count is what authorizes the game logic below and a
+                    // second confirmation (including after a restart) is a no-op.
                     let wasUpdated = false;
                     let confirmationError = null;
                     try {
@@ -831,7 +823,6 @@ class PaymentHandlers {
                         console.error('[PaymentHandlers] Failed to update payment status in DB:', dbErr.message);
                     }
 
-                    // Only proceed with game logic if we actually confirmed this payment
                     if (!wasUpdated) {
                         if (confirmationError) {
                             socket.emit('payment_review_required', {
@@ -850,9 +841,9 @@ class PaymentHandlers {
 
                     socket.emit('payment_confirmed', { paymentId: paymentRequest.id, message: 'Payment confirmed in block!', confirmations: status.confirmations });
 
-                    // Unify to credits: a direct/single_game entry counts as buying + spending 1
-                    // credit, so it advances total_credits_purchased and unlocks the same tier/
-                    // threshold cosmetics as a credit purchase. (Runs once — guarded by wasUpdated.)
+                    // A direct single_game entry counts as buying and spending one credit, so it
+                    // advances total_credits_purchased and unlocks the same threshold cosmetics
+                    // as a credit purchase. The wasUpdated guard above keeps this to one run.
                     if (this.gameModeManager && typeof this.gameModeManager.recordDirectEntryPurchase === 'function') {
                         try {
                             const rec = await this.gameModeManager.recordDirectEntryPurchase(socket.id);
@@ -869,12 +860,11 @@ class PaymentHandlers {
                         }
                     }
 
-                    // IMPORTANT: If payment confirmed before mempool detection (fast blocks),
-                    // the player may not be in the queue yet. Add them now with confirmed=true.
+                    // On fast blocks confirmation can precede mempool detection, leaving the
+                    // player out of the queue; they are added here as already confirmed.
                     const existingIdx = this.queueManager.getPlayerIndex(socket.id);
                     if (existingIdx === -1) {
                         console.log(`[PaymentHandlers] Payment confirmed but player not in queue - adding now (socket: ${socket.id})`);
-                        // Try to get DB userId from session
                         let userId = null;
                         if (this.sessionManager?.sessions?.has(socket.id)) {
                             userId = this.sessionManager.sessions.get(socket.id).id;
@@ -889,11 +879,11 @@ class PaymentHandlers {
                             fairnessProof: mapping?.fairnessProof || null
                         });
                     } else {
-                        // Player was in queue from mempool detection, just mark confirmed
+                        // Already queued from mempool detection.
                         this.queueManager.markConfirmed(socket.id);
                     }
 
-                    // Attempt immediate game start so user doesn't wait another full block
+                    // Start immediately so the player does not wait another full block.
                     const currentBlock = this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : null;
                     if (currentBlock !== null) {
                         const started = await this.queueManager.startGameImmediately(socket.id, currentBlock);
@@ -909,7 +899,7 @@ class PaymentHandlers {
                         console.log(`[PaymentHandlers] No block height available - player will start on next block`);
                     }
                 }
-                // Clean up monitoring for this socket (even if duplicate)
+                // Monitoring ends here on every confirmed path, duplicates included.
                 this.stopMonitoringForSocket(socket.id);
             }
     }
@@ -924,13 +914,13 @@ class PaymentHandlers {
     }
 
     /**
-     * Stop monitoring (if any) for a given socket (disconnect/expiry)
+     * Stop monitoring for a given socket on disconnect or expiry. Safe when none is active.
      */
     stopMonitoringForSocket(socketId) {
         const mapping = this.socketPaymentMap.get(socketId);
         if (mapping) {
             if (mapping.provider && typeof mapping.provider.stopWatch === 'function') {
-                mapping.provider.stopWatch(mapping.watchRef || mapping.address); // native delegates to stopPaymentMonitoring
+                mapping.provider.stopWatch(mapping.watchRef || mapping.address); // native provider delegates to stopPaymentMonitoring
             } else {
                 this.walletService.stopPaymentMonitoring(mapping.address);
             }
@@ -951,7 +941,7 @@ class PaymentHandlers {
     }
 
     /**
-     * Dispose resources (intervals, monitors) - useful for tests / graceful shutdown.
+     * Release intervals and monitors for graceful shutdown and test teardown.
      */
     dispose() {
         this.beginShutdown();

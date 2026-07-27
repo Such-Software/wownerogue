@@ -45,17 +45,17 @@ class AlertService {
 
         // Notifications hub (preferred): DB-backed dedup/throttle that survives restarts, so a stuck
         // condition is ~5 emails, not thousands. Falls back to direct Resend if NOTIFY_HUB_URL unset.
-        this.hubUrl = process.env.NOTIFY_HUB_URL || '';   // e.g. http://10.42.1.20:8765/api/notify
+        this.hubUrl = process.env.NOTIFY_HUB_URL || '';   // e.g. http://notify.internal.example:8765/api/notify
         this.notifySource = process.env.NOTIFY_SOURCE || process.env.GAME_NAME || 'wowngeon';
 
-        // Resend configuration (legacy fallback)
+        // Resend configuration: used only when no hub URL is set.
         this.resendApiKey = process.env.RESEND_API_KEY;
         this.adminEmail = process.env.ADMIN_EMAIL;
-        this.fromEmail = process.env.ALERT_FROM_EMAIL || 'alerts@monerogue.app';
+        this.fromEmail = process.env.ALERT_FROM_EMAIL || 'alerts@example.invalid';
 
-        // Balance thresholds (atomic units)
-        // BALANCE_WARN: sends email alert
-        // BALANCE_CRITICAL: sends email AND halts new games
+        // Balance thresholds, in atomic units.
+        // BALANCE_WARN: sends an email alert.
+        // BALANCE_CRITICAL: sends an email and halts new games.
         this.balanceWarnThreshold = positiveAtomic(
             process.env.BALANCE_WARN || process.env.LOW_BALANCE_THRESHOLD,
             100000000000n
@@ -67,15 +67,13 @@ class AlertService {
             15 * 60 * 1000
         );
 
-        // Track critical balance state for game halt
         this.isBalanceCritical = false;
         this.lastBalanceCheck = null;
 
-        // Cooldowns (prevent alert spam)
+        // Per-type cooldown for the direct-Resend path only; it does not survive a restart.
         this.alertCooldown = parseInt(process.env.ALERT_COOLDOWN_MS) || 3600000; // 1 hour
         this.lastAlertSent = new Map();
 
-        // Track wallet disconnect duration
         this.walletDisconnectedSince = null;
         this.walletDisconnectAlertThreshold = 300000; // 5 minutes
 
@@ -91,7 +89,7 @@ class AlertService {
     }
 
     /**
-     * Check if an alert type is on cooldown
+     * Check if an alert type is on cooldown.
      */
     isOnCooldown(alertType) {
         const lastSent = this.lastAlertSent.get(alertType) || 0;
@@ -99,15 +97,15 @@ class AlertService {
     }
 
     /**
-     * Send an email alert via Resend
+     * Send an alert through the notifications hub, or directly via Resend when no hub is set.
      */
     async sendAlert(type, { subject, html, level = 'warn', body = '' }) {
         if (!this.enabled) {
             return { sent: false, reason: 'Alert service not configured' };
         }
 
-        // Preferred: the central hub dedups + throttles (DB-backed, so it survives restarts — unlike
-        // the in-memory cooldown that re-spammed on every restart). Stable key = source:type.
+        // The central hub dedups and throttles in the DB, so throttling survives a restart; the
+        // in-memory cooldown below does not. Dedup key is stable: source:type.
         if (this.hubUrl) {
             return this._postHub({
                 key: `${this.notifySource}:${type}`,
@@ -117,7 +115,7 @@ class AlertService {
             });
         }
 
-        // Legacy fallback: direct Resend with the in-memory cooldown.
+        // Without a hub, send directly through Resend under the in-memory cooldown.
         if (this.isOnCooldown(type)) {
             return { sent: false, reason: 'On cooldown' };
         }
@@ -137,7 +135,8 @@ class AlertService {
     }
 
     /**
-     * Clear a firing alert in the hub (one ✅ resolve if it had alerted). No-op without the hub.
+     * Clear a firing alert in the hub, which sends a single resolve notice if it had alerted.
+     * No-op without the hub.
      */
     async resolveAlert(type) {
         if (!this.hubUrl) return { sent: false, reason: 'no hub' };
@@ -165,9 +164,9 @@ class AlertService {
     }
 
     /**
-     * Check wallet balance and alert if low or critical
-     * BALANCE_WARN: sends email alert
-     * BALANCE_CRITICAL: sends email AND sets isBalanceCritical flag (halts new games)
+     * Check wallet balance and alert if low or critical.
+     * Below BALANCE_WARN: sends an email alert.
+     * Below BALANCE_CRITICAL: sends an email and sets isBalanceCritical, which halts new games.
      */
     async checkWalletBalance() {
         if (!this.walletService?.isHealthy) {
@@ -183,9 +182,8 @@ class AlertService {
             const decimals = cryptoType === 'WOW' ? 11 : 12;
             const balanceFormatted = formatAtomicFixed(unlockedBalance, decimals, 6);
 
-            // Check CRITICAL threshold first (more severe)
+            // Critical is checked first because it is the stricter of the two thresholds.
             if (unlockedBalance < this.balanceCriticalThreshold) {
-                // Set critical flag - this will halt new games
                 if (!this.isBalanceCritical) {
                     this.isBalanceCritical = true;
                     console.warn(`🚨 CRITICAL: Wallet balance is critically low (${balanceFormatted} ${cryptoType}). New games are HALTED.`);
@@ -214,9 +212,8 @@ class AlertService {
                     `
                 });
             }
-            // Check WARN threshold (less severe)
             else if (unlockedBalance < this.balanceWarnThreshold) {
-                // Clear critical flag if we were critical but now just warning
+                // Above critical again, so admission reopens even though the balance is still low.
                 if (this.isBalanceCritical) {
                     this.isBalanceCritical = false;
                     console.log(`✅ Wallet balance restored above critical threshold. Games can resume.`);
@@ -244,7 +241,7 @@ class AlertService {
                     `
                 });
             } else {
-                // Balance is healthy - clear critical flag + any firing balance alerts in the hub
+                // Healthy balance clears the halt flag and any firing balance alerts in the hub.
                 if (this.isBalanceCritical) {
                     this.isBalanceCritical = false;
                     console.log(`✅ Wallet balance restored above thresholds. Games can resume.`);
@@ -261,7 +258,7 @@ class AlertService {
     }
 
     /**
-     * Check if new paid games should be halted due to critical balance
+     * Check if new paid games should be halted due to critical balance.
      * @returns {boolean} true if games should be halted
      */
     shouldHaltGames() {
@@ -269,7 +266,7 @@ class AlertService {
     }
 
     /**
-     * Force refresh the balance check (useful when called before game start)
+     * Read the balance exactly at game start rather than trusting the periodic check.
      * @returns {Object} { halted: boolean, reason?: string }
      */
     async checkBalanceForGameStart() {
@@ -302,11 +299,11 @@ class AlertService {
     }
 
     /**
-     * Check for wallet disconnection
+     * Alert once the wallet RPC has been unreachable past the disconnect threshold.
      */
     async checkWalletConnection() {
         if (this.walletService?.isHealthy) {
-            if (this.walletDisconnectedSince) {          // was down, now back → clear the hub alert
+            if (this.walletDisconnectedSince) {          // Recovered: clear the firing hub alert.
                 this.walletDisconnectedSince = null;
                 this.resolveAlert('wallet_disconnect');
             }
@@ -346,7 +343,7 @@ class AlertService {
     }
 
     /**
-     * Check for pending payouts queue
+     * Alert when the pending or failed payout queue exceeds HIGH_PENDING_THRESHOLD.
      */
     async checkPendingPayouts() {
         if (!this.db) return;
@@ -462,7 +459,7 @@ class AlertService {
     }
 
     /**
-     * Alert when a payout permanently fails
+     * Alert when a payout permanently fails.
      */
     async alertPayoutFailed(payout) {
         const cryptoType = process.env.CRYPTO_TYPE || 'XMR';
@@ -492,7 +489,7 @@ class AlertService {
     }
 
     /**
-     * Run all checks (call this periodically)
+     * Run every check once.
      */
     async runChecks() {
         await this.checkWalletBalance();
@@ -502,17 +499,16 @@ class AlertService {
     }
 
     /**
-     * Start periodic checking
+     * Start periodic checking.
      */
     startPeriodicChecks(intervalMs = 300000) { // Default 5 minutes
         if (!this.enabled) {
             return;
         }
 
-        // Run initial check after a short delay
+        // Delay the first pass so wallet and DB connections have time to come up.
         setTimeout(() => this.runChecks(), 10000);
 
-        // Then run periodically
         this.checkInterval = setInterval(() => {
             this.runChecks();
         }, intervalMs);
@@ -521,7 +517,7 @@ class AlertService {
     }
 
     /**
-     * Stop periodic checking
+     * Stop periodic checking.
      */
     stopPeriodicChecks() {
         if (this.checkInterval) {

@@ -1,5 +1,5 @@
 /**
- * MatchRoom — a server-authoritative multiplayer race room.
+ * MatchRoom: a server-authoritative multiplayer race room.
  *
  * Extends Room with a shared dungeon, shared monsters, treasure, and per-player
  * life/death/finish state. The engine is transport-agnostic; MatchManager owns the
@@ -48,7 +48,7 @@ class MatchRoom extends Room {
         super({ id, type: 'match', layout: ['.'], solidOccupants: true, maxOccupants: opts.maxPlayers || 4 });
 
         // Resolve the ruleset (Pillar 4). Precedence: an explicit ruleset object, then a rulesetId
-        // from the registry, else one synthesized from the legacy opts — which preserves the classic
+        // from the registry, else one synthesized from the legacy opts, which preserves the classic
         // race behavior exactly, so nothing changes until a caller asks for a different ruleset.
         this.ruleset = opts.ruleset ? defineRuleset(opts.ruleset)
             : (opts.rulesetId ? getRuleset(opts.rulesetId, opts.rulesetOverrides) : rulesetFromMatchOpts(opts));
@@ -176,7 +176,7 @@ class MatchRoom extends Room {
 
     /**
      * Replace the inherited tavern occupants with match entrants placed at the entrance.
-     * @param {object} entrants — id -> { userId, name, avatar, appearance }
+     * @param {object} entrants - id -> { userId, name, avatar, appearance }
      */
     _resetEntrants(entrants) {
         this.occupants.clear();

@@ -1,11 +1,11 @@
 /**
- * MatchQueue — persisted, per-economy queue for match mode.
+ * MatchQueue: persisted, per-economy queue for match mode.
  *
  * Responsibilities:
  *   • Enqueue/leave a queue for each economy (free, credits_prestige, crypto_race).
  *   • Atomically deduct credits or tickets into escrow on join; REFUND on EVERY cancellation
  *     path (leave, stale cleanup, drain abort, shutdown, boot recovery), always writing a
- *     ledger row — never a status flip alone.
+ *     ledger row, never a status flip alone.
  *   • Drain a full economy bucket into a match at block time (memory only mutated after the DB
  *     commit succeeds, so a failed drain leaves the queue intact).
  *
@@ -228,7 +228,7 @@ class MatchQueue {
      */
     async _recoverAbandonedMatches() {
         // Single-instance (default, this deployment's model): a boot means all in-memory match
-        // state is gone, so every in-flight row is abandoned — reclaim them all immediately.
+        // state is gone, so every in-flight row is abandoned; reclaim them all immediately.
         // Multi-instance (MATCH_SINGLE_INSTANCE=false): a sibling instance may be actively running
         // a recent race, so only reclaim rows older than the maximum possible match duration
         // (hard ceiling + buffer). Anything younger is left for its owner (its own ceiling watchdog
@@ -259,7 +259,7 @@ class MatchQueue {
         for (const m of rows) {
             try {
                 await this.db.withTransaction(async (client) => {
-                    // If a payout already exists, the race effectively completed — don't refund
+                    // If a payout already exists, the race effectively completed: don't refund
                     // (that would double-pay the winner); just finalize the match status so the
                     // batcher/retry can settle the payout.
                     const pay = await client.query(`SELECT id FROM payouts WHERE match_id = $1 LIMIT 1`, [m.id]);
@@ -1173,7 +1173,7 @@ class MatchQueue {
 
     /**
      * Leave a queue before a match starts, refunding credits/tickets. Accepts either a resolved
-     * session object ({ userId, economy }) — the socketHandlers form — or the legacy
+     * session object ({ userId, economy }), the socketHandlers form, or the legacy
      * (userId, economy) pair. When no economy is supplied, leaves every economy the user is in.
      */
     async leave(sessionOrUserId, maybeEconomy) {
@@ -1408,7 +1408,7 @@ class MatchQueue {
                         expectedById.get(String(row.id)) === String(row.user_id)
                     ));
                 if (!rowsMatch) {
-                    // Memory/DB out of sync — abort without mutating memory; retry next block.
+                    // Memory/DB out of sync: abort without mutating memory; retry next block.
                     throw Object.assign(
                         new Error(`Queue drain mismatch: expected ${queueEntryIds.length}, got ${result.rowCount}`),
                         { code: 'DRAIN_MISMATCH' }
@@ -1420,7 +1420,7 @@ class MatchQueue {
             return null;
         }
 
-        // DB commit succeeded — now remove them from the in-memory queue.
+        // DB commit succeeded; now remove them from the in-memory queue.
         const idSet = new Set(queueEntryIds.map(String));
         this._queues[economy] = this._queues[economy]
             .filter(e => !idSet.has(String(e.queueEntryId)));

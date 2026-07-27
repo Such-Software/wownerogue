@@ -13,8 +13,8 @@ const SocketHandlers = {
 
     _hasPayoutAddress: false,
     _creditsBalance: 0,
-    _gameMode: null, // set from the server's game-modes event; was previously declared
-                     // twice in this object literal (the later `null` silently won)
+    _gameMode: null, // Set from the server's game-modes event. Declare it exactly once: a duplicate
+                     // key in this object literal would silently shadow the other.
 
     _directModeEnabled: false,
     _directPayoutsEnabled: false,
@@ -39,11 +39,11 @@ const SocketHandlers = {
         var offer = this._fairnessOffer;
         if (!offer || !offer.offerId || !/^[0-9a-f]{64}$/i.test(String(offer.commitment || ''))) {
             socket.emit('fairness_offer_request');
-            $('#messages').append($('<li class="status" style="color:#ffcc00;">').text('Preparing a fairness commitment — try again in a moment.'));
+            $('#messages').append($('<li class="status" style="color:#ffcc00;">').text('Preparing a fairness commitment; try again in a moment.'));
             if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
             return null;
         }
-        // Generate the player's contribution only AFTER selecting the published commitment.
+        // The player's contribution is generated only AFTER selecting the published commitment.
         var clientSeed = this._randomClientSeed();
         if (!clientSeed) {
             $('#messages').append($('<li class="error">').text('Secure randomness is unavailable in this browser; the game was not started.'));
@@ -109,7 +109,6 @@ const SocketHandlers = {
         if (!$btn.length) return;
         
         if (hasAddress) {
-            // Address is set - show green indicator
             $btn.css({
                 'background': '#053655',
                 'color': '#0ff',
@@ -117,7 +116,6 @@ const SocketHandlers = {
             });
             $btn.html('✅ Payout Address Set');
         } else {
-            // No address - show warning indicator (yellow/orange)
             $btn.css({
                 'background': '#553300',
                 'color': '#ffa500',
@@ -168,7 +166,7 @@ const SocketHandlers = {
                 setTimeout(function() { $btn.text(origText); }, 1500);
             });
         } else {
-            // Fallback
+            // execCommand fallback for browsers without the async clipboard API.
             const $temp = $('<input>');
             $('body').append($temp);
             $temp.val(text).select();
@@ -207,17 +205,17 @@ const SocketHandlers = {
         socket.on('game_settlement_pending', this.onGameSettlementPending);
         socket.on('fairness_offer', this.onFairnessOffer);
         socket.on('fairness_error', this.onFairnessError);
-        // Discrete in-run events. Multi-level DESCEND is the big one — without this, taking the
-        // stairs down silently dumped the player at a new entrance and read as a bug.
+        // Discrete in-run events. The descend event is what tells the player a new entrance means a
+        // deeper level rather than a reset.
         socket.on('game_event', function (data) {
             if (!data || !data.event) return;
             var $m = $('#messages');
             if (data.event === 'descend') {
-                var lvl = (data.depth && data.maxDepth) ? ('Level ' + data.depth + ' of ' + data.maxDepth + ' — ') : '';
+                var lvl = (data.depth && data.maxDepth) ? ('Level ' + data.depth + ' of ' + data.maxDepth + '. ') : '';
                 $m.append($('<li class="status" style="color:#ffcc00; font-weight:bold;">')
-                    .text('⬇️ Stairs down! ' + lvl + 'keep going — escape before the block!'));
+                    .text('⬇️ Stairs down! ' + lvl + 'Keep going: escape before the block!'));
                 var lvlTitle = (data.depth && data.maxDepth) ? ('⬇ LEVEL ' + data.depth + ' / ' + data.maxDepth) : '⬇ DESCEND';
-                SocketHandlers.showEventBanner(lvlTitle, 'Deeper in — escape before the block!', '#ffcc00');
+                SocketHandlers.showEventBanner(lvlTitle, 'Deeper in: escape before the block!', '#ffcc00');
             } else if (data.event === 'treasure_found') {
                 $m.append($('<li class="status" style="color:#fbbf24; font-weight:bold;">').text('💰 Treasure secured!'));
                 SocketHandlers.showEventBanner('💰 TREASURE SECURED', 'Now get to the stairs and escape!', '#fbbf24');
@@ -260,8 +258,8 @@ const SocketHandlers = {
         socket.on('win_feed', this.onWinFeed);
     },
 
-    // Show a transient "someone just escaped" toast so the room feels alive. Toasts stack in a
-    // fixed container (top-right), auto-dismiss, and never block the UI.
+    // Transient "someone just escaped" toast. Toasts stack in a fixed top-right container,
+    // auto-dismiss, and never block the UI.
     onWinFeed: function(data) {
         if (!data) return;
         var name = String(data.name || 'Someone').slice(0, 24);
@@ -276,7 +274,6 @@ const SocketHandlers = {
                 '🏆 <strong>' + escapeHtml(name) + '</strong> escaped' + bag + paid
             );
             $c.append($t);
-            // Fade in, hold, fade out, remove.
             requestAnimationFrame(function () { $t.addClass('show'); });
             setTimeout(function () { $t.removeClass('show'); }, 5000);
             setTimeout(function () { $t.remove(); }, 5600);
@@ -309,7 +306,6 @@ const SocketHandlers = {
             userAgent: navigator.userAgent
         });
         socket.emit('identity:get');
-        // Update small status banner immediately
         SocketHandlers._setBannerStatus('Connected', '#0f0');
     },
 
@@ -318,15 +314,15 @@ const SocketHandlers = {
             try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('New session established. Token stored.'));
             UI.scrollChat();
-            // New session = no address set yet
+            // A new session carries no payout address.
             SocketHandlers._updateAddressButtonStatus(false);
             SocketHandlers._refreshSmirkLinked();
         }
     },
 
-    // The server ROTATES the session token on every resume, so the initial SmirkAuth.checkStatus()
-    // races the rotation and 403's with the stale token — leaving _isLinked=false and disabling
-    // one-click Smirk payment after a reload. Re-check with the FRESH token once it's stored.
+    // The server rotates the session token on every resume, so an initial SmirkAuth.checkStatus()
+    // can race the rotation and 403 with the stale token, leaving _isLinked=false and disabling
+    // one-click Smirk payment. Re-check once the fresh token is stored.
     _refreshSmirkLinked: function() {
         if (typeof SmirkAuth !== 'undefined' && SmirkAuth.checkStatus &&
             SmirkAuth.isAvailable && SmirkAuth.isAvailable()) {
@@ -394,10 +390,8 @@ const SocketHandlers = {
     _creditsPerGame: 1,
     
     _updateCreditsDisplay: function(balance, creditsPerGame) {
-        // Store current balance
         this._creditsBalance = balance;
 
-        // Update stored creditsPerGame if provided
         if (creditsPerGame && creditsPerGame > 0) {
             SocketHandlers._creditsPerGame = creditsPerGame;
         }
@@ -405,11 +399,9 @@ const SocketHandlers = {
         var el = document.getElementById('creditsDisplay');
         if (!el) return;
 
-        // Calculate games remaining
         var perGame = SocketHandlers._creditsPerGame || 1;
         var gamesRemaining = Math.floor(balance / perGame);
 
-        // Show/hide based on balance
         if (balance > 0) {
             el.style.display = 'block';
             if (gamesRemaining > 0) {
@@ -432,8 +424,8 @@ const SocketHandlers = {
         UI.scrollChat();
     },
 
-    // A big, one-shot on-screen banner over the game view for headline in-run events (descend /
-    // treasure). Pops in, holds, fades — pointer-events:none so it never eats input, and auto-removes.
+    // One-shot banner over the game view for headline in-run events (descend / treasure). It is
+    // pointer-events:none so it never eats input, and it removes itself when the animation ends.
     showEventBanner: function(title, sub, color) {
         color = color || '#ffcc00';
         var host = document.getElementById('game-display') || document.body;
@@ -448,7 +440,7 @@ const SocketHandlers = {
                 '100%{opacity:0;transform:translate(-50%,-50%) scale(1.05)}}';
             document.head.appendChild(st);
         }
-        // Drop any banner still on screen so they never stack.
+        // Only one banner is on screen at a time.
         var prev = document.getElementById('evt-banner');
         if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
 
@@ -464,7 +456,7 @@ const SocketHandlers = {
             (sub ? '<div style="font-size:15px;color:#e6ead0;margin-top:8px;text-shadow:0 2px 6px #000;">' + sub + '</div>' : '');
         host.appendChild(b);
         setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 2650);
-        // A little extra pop: a soft colored flash if the FX overlay is up.
+        // Optional colored flash, only when the FX overlay is present.
         try { if (window.FX && window.FX.flash) window.FX.flash(color, 0.16, 320); } catch (e) {}
     },
 
@@ -484,7 +476,7 @@ const SocketHandlers = {
         } else if (data.type === 'queue') {
             SocketHandlers._setBannerStatus('Queued', '#0af');
         } else if (data.type === 'payment') {
-            // Generic payment message (more granular handlers override later)
+            // Generic payment message; more granular handlers override this later.
             SocketHandlers._setBannerStatus('Payment', '#0af');
             if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
         } else if (data.type === 'error') {
@@ -494,19 +486,18 @@ const SocketHandlers = {
         }
     },
 
-    // Chat text arrives ALREADY HTML-escaped by the server (that is the delivery contract — the
-    // tavern renders it as HTML directly). Escaping it a second time on the way in is what made
-    // every apostrophe show up as &#39; and every ampersand as &amp;. Decode the exact five
-    // entities the server writes, then render through a TEXT node: no double encoding, and strictly
-    // safer than the old innerHTML path because the message can never be parsed as markup at all —
-    // so the client keeps its "never trust the server escaped it" stance without the artefacts.
+    // Chat text arrives already HTML-escaped by the server; that is the delivery contract, since the
+    // tavern renders it as HTML directly. Decoding the exact five entities the server writes and
+    // rendering through a TEXT node avoids double encoding (apostrophes as &#39;, ampersands as
+    // &amp;) while keeping the message unparseable as markup, so the client never has to trust that
+    // the server escaped it.
     _chatText: function(value) {
         return String(value == null ? '' : value)
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
             .replace(/&quot;/g, '"')
             .replace(/&#39;/g, "'")
-            .replace(/&amp;/g, '&'); // last — mirrors the server escaping & first
+            .replace(/&amp;/g, '&'); // Last, mirroring the server escaping & first.
     },
 
     // <strong>sender:</strong> followed by the message as a text node.
@@ -519,8 +510,8 @@ const SocketHandlers = {
 
     onChatBroadcast: function(data) {
         const msgElement = $('<li style="color: #aaa;">');
-        // Prefer non-sensitive attribution fields; the server no longer sends the raw full
-        // socket.id (S1). Fall back to a short slice only for legacy payloads.
+        // Prefer non-sensitive attribution fields; the server does not send the raw full socket.id.
+        // The short slice covers older payloads only.
         const sender = data.username || data.playerId || data.publicId ||
             (data.socketId ? String(data.socketId).substring(0, 6) : null);
         if (sender) {
@@ -535,12 +526,11 @@ const SocketHandlers = {
     onChatHistory: function(data) {
         if (!data || !data.messages || !Array.isArray(data.messages)) return;
 
-        // Add a separator for history messages
         if (data.messages.length > 0) {
             $('#messages').append($('<li class="chat-history-header" style="color: #666; font-style: italic; border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px;">').text('--- Recent Chat History ---'));
         }
 
-        // Add each historical message with data-msg-id for deletion support
+        // data-msg-id lets chat_deleted find and remove a specific line later.
         data.messages.forEach(function(msg) {
             const msgElement = $('<li style="color: #888;">');
             if (msg.id) {
@@ -551,7 +541,6 @@ const SocketHandlers = {
             if (isSystem) {
                 msgElement.addClass('status');
             }
-            // Add timestamp if available
             if (msg.timestamp) {
                 const stamp = document.createElement('span');
                 stamp.style.cssText = 'color:#555;font-size:10px;';
@@ -571,7 +560,6 @@ const SocketHandlers = {
 
     onChatDeleted: function(data) {
         if (!data || !data.messageId) return;
-        // Remove deleted message from view with fade effect
         $('#messages li[data-msg-id="' + data.messageId + '"]').fadeOut(200, function() {
             $(this).remove();
         });
@@ -595,7 +583,6 @@ const SocketHandlers = {
         if (data.status === 'waiting') {
             $('#messages').append($('<li style="color:#ff0;">').text(data.message));
             
-            // Check if we should show waiting screen
             const addressRequired = SocketHandlers.payoutAddressRequired();
             const hasAddress = SocketHandlers._hasPayoutAddress;
             const canAfford = SocketHandlers.canAffordGame();
@@ -613,7 +600,6 @@ const SocketHandlers = {
     onQueueJoined: function(data) {
         console.log('Queue joined:', data);
         
-        // Mark as queued and update early entry button
         SocketHandlers._isQueued = true;
         SocketHandlers._updateEarlyEntryButton();
         
@@ -639,18 +625,15 @@ const SocketHandlers = {
     },
 
     onGameStart: function(data) {
-        // Clear queued state
         SocketHandlers._isQueued = false;
         SocketHandlers._updateEarlyEntryButton();
-        
-        // Hide any lingering QR code
+
         SocketHandlers.hidePaymentQR();
 
-        // Clear the transient entry line ("dropping in…/queued…"); the game is starting now.
+        // The game is starting, so the transient entry line is no longer accurate.
         $('#messages').find('.entry-progress').remove();
         $('#messages').append($('<li class="game-start">').text("Starting game..."));
-        
-        // Display provably fair commitment if present
+
         if (data && data.proof && data.proof.commitment) {
             var attempted = SocketHandlers._pendingFairnessAttempt;
             var proofMatchesAttempt = !attempted || (
@@ -674,8 +657,8 @@ const SocketHandlers = {
                 $('#messages').append($('<li class="error">').text('⚠️ Fairness proof mismatch: the server did not echo the offer/client seed used for this attempt.'));
             }
             SocketHandlers._pendingFairnessAttempt = null;
-            
-            // Store for later verification display
+
+            // Held for the reveal rendered at game over.
             SocketHandlers._currentGameProof = data.proof;
         }
         
@@ -696,8 +679,8 @@ const SocketHandlers = {
                 $('#messages').append($('<li class="error">').text("Game start failed. Check console for details."));
                 if (typeof Game !== 'undefined' && Game._drawWelcomeScreen) Game._drawWelcomeScreen(); 
             } else {
-                // Game is live and rendering — drop the "Starting game…" transient; the server's
-                // "Game started! Escape before the next block!" success line is the standing status.
+                // The game is live and rendering, so the "Starting game..." transient is dropped.
+                // The server's "Game started!" success line is the standing status.
                 $('#messages').find('.game-start').remove();
                 setTimeout(function() {
                     $('#game-display').focus();
@@ -711,17 +694,15 @@ const SocketHandlers = {
         
         UI.scrollChat();
         SocketHandlers._setBannerStatus('In Game', '#0f0');
-        // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
+        // AudioAlerts._patchSocketHandlers() plays the sound for this event.
     },
 
     onGameUpdate: function(data) {
-        // Server pushed a game state update. The Game object exposes updateGameState().
-        // Older code referenced Game.updateGame, which doesn't exist in the current refactor,
-        // so updates were silently ignored (player appeared frozen).
+        // Game exposes updateGameState(); updateGame is only an alias some builds may add.
         if (typeof Game !== 'undefined') {
             if (Game.updateGameState) {
                 Game.updateGameState(data);
-            } else if (Game.updateGame) { // Fallback if an alias gets added later
+            } else if (Game.updateGame) {
                 Game.updateGame(data);
             } else {
                 console.warn('Game update received but no updateGameState()/updateGame() method found on Game.');
@@ -731,9 +712,9 @@ const SocketHandlers = {
     },
 
     onGameSettlementPending: function() {
-        // The server withholds game_over until the authoritative completion + any payout
-        // obligation commit together. Keep the player informed without publishing a result that
-        // PostgreSQL cannot yet prove or offering another entry while retry is in progress.
+        // The server withholds game_over until the authoritative completion and any payout
+        // obligation commit together. This keeps the player informed without publishing a result
+        // PostgreSQL cannot yet prove, and without offering another entry mid-retry.
         $('#messages').find('.solo-settlement-pending').remove();
         $('#messages').append($('<li class="status solo-settlement-pending" style="color:#ffcc00;">')
             .text('Result pending durable settlement · retrying safely…'));
@@ -745,7 +726,6 @@ const SocketHandlers = {
         $('#messages').find('.solo-settlement-pending').remove();
         $('#messages').append($('<li class="game-over">').text("Game Over: " + data.message));
         
-        // Display provably fair verification info if present
         if (data && data.proof && data.proof.seed) {
             const serverSeed = data.proof.serverSeed || '';
             const effectiveSeed = data.proof.effectiveSeed || data.proof.seed;
@@ -768,8 +748,7 @@ const SocketHandlers = {
                 '<a href="' + verifyUrl + '" target="_blank" style="color:#0af;">🔗 Verify this game</a>'
             );
             $('#messages').append($proofReveal);
-            
-            // Clear stored proof
+
             SocketHandlers._currentGameProof = null;
         }
         
@@ -777,14 +756,13 @@ const SocketHandlers = {
             if (Game.endGame) {
                 Game.endGame(data);
             } else if (Game.drawLoseScreen && data && data.reason) {
-                // Minimal fallback if endGame not present
+                // Minimal fallback when endGame is absent.
                 if (data.reason === 'monster') Game.drawLoseScreen('monster');
             }
         }
         
         const won = data && (data.status === 'won' || data.reason === 'escaped');
 
-        // Show payout notification for wins
         if (won && data.payout && data.payout.amount) {
             var decimals = (SocketHandlers._cryptoType === 'WOW') ? 11 : 12;
             var amountFormatted = (data.payout.amount / Math.pow(10, decimals)).toFixed(4);
@@ -796,8 +774,7 @@ const SocketHandlers = {
             ));
         }
 
-        // Offer a one-tap "Share to X" on wins (brag mechanic). The verify link unfurls with a
-        // social card (OG meta on the /verify page), so a shared tweet shows a preview.
+        // The verify link carries OG meta on the /verify page, so a shared post unfurls a preview.
         if (won) {
             SocketHandlers._appendShareWin(data);
         }
@@ -810,7 +787,7 @@ const SocketHandlers = {
         }
     },
 
-    // Build an absolute verify URL for this game (used by the share button).
+    // Absolute verify URL for this game, used by the share button.
     _verifyUrlFor: function(data) {
         var path = (data && data.proof && (data.proof.verificationUrl ||
             (data.proof.gameId ? '/verify/' + data.proof.gameId : null)));
@@ -821,7 +798,7 @@ const SocketHandlers = {
 
     _appendShareWin: function(data) {
         var url = SocketHandlers._verifyUrlFor(data);
-        if (!url) return; // no proof -> nothing to verify/share
+        if (!url) return; // Without a proof there is nothing to verify or share.
 
         var bag = data && data.treasure ? ' with the bag 💰' : '';
         var score = (data && typeof data.score === 'number') ? (' (score ' + data.score + ')') : '';
@@ -848,7 +825,6 @@ const SocketHandlers = {
     },
 
     onQueueCancelled: function(data) {
-        // Clear queued state
         SocketHandlers._isQueued = false;
         SocketHandlers._updateEarlyEntryButton();
         
@@ -871,7 +847,7 @@ const SocketHandlers = {
     onAddressConfirmed: function(data) {
         console.log('Address confirmed:', data);
         
-        // Cleanup previous address-related messages to reduce clutter
+        // Drop the earlier address prompts now that the address is confirmed.
         $('#messages li').each(function() {
             const text = $(this).text();
             if (text.includes('Paste your payout address') || 
@@ -887,7 +863,6 @@ const SocketHandlers = {
         if (typeof AddressModal !== 'undefined') {
             AddressModal.onConfirmed(data);
         }
-        // Update button to show address is set (unless cancelled)
         if (!data.cancelled && data.address) {
             SocketHandlers._updateAddressButtonStatus(true);
         }
@@ -911,12 +886,10 @@ const SocketHandlers = {
     onGameModeInfo: function(data) {
         console.log('Game mode info received:', data);
         
-        // Store creditsPerGame for calculating games remaining
         if (data.creditsPerGame) {
             SocketHandlers._creditsPerGame = data.creditsPerGame;
         }
-        
-        // Store game mode and early entry config
+
         SocketHandlers._gameMode = data.mode;
         SocketHandlers._freePlayEnabled = !!data.freePlayEnabled;
         SocketHandlers._earlyEntryConfig = data.earlyEntry || { enabled: false };
@@ -926,13 +899,13 @@ const SocketHandlers = {
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
         SocketHandlers._smirkEnabled = SocketHandlers._isSmirkExplicitlyEnabled(data);
         SocketHandlers._cryptoType = data.cryptoType || 'WOW';
-        SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // sXMR on stagenet
+        SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // e.g. sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
         if (typeof Leaderboard !== 'undefined' && Leaderboard.updateConfig) {
             Leaderboard.updateConfig(data);
         }
-        // Do not ask prestige-only users for a payout address or imply that mainnet paid
-        // entries award crypto. Match crypto is exposed only when its economy is admitted.
+        // Prestige-only users are never asked for a payout address, so the UI never implies paid
+        // entries award crypto. Match crypto counts only when its economy is admitted.
         var matchCryptoPayouts = !!(data.modes && data.modes.match && data.modes.match.economies
             && data.modes.match.economies.crypto_race);
         var anyPayouts = SocketHandlers._creditsPayoutsEnabled
@@ -942,15 +915,14 @@ const SocketHandlers = {
             SinglePlayerAvatar.applyEntitlements(data.entitlements);
         }
 
-        // Mode availability (Solo / Tavern / Multiplayer). Backward compatible: if the server
-        // doesn't send `modes`, assume solo-only (the historical behavior).
+        // Mode availability (Solo / Tavern / Multiplayer). A server that omits `modes` is treated
+        // as solo-only.
         var modes = data.modes || { solo: true, tavern: false, multiplayer: false };
         SocketHandlers._modes = modes;
         if (modes.tavern) { $('#tavernButton').show(); } else { $('#tavernButton').hide(); }
-        // Tavern-only / no single-player instance: don't surface the solo start button.
+        // A tavern-only instance has no single-player entry point.
         if (modes.solo === false) { $('#startButton').hide(); }
 
-        // Initialize Smirk auth if enabled and not already initialized
         if (SocketHandlers._smirkEnabled && typeof SmirkAuth !== 'undefined' && !SmirkAuth._initialized) {
             SmirkAuth.init();
         }
@@ -959,12 +931,11 @@ const SocketHandlers = {
             UI.updateGameTitle(data.cryptoType);
         }
 
-        // Update ScreenManager with crypto type for welcome screen title
+        // ScreenManager uses the crypto type in the welcome screen title.
         if (typeof ScreenManager !== 'undefined' && ScreenManager.setCryptoType) {
             ScreenManager.setCryptoType(data.cryptoType);
         }
 
-        // Display testnet/stagenet warning if applicable
         if (data.testnetWarning) {
             SocketHandlers._showNetworkWarning(data.testnetWarning, data.network);
         } else {
@@ -973,7 +944,6 @@ const SocketHandlers = {
 
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.updateConfig(data);
-            // Show shop button if payments enabled
             if (data.paymentsEnabled) {
                 $('#shopButton').show();
             } else {
@@ -981,12 +951,10 @@ const SocketHandlers = {
             }
         }
 
-        // Update HelpModal with config
         if (typeof HelpModal !== 'undefined') {
             HelpModal.updateConfig(data);
         }
-        
-        // Update early entry button visibility
+
         SocketHandlers._updateEarlyEntryButton();
     },
 
@@ -994,7 +962,6 @@ const SocketHandlers = {
         let $warning = $('#networkWarning');
         if (!$warning.length) {
             $warning = $('<div id="networkWarning"></div>');
-            // Insert at top of container
             $('.container').prepend($warning);
         }
         const networkUpper = (network || 'stagenet').toUpperCase();
@@ -1014,14 +981,13 @@ const SocketHandlers = {
         console.log('Payment created:', data);
         if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
 
-        // Try Smirk native payment if user is connected via Smirk
+        // Native Smirk payment is only possible while the user is linked through the extension.
         if (typeof SmirkAuth !== 'undefined' && SmirkAuth._isLinked && SmirkAuth.isAvailable() &&
             typeof window.smirk !== 'undefined' && window.smirk.requestPayment) {
             SocketHandlers._trySmirkPayment(data);
             return;
         }
 
-        // Normal flow: show payment modal + chat message + QR
         SocketHandlers._showPaymentFlow(data);
     },
 
@@ -1034,7 +1000,7 @@ const SocketHandlers = {
         UI.scrollChat();
 
         try {
-            // Use human-readable amount (e.g. "1"), NOT atomic units (e.g. 100000000000)
+            // Smirk expects a human-readable amount (e.g. "1"), not atomic units.
             var payAmount = data.humanAmount || data.amountFormatted || String(data.amount);
             var description = 'Single game entry';
             if (data.paymentType === 'credits_package') {
@@ -1050,16 +1016,16 @@ const SocketHandlers = {
                 description: description
             });
 
-            // User confirmed in Smirk — TX submitted, server monitoring handles the rest
+            // The user confirmed in Smirk and the transaction is submitted; server-side monitoring
+            // handles confirmation from here.
             $('#messages').append($('<li class="status" style="color:#4ade80;">').text(
                 'Payment sent via Smirk! Waiting for confirmation...'
             ));
             UI.scrollChat();
 
-            // Show payment UI in "waiting for confirmation" state
             if (typeof PaymentUI !== 'undefined') {
                 PaymentUI.showPaymentRequest(data);
-                $('#payment-status').html('<span style="color:#4ade80;">Payment sent via Smirk — awaiting confirmation...</span>');
+                $('#payment-status').html('<span style="color:#4ade80;">Payment sent via Smirk, awaiting confirmation...</span>');
             }
             SocketHandlers._setBannerStatus('Pay', '#0af');
             if (typeof Game !== 'undefined' && Game._paymentRequested) Game._paymentRequested();
@@ -1069,7 +1035,7 @@ const SocketHandlers = {
             console.log('Smirk payment declined/failed, falling back to manual:', err);
             var errMsg = String(err.message || err || '').toLowerCase();
 
-            // Check if this is a user-initiated denial vs extension error
+            // Distinguish a user-initiated denial from an extension error.
             var isUserDenied = errMsg.indexOf('denied') !== -1 ||
                                errMsg.indexOf('rejected') !== -1 ||
                                errMsg.indexOf('cancelled') !== -1 ||
@@ -1080,15 +1046,14 @@ const SocketHandlers = {
                     'Smirk payment cancelled. Use the address below.'
                 ));
             } else {
-                // Extension error (context invalidated, service worker issue, etc.)
+                // Extension error: invalidated context, service worker issue, and similar.
                 $('#messages').append($('<li class="status" style="color:#f59e0b;">').text(
-                    'Smirk payment unavailable — using manual payment. Try refreshing the page to fix Smirk.'
+                    'Smirk payment unavailable, using manual payment. Refresh the page to restore Smirk.'
                 ));
                 SmirkAuth._isLinked = false;
             }
             UI.scrollChat();
 
-            // Fall back to normal address/QR flow
             SocketHandlers._showPaymentFlow(data);
         }
     },
@@ -1114,7 +1079,6 @@ const SocketHandlers = {
         const $li = $('<li class="payment-info" style="white-space:normal;">').html(parts.join('<br>'));
         $('#messages').append($li);
 
-        // Attach copy handler
         const fullAddress = data.address;
         $li.on('click', '.copy-pay-address', function(e) {
             e.preventDefault();
@@ -1139,7 +1103,6 @@ const SocketHandlers = {
             doCopy();
         });
 
-        // Toggle short/full address on span click
         var showingFull = false;
         $li.on('click', '.pay-address-full', function() {
             showingFull = !showingFull;
@@ -1157,7 +1120,7 @@ const SocketHandlers = {
             Game.drawWaitingScreen();
         }
 
-        // Sidebar QR (persistent) - create/update separate from chat scroll
+        // The sidebar QR lives outside the chat log so it persists as messages scroll.
         if (data.qr) {
             let qrHolder = document.getElementById('paymentQRContainer');
             if (!qrHolder) {
@@ -1170,7 +1133,6 @@ const SocketHandlers = {
                 }
             }
             if (qrHolder) {
-                // Create close button
                 const closeBtn = '<div onclick="SocketHandlers.hidePaymentQR()" style="position:absolute;top:4px;right:8px;cursor:pointer;font-size:16px;color:#0f0;font-weight:bold;z-index:10;" title="Close QR code">✕</div>';
                 qrHolder.innerHTML = closeBtn + '<img style="image-rendering:pixelated;width:100%;height:auto;display:block;margin:0 auto;max-width:320px;" src="' + data.qr + '" alt="Payment QR" />';
             }
@@ -1192,7 +1154,7 @@ const SocketHandlers = {
         }
     },
     
-    // Helper to hide/remove the payment QR code container
+    // Removes the payment QR container from the sidebar.
     hidePaymentQR: function() {
         const qrHolder = document.getElementById('paymentQRContainer');
         if (qrHolder) {
@@ -1202,7 +1164,6 @@ const SocketHandlers = {
 
     onShowPaymentOptions: function(data) {
         console.log('Show payment options:', data);
-        // Show the payment options modal so user can choose how to play
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.show();
         }
@@ -1227,14 +1188,12 @@ const SocketHandlers = {
     },
 
     onBalanceCritical: function(data) {
-        console.warn('Balance critical - games halted:', data);
+        console.warn('Balance critical, games halted:', data);
 
         const message = data?.message || 'Sorry, the house balance is too low to initiate new games. Please try again later.';
 
-        // Show a modal to the user
         SocketHandlers._showBalanceCriticalModal(message);
 
-        // Also show in chat
         $('#messages').append($('<li class="error" style="color: #ff6600; font-weight: bold;">').text('⚠️ ' + message));
         UI.scrollChat();
 
@@ -1242,7 +1201,6 @@ const SocketHandlers = {
     },
 
     _showBalanceCriticalModal: function(message) {
-        // Remove any existing modal
         $('#balanceCriticalModal').remove();
 
         const $modal = $(`
@@ -1290,19 +1248,17 @@ const SocketHandlers = {
 
         $('body').append($modal);
 
-        // Close handlers
         $modal.on('click', '#balanceCriticalOK', function() {
             $modal.fadeOut(200, function() { $modal.remove(); });
         });
 
-        // Also close on clicking outside
+        // Clicking the backdrop closes the modal.
         $modal.on('click', function(e) {
             if (e.target === $modal[0]) {
                 $modal.fadeOut(200, function() { $modal.remove(); });
             }
         });
 
-        // Close on ESC key
         $(document).one('keydown.balanceCritical', function(e) {
             if (e.key === 'Escape') {
                 $modal.fadeOut(200, function() { $modal.remove(); });
@@ -1314,22 +1270,19 @@ const SocketHandlers = {
     _confirmationTimestamps: {}, // paymentId -> ts
     onPaymentConfirmed: function(data) {
         console.log('Payment confirmed in block:', data);
-        if (!data || !data.paymentId) return; // ignore malformed legacy event
-        // Expire old confirmations (6h default) to prevent unbounded memory
+        if (!data || !data.paymentId) return; // A payload without a paymentId cannot be deduped.
         SocketHandlers._expireOldClientPaymentMarkers();
         if (SocketHandlers._lastDisplayedConfirmation === data.paymentId) return;
         SocketHandlers._lastDisplayedConfirmation = data.paymentId;
         SocketHandlers._confirmationTimestamps[data.paymentId] = Date.now();
 
-        // Hide the QR code now that payment is confirmed
         SocketHandlers.hidePaymentQR();
 
-        // Credits purchase: return to home screen (no game queue)
+        // A credits purchase does not enqueue a game, so the player returns to the welcome screen.
         if (data.creditsAdded || data.newBalance !== undefined) {
             if (typeof Game !== 'undefined') {
                 Game._pendingPaymentConfirmed();
             }
-            // Return to welcome/home screen so user can start a game
             if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWelcomeScreen) {
                 ScreenManager.drawWelcomeScreen();
             }
@@ -1339,7 +1292,7 @@ const SocketHandlers = {
             UI.scrollChat();
             SocketHandlers._setBannerStatus('Credits Added', '#0f0');
         } else {
-            // Single game payment: show waiting screen (player is in queue)
+            // A single-game payment puts the player in the queue, so show the waiting screen.
             if (typeof Game !== 'undefined' && Game.drawWaitingScreen) {
                 Game.drawWaitingScreen();
             }
@@ -1352,20 +1305,19 @@ const SocketHandlers = {
             UI.scrollChat();
             SocketHandlers._setBannerStatus('Confirmed', '#0f0');
         }
-        // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
+        // AudioAlerts._patchSocketHandlers() plays the sound for this event.
     },
 
     _mempoolShownForPayment: new Set(),
     _mempoolTimestamps: {}, // paymentId -> ts
     onPaymentDetected: function(data) {
         console.log('Payment detected (mempool):', data);
-        if (!data || !data.paymentId) return; // require paymentId for dedupe
+        if (!data || !data.paymentId) return; // A payload without a paymentId cannot be deduped.
         SocketHandlers._expireOldClientPaymentMarkers();
         if (SocketHandlers._mempoolShownForPayment.has(data.paymentId)) return;
         SocketHandlers._mempoolShownForPayment.add(data.paymentId);
         SocketHandlers._mempoolTimestamps[data.paymentId] = Date.now();
 
-        // Hide the QR code now that payment was detected
         SocketHandlers.hidePaymentQR();
 
         if (typeof Game !== 'undefined') {
@@ -1377,14 +1329,14 @@ const SocketHandlers = {
         ));
         UI.scrollChat();
         SocketHandlers._setBannerStatus('Mempool', '#0af');
-        // Sound handled by AudioAlerts._patchSocketHandlers() - don't duplicate
+        // AudioAlerts._patchSocketHandlers() plays the sound for this event.
     },
 
-    // Internal: periodic cleanup of client-side payment marker sets (invoked opportunistically)
+    // Bounds the client-side payment marker sets. Called opportunistically from the payment
+    // handlers rather than on a timer.
     _expireOldClientPaymentMarkers: function() {
         const TTL = 6 * 60 * 60 * 1000; // 6 hours
         const now = Date.now();
-        // Mempool markers
         for (const pid of Array.from(SocketHandlers._mempoolShownForPayment)) {
             const ts = SocketHandlers._mempoolTimestamps[pid];
             if (!ts || now - ts > TTL) {
@@ -1392,13 +1344,12 @@ const SocketHandlers = {
                 delete SocketHandlers._mempoolTimestamps[pid];
             }
         }
-        // Confirmation marker (single id tracking + map of timestamps)
         if (SocketHandlers._lastDisplayedConfirmation) {
             const lastId = SocketHandlers._lastDisplayedConfirmation;
             const ts = SocketHandlers._confirmationTimestamps[lastId];
             if (ts && now - ts > TTL) {
                 delete SocketHandlers._confirmationTimestamps[lastId];
-                // Allow new confirmation message for same id after TTL (rare, but cleans memory)
+                // Clearing the id frees the entry; the same id may display again after the TTL.
                 SocketHandlers._lastDisplayedConfirmation = null;
             }
         }
@@ -1408,17 +1359,18 @@ const SocketHandlers = {
         if (typeof UI !== 'undefined' && UI.updateBlockHeight) {
             UI.updateBlockHeight(data.blockHeight);
         }
-        // Sync to ScreenManager for welcome screen display
+        // ScreenManager shows the height on the welcome screen.
         if (typeof ScreenManager !== 'undefined' && data.blockHeight) {
             ScreenManager._currentBlockHeight = data.blockHeight;
-            // Redraw welcome screen if not in a game, not spectating, and not showing waiting screen
+            // Redrawing is only safe when no game, spectator view, or waiting screen owns the canvas.
             if (typeof GameState !== 'undefined' && !GameState.isGameActive() && 
                 typeof Game !== 'undefined' && !Game._isSpectating &&
                 !ScreenManager.isShowingWaitingScreen()) {
                 ScreenManager.drawWelcomeScreen();
             }
         }
-        // Fallback: if status banner still says Connecting..., upgrade it
+        // A banner still reading Connecting... has missed its status event; this block height
+        // proves the connection is live.
         const current = $('#statusValue').text();
         if (current === 'Connecting...') {
             SocketHandlers._setBannerStatus('Ready', '#0f0');
@@ -1434,7 +1386,6 @@ const SocketHandlers = {
     _updateUserCountDisplay: function(count) {
         let el = document.getElementById('userCountDisplay');
         if (!el) {
-            // Create display element next to connection status
             const statusDiv = document.querySelector('.status') || document.getElementById('connectionStatus')?.parentElement;
             if (statusDiv) {
                 el = document.createElement('div');
@@ -1462,10 +1413,9 @@ const SocketHandlers = {
         SocketHandlers._updateLiveCta(data);
     },
 
-    // "Land on action": when live games are in progress, surface a prominent, dismissible CTA
-    // in the status area so a new visitor immediately sees the room is alive and can jump into
-    // spectating with one click. Deliberately NON-intrusive — it never hijacks the canvas or
-    // interrupts someone who came to play (hidden while in a game / spectating, and dismissible).
+    // Dismissible call to action in the status area, shown only when live games exist. It stays out
+    // of the canvas and hides while the visitor is in a game, queued, or spectating, so it never
+    // interrupts play.
     _liveCtaDismissed: false,
     _updateLiveCta: function(data) {
         var el = document.getElementById('liveCta');
@@ -1476,12 +1426,12 @@ const SocketHandlers = {
 
         if (liveCount > 0 && !inGame && !panelOpen && !SocketHandlers._liveCtaDismissed) {
             el.innerHTML = '🔴 ' + liveCount + ' game' + (liveCount === 1 ? '' : 's') +
-                ' live right now — <span style="text-decoration:underline;">watch &raquo;</span>';
+                ' live right now: <span style="text-decoration:underline;">watch &raquo;</span>';
             el.style.display = 'block';
             if (!el._bound) {
                 el._bound = true;
                 el.addEventListener('click', function () {
-                    SocketHandlers._liveCtaDismissed = true; // don't nag after they engage
+                    SocketHandlers._liveCtaDismissed = true; // Engaging once suppresses it for the session.
                     el.style.display = 'none';
                     if (window.socket) socket.emit('get_active_games', { page: 1, pageSize: 20 });
                     SocketHandlers._showGamesPanel();
@@ -1497,17 +1447,14 @@ const SocketHandlers = {
         SocketHandlers._spectatorMode = true;
         SocketHandlers._spectatingGameId = data.gameId;
         
-        // Hide games panel
         SocketHandlers._hideGamesPanel();
-        
-        // Show spectator controls
+
         SocketHandlers._showSpectatorControls(data.playerId);
-        
-        // Start the game display in spectator mode
+
         if (typeof Game !== 'undefined' && data.initialState) {
             const state = data.initialState;
             try {
-                // Use a modified startGame that marks as spectator
+                // _isSpectating is set before startGame so the run renders read-only.
                 Game._isSpectating = true;
                 Game.startGame(
                     state.player,
@@ -1533,8 +1480,7 @@ const SocketHandlers = {
 
     onSpectatorUpdate: function(data) {
         if (!data || !SocketHandlers._spectatorMode) return;
-        
-        // Update the game display with new state
+
         if (typeof Game !== 'undefined' && typeof Game.updateGameState === 'function') {
             Game.updateGameState(data.gameState);
         }
@@ -1548,10 +1494,8 @@ const SocketHandlers = {
             Game._isSpectating = false;
         }
         
-        // Hide spectator controls
         SocketHandlers._hideSpectatorControls();
-        
-        // Show end message
+
         const reason = data?.reason || 'unknown';
         const gameOverData = data?.gameOverData;
         
@@ -1564,13 +1508,11 @@ const SocketHandlers = {
         
         $('#messages').append($('<li class="spectate-end" style="color:#0af;">').text(message));
         UI.scrollChat();
-        
-        // Return to welcome screen
+
         if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWelcomeScreen) {
             ScreenManager.drawWelcomeScreen();
         }
-        
-        // Show games panel again
+
         SocketHandlers._showGamesPanel();
         
         SocketHandlers._setBannerStatus('Ready', '#0f0');
@@ -1579,7 +1521,6 @@ const SocketHandlers = {
     _updateGamesListPanel: function(data) {
         let $panel = $('#gamesListPanel');
         
-        // Create panel if it doesn't exist
         if (!$panel.length) {
             $panel = $(`
                 <div id="gamesListPanel" style="
@@ -1609,12 +1550,11 @@ const SocketHandlers = {
             `);
             $('body').append($panel);
             
-            // Close button handler
             $panel.on('click', '#gamesListClose', function() {
                 $panel.hide();
             });
-            
-            // Spectate button handler (delegated)
+
+            // Delegated: game rows are re-rendered on every active_games update.
             $panel.on('click', '.spectate-btn', function() {
                 const gameId = $(this).data('gameid');
                 if (gameId && window.socket) {
@@ -1623,7 +1563,6 @@ const SocketHandlers = {
             });
         }
         
-        // Render pending games section
         const $pendingContent = $('#pendingGamesContent');
         $pendingContent.empty();
         
@@ -1659,7 +1598,6 @@ const SocketHandlers = {
             });
         }
         
-        // Render active games section
         const $content = $('#gamesListContent');
         $content.empty();
         
@@ -1676,7 +1614,6 @@ const SocketHandlers = {
             </div>
         `);
         
-        // Render each game
         data.games.forEach(function(game) {
             const duration = game.durationSeconds || 0;
             const mins = Math.floor(duration / 60);
@@ -1716,7 +1653,6 @@ const SocketHandlers = {
             $content.append($gameItem);
         });
         
-        // Pagination info
         const pag = data.pagination;
         if (pag && pag.totalGames > pag.pageSize) {
             $('#gamesListPagination').html(
@@ -1794,7 +1730,7 @@ const SocketHandlers = {
     _isQueued: false,
     
     /**
-     * Check if early entry is currently allowed based on mode and config
+     * Whether early entry is allowed for the current mode and server config.
      */
     isEarlyEntryAllowed: function() {
         const config = this._earlyEntryConfig;
@@ -1808,12 +1744,11 @@ const SocketHandlers = {
     },
     
     /**
-     * Update early entry button visibility based on current state
+     * Sets early entry button visibility and label from the current state.
      */
     _updateEarlyEntryButton: function() {
         let $btn = $('#earlyEntryButton');
-        
-        // Create button if it doesn't exist
+
         if (!$btn.length) {
             $btn = $(`
                 <button id="earlyEntryButton" style="
@@ -1832,7 +1767,6 @@ const SocketHandlers = {
                 ">⚡ ENTER NOW (RISKY!) ⚡</button>
             `);
 
-            // Add CSS animation
             if (!$('#earlyEntryStyles').length) {
                 $('head').append(`
                     <style id="earlyEntryStyles">
@@ -1848,24 +1782,20 @@ const SocketHandlers = {
                 `);
             }
             
-            // Insert near animation toggle button
             const $animBtn = $('#animationToggleButton');
             if ($animBtn.length) {
                 $animBtn.after($btn);
             } else {
-                // Fallback - add to header area
                 $('#header').append($btn);
             }
-            
-            // Click handler
+
             $btn.on('click', function() {
                 SocketHandlers.requestEarlyEntry();
             });
         }
         
-        // Show/hide based on whether we're queued and early entry is allowed
         if (this._isQueued && this.isEarlyEntryAllowed()) {
-            // Update button text to show credit cost when in paid mode
+            // Paid modes name the credit cost in the label.
             var mode = this._gameMode;
             if (mode === 'PAID_CREDITS' || mode === 'MIXED') {
                 var cost = this._creditsPerGame || 1;
@@ -1880,12 +1810,11 @@ const SocketHandlers = {
     },
 
     /**
-     * Request early entry from the server
+     * Requests early entry from the server after confirming the credit spend.
      */
     requestEarlyEntry: function() {
         if (!window.socket) return;
 
-        // Confirm before spending credits
         var mode = this._gameMode;
         var msg = 'Enter the dungeon NOW?\n\nYou will die when the next block is found!';
         if (mode === 'PAID_CREDITS' || mode === 'MIXED') {
@@ -1894,7 +1823,7 @@ const SocketHandlers = {
         }
         if (!confirm(msg)) return;
 
-        // Disable button to prevent double-clicks
+        // Disabling the button prevents a second entry request while the first is in flight.
         var $btn = $('#earlyEntryButton');
         $btn.prop('disabled', true).text('⏳ Entering...');
 
@@ -1903,26 +1832,19 @@ const SocketHandlers = {
         }
     },
     
-    /**
-     * Handle early entry success
-     */
     onEarlyEntrySuccess: function(data) {
         console.log('Early entry success:', data);
         SocketHandlers._isQueued = false;
         SocketHandlers._updateEarlyEntryButton();
-        
-        // The game_start event will follow - just show feedback
+
+        // game_start follows and draws the run; this line is acknowledgement only.
         $('#messages').append($('<li class="status" style="color:#ff6600;">').text('⚡ Early entry! Race to escape before the next block!'));
         UI.scrollChat();
     },
     
-    /**
-     * Handle early entry error
-     */
     onEarlyEntryError: function(data) {
         console.error('Early entry error:', data);
 
-        // Re-enable button
         const $btn = $('#earlyEntryButton');
         $btn.prop('disabled', false).text('⚡ ENTER NOW (RISKY!) ⚡');
 
@@ -1935,10 +1857,10 @@ const SocketHandlers = {
     // Entry Choice Modal
     // =====================
 
-    // ONE consolidated entry modal: timing (when) + entry (free vs ranked) in a single dialog, so
-    // the player never hits the old timing-modal-then-payment-modal double. Each card emits the
-    // FINAL intent — Free sends {free:true} (server skips its options modal), Ranked uses a credit
-    // or opens the real payment UI. Nothing starts until a card is clicked.
+    // A single dialog covering both timing and entry type, so the player answers one modal rather
+    // than a timing modal followed by a payment modal. Each card emits the final intent: Free sends
+    // {free:true} so the server skips its own options modal, Ranked spends a credit or opens the
+    // payment UI. Nothing starts until a card is clicked.
     showEntryChoiceModal: function(opts) {
         opts = opts || {};
         $('#entryChoiceOverlay').remove();
@@ -1950,7 +1872,7 @@ const SocketHandlers = {
         var buyRankedEntry = SocketHandlers._directModeEnabled
             ? 'Buy a single entry or credits with ' + currency
             : 'Buy credits with ' + currency;
-        var timing = 'wait'; // safe default
+        var timing = 'wait'; // Waiting for the next block is the non-risky option.
 
         var $overlay = $('<div id="entryChoiceOverlay">').css({
             position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
@@ -1983,9 +1905,9 @@ const SocketHandlers = {
         function begin(msg, emit) {
             if (emit() === false) return;
             $('#entryChoiceOverlay').remove();
-            // Transient "dropping in…/queued…" line — cleared in onGameStart once the game is live so
-            // it doesn't linger next to a running game reading as "still starting". The queued variant
-            // stays visible during the (real) block wait; only a started game removes it.
+            // Transient entry line, cleared in onGameStart once the game is live so it cannot read
+            // as "still starting" beside a running game. The queued variant stays visible for the
+            // whole block wait; only a started game removes it.
             $('#messages').append($('<li class="entry-progress" style="color:#f0a828;">').text(msg));
             if (typeof UI !== 'undefined' && UI.scrollChat) UI.scrollChat();
             if (typeof ScreenManager !== 'undefined' && ScreenManager.drawWaitingScreen) ScreenManager.drawWaitingScreen();
@@ -2017,13 +1939,13 @@ const SocketHandlers = {
             $('#ecNow').on('click', function () { timing = 'now'; render(); });
             $('#ecX').on('click', function () { $('#entryChoiceOverlay').remove(); });
             $('#ecFree').on('click', function () {
-                if (timing === 'now') begin('⚡ Free game — dropping in...', function () { return SocketHandlers.emitFairGameStart('auto_start', { free: true }); });
-                else begin('🛡️ Free game — queued for the next block...', function () { return SocketHandlers.emitFairGameStart('join_queue', { free: true }); });
+                if (timing === 'now') begin('⚡ Free game: dropping in...', function () { return SocketHandlers.emitFairGameStart('auto_start', { free: true }); });
+                else begin('🛡️ Free game: queued for the next block...', function () { return SocketHandlers.emitFairGameStart('join_queue', { free: true }); });
             });
             $('#ecRank').on('click', function () {
                 if (!hasCredits) { pay(); return; }
-                if (timing === 'now') begin('⚡ Ranked — dropping in now...', function () { return SocketHandlers.emitFairGameStart('auto_start'); });
-                else begin('🛡️ Ranked — queued for the next block...', function () { return SocketHandlers.emitFairGameStart('join_queue'); });
+                if (timing === 'now') begin('⚡ Ranked: dropping in now...', function () { return SocketHandlers.emitFairGameStart('auto_start'); });
+                else begin('🛡️ Ranked: queued for the next block...', function () { return SocketHandlers.emitFairGameStart('join_queue'); });
             });
             $('#ecBuy').on('click', pay);
         }

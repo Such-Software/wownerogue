@@ -6,22 +6,22 @@ const Appearance = require('./appearance');
 // object just mirrors the four seed packs so nothing regresses without the table.
 //
 // Each entry: { id, label, kind, projection, tier, unlockMinCredits, grantOnly, premium }.
-//   tier            — 0 = free tier; ordered ladder (1,2,3) for premium subscriptions.
-//   unlockMinCredits — lifetime-spend threshold to unlock, or null (not credit-unlockable).
-//   grantOnly       — only obtainable via an explicit grant/purchase.
-//   premium         — derived convenience flag: true unless the pack is free (no gate at all).
-// Cosmetic ladder. Unlock by LIFETIME CREDITS PURCHASED (cumulative — spend more, unlock more; NOT
+//   tier            : 0 = free tier; ordered ladder (1,2,3) for premium subscriptions.
+//   unlockMinCredits : lifetime-spend threshold to unlock, or null (not credit-unlockable).
+//   grantOnly       : only obtainable via an explicit grant/purchase.
+//   premium         : derived convenience flag, true unless the pack is free (no gate at all).
+// Cosmetic ladder. Unlock by LIFETIME CREDITS PURCHASED (cumulative: spend more, unlock more; NOT
 // deducted, so buying credits to play also walks you up the ladder) OR by subscription tier. Each
-// row is just data — a tilepack OR a char-skin, at any credit rung — so the operator adds more of
+// row is just data, a tilepack OR a char-skin, at any credit rung, so the operator adds more of
 // either by appending a row (+ assets + registerPack for a client pack). See docs/MONETIZATION.md.
 //
-//   free  original tiles (bare — no furniture, the "ugly tavern") + plain ASCII (in renderModes)
+//   free  original tiles (bare: no furniture, the "ugly tavern") + plain ASCII (in renderModes)
 //   1     Roguelike Interior (first premium tilepack)
 //   5     Character skins
 //   10    Iso technique (first iso pack)      20  another tilepack
 //   40    second iso pack                     50  3D technique
 const DEFAULT_CATALOG = Object.freeze({
-    // FREE pleb baseline — the game's original bare tiles. Furniture kinds fall back to floor, so
+    // FREE pleb baseline: the game's original bare tiles. Furniture kinds fall back to floor, so
     // the free tavern is pointedly plain (just floor + walls + players/monsters). By design: it's
     // the reason to unlock the richer packs.
     'original': Object.freeze({
@@ -55,7 +55,7 @@ const DEFAULT_CATALOG = Object.freeze({
 });
 
 // Ordered premium-tier ladder. Buying credits does NOT put you on this ladder (that was the old
-// bug — any purchase → level 'credits' → every premium pack unlocked). 'credits' maps to tier 0.
+// bug: any purchase → level 'credits' → every premium pack unlocked). 'credits' maps to tier 0.
 const TIER_OF = Object.freeze({ free: 0, credits: 0, supporter: 1, premium: 2, operator: 3 });
 
 // Backwards-compatible alias: productGrants.js and older callers validate pack ids against PACKS.
@@ -97,7 +97,7 @@ function normalizePackGrants(grants = [], catalog = DEFAULT_CATALOG) {
 // Only a REAL premium tier (supporter/premium/operator) counts as a level; buying credits does not.
 // The tier is the HIGHEST of the stored premium_level and any active-subscription tier: a live
 // wowne.ro premium sub sets subscription_tier (e.g. 'premium') and thereby unlocks the cosmetic
-// packs at/below that tier — one subscription drives both chat perks and tile/customization unlocks.
+// packs at/below that tier: one subscription drives both chat perks and tile/customization unlocks.
 // (The subscription_tier field is populated by the user loader from a subscription check; absent =
 // unchanged legacy behavior.)
 function levelForUser(user = {}) {
@@ -144,7 +144,7 @@ function snapshotForUser(user = {}, packGrants = [], catalog = DEFAULT_CATALOG) 
     };
 }
 
-// Display-facing catalog the client renders (labels/projection/gating) — replaces the hardcoded
+// Display-facing catalog the client renders (labels/projection/gating): replaces the hardcoded
 // client RK.PACKS so the operator owns the catalog from one place (the DB).
 function catalogSummary(catalog = DEFAULT_CATALOG) {
     const out = [];

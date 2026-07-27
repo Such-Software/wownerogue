@@ -1,15 +1,15 @@
 // Bot policies for the balance sim. A bot is a pure decision function: given the live Game, return
-// the next move {dx,dy} (or null to give up). Bots NEVER mutate the game — the harness applies the
+// the next move {dx,dy} (or null to give up). Bots NEVER mutate the game: the harness applies the
 // move through the real engine. Two skill models bracket reality:
 //
-//   omniscient  — knows the full map from move 1; BFS-optimal to (treasure→)exit. This is the BEST
+//   omniscient:   knows the full map from move 1; BFS-optimal to (treasure→)exit. This is the BEST
 //                 case: it is a LOWER bound on completion time, hence a LOWER bound on house-win-rate.
-//   explorer    — fog-of-war: only knows cells it has seen (radius `vision`). Explores toward the
+//   explorer:     fog-of-war, only knows cells it has seen (radius `vision`). Explores toward the
 //                 nearest frontier until the exit is revealed, then heads out. This is the realistic
 //                 first-time-player model (every dungeon is seen fresh).
 //
 // Both softly avoid the monster's current + adjacent cells when a detour exists, so bots don't walk
-// into obvious suicides — but they do NOT actively evade (a known bias: real skilled players evade
+// into obvious suicides, but they do NOT actively evade (a known bias: real skilled players evade
 // better, so monster-deaths here are an UPPER bound). The omniscient/explorer pair plus this note
 // bracket the true numbers honestly rather than pretending to a single "correct" bot.
 
@@ -61,7 +61,7 @@ function omniscientBot(opts = {}) {
             let field = bfsField(cols, rows, passable, [goingTo]);
             let step = stepDownField(field, game.player.x, game.player.y, cols, rows);
             if (step) return step;
-            // Blocked only by the monster hazard — retry ignoring it (accept the risk over stalling).
+            // Blocked only by the monster hazard: retry ignoring it (accept the risk over stalling).
             passable = passableFactory(game, null, new Set(), goalKey);
             field = bfsField(cols, rows, passable, [goingTo]);
             return stepDownField(field, game.player.x, game.player.y, cols, rows);
@@ -111,7 +111,7 @@ function explorerBot(opts = {}) {
         id: wantTreasure ? 'explorer-greedy' : 'explorer-escape',
         vision,
         move(game) {
-            // On a descent, the old level's knowledge is stale — start the new level unexplored.
+            // On a descent, the old level's knowledge is stale: start the new level unexplored.
             if (game.depth && game.depth !== lastDepth) {
                 known.clear(); seenExit.at = null; seenTreasure.at = null; lastDepth = game.depth;
             }
@@ -137,7 +137,7 @@ function explorerBot(opts = {}) {
                 const field = bfsField(cols, rows, passable, fs);
                 const step = stepDownField(field, game.player.x, game.player.y, cols, rows);
                 if (step) return step;
-                // Hazard-blocked — retry without avoiding the monster.
+                // Hazard-blocked: retry without avoiding the monster.
                 const field2 = bfsField(cols, rows, passableFactory(game, known, new Set(), null), fs);
                 const step2 = stepDownField(field2, game.player.x, game.player.y, cols, rows);
                 if (step2) return step2;

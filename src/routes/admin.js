@@ -65,7 +65,7 @@ const adminAuth = (req, res, next) => {
     });
   }
 
-  // Origin check — reject cross-origin requests to admin endpoints
+  // Origin check: reject cross-origin requests to admin endpoints
   // Same-origin requests (Origin matches Host) are always allowed
   const origin = req.headers.origin || req.headers.referer;
   if (origin) {

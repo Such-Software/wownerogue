@@ -14,7 +14,7 @@ function escapeHtml(s) {
 }
 
 /**
- * TavernManager — transport and lifecycle for the Tavern mode.
+ * TavernManager: transport and lifecycle for the Tavern mode.
  *
  * Owns a shared Room, a server-tick timer, and Socket.IO room broadcasts. Structured like
  * SpectatorManager. Disabled unless TAVERN_ENABLED=true: when disabled, no timer runs and
@@ -43,12 +43,12 @@ class TavernManager {
 
         this.room = new Room({ id: this.roomId, type: 'tavern', roomData: roomData, roomUrl: roomUrl });
 
-        // Chat: prefer the shared GLOBAL chat provider (persistent history + cross-page/relay
-        // fan-out) so the tavern participates in one global chat with backlog. When it isn't
-        // injected, fall back to an ephemeral tavern-scoped provider (previous behavior).
+        // Chat prefers the shared global provider (persistent history plus cross-page/relay
+        // fan-out) so the tavern participates in one global chat with backlog. Without one
+        // injected, the ephemeral tavern-scoped provider is used instead.
         this.globalChatProvider = globalChatProvider;
         this.chatProvider = new SocketChatProvider({ io: this.io, debugManager: this.debugManager });
-        // Guards applied before anything reaches GLOBAL chat (ban list, shared rate limiter,
+        // Guards applied before anything reaches global chat (ban list, shared rate limiter,
         // user_id attribution). Optional so a tavern-only/ephemeral instance still works.
         this.chatModeration = chatModeration;
     }
@@ -132,7 +132,7 @@ class TavernManager {
         // Full state (map + occupants) to the joiner; the next tick shows the arrival to others.
         socket.emit('tavern_joined', { you: socket.id, state: this.room.fullState() });
 
-        // Send recent GLOBAL chat backlog so the tavern shows history on arrival (unified chat).
+        // Recent global chat backlog so the tavern shows history on arrival.
         if (this.globalChatProvider && typeof this.globalChatProvider.getHistory === 'function') {
             this.globalChatProvider.getHistory({ scope: 'global', limit: 50 })
                 .then(messages => { if (messages && messages.length) socket.emit('chat_history', { messages }); })
@@ -154,15 +154,15 @@ class TavernManager {
 
         const { dx, dy } = this._normalizeDir(data);
         if (dx === 0 && dy === 0) return;
-        this.room.moveOccupant(socket.id, dx, dy); // next tick broadcasts the result
+        this.room.moveOccupant(socket.id, dx, dy); // the next tick broadcasts the result
     }
 
     /**
      * Publish a tavern message.
      *
-     * When a global chat provider is injected this reaches EVERY connected client and the persisted
+     * When a global chat provider is injected this reaches every connected client and the persisted
      * history, so it must clear the same bar as the lobby path: chat ban, the reconnect-proof rate
-     * limiter, and user_id attribution. Async — callers are wrapped by the socket safe-dispatch, and
+     * limiter, and user_id attribution. Async: callers are wrapped by the socket safe-dispatch, and
      * a moderation lookup failure must never publish.
      */
     async chat(socket, data = {}) {
@@ -176,9 +176,9 @@ class TavernManager {
 
         const now = Date.now();
         if (now - (this._lastChatAt.get(socket.id) || 0) < this.chatCooldownMs) {
-            // Tell the sender instead of silently dropping — a silent drop with a cleared
+            // Tell the sender instead of silently dropping: a silent drop with a cleared
             // input reads as "my message disappeared".
-            this._notice(socket, 'Easy — wait a moment before your next message.');
+            this._notice(socket, 'Easy, wait a moment before your next message.');
             return;
         }
 
@@ -191,9 +191,9 @@ class TavernManager {
         this._lastChatAt.set(socket.id, now);
 
         const username = occ.name || String(socket.id).slice(0, 6);
-        // Escape here (delivery is trusted-escaped, rendered as HTML on the client). Route to the
-        // global chat (persisted + broadcast to everyone + relayed over nostr when enabled) so the
-        // tavern shares one global conversation; fall back to tavern-scoped if no global provider.
+        // Escape here: delivery is trusted-escaped and rendered as HTML on the client. Routing to
+        // global chat (persisted, broadcast to everyone, relayed over nostr when enabled) keeps the
+        // tavern in one global conversation; tavern-scoped is used when no global provider exists.
         const provider = this.globalChatProvider || this.chatProvider;
         const scope = this.globalChatProvider ? 'global' : this.channel;
         provider.publish({
@@ -215,7 +215,7 @@ class TavernManager {
     /**
      * Shared-chat guards. Returns { allowed, message, userId }.
      *
-     * Only enforced for messages that actually enter GLOBAL chat — a tavern-scoped fallback room is
+     * Only enforced for messages that actually enter global chat; a tavern-scoped fallback room is
      * ephemeral and stays governed by the per-occupant cooldown alone.
      */
     async _moderateChat(socket) {
@@ -284,7 +284,7 @@ class TavernManager {
     }
 }
 
-// Cosmetic avatar ids the server will accept. Availability/unlocks are enforced via
+// Cosmetic avatar ids the server accepts. Availability and unlocks are enforced by
 // the Entitlements policy during join.
 TavernManager.AVATARS = Appearance.avatarIds();
 TavernManager.PREMIUM_AVATARS = Appearance.premiumAvatarIds();
