@@ -1,0 +1,8 @@
+Art assets in this folder are by Kenney (https://kenney.nl), released under
+Creative Commons Zero (CC0 1.0 Universal) — public domain.
+
+- roguelikeIndoor.png  — Kenney "Roguelike Interior Pack"
+- roguelikeChar.png    — Kenney "Roguelike Characters Pack"
+
+Tile grid: 16x16 px, 1 px spacing (17 px stride), no margin.
+No attribution is legally required; Kenney is credited here with thanks.

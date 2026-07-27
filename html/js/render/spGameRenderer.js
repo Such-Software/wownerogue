@@ -1,0 +1,320 @@
+// SP game render bridge (RK.SPGame): renders the single-player dungeon through the render kit
+// (Tiled / ASCII / Iso / 3D + unlocked packs) rather than the legacy ROT display, so a purchased
+// pack applies in gameplay and not only in the tavern. It mounts a renderer in a dedicated host
+// inside #game-display and hides the legacy ROT canvases while a game is live; the retro splash /
+// win / lose text screens still use ROT. When anything here is unavailable it returns false and the
+// caller falls back to the legacy RenderEngine, so a live game can never hard-break.
+(function (root) {
+    'use strict';
+    var RK = root.RK = root.RK || {};
+    var SP = RK.SPGame = RK.SPGame || {};
+
+    SP._renderer = null;
+    SP._mode = null;
+    SP._live = false;
+
+    function doc() { return root.document; }
+    function gameDisplay() { return doc() && doc().getElementById('game-display'); }
+
+    // Keyboard movement is intentionally scoped to #game-display so typing in chat and controls
+    // can never move the player. UI controls that affect the live renderer call this immediately
+    // after activation to restore that explicit gameplay focus.
+    SP.focusGameplay = function () {
+        var gd = gameDisplay();
+        if (!gd || !gd.focus) return false;
+        gd.setAttribute('tabindex', '-1');
+        try { gd.focus({ preventScroll: true }); }
+        catch (_) { gd.focus(); }
+        if (root.UI && UI.updateFocusIndicator) UI.updateFocusIndicator();
+        return doc().activeElement === gd;
+    };
+
+    // A dedicated, self-sizing child host so the RK canvas neither collides with the ROT canvas nor
+    // depends on it for dimensions; it is the viewport the camera transform is clipped to.
+    function rkHost() {
+        var gd = gameDisplay();
+        if (!gd) return null;
+        var host = doc().getElementById('rk-game-host');
+        if (!host) {
+            host = doc().createElement('div');
+            host.id = 'rk-game-host';
+            // inset:0 fills #game-display exactly. #game-display is a definite, grid-bounded height
+            // (.container is height:100vh; overflow:hidden), so filling it gives the camera reliable
+            // clientWidth/clientHeight every frame. Height caps plus translate(-50%) centering resolve
+            // to a wrong or transient size and strand the view in a top band, so avoid them.
+            // Pure-black background keeps the area beyond the map edge the same black as an
+            // unexplored ('dark') in-bounds tile; any shade difference outlines the map.
+            host.style.cssText = 'display:none; position:absolute; inset:0;' +
+                ' overflow:hidden; background:#000; z-index:6; touch-action:none; cursor:grab;';
+            gd.appendChild(host);
+        }
+        return host;
+    }
+
+    SP.available = function () {
+        return !!(RK.createRenderer && RK.sceneFromGameState && gameDisplay());
+    };
+
+    SP.mode = function () {
+        if (!SP._mode) {
+            var m = (RK.loadMode && RK.loadMode('tiles')) || 'tiles';
+            SP._mode = (RK.canUseMode && !RK.canUseMode(m)) ? 'tiles' : m;
+        }
+        return SP._mode;
+    };
+
+    SP.setMode = function (mode) {
+        if (RK.canUseMode && !RK.canUseMode(mode)) return false;
+        if (SP._mode !== mode) SP._zoom = null; // let the new projection use its legible default
+        SP._mode = mode;
+        if (RK.saveMode) RK.saveMode(mode);
+        SP._destroyRenderer();
+        if (SP._live && SP._lastState) SP.render(SP._lastState, SP._lastOpts);
+        return true;
+    };
+
+    // Re-mount after a pack switch (same mode, new active pack/assets).
+    SP.refreshPack = function () {
+        SP._destroyRenderer();
+        if (SP._live && SP._lastState) SP.render(SP._lastState, SP._lastOpts);
+    };
+
+    SP._destroyRenderer = function () {
+        if (SP._renderer && SP._renderer.destroy) { try { SP._renderer.destroy(); } catch (_) {} }
+        SP._renderer = null;
+    };
+
+    SP._setZoom = function (next) {
+        SP._zoom = Math.max(0.4, Math.min(4, Number(next) || SP._defaultZoom()));
+        var readout = doc() && doc().getElementById('rk-sp-camera-zoom');
+        if (readout) readout.textContent = Math.round(SP._zoom * 100) + '%';
+        SP._applyCamera();
+    };
+
+    SP._mountCameraControls = function (host) {
+        if (!host || host._rkCameraControls || !doc()) return;
+        var controls = doc().createElement('div');
+        controls.id = 'rk-sp-camera-controls';
+        controls.className = 'rk-camera-controls';
+        controls.setAttribute('aria-label', 'Dungeon camera controls');
+        controls.style.cssText = 'position:absolute;right:10px;bottom:10px;z-index:20;display:flex;' +
+            'align-items:center;gap:4px;padding:4px;background:rgba(4,7,10,.82);border:1px solid rgba(255,255,255,.2);' +
+            'border-radius:7px;box-shadow:0 4px 18px rgba(0,0,0,.45);font:12px monospace;';
+        function addButton(label, title, action) {
+            var b = doc().createElement('button');
+            b.type = 'button'; b.textContent = label; b.title = title; b.setAttribute('aria-label', title);
+            b.style.cssText = 'min-width:30px;height:28px;padding:0 7px;background:#151b22;color:#e5e7eb;' +
+                'border:1px solid #3b4552;border-radius:4px;cursor:pointer;font:inherit;';
+            b.addEventListener('click', function (e) {
+                e.stopPropagation();
+                action();
+                SP.focusGameplay();
+            });
+            controls.appendChild(b);
+        }
+        addButton('−', 'Zoom out', function () { SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) / 1.18); });
+        var readout = doc().createElement('span');
+        readout.id = 'rk-sp-camera-zoom';
+        readout.style.cssText = 'min-width:42px;text-align:center;color:#a7f3d0;';
+        controls.appendChild(readout);
+        addButton('+', 'Zoom in', function () { SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) * 1.18); });
+        addButton('⌂', 'Reset camera', function () { SP._zoom = null; SP._camX = null; SP._setZoom(SP._defaultZoom()); });
+        host.appendChild(controls);
+        host._rkCameraControls = controls;
+        readout.textContent = Math.round(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) * 100) + '%';
+    };
+
+    SP._ensureRenderer = function () {
+        if (SP._renderer) return SP._renderer;
+        var host = rkHost();
+        if (!host || !RK.createRenderer) return null;
+        var mode = SP.mode();
+        // 3D needs THREE, lazy-loaded from the pinned same-origin vendor route (or the explicitly
+        // enabled CDN fallback). The sync createRenderer() returns Tiled until it is ready, so the
+        // renderer is remounted as real 3D once loading finishes and the screen never goes blank.
+        if (mode === '3d' && RK.ensureThree && RK.threeReady && !RK.threeReady()) {
+            if (!SP._threePending) {
+                SP._threePending = true;
+                RK.ensureThree(function (ok) {
+                    SP._threePending = false;
+                    if (ok && SP._live && SP.mode() === '3d') {
+                        SP._destroyRenderer();
+                        if (SP._lastState) SP.render(SP._lastState, SP._lastOpts);
+                    }
+                });
+            }
+        }
+        SP._renderer = RK.createRenderer(mode, host, { cell: 24 });
+        // The camera owns the canvas transform (centre on the player), so the canvas is positioned
+        // absolutely and allowed to overflow. RK.attachZoom fights this transform; do not use it.
+        if (SP._renderer && SP._renderer.canvas) {
+            var c = SP._renderer.canvas;
+            c.style.position = 'absolute'; c.style.top = '0'; c.style.left = '0';
+            // Overrides the `.rotdis canvas { max-width/height:100%; object-fit:contain }` rules meant
+            // for the legacy ROT canvas, so the render-kit buffer maps 1:1 to the element and the
+            // camera transform is the sole controller of scale and position. Without these overrides a
+            // canvas taller than the host is object-fit-shrunk while the camera translate is computed
+            // in buffer space, pushing the player off-screen (iso canvases are tall enough to hit this;
+            // tiled canvases usually fit the host).
+            c.style.setProperty('max-width', 'none', 'important');
+            c.style.setProperty('max-height', 'none', 'important');
+            c.style.setProperty('object-fit', 'fill', 'important');
+            c.style.setProperty('image-rendering', 'pixelated', 'important');
+        }
+        if (!host._rkZoomBound) {
+            host._rkZoomBound = true;
+            host.addEventListener('wheel', function (ev) {
+                ev.preventDefault();
+                // The step is based on the current effective zoom (mode-aware default when unset).
+                // A hardcoded base makes the first scroll in a mode with a different default jump to
+                // that base, so both directions read as "zoom in".
+                var base = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
+                SP._setZoom(base * Math.exp(-ev.deltaY * 0.0015));
+            }, { passive: false });
+            host.addEventListener('dblclick', function (ev) {
+                if (ev.target && ev.target.closest && ev.target.closest('.rk-camera-controls')) return;
+                SP._zoom = null; SP._camX = null; SP._setZoom(SP._defaultZoom());
+            });
+            var points = {}, pinchDistance = null;
+            host.addEventListener('pointerdown', function (ev) {
+                if (ev.target && ev.target.closest && ev.target.closest('.rk-camera-controls')) return;
+                points[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+                try { host.setPointerCapture(ev.pointerId); } catch (_) {}
+            });
+            host.addEventListener('pointermove', function (ev) {
+                if (!points[ev.pointerId]) return;
+                points[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+                var ids = Object.keys(points);
+                if (ids.length < 2) return;
+                var a = points[ids[0]], b = points[ids[1]];
+                var distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (pinchDistance) SP._setZoom(((SP._zoom != null) ? SP._zoom : SP._defaultZoom()) * (distance / pinchDistance));
+                pinchDistance = distance;
+            });
+            function release(ev) { delete points[ev.pointerId]; pinchDistance = null; }
+            host.addEventListener('pointerup', release);
+            host.addEventListener('pointercancel', release);
+        }
+        SP._mountCameraControls(host);
+        return SP._renderer;
+    };
+
+    // Mode-aware default zoom: iso tiles are large (84px) so they want less magnification than the
+    // small tiled/ascii cells (~24px).
+    SP._defaultZoom = function () {
+        if (SP._renderer && SP._renderer.name === 'iso') return 1.0;
+        if (SP._renderer && SP._renderer.name === '3d') return 1.05;
+        return 1.7;
+    };
+
+    // Centre the whole-scene canvas on the player via a CSS transform, clipped to the host. This is
+    // renderer-agnostic: tiled, iso and 3d each report their own focusPoint.
+    SP._applyCamera = function () {
+        var r = SP._renderer;
+        var host = doc() && doc().getElementById('rk-game-host');
+        if (!r || !r.canvas || !host) return;
+        // The 3D renderer fills the host itself (setSize) and its own THREE camera follows the
+        // player, so it takes no CSS transform; one would double-transform the WebGL view.
+        if (r.name === '3d') {
+            if (r.setZoom) r.setZoom((SP._zoom != null) ? SP._zoom : SP._defaultZoom());
+            r.canvas.style.transform = 'none';
+            r.canvas.style.left = '0';
+            r.canvas.style.top = '0';
+            return;
+        }
+        var scale = (SP._zoom != null) ? SP._zoom : SP._defaultZoom();
+        var fp = r.focusPoint;
+        // A renderer can lack a focus for a frame: at game start, or when a camera tick reads a
+        // just-created renderer instance before its first render. In that case the focus is derived
+        // from the last known player cell (tiled coords); otherwise the camera falls back to a
+        // scale-only transform that pins the whole level to the top-left corner.
+        if (!fp && (r.name === 'tiles' || r.name === 'ascii') && SP._lastState && SP._lastState.player &&
+            typeof SP._lastState.player.x === 'number') {
+            var _c = r.cell || 24;
+            fp = { x: (SP._lastState.player.x + 0.5) * _c, y: (SP._lastState.player.y + 0.5) * _c };
+        }
+        r.canvas.style.transformOrigin = '0 0';
+        if (!fp) { r.canvas.style.transform = 'scale(' + scale + ')'; return; }
+        var w = host.clientWidth || host.offsetWidth || 640, h = host.clientHeight || host.offsetHeight || 400;
+        var tx = w / 2 - fp.x * scale, ty = h / 2 - fp.y * scale;
+        // Smooth follow: glide toward the target so single steps aren't jerky, but snap on a big jump
+        // (level-change teleport, or a stale focus that then updates) rather than panning the map.
+        if (SP._camX == null || Math.abs(tx - SP._camX) > w || Math.abs(ty - SP._camY) > h) {
+            SP._camX = tx; SP._camY = ty;
+        } else {
+            SP._camX += (tx - SP._camX) * 0.3;
+            SP._camY += (ty - SP._camY) * 0.3;
+        }
+        r.canvas.style.transform = 'translate(' + SP._camX + 'px,' + SP._camY + 'px) scale(' + scale + ')';
+    };
+
+    function toggleLegacy(hide) {
+        var gd = gameDisplay();
+        if (!gd) return;
+        var kids = gd.children;
+        for (var i = 0; i < kids.length; i++) {
+            if (kids[i].id === 'rk-game-host') continue;
+            kids[i].style.display = hide ? 'none' : '';
+        }
+    }
+
+    // Show the render-kit view (hide the ROT splash canvases). Call on game start.
+    SP.show = function () {
+        if (!SP.available()) return false;
+        var host = rkHost();
+        if (!host) return false;
+        host.style.display = 'block';
+        toggleLegacy(true);
+        SP._live = true;
+        SP._camX = null; // snap-center on the first frame of a new game
+        SP._startCameraLoop();
+        return true;
+    };
+
+    // Re-applies the camera every frame while live, so a renderer resizing its canvas or a transient
+    // focusPoint cannot leave the view snapped to a corner mid-run.
+    SP._startCameraLoop = function () {
+        if (SP._camRaf != null) return;
+        function tick() {
+            if (!SP._live) { SP._camRaf = null; return; }
+            SP._applyCamera();
+            SP._camRaf = root.requestAnimationFrame(tick);
+        }
+        SP._camRaf = root.requestAnimationFrame(tick);
+    };
+
+    // Back to the ROT view (splash / win / lose). Call on game end.
+    SP.hide = function () {
+        SP._live = false;
+        SP._destroyRenderer();
+        var host = doc() && doc().getElementById('rk-game-host');
+        if (host) host.style.display = 'none';
+        toggleLegacy(false);
+    };
+
+    // Build the Scene from the SP client render-state and draw it. Returns true if it rendered
+    // (caller then skips the legacy renderer). Non-destructive on failure.
+    SP.render = function (clientState, opts) {
+        if (!SP._live || !SP.available()) return false;
+        var r = SP._ensureRenderer();
+        if (!r) return false;
+        opts = opts || {};
+        SP._lastState = clientState;
+        SP._lastOpts = opts;
+        try {
+            var scene = RK.sceneFromGameState(clientState, {
+                cryptoType: opts.cryptoType,
+                playerAppearance: opts.playerAppearance,
+                isSpectating: opts.isSpectating
+            });
+            r.render(scene);
+            SP._applyCamera();
+            return true;
+        } catch (e) {
+            if (root.console) console.warn('SPGame render failed; falling back to legacy:', e && e.message);
+            return false;
+        }
+    };
+
+    if (typeof module !== 'undefined' && module.exports) module.exports = SP;
+})(typeof window !== 'undefined' ? window : this);

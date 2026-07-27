@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wownerogue - A Wownero Roguelike</title>
+    <link rel="stylesheet" type="text/css" href="styles/stylesheet.css">
+    <link rel="stylesheet" type="text/css" href="styles/commerce-consent.css">
+    <link rel="icon" type="image/x-icon" href="favicon.ico" id="favicon">
+
+    <!-- Socket.io -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Initialize socket with resume token (for persistent anonymous session) -->
+    <script>
+        (function(){
+            let opts = {};
+            window._localStorageAvailable = false;
+            try {
+                // Test localStorage availability (fails in private browsing on some browsers)
+                localStorage.setItem('_test', '1');
+                localStorage.removeItem('_test');
+                window._localStorageAvailable = true;
+                const existing = localStorage.getItem('wownerogue_token');
+                if (existing) {
+                    // Send the session token in the handshake `auth` payload, NOT the URL
+                    // query string. Query strings leak into proxy/access/referer logs;
+                    // auth is carried in the connection body.
+                    opts.auth = { resumeToken: existing };
+                }
+            } catch(_) {
+                window._localStorageAvailable = false;
+                console.warn('localStorage unavailable - session will not persist');
+            }
+            window.socket = io(opts);
+            // Show warning if localStorage unavailable (after DOM ready)
+            document.addEventListener('DOMContentLoaded', function() {
+                if (!window._localStorageAvailable) {
+                    const warn = document.getElementById('sessionWarning');
+                    if (warn) warn.style.display = 'inline';
+                }
+                // Fetch server config and populate hosted-by footer
+                fetch('/api/game-modes')
+                    .then(function(res) { return res.json(); })
+                    .then(function(data) {
+                        if (data.hostedBy && data.hostedBy.url) {
+                            var container = document.getElementById('hosted-by-container');
+                            if (container) {
+                                container.textContent = ' | Hosted by: ';
+                                var hostedLink = document.createElement('a');
+                                hostedLink.href = data.hostedBy.url;
+                                hostedLink.target = '_blank';
+                                hostedLink.rel = 'noopener';
+                                hostedLink.style.color = '#888';
+                                hostedLink.textContent = data.hostedBy.name || data.hostedBy.url;
+                                container.appendChild(hostedLink);
+                            }
+                        }
+                    })
+                    .catch(function() { /* ignore errors */ });
+            });
+        })();
+    </script>
+    
+    <!-- Core libraries -->
+    <script src="js/lib/jquery-3.7.1.min.js"></script>
+    <script src="js/lib/rot.min.js"></script>
+    <script src="js/core/escapeHtml.js"></script>
+    <script src="js/legal/commerceConsent.js"></script>
+    <script src="js/core/options.js"></script>
+    <script src="js/ui/teletype.js"></script>
+    
+    <!-- Modular game components (order matters for dependencies) -->
+    <script src="js/display/displayManager.js"></script>
+    <script src="js/display/waitingScreenAnimator.js"></script>
+    <script src="js/display/screenManager.js"></script>
+    <script src="js/display/renderEngine.js"></script>
+    <!-- Additive FX overlay (dependency-free window.FX; created by the fx-core track).
+         Loaded BEFORE gameState.js / game.js / singlePlayerAvatar.js so their guarded
+         `if (window.FX)` hooks can fire. All methods are no-ops when no overlay canvas
+         is present, so match.html / tavern.html are unaffected. -->
+    <script src="js/display/fxOverlay.js"></script>
+    <script src="js/core/gameState.js"></script>
+    <script src="js/core/game.js"></script>
+    <script src="js/render/atlas.js"></script>
+    <script src="js/render/skins.js"></script>
+    <script src="js/render/charSprites.js"></script>
+    <script src="js/render/packRegistry.js"></script>
+    <script src="js/render/assetPacks.js"></script>
+    <script src="/runtime-config.js"></script>
+    <script type="importmap">
+        {"imports":{"three":"/vendor/three/0.160.0/three.module.min.js"}}
+    </script>
+    <script src="js/render/renderModes.js"></script>
+    <script src="js/render/charCustomize.js"></script>
+    <script src="js/render/avatarVisuals.js"></script>
+    <!-- Render-kit renderers so the single-player DUNGEON draws through the kit (Tiled/ASCII/Iso/3D
+         + unlocked packs), not the legacy ROT display. Loaded before spGameRenderer.js. -->
+    <script src="js/render/sceneModel.js"></script>
+    <script src="js/render/fxLayer.js"></script>
+    <script src="js/render/catSprites.js"></script>
+    <script src="js/render/asciiRenderer.js"></script>
+    <script src="js/render/tileRenderer.js"></script>
+    <script src="js/render/isoRenderer.js"></script>
+    <script src="js/render/threeRenderer.js"></script>
+    <script src="js/render/zoomControl.js"></script>
+    <script src="js/render/spGameRenderer.js"></script>
+    <script src="js/ui/spRenderPicker.js"></script>
+    <script src="js/core/singlePlayerAvatar.js"></script>
+    
+    <!-- Other modules -->
+    <script src="js/ui/ui.js"></script>
+    <script src="js/ui/paymentUI.js"></script>
+    <script src="js/ui/audioAlerts.js"></script>
+    <script src="js/ui/addressModal.js"></script>
+    <script src="js/ui/transactionHistory.js"></script>
+    <script src="js/ui/leaderboard.js"></script>
+    <script src="js/ui/helpModal.js"></script>
+    <script src="js/ui/publicStats.js"></script>
+    <script src="js/network/socketHandlers.js"></script>
+    <script src="js/network/smirkAuth.js"></script>
+    <script src="js/input/inputHandler.js"></script>
+    <script src="js/input/touchControls.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header area -->
+        <header class="banner">
+            <div id="staticbanner">
+                <span id="banner"></span><span id="bannercursor">|</span>
+            </div>
+        </header>
+        
+        <!-- Status area for block height -->
+        <div class="status">
+            <div id="blockHeight">Block Height: <span id="heightValue">Loading...</span></div>
+            <div id="connectionStatus">Status: <span id="statusValue">Connecting...</span></div>
+            <div id="publicStats" style="display:none; margin-top:4px; font-size:11px; color:#9cf; font-family:monospace; line-height:1.4;"></div>
+            <div id="liveCta" style="display:none; margin-top:6px; cursor:pointer; background:rgba(80,0,0,0.55); border:1px solid #f33; border-radius:4px; padding:5px 10px; font-size:12px; font-family:monospace; color:#ff8a8a; font-weight:bold;" title="Watch a live game"></div>
+            <div id="creditsDisplay" style="display:none; margin-top:4px; font-size:13px; font-family:monospace; color:#0f0; background:#001a00; padding:4px 8px; border:1px solid #0a0; border-radius:4px; font-weight:bold;"></div>
+            <!-- PLAY -->
+            <button id="startButton" class="ctrl-btn ctrl-btn--start" style="display: none;">
+                🎮 <span class="lbl-full">START GAME</span><span class="lbl-short">START</span>
+            </button>
+
+            <!-- LOADOUT · set once, remembered -->
+            <div class="menu-grp-h">Loadout</div>
+            <button id="characterButton" class="ctrl-btn ctrl-btn--character" title="Create / customize your character">
+                🎭 <span id="characterButtonLabel" class="lbl-full">CHARACTER</span><span class="lbl-short">CHAR</span>
+            </button>
+            <!-- Render mode + tile-pack picker (Style), populated by spRenderPicker.js from entitlements. -->
+            <div id="renderPicker" class="hidden"></div>
+
+            <!-- EXPLORE -->
+            <div class="menu-grp-h">Explore</div>
+            <button id="watchGamesButton" class="ctrl-btn ctrl-btn--watch">
+                👁️ <span class="lbl-full">WATCH GAMES</span><span class="lbl-short">WATCH</span>
+            </button>
+            <button id="tavernButton" class="ctrl-btn ctrl-btn--tavern" style="display: none;" onclick="window.location.href='/tavern'">
+                🍺 <span class="lbl-full">TAVERN</span><span class="lbl-short">TAVERN</span>
+            </button>
+
+            <!-- PROGRESS & ACCOUNT -->
+            <div class="menu-grp-h">Progress &amp; account</div>
+            <button id="shopButton" class="ctrl-btn ctrl-btn--shop" style="display: none;">
+                🛒 SHOP
+            </button>
+            <button id="animationToggleButton" class="ctrl-btn ctrl-btn--anim" style="display: none;">
+                🎬 DISABLE ANIMATION
+            </button>
+            <div class="hud-toolbar">
+                <label>
+                    <input type="checkbox" id="audioAlertsToggle"> Audio Alerts
+                </label>
+                <button id="helpButton" class="hud-chip hud-chip--help hud-chip--push" title="How to play and payment information">❓ Help</button>
+                <button id="historyButton" class="hud-chip hud-chip--history" title="View your payment and payout history">📜 History</button>
+                <button id="leaderboardButton" class="hud-chip hud-chip--scores" title="View high scores">🏆 Scores</button>
+                <button id="manageAddressButton" class="hud-chip hud-chip--address" style="display:none;" title="Your payout address and credits are tied to a browser session token. Clearing cookies/localStorage or using incognito mode will lose your session.">⚙️ Manage Payout Address</button>
+                <span id="sessionWarning" style="display:none;" title="Private browsing or localStorage blocked - your session won't persist">⚠️ Session not saved</span>
+            </div>
+        </div>
+        
+        <!-- Payment System UI -->
+        <div id="payment-ui" class="payment-section dungeon-modal" style="display: none;">
+            <div class="payment-header dm-head">
+                <strong>🎮 Choose How to Play</strong>
+                <button id="close-payment" class="dm-close">✕</button>
+            </div>
+            
+            <!-- Dynamic game mode options populated by PaymentUI.js -->
+            <div class="game-modes" style="margin: 15px 0;">
+                <div style="color: #888; text-align: center; padding: 20px;">Loading payment options...</div>
+            </div>
+
+            <p style="font-size:11px;color:#aaa;line-height:1.45;">
+                Paid actions require a current acknowledgement. Review the <a href="/terms" target="_blank" rel="noopener">Terms</a>,
+                <a href="/privacy" target="_blank" rel="noopener">Privacy Notice</a>, and
+                <a href="/responsible-play" target="_blank" rel="noopener">Responsible Play</a> guidance.
+            </p>
+            
+            <div id="credits-display" style="margin: 10px 0; display: none;">
+                <strong>Credits remaining: <span id="credits-count">0</span></strong>
+            </div>
+            
+            <div id="payment-details" style="display: none; margin: 15px 0;">
+                <div style="margin-bottom: 5px;"><strong>Payment Required:</strong></div>
+                <div style="font-size: 1.2em; margin-bottom: 10px;">Amount: <span id="payment-amount" style="color: #ff0;">0</span></div>
+                <div style="margin-bottom: 5px;">Address:</div>
+                <input id="payment-address" type="text" readonly style="width: 100%; background: #000; color: #0f0; border: 1px solid #0f0; padding: 8px; font-family: monospace; margin-bottom: 10px;">
+                <div style="margin: 10px 0; display: flex; gap: 10px;">
+                    <button id="copy-address" style="flex: 1; background: #050; color: #0f0; border: 1px solid #0f0; padding: 8px; cursor: pointer;">📋 Copy Address</button>
+                    <button id="check-payment" style="flex: 1; background: #005; color: #0f0; border: 1px solid #0f0; padding: 8px; cursor: pointer;">🔄 Check Payment</button>
+                </div>
+                <div id="payment-status" style="margin: 10px 0; font-weight: bold; text-align: center;"></div>
+                <div style="font-size: 0.8em; color: #aaa; text-align: center; margin-top: 15px; border-top: 1px solid #333; padding-top: 10px;">
+                    ℹ️ You can close this window. The payment information is also available in the sidebar/chat area.
+                </div>
+            </div>
+        </div>
+        
+        <!-- Transaction History Panel -->
+        <div id="history-panel" class="dungeon-modal" style="display: none; max-width: 600px;">
+            <div class="dm-head">
+                <strong style="color:#c4b5fd;">📜 Transaction History</strong>
+                <button id="close-history" class="dm-close">✕</button>
+            </div>
+            
+            <!-- Summary Section -->
+            <div id="history-summary" style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
+                <div style="background:#1a1a3d; padding:12px; border-radius:6px; border:1px solid #4c1d95;">
+                    <div style="color:#888; font-size:0.85em;">Total Rewards</div>
+                    <div id="total-received" style="color:#4ade80; font-size:1.3em; font-weight:bold;">0 WOW</div>
+                </div>
+                <div style="background:#1a1a3d; padding:12px; border-radius:6px; border:1px solid #4c1d95;">
+                    <div style="color:#888; font-size:0.85em;">Total Paid</div>
+                    <div id="total-payments" style="color:#60a5fa; font-size:1.3em; font-weight:bold;">0 WOW</div>
+                </div>
+            </div>
+            
+            <!-- Tabs -->
+            <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <button class="history-tab active" data-tab="payouts" style="flex:1; padding:8px; background:#4c1d95; color:#fff; border:none; cursor:pointer; border-radius:4px;">💰 Payouts</button>
+                <button class="history-tab" data-tab="payments" style="flex:1; padding:8px; background:#333; color:#aaa; border:none; cursor:pointer; border-radius:4px;">💳 Payments</button>
+            </div>
+            
+            <!-- Payouts Tab Content -->
+            <div id="payouts-content" class="history-content">
+                <div id="payouts-list" style="max-height:300px; overflow-y:auto;"></div>
+                <div id="payouts-empty" style="text-align:center; color:#666; padding:20px;">No payouts yet</div>
+            </div>
+            
+            <!-- Payments Tab Content -->
+            <div id="payments-content" class="history-content" style="display:none;">
+                <div id="payments-list" style="max-height:300px; overflow-y:auto;"></div>
+                <div id="payments-empty" style="text-align:center; color:#666; padding:20px;">No payments yet</div>
+            </div>
+            
+            <div style="margin-top:15px; font-size:0.8em; color:#666; text-align:center;">
+                History is tied to your browser session
+            </div>
+        </div>
+        
+        <!-- Game display -->
+        <div id="game-display" class="rotdis"></div>
+        
+        <!-- Debug display area (hidden in production) -->
+        <div id="debug-display" style="display: none; background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; font-size: 12px; padding: 10px; margin: 5px; border: 1px solid #333; max-height: 200px; overflow-y: auto;">
+            <div><strong>Debug Information:</strong></div>
+            <div id="debug-content">Ready...</div>
+        </div>
+        
+        <!-- Chat messages area -->
+        <div class="chat-container">
+            <div id="messageBox">
+                <ul id="messages"></ul>
+            </div>
+        </div>
+        
+        <!-- Chat input in its own row -->
+        <div class="input-container">
+            <form id="chatForm" action="">
+                <input id="chatInput" autocomplete="off" placeholder="Type a command..." maxlength="200" />
+                <span id="charCounter" style="color:#666; font-size:10px; margin-left:5px; min-width:45px;">0/200</span>
+                <button type="submit">Send</button>
+            </form>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <span id="footer-title">Wownero Roguelike v0.1.0 | Use WASD or arrow keys to move</span>
+            <span id="hosted-by-container"></span>
+            <span> | <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/responsible-play">Responsible Play</a></span>
+        </div>
+    </div>
+
+    <!-- Address management modal -->
+    <div id="addressModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="addressModalTitle">
+        <div class="modal-content">
+            <button type="button" class="modal-close" id="addressModalClose" aria-label="Close">✕</button>
+            <h2 id="addressModalTitle">Manage Payout Address</h2>
+            <p class="modal-description">Enter your Wownero (WOW) or Monero (XMR) address below. This will be used for payouts when you escape.</p>
+            <p class="modal-description" style="font-size:11px; color:#888; margin-top:8px; padding:6px; background:rgba(255,200,0,0.1); border-radius:4px;">💡 <strong>Session Info:</strong> Your address and credits are tied to a browser session token stored locally. They will persist across page refreshes but will be lost if you clear cookies, use incognito mode, or switch browsers.</p>
+
+            <!-- Smirk Wallet Integration -->
+            <div id="smirkSection" style="margin: 15px 0; padding: 12px; background: rgba(26,26,77,0.5); border: 1px solid #3a3a7d; border-radius: 6px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-size: 1.2em;">🔐</span>
+                    <strong style="color: #aaf;">Connect with Smirk Wallet</strong>
+                </div>
+                <p style="font-size: 11px; color: #999; margin-bottom: 10px;">Automatically set your payout address by connecting your Smirk browser wallet.</p>
+                <div id="smirkButtonContainer">
+                    <!-- Will be populated by smirkAuth.js -->
+                </div>
+            </div>
+
+            <div style="text-align: center; color: #666; margin: 10px 0; font-size: 12px;">or enter manually</div>
+
+            <form id="addressModalForm">
+                <label for="addressModalInput" class="modal-label">Payout Address</label>
+                <textarea id="addressModalInput" autocomplete="off" spellcheck="false" rows="3" placeholder="Paste your payout address here"></textarea>
+                <div class="modal-actions">
+                    <button type="submit" id="addressModalSave">Save Address</button>
+                    <button type="button" id="addressModalCancel">Cancel</button>
+                </div>
+                <div id="addressModalFeedback" class="modal-feedback" aria-live="polite"></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Help/Instructions Modal -->
+    <div id="helpModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+        <div class="modal-content" style="max-width: 600px; max-height: 80vh; overflow-y: auto;">
+            <button type="button" class="modal-close" id="helpModalClose" aria-label="Close">✕</button>
+            <h2 id="helpModalTitle" style="color:#ffd700; margin-bottom:15px;">❓ How to Play</h2>
+            
+            <div style="margin-bottom:20px;">
+                <h3 style="color:#4ade80; font-size:1em; margin-bottom:8px;">🎮 Game Objective</h3>
+                <p style="color:#ccc; font-size:0.9em; line-height:1.4;">Navigate through the dungeon, collect the treasure bag, and escape through the exit before the monster catches you or time runs out!</p>
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <h3 style="color:#4ade80; font-size:1em; margin-bottom:8px;">⌨️ Controls</h3>
+                <ul style="color:#ccc; font-size:0.9em; line-height:1.6; padding-left:20px;">
+                    <li><strong>WASD</strong> or <strong>Arrow Keys</strong> - Move your character</li>
+                    <li><strong>Enter</strong> - Join the queue to play</li>
+                </ul>
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <h3 style="color:#4ade80; font-size:1em; margin-bottom:8px;">🕐 Block Timing</h3>
+                <p style="color:#ccc; font-size:0.9em; line-height:1.4;">Games are synchronized to blockchain blocks. <strong>You may need to wait a few minutes</strong> for the next block before your game starts. The block height is shown at the top of the screen.</p>
+            </div>
+
+            <div id="helpPaymentModes" style="margin-bottom:20px;">
+                <h3 style="color:#4ade80; font-size:1em; margin-bottom:8px;">🎫 Credits &amp; Entry</h3>
+                <div id="helpModesList" style="color:#ccc; font-size:0.9em; line-height:1.4;">
+                    <!-- Dynamically populated based on active modes -->
+                </div>
+            </div>
+
+            <div id="helpPayoutSection" style="margin-bottom:20px;">
+                <h3 id="helpPayoutTitle" style="color:#4ade80; font-size:1em; margin-bottom:8px;">🎁 Rewards</h3>
+                <p id="helpPayoutCopy" style="color:#ccc; font-size:0.9em; line-height:1.4;">Reward policy is loading…</p>
+            </div>
+
+            <div style="margin-bottom:15px;">
+                <h3 style="color:#4ade80; font-size:1em; margin-bottom:8px;">📜 Legend</h3>
+                <div style="display:grid; grid-template-columns: 30px 1fr; gap:8px; color:#ccc; font-size:0.9em;">
+                    <span style="color:#60a5fa;">@</span><span>You (the player)</span>
+                    <span style="color:#4ade80;">></span><span>Exit - escape here to win</span>
+                    <span style="color:#ef4444;">~</span><span>Monster - avoid at all costs</span>
+                    <span style="color:#fbbf24;">$</span><span id="helpTreasureLegend">Treasure - collect for a score bonus</span>
+                </div>
+            </div>
+
+            <button id="helpModalCloseBtn" style="width:100%; padding:10px; background:#4c1d95; color:#fff; border:none; cursor:pointer; border-radius:4px; font-weight:bold;">Got it!</button>
+        </div>
+    </div>
+
+    <!-- Browser info panel -->
+    <div id="browser-info" style="position: fixed; right: 10px; top: 40px; background: rgba(0,0,0,0.7); color: #0f0; padding: 5px; font-family: monospace; font-size: 12px; z-index: 1000; display: none;">
+        <div>Browser: <span id="browser-name">checking...</span></div>
+        <div>Display: <span id="display-status">checking...</span></div>
+        <button onclick="document.getElementById('browser-info').style.display='none'" style="margin-top: 5px; background: #333; border: 1px solid #666; color: white; font-size: 10px; padding: 2px 4px;">
+            Close
+        </button>
+    </div>
+
+    <!-- Initialize game when ready -->
+    <script>
+        $(document).ready(function() {
+            console.log("Document ready - initializing modules...");
+            console.log("Socket available:", !!window.socket);
+            console.log("Game object available:", typeof Game !== 'undefined');
+            console.log("SocketHandlers available:", typeof SocketHandlers !== 'undefined');
+            console.log("UI available:", typeof UI !== 'undefined');
+            console.log("InputHandler available:", typeof InputHandler !== 'undefined');
+            
+            // Small delay to ensure all modules are fully loaded
+            setTimeout(function() {
+                // Initialize Game first
+                if (typeof Game !== 'undefined') {
+                    console.log("Initializing Game...");
+                    const gameInitResult = Game.init();
+                    console.log("Game initialization result:", gameInitResult);
+                    
+                    // Ensure welcome screen is shown after a brief delay
+                    setTimeout(function() {
+                        if (gameInitResult && typeof ScreenManager !== 'undefined' && ScreenManager.drawWelcomeScreen) {
+                            console.log("Ensuring welcome screen is drawn...");
+                            ScreenManager.drawWelcomeScreen();
+                        }
+                    }, 50);
+                } else {
+                    console.error("Game object not found!");
+                }
+
+                if (typeof SinglePlayerAvatar !== 'undefined') {
+                    SinglePlayerAvatar.init();
+                }
+                
+                // Initialize SocketHandlers (CRITICAL for receiving game_start events!)
+                if (typeof SocketHandlers !== 'undefined') {
+                    console.log("Initializing SocketHandlers...");
+                    // IMPORTANT: AudioAlerts patches SocketHandlers methods, so must init BEFORE socket bindings
+                    if (typeof AudioAlerts !== 'undefined') { AudioAlerts.init(); }
+                    SocketHandlers.init();
+                } else {
+                    console.error("SocketHandlers object not found!");
+                }
+                
+                // Initialize InputHandler
+                if (typeof InputHandler !== 'undefined') {
+                    console.log("Initializing InputHandler...");
+                    InputHandler.init();
+                } else {
+                    console.error("InputHandler object not found!");
+                }
+            }, 100); // 100ms delay to ensure everything is loaded
+        });
+    </script>
+
+    <!-- On-screen movement D-pad (shown on touch/mobile via CSS) -->
+    <div id="touch-dpad" aria-hidden="true">
+        <button id="dpad-up" type="button" aria-label="Move up">▲</button>
+        <button id="dpad-left" type="button" aria-label="Move left">◀</button>
+        <button id="dpad-right" type="button" aria-label="Move right">▶</button>
+        <button id="dpad-down" type="button" aria-label="Move down">▼</button>
+    </div>
+</body>
+</html>

@@ -1,0 +1,64 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Logs
+logs/
+*.log
+*.tlog
+*.out
+*.pid
+*.gz
+
+# Environment variables. Ignore every runtime variant, not just the bare name:
+# the deployment docs instruct operators to create .env.mainnet, .env.stagenet and
+# similar, and an exact-name rule would let those be committed.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Build files
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+__pycache__/
+*.py[cod]
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+TEMP_TODO.md
+
+# 3D models / generation source artifacts (produced by the sprite pipeline; never commit:
+# see ~/src/docs/animated-sprite-pipeline.md)
+*.glb
+*.fbx
+*.blend
+*.blend1
+*.obj
+*.stl
+
+# AI-generated and heavy premium assets: hosted and lazy-loaded, not in the code tree
+html/assets/generated/
+
+# Operator-private documentation. Describes the operator's own deployment, books,
+# and account topology; never belongs in the public repository.
+docs/private/
+
+# Local agent/editor state. Never repository content.
+.claude/
+.agents/
+.codex/

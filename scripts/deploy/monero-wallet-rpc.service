@@ -1,0 +1,46 @@
+# Monero STAGENET wallet RPC for the monerogue instance.
+# Install to /etc/systemd/system/monero-wallet-rpc.service.
+#
+# Wallet credentials belong in /etc/monerogue/wallet-rpc.conf (root:monerogue-wallet 0640), never in
+# this unit: anything passed on the command line is readable from /proc by any local user. See
+# monero-wallet-rpc.conf.example.
+[Unit]
+Description=Monero Wallet RPC (Stagenet) - monerogue
+After=network-online.target monerod.service
+Wants=network-online.target
+Wants=monerod.service
+
+[Service]
+User=monerogue-wallet
+Group=monerogue-wallet
+Type=simple
+
+ExecStart=/usr/bin/monero-wallet-rpc --config-file /etc/monerogue/wallet-rpc.conf
+
+Restart=always
+RestartSec=10
+TimeoutStopSec=60
+UMask=0077
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/monerogue-wallet
+
+[Install]
+WantedBy=multi-user.target

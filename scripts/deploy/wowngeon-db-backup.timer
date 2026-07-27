@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Wowngeon PostgreSQL backups
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=wowngeon-db-backup.service
+
+[Install]
+WantedBy=timers.target

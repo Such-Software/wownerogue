@@ -1,0 +1,11 @@
+# Install as /etc/monerogue-wallet/wallet-rpc.conf, owned root:monerogue-wallet, mode 0640.
+# Replace CHANGE_ME with an independently generated password. The same rpc-login credentials
+# must be set as WALLET_RPC_USER/WALLET_RPC_PASSWORD in the app's protected .env file.
+stagenet=1
+wallet-file=/var/lib/monerogue-wallet/stagenet
+password-file=/etc/monerogue-wallet/wallet-password
+rpc-bind-port=38083
+rpc-bind-ip=127.0.0.1
+daemon-address=127.0.0.1:38081
+rpc-login=monerogue:CHANGE_ME_STRONG_RPC_PASSWORD
+non-interactive=1

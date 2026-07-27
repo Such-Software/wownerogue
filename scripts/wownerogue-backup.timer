@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily Wownerogue database backup
+
+[Timer]
+# Run daily at 3 AM
+OnCalendar=*-*-* 03:00:00
+
+# Run immediately if a scheduled run was missed (e.g., system was powered off)
+Persistent=true
+
+# Add random delay up to 15 minutes to avoid exact timing
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

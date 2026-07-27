@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Wowngeon</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: #1a1a2e;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a2a4e;
+        }
+        .header h1 { color: #4ade80; font-size: 1.5em; }
+        .header-right { display: flex; align-items: center; gap: 20px; }
+        .wallet-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 15px;
+            background: #0f0f1a;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        .wallet-status.warning { border: 1px solid #f59e0b; }
+        .wallet-status.healthy { border: 1px solid #22c55e; }
+        .wallet-status.disconnected { border: 1px solid #ef4444; }
+        .logout-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .logout-btn:hover { background: #dc2626; }
+
+        /* Login Modal */
+        .login-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .login-box {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-box h2 { margin-bottom: 20px; color: #4ade80; }
+        .login-box input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            background: #0f0f1a;
+            border: 1px solid #2a2a4e;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-size: 1em;
+        }
+        .login-box button {
+            width: 100%;
+            padding: 12px;
+            background: #4ade80;
+            color: #0a0a0a;
+            border: none;
+            border-radius: 4px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .login-box button:hover { background: #22c55e; }
+        .login-error { color: #ef4444; margin-bottom: 15px; display: none; }
+
+        /* Main content */
+        .main-content { padding: 20px; max-width: 1400px; margin: 0 auto; }
+
+        /* Stats cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: #1a1a2e;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #2a2a4e;
+        }
+        .stat-card h3 { color: #888; font-size: 0.9em; margin-bottom: 8px; }
+        .stat-card .value { font-size: 2em; font-weight: bold; color: #4ade80; }
+        .stat-card .value.warning { color: #f59e0b; }
+        .stat-card .value.danger { color: #ef4444; }
+        .stat-card .subtext { color: #666; font-size: 0.85em; margin-top: 5px; }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #2a2a4e;
+            padding-bottom: 10px;
+        }
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 1em;
+            border-radius: 4px 4px 0 0;
+        }
+        .tab-btn:hover { color: #e0e0e0; background: #1a1a2e; }
+        .tab-btn.active { color: #4ade80; background: #1a1a2e; border-bottom: 2px solid #4ade80; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Tables */
+        .table-container {
+            background: #1a1a2e;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .table-header {
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a2a4e;
+        }
+        .table-header h3 { color: #4ade80; }
+        .table-header select {
+            background: #0f0f1a;
+            color: #e0e0e0;
+            border: 1px solid #2a2a4e;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #2a2a4e; }
+        th { background: #0f0f1a; color: #888; font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+        tr:hover { background: #0f0f1a; }
+
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.85em; font-weight: 500; }
+        .status-pending { background: #f59e0b20; color: #f59e0b; }
+        .status-requested { background: #f59e0b20; color: #f59e0b; }
+        .status-processing { background: #3b82f620; color: #60a5fa; }
+        .status-failed { background: #ef444420; color: #ef4444; }
+        .status-needs_review { background: #ef444440; color: #fca5a5; border: 1px solid #ef4444; }
+        .status-completed { background: #22c55e20; color: #22c55e; }
+        .status-recorded { background: #6b728020; color: #9ca3af; }
+        .status-batched { background: #8b5cf620; color: #a78bfa; }
+        .status-permanently_failed { background: #7f1d1d; color: #fca5a5; }
+        .status-won { background: #22c55e20; color: #22c55e; }
+        .status-lost { background: #ef444420; color: #ef4444; }
+
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+
+        /* Charts */
+        .chart-container {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-container h3 { color: #4ade80; margin-bottom: 15px; }
+
+        /* Search */
+        .search-box { display: flex; gap: 10px; margin-bottom: 15px; }
+        .search-box input {
+            flex: 1;
+            padding: 10px;
+            background: #0f0f1a;
+            border: 1px solid #2a2a4e;
+            border-radius: 4px;
+            color: #e0e0e0;
+        }
+        .search-box button {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .pagination { display: flex; justify-content: center; gap: 10px; padding: 15px; }
+        .pagination button {
+            padding: 8px 15px;
+            background: #2a2a4e;
+            color: #e0e0e0;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .hidden { display: none !important; }
+        .tx-hash { font-family: monospace; font-size: 0.8em; color: #888; }
+
+        @media (max-width: 768px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .table-container { overflow-x: auto; }
+            table { min-width: 600px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Modal -->
+    <div id="loginModal" class="login-modal">
+        <div class="login-box">
+            <h2>Admin Login</h2>
+            <div id="loginError" class="login-error">Invalid API key</div>
+            <input type="password" id="apiKeyInput" placeholder="Enter Admin API Key">
+            <button onclick="attemptLogin()">Login</button>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboard" class="hidden">
+        <header class="header">
+            <h1>Wowngeon Admin</h1>
+            <div class="header-right">
+                <div id="walletStatus" class="wallet-status">
+                    <span id="walletIcon">-</span>
+                    <span id="walletBalance">Loading...</span>
+                </div>
+                <button class="logout-btn" onclick="logout()">Logout</button>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Stats Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Users</h3>
+                    <div id="statUsers" class="value">-</div>
+                    <div id="statNewUsers" class="subtext">+0 last 24h</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Games (24h)</h3>
+                    <div id="statGames" class="value">-</div>
+                    <div id="statWinRate" class="subtext">0% win rate</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Pending Payouts</h3>
+                    <div id="statPending" class="value">-</div>
+                    <div id="statFailed" class="subtext">0 failed</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Payout Review</h3>
+                    <div id="statPayoutReview" class="value">-</div>
+                    <div id="statPayoutProcessing" class="subtext">0 processing</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Refund Attention</h3>
+                    <div id="statRefundAttention" class="value">-</div>
+                    <div id="statRefundBreakdown" class="subtext">0 requested · 0 processing</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Wallet Balance</h3>
+                    <div id="statBalance" class="value">-</div>
+                    <div id="statUnlocked" class="subtext">Unlocked: -</div>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="overview">Overview</button>
+                <button class="tab-btn" data-tab="queue">Queue</button>
+                <button class="tab-btn" data-tab="payouts">Payouts</button>
+                <button class="tab-btn" data-tab="refunds">Refunds</button>
+                <button class="tab-btn" data-tab="games">Games</button>
+                <button class="tab-btn" data-tab="users">Users</button>
+                <button class="tab-btn" data-tab="chat">Chat</button>
+            </div>
+
+            <!-- Tab: Overview -->
+            <div id="tab-overview" class="tab-content active">
+                <div class="chart-container">
+                    <h3>Game Outcomes (Last 24h)</h3>
+                    <canvas id="outcomesChart" height="100"></canvas>
+                </div>
+            </div>
+
+            <!-- Tab: Queue -->
+            <div id="tab-queue" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Game Queue</h3>
+                        <button onclick="refreshQueue()" style="background:#055; color:#0f0; border:1px solid #0f0; padding:4px 10px; cursor:pointer;">🔄 Refresh</button>
+                    </div>
+                    <p style="color:#888; margin: 10px 0; font-size:12px;">
+                        Entries waiting more than 10 minutes are highlighted in orange. Remove stuck entries that will never confirm.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Server ID</th>
+                                <th>Waiting</th>
+                                <th>Payment ID</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueTable">
+                            <tr><td colspan="6" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab: Payouts -->
+            <div id="tab-payouts" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Payouts</h3>
+                        <select id="payoutStatusFilter">
+                            <option value="">All Status</option>
+                            <option value="attention">Needs Attention</option>
+                            <option value="pending">Pending</option>
+                            <option value="processing">Processing</option>
+                            <option value="failed">Failed</option>
+                            <option value="needs_review">Needs Review</option>
+                            <option value="completed">Completed</option>
+                            <option value="permanently_failed">Permanently Failed</option>
+                            <option value="batched">Batched</option>
+                        </select>
+                    </div>
+                    <p id="payoutTotals" style="color:#888; margin: 10px 15px; font-size:12px;">
+                        Loading payout totals...
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Amount</th>
+                                <th>Address</th>
+                                <th>Status</th>
+                                <th>TX Hash</th>
+                                <th>Last Error</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="payoutsTable">
+                            <tr><td colspan="8" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab: Refunds -->
+            <div id="tab-refunds" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Payment Refund Outbox</h3>
+                        <select id="refundStatusFilter">
+                            <option value="attention">Needs Attention</option>
+                            <option value="">All Status</option>
+                            <option value="requested">Requested</option>
+                            <option value="processing">Processing</option>
+                            <option value="needs_review">Needs Review</option>
+                            <option value="recorded">Recorded (no transfer)</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                    <p id="refundTotals" style="color:#888; margin: 10px 15px; font-size:12px;">
+                        Loading refund totals...
+                    </p>
+                    <p style="color:#f59e0b; margin: 10px 15px; font-size:12px;">
+                        Processing and needs-review transfers may already have broadcast. Never resend them from this dashboard.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Payment</th>
+                                <th>Amount</th>
+                                <th>Address</th>
+                                <th>Status</th>
+                                <th>TX / Error</th>
+                                <th>Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="refundsTable">
+                            <tr><td colspan="7" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab: Games -->
+            <div id="tab-games" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Recent Games</h3>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Mode</th>
+                                <th>Status</th>
+                                <th>Outcome</th>
+                                <th>Duration</th>
+                                <th>Payout</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gamesTable">
+                            <tr><td colspan="7" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab: Users -->
+            <div id="tab-users" class="tab-content">
+                <div class="search-box">
+                    <input type="text" id="userSearch" placeholder="Search by socket ID or address (min 3 chars)...">
+                    <button onclick="searchUsers()">Search</button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Socket ID</th>
+                                <th>Address</th>
+                                <th>Credits</th>
+                                <th>Games</th>
+                                <th>Won</th>
+                                <th>Total Won</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTable">
+                            <tr><td colspan="8" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="pagination" id="usersPagination"></div>
+                </div>
+            </div>
+
+            <!-- Tab: Chat -->
+            <div id="tab-chat" class="tab-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Chat Moderation</h3>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <label style="color:#888; font-size:12px;">
+                                <input type="checkbox" id="showDeletedMessages" onchange="loadChat()"> Show deleted
+                            </label>
+                            <button onclick="loadChat()" style="background:#055; color:#0f0; border:1px solid #0f0; padding:4px 10px; cursor:pointer;">🔄 Refresh</button>
+                        </div>
+                    </div>
+                    <p style="color:#888; margin: 10px 0; font-size:12px;">
+                        Delete offensive messages (they'll be removed from all clients). Ban users from chat if needed.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Time</th>
+                                <th>Player</th>
+                                <th>Message</th>
+                                <th>User ID</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="chatTable">
+                            <tr><td colspan="7" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // State
+        let apiKey = sessionStorage.getItem('adminApiKey') || '';
+        let currentTab = 'overview';
+        let usersOffset = 0;
+        let outcomesChart = null;
+        let atomicDivisor = 1e11; // Default WOW, updated from server on login
+        let cryptoSymbol = 'WOW'; // Updated from server on login
+
+        // Check if already logged in
+        if (apiKey) {
+            verifyAndShowDashboard();
+        }
+
+        // Enter key on login
+        document.getElementById('apiKeyInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') attemptLogin();
+        });
+
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        });
+
+        // Payout filter
+        document.getElementById('payoutStatusFilter').addEventListener('change', loadPayouts);
+        document.getElementById('refundStatusFilter').addEventListener('change', loadRefunds);
+
+        // User search on enter
+        document.getElementById('userSearch').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchUsers();
+        });
+
+        async function attemptLogin() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            if (!key) return;
+
+            try {
+                const res = await fetch('/api/admin/stats/overview', {
+                    headers: { 'X-Admin-Key': key }
+                });
+
+                if (res.ok) {
+                    apiKey = key;
+                    sessionStorage.setItem('adminApiKey', key);
+                    verifyAndShowDashboard();
+                } else {
+                    document.getElementById('loginError').style.display = 'block';
+                }
+            } catch (e) {
+                document.getElementById('loginError').textContent = 'Connection error';
+                document.getElementById('loginError').style.display = 'block';
+            }
+        }
+
+        async function verifyAndShowDashboard() {
+            try {
+                const res = await fetch('/api/admin/stats/overview', {
+                    headers: { 'X-Admin-Key': apiKey }
+                });
+
+                if (res.ok) {
+                    document.getElementById('loginModal').classList.add('hidden');
+                    document.getElementById('dashboard').classList.remove('hidden');
+                    loadDashboard();
+                } else {
+                    logout();
+                }
+            } catch (e) {
+                logout();
+            }
+        }
+
+        function logout() {
+            apiKey = '';
+            sessionStorage.removeItem('adminApiKey');
+            document.getElementById('loginModal').classList.remove('hidden');
+            document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('apiKeyInput').value = '';
+            document.getElementById('loginError').style.display = 'none';
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+            document.getElementById(`tab-${tab}`).classList.add('active');
+
+            // Load data for tab
+            if (tab === 'queue') loadQueue();
+            else if (tab === 'payouts') loadPayouts();
+            else if (tab === 'refunds') loadRefunds();
+            else if (tab === 'games') loadGames();
+            else if (tab === 'users') loadUsers();
+            else if (tab === 'chat') loadChat();
+        }
+
+        async function loadDashboard() {
+            try {
+                // Load overview stats
+                const overviewRes = await fetch('/api/admin/stats/overview', {
+                    headers: { 'X-Admin-Key': apiKey }
+                });
+                const overview = await overviewRes.json();
+
+                document.getElementById('statUsers').textContent = overview.totalUsers || 0;
+                document.getElementById('statNewUsers').textContent = `+${overview.last24h?.newUsers || 0} last 24h`;
+
+                const games24h = overview.last24h?.games || 0;
+                const wins24h = overview.last24h?.wins || 0;
+                const winRate = games24h > 0 ? Math.round((wins24h / games24h) * 100) : 0;
+                document.getElementById('statGames').textContent = games24h;
+                document.getElementById('statWinRate').textContent = `${winRate}% win rate`;
+
+                const pending = overview.pendingPayouts || 0;
+                const processing = overview.processingPayouts || 0;
+                const failed = overview.failedPayouts || 0;
+                const needsReview = overview.payoutsNeedsReview || 0;
+                const permanentlyFailed = overview.permanentlyFailedPayouts || 0;
+                document.getElementById('statPending').textContent = pending;
+                document.getElementById('statPending').className = 'value' + (pending > 5 ? ' warning' : '');
+                document.getElementById('statFailed').textContent = `${failed} failed · ${permanentlyFailed} permanent`;
+                document.getElementById('statFailed').className = 'subtext' + (failed + permanentlyFailed > 0 ? ' danger' : '');
+                document.getElementById('statPayoutReview').textContent = needsReview;
+                document.getElementById('statPayoutReview').className = 'value' + (needsReview > 0 ? ' danger' : '');
+                document.getElementById('statPayoutProcessing').textContent = `${processing} processing`;
+                document.getElementById('statPayoutProcessing').className = 'subtext' + (processing > 0 ? ' warning' : '');
+
+                const refundRequested = overview.refunds?.requested || 0;
+                const refundProcessing = overview.refunds?.processing || 0;
+                const refundReview = overview.refunds?.needsReview || 0;
+                const refundAttention = refundRequested + refundProcessing + refundReview;
+                document.getElementById('statRefundAttention').textContent = refundAttention;
+                document.getElementById('statRefundAttention').className = 'value' + (refundAttention > 0 ? ' danger' : '');
+                document.getElementById('statRefundBreakdown').textContent =
+                    `${refundRequested} requested · ${refundProcessing} processing · ${refundReview} review`;
+
+                // Update divisor and symbol from server
+                if (overview.atomicDivisor) atomicDivisor = overview.atomicDivisor;
+                if (overview.cryptoType) cryptoSymbol = overview.cryptoType;
+
+                // Wallet balance
+                if (overview.walletBalance) {
+                    const walletEl = document.getElementById('walletStatus');
+
+                    if (overview.walletBalance.error) {
+                        // Wallet RPC error - show error state
+                        document.getElementById('statBalance').textContent = 'Error';
+                        document.getElementById('statUnlocked').textContent = overview.walletBalance.error;
+                        document.getElementById('statUnlocked').title = overview.walletBalance.error;
+                        walletEl.className = 'wallet-status disconnected';
+                        document.getElementById('walletBalance').textContent = 'RPC Error';
+                    } else {
+                        // Wallet connected - show total balance and unlocked/locked breakdown
+                        const total = overview.walletBalance.balance || 0;
+                        const unlocked = overview.walletBalance.unlocked_balance || 0;
+                        const locked = total - unlocked;
+                        const totalFormatted = (total / atomicDivisor).toFixed(4);
+                        const unlockedFormatted = (unlocked / atomicDivisor).toFixed(4);
+                        document.getElementById('statBalance').textContent = totalFormatted;
+                        if (locked > 0) {
+                            const lockedFormatted = (locked / atomicDivisor).toFixed(4);
+                            document.getElementById('statUnlocked').textContent = `Unlocked: ${unlockedFormatted} | Locked: ${lockedFormatted}`;
+                        } else {
+                            document.getElementById('statUnlocked').textContent = `Unlocked: ${unlockedFormatted}`;
+                        }
+                        walletEl.className = 'wallet-status' + (unlocked < atomicDivisor ? ' warning' : ' healthy');
+                        document.getElementById('walletBalance').textContent = `${totalFormatted} ${cryptoSymbol}`;
+                    }
+                } else {
+                    document.getElementById('statBalance').textContent = '-';
+                    document.getElementById('walletBalance').textContent = 'Not configured';
+                    document.getElementById('walletStatus').className = 'wallet-status disconnected';
+                }
+
+                // Load games data for chart
+                const gamesRes = await fetch('/api/admin/stats/games?period=24h', {
+                    headers: { 'X-Admin-Key': apiKey }
+                });
+                const gamesData = await gamesRes.json();
+                renderOutcomesChart(gamesData.summary);
+
+            } catch (e) {
+                console.error('Failed to load dashboard:', e);
+            }
+        }
+
+        function renderOutcomesChart(summary) {
+            const canvas = document.getElementById('outcomesChart');
+            const ctx = canvas.getContext('2d');
+
+            if (outcomesChart) outcomesChart.destroy();
+            const labels = ['Won/Escaped', 'Caught', 'Expired', 'Other'];
+            const values = [
+                (summary.won || 0) + (summary.escaped || 0),
+                summary.caught || 0,
+                summary.expired || 0,
+                Math.max(0, (summary.total || 0) - (summary.won || 0) - (summary.escaped || 0) - (summary.caught || 0) - (summary.expired || 0))
+            ];
+            const colors = ['#22c55e', '#ef4444', '#f59e0b', '#6b7280'];
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const cssWidth = Math.max(320, canvas.clientWidth || 480);
+            const cssHeight = Math.max(200, canvas.clientHeight || 240);
+            canvas.width = Math.round(cssWidth * dpr);
+            canvas.height = Math.round(cssHeight * dpr);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+            const total = values.reduce((sum, value) => sum + value, 0);
+            const centerX = Math.min(cssWidth * 0.34, cssHeight * 0.5);
+            const centerY = cssHeight * 0.5;
+            const radius = Math.max(45, Math.min(cssHeight * 0.36, centerX - 12));
+            let angle = -Math.PI / 2;
+            values.forEach((value, index) => {
+                if (value <= 0 || total <= 0) return;
+                const next = angle + (value / total) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, radius, angle, next);
+                ctx.closePath();
+                ctx.fillStyle = colors[index];
+                ctx.fill();
+                angle = next;
+            });
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius * 0.58, 0, Math.PI * 2);
+            ctx.fillStyle = '#111827';
+            ctx.fill();
+            ctx.fillStyle = '#e5e7eb';
+            ctx.font = '600 18px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(total), centerX, centerY - 5);
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '11px system-ui, sans-serif';
+            ctx.fillText('games', centerX, centerY + 14);
+
+            const legendX = Math.max(centerX + radius + 28, cssWidth * 0.62);
+            labels.forEach((label, index) => {
+                const y = centerY - 54 + index * 34;
+                ctx.fillStyle = colors[index];
+                ctx.fillRect(legendX, y - 6, 12, 12);
+                ctx.fillStyle = '#9ca3af';
+                ctx.textAlign = 'left';
+                ctx.font = '12px system-ui, sans-serif';
+                ctx.fillText(`${label}: ${values[index]}`, legendX + 20, y);
+            });
+
+            outcomesChart = {
+                destroy: () => ctx.clearRect(0, 0, cssWidth, cssHeight)
+            };
+        }
+
+        // Queue management functions
+        async function loadQueue() {
+            try {
+                const res = await fetch('/api/admin/queue', { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+
+                const tbody = document.getElementById('queueTable');
+                if (!data.queue?.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading" style="color:#0f0;">Queue is empty - no waiting players</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.queue.map(entry => {
+                    const isStuck = entry.waitingSeconds > 600; // > 10 minutes
+                    const rowStyle = isStuck ? 'background: rgba(255,100,0,0.2);' : '';
+                    const statusText = entry.confirmed ? '✅ Confirmed' :
+                                      entry.requiresConfirmation ? '⏳ Awaiting Confirmation' : '🎮 Ready';
+
+                    const formatWait = (sec) => {
+                        if (sec < 60) return sec + 's';
+                        if (sec < 3600) return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+                        return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+                    };
+
+                    return `
+                        <tr style="${rowStyle}">
+                            <td>${entry.position}</td>
+                            <td title="${entry.serverId}">${entry.serverId.substring(0, 12)}...</td>
+                            <td style="${isStuck ? 'color:#f80; font-weight:bold;' : ''}">${formatWait(entry.waitingSeconds)}</td>
+                            <td>${entry.paymentId || '-'}</td>
+                            <td>${statusText}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="removeQueueEntry('${entry.serverId}')" style="background:#500; color:#f88; border:1px solid #f55; padding:3px 8px; cursor:pointer;">
+                                    Remove
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load queue:', e);
+                document.getElementById('queueTable').innerHTML = '<tr><td colspan="6" class="loading" style="color:#f00;">Failed to load queue</td></tr>';
+            }
+        }
+
+        function refreshQueue() {
+            loadQueue();
+        }
+
+        async function removeQueueEntry(serverId) {
+            if (!confirm(`Remove queue entry for ${serverId.substring(0, 12)}...? This will cancel their queue position.`)) return;
+
+            const reason = prompt('Reason for removal (optional):') || 'Admin removal';
+
+            try {
+                const res = await fetch('/api/admin/queue/remove', {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ serverId, reason })
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    alert('Queue entry removed successfully');
+                    loadQueue();
+                    loadDashboard(); // Refresh overview stats
+                } else {
+                    alert('Error: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to remove queue entry: ' + e.message);
+            }
+        }
+
+        async function loadPayouts() {
+            const status = document.getElementById('payoutStatusFilter').value;
+            const url = `/api/admin/stats/payouts?limit=50${status ? `&status=${status}` : ''}`;
+
+            try {
+                const res = await fetch(url, { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+
+                const tbody = document.getElementById('payoutsTable');
+                const totals = data.totals || {};
+                document.getElementById('payoutTotals').textContent =
+                    `${totals.pending || 0} pending · ${totals.processing || 0} processing · ` +
+                    `${totals.failed || 0} failed · ${totals.needsReview || 0} needs review · ` +
+                    `${totals.permanentlyFailed || 0} permanently failed · ${totals.completed || 0} completed`;
+                if (!data.payouts?.length) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="loading">No payouts found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.payouts.map(p => {
+                    const retryable = (p.status === 'failed' || p.status === 'permanently_failed') && !p.txHash;
+                    const lastError = p.lastError || '';
+                    return `
+                        <tr>
+                            <td>${p.id}</td>
+                            <td title="${escapeHtml(String(p.amount))} atomic">${(p.amount / atomicDivisor).toFixed(6)}</td>
+                            <td title="${escapeHtml(p.address || '')}">${p.address ? escapeHtml(p.address.substring(0, 12)) + '...' : '-'}</td>
+                            <td><span class="status-badge status-${escapeHtml(p.status)}">${escapeHtml(p.status)}</span></td>
+                            <td class="tx-hash">${p.txHash ? escapeHtml(p.txHash.substring(0, 16)) + '...' : '-'}</td>
+                            <td title="${escapeHtml(lastError)}">${lastError ? escapeHtml(lastError.substring(0, 48)) : '-'}</td>
+                            <td>${new Date(p.createdAt).toLocaleString()}</td>
+                            <td>
+                                ${retryable ? `<button class="btn btn-primary" onclick="retryPayout(${p.id})">Retry</button>` : '-'}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load payouts:', e);
+            }
+        }
+
+        async function retryPayout(id) {
+            if (!confirm('Only retry after confirming the recorded failure was pre-broadcast and wallet history contains no matching transfer. Queue this payout?')) return;
+
+            try {
+                const res = await fetch(`/api/admin/payouts/${id}/retry`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ confirm: true })
+                });
+
+                if (res.ok) {
+                    alert('Payout queued for retry');
+                    loadPayouts();
+                } else {
+                    const err = await res.json();
+                    alert('Error: ' + (err.message || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to retry payout');
+            }
+        }
+
+        async function loadRefunds() {
+            const status = document.getElementById('refundStatusFilter').value;
+            const url = `/api/admin/stats/refunds?limit=50${status ? `&status=${status}` : ''}`;
+
+            try {
+                const res = await fetch(url, { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+                const tbody = document.getElementById('refundsTable');
+                const totals = data.totals || {};
+                document.getElementById('refundTotals').textContent =
+                    `${totals.requested || 0} requested · ${totals.processing || 0} processing · ` +
+                    `${totals.needsReview || 0} needs review · ${totals.recorded || 0} recorded · ` +
+                    `${totals.completed || 0} completed`;
+
+                if (!data.refunds?.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No refunds found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.refunds.map(refund => {
+                    const evidence = refund.txHash
+                        ? `TX ${refund.txHash.substring(0, 16)}...`
+                        : (refund.error || refund.reason || '-');
+                    const updated = refund.updatedAt || refund.createdAt;
+                    return `
+                        <tr>
+                            <td>${refund.id}</td>
+                            <td>${refund.paymentId}</td>
+                            <td title="${escapeHtml(String(refund.amount))} atomic">${(refund.amount / atomicDivisor).toFixed(6)}</td>
+                            <td title="${escapeHtml(refund.address || '')}">${refund.address ? escapeHtml(refund.address.substring(0, 12)) + '...' : '-'}</td>
+                            <td><span class="status-badge status-${escapeHtml(refund.status)}">${escapeHtml(refund.status)}</span></td>
+                            <td title="${escapeHtml(evidence)}">${escapeHtml(evidence.substring(0, 56))}</td>
+                            <td>${new Date(updated).toLocaleString()}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load refunds:', e);
+                document.getElementById('refundsTable').innerHTML =
+                    '<tr><td colspan="7" class="loading">Failed to load refunds</td></tr>';
+            }
+        }
+
+        async function loadGames() {
+            try {
+                const res = await fetch('/api/admin/stats/games?period=24h&limit=50', {
+                    headers: { 'X-Admin-Key': apiKey }
+                });
+                const data = await res.json();
+
+                const tbody = document.getElementById('gamesTable');
+                if (!data.recentGames?.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No games found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.recentGames.map(g => `
+                    <tr>
+                        <td>${g.id}</td>
+                        <td>${g.mode || '-'}</td>
+                        <td><span class="status-badge status-${g.status}">${g.status}</span></td>
+                        <td>${g.outcome || '-'}</td>
+                        <td>${g.duration ? g.duration + 's' : '-'}</td>
+                        <td>${g.payoutAmount ? (g.payoutAmount / atomicDivisor).toFixed(6) : '-'}</td>
+                        <td>${new Date(g.createdAt).toLocaleString()}</td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load games:', e);
+            }
+        }
+
+        async function loadUsers(offset = 0) {
+            usersOffset = offset;
+            const search = document.getElementById('userSearch').value.trim();
+
+            try {
+                const url = `/api/admin/users?limit=50&offset=${offset}${search.length >= 3 ? `&search=${encodeURIComponent(search)}` : ''}`;
+                const res = await fetch(url, { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+
+                const tbody = document.getElementById('usersTable');
+                if (!data.users?.length) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="loading">No users found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.users.map(u => `
+                    <tr>
+                        <td>${u.id}</td>
+                        <td title="${escapeHtml(u.socketId)}">${u.socketId ? escapeHtml(u.socketId.substring(0, 15)) + '...' : '-'}</td>
+                        <td>${u.payoutAddress ? escapeHtml(u.payoutAddress) : '-'}</td>
+                        <td>${u.credits || 0}</td>
+                        <td>${u.gamesPlayed || 0}</td>
+                        <td>${u.gamesWon || 0}</td>
+                        <td>${u.totalWon ? (parseInt(u.totalWon) / atomicDivisor).toFixed(4) : '0'}</td>
+                        <td>${new Date(u.createdAt).toLocaleDateString()}</td>
+                    </tr>
+                `).join('');
+
+                // Pagination
+                const pagination = document.getElementById('usersPagination');
+                const total = data.total || 0;
+                const pages = Math.ceil(total / 50);
+                const currentPage = Math.floor(offset / 50);
+
+                if (pages > 1) {
+                    pagination.innerHTML = `
+                        <button ${currentPage === 0 ? 'disabled' : ''} onclick="loadUsers(${(currentPage - 1) * 50})">Prev</button>
+                        <span>Page ${currentPage + 1} of ${pages}</span>
+                        <button ${currentPage >= pages - 1 ? 'disabled' : ''} onclick="loadUsers(${(currentPage + 1) * 50})">Next</button>
+                    `;
+                } else {
+                    pagination.innerHTML = '';
+                }
+            } catch (e) {
+                console.error('Failed to load users:', e);
+            }
+        }
+
+        function searchUsers() {
+            loadUsers(0);
+        }
+
+        // Chat moderation functions
+        async function loadChat() {
+            const includeDeleted = document.getElementById('showDeletedMessages')?.checked || false;
+
+            try {
+                const url = `/api/admin/chat?limit=100&includeDeleted=${includeDeleted}`;
+                const res = await fetch(url, { headers: { 'X-Admin-Key': apiKey } });
+                const data = await res.json();
+
+                const tbody = document.getElementById('chatTable');
+                if (!data.messages?.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No chat messages</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.messages.map(m => {
+                    const isDeleted = !!m.deletedAt;
+                    const isBanned = m.chatBanned;
+                    const rowStyle = isDeleted ? 'opacity: 0.5; text-decoration: line-through;' : '';
+
+                    return `
+                        <tr style="${rowStyle}">
+                            <td>${m.id}</td>
+                            <td>${formatTimeAgo(new Date(m.timestamp))}</td>
+                            <td>${escapeHtml(m.playerId || m.username || '-')}</td>
+                            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(m.message)}">${escapeHtml(m.message)}</td>
+                            <td>${escapeHtml(m.userId || '-')}</td>
+                            <td>
+                                ${isDeleted ? '<span class="status-badge status-failed">Deleted</span>' : ''}
+                                ${isBanned ? '<span class="status-badge status-failed">Banned</span>' : ''}
+                                ${!isDeleted && !isBanned ? '<span class="status-badge status-completed">Active</span>' : ''}
+                            </td>
+                            <td>
+                                ${!isDeleted ? `<button class="btn btn-primary" onclick="deleteMessage(${m.id})" style="background:#c33;">Delete</button>` : ''}
+                                ${m.userId && !isBanned ? `<button class="btn btn-primary" onclick="banUser(${m.userId})" style="background:#a00; margin-left:4px;">Ban</button>` : ''}
+                                ${m.userId && isBanned ? `<button class="btn btn-primary" onclick="unbanUser(${m.userId})" style="background:#060; margin-left:4px;">Unban</button>` : ''}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to load chat:', e);
+                document.getElementById('chatTable').innerHTML = '<tr><td colspan="7" class="loading">Error loading chat</td></tr>';
+            }
+        }
+
+        async function deleteMessage(messageId) {
+            if (!confirm('Delete this message? It will be removed from all clients.')) return;
+
+            try {
+                const res = await fetch(`/api/admin/chat/${messageId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ reason: 'Admin deleted' })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    loadChat();
+                } else {
+                    alert('Failed to delete: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to delete message:', e);
+                alert('Error deleting message');
+            }
+        }
+
+        async function banUser(userId) {
+            const reason = prompt('Ban reason (optional):');
+            if (reason === null) return; // Cancelled
+
+            try {
+                const res = await fetch(`/api/admin/users/${userId}/chat-ban`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ banned: true, reason: reason || 'Admin banned' })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    loadChat();
+                } else {
+                    alert('Failed to ban: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to ban user:', e);
+                alert('Error banning user');
+            }
+        }
+
+        async function unbanUser(userId) {
+            if (!confirm('Unban this user from chat?')) return;
+
+            try {
+                const res = await fetch(`/api/admin/users/${userId}/chat-ban`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ banned: false })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    loadChat();
+                } else {
+                    alert('Failed to unban: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Failed to unban user:', e);
+                alert('Error unbanning user');
+            }
+        }
+
+        function escapeHtml(text) {
+            // Escape all five HTML-significant chars (including quotes) so the result is
+            // safe in both element text and quoted attribute values (e.g. title="...").
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function formatTimeAgo(date) {
+            const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            return Math.floor(seconds / 86400) + 'd ago';
+        }
+
+        // Auto-refresh every 15 seconds for active tabs
+        setInterval(() => {
+            if (!apiKey) return;
+            if (currentTab === 'overview') loadDashboard();
+            else if (currentTab === 'queue') loadQueue();
+        }, 15000);
+    </script>
+</body>
+</html>
