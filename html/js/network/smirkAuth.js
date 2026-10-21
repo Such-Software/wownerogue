@@ -5,11 +5,11 @@
  * Uses the Smirk browser extension API (window.smirk) for wallet interactions.
  *
  * Flow:
- * 1. Get challenge from server
- * 2. Connect to Smirk extension to get public keys
+ * 1. Acquire explicit WOW permission from Smirk
+ * 2. Get challenge from server
  * 3. Sign challenge with wallet
  * 4. Verify signature with backend
- * 5. Get wallet addresses via getAddresses() and auto-set payout address
+ * 5. Read wallet addresses; update a payout address only in payout-enabled modes
  */
 
 const SmirkAuth = {
@@ -24,7 +24,33 @@ const SmirkAuth = {
      * Current link status
      */
     _isLinked: false,
+    _wowReady: false,
     _walletAddress: null,
+
+    _sessionEpoch() {
+        return typeof SocketHandlers !== 'undefined' ? SocketHandlers._paymentSessionEpoch : null;
+    },
+
+    async requestWowAccess() {
+        const epoch = this._sessionEpoch();
+        this._wowReady = false;
+        const keys = await window.smirk.connect(['wow']);
+        if (epoch !== this._sessionEpoch()) throw new Error('Game session changed. Reconnect Smirk for the current account.');
+        if (!keys || !keys.wow) throw new Error('Smirk did not grant WOW access.');
+        this._wowReady = true;
+        return keys;
+    },
+
+    async checkWowAccess() {
+        const epoch = this._sessionEpoch();
+        this._wowReady = false;
+        try {
+            const keys = await window.smirk.getPublicKeys();
+            if (epoch !== this._sessionEpoch()) return false;
+            this._wowReady = !!keys?.wow;
+        } catch (_) { /* Missing permission or provider is not a grant. */ }
+        return this._wowReady;
+    },
 
     /**
      * Detect whether the connected Smirk wallet supports NIP-98 (nostr) signing.
@@ -37,10 +63,8 @@ const SmirkAuth = {
     /**
      * Main login flow.
      *
-     * Prefers NIP-98 (nostr kind:27235 HTTP auth event) when the wallet
-     * advertises the capability, and gracefully falls back to the legacy
-     * Ed25519 challenge-signing path otherwise (or if NIP-98 signing fails
-     * mid-flow).
+     * Keeps NIP-98 identity when supported. Errors never switch credential methods.
+     * WOW asset consent is separate from Nostr signing permission.
      */
     async login() {
         if (!this.isAvailable()) {
@@ -57,6 +81,10 @@ const SmirkAuth = {
         if (!sessionToken) {
             throw new Error('Your game session is still being established. Please retry in a moment.');
         }
+
+        // An explicit click grants only the asset this game supports. Nostr-only grants do
+        // not authorize WOW payments. A denial ends this attempt without another popup.
+        const keys = await this.requestWowAccess();
 
         // Step 1: Get challenge from server
         const challengeRes = await fetch('/api/auth/smirk/challenge', {
@@ -80,26 +108,11 @@ const SmirkAuth = {
         let provenPublicKey = null;
 
         if (this._supportsNip98()) {
-            try {
-                const result = await this._verifyNip98(socketId, challenge, sessionToken);
-                verifyData = result.verifyData;
-                provenPublicKey = result.pubkey;
-            } catch (nip98Err) {
-                // Fall back to the legacy connect() path UNLESS the user explicitly cancelled the
-                // popup. This gives connect() a chance to open the unlock prompt when a locked
-                // signNostrEvent threw LOCKED instead of prompting (partial/stale builds), and
-                // covers wallets that lack NIP-98 entirely. Only an explicit cancel is not retried.
-                const code = nip98Err && nip98Err.code;
-                const userCancelled = code === 'USER_REJECTED'
-                    || /reject|cancel|denied|declined/i.test((nip98Err && nip98Err.message) || '');
-                if (userCancelled) throw nip98Err;
-                console.warn('Smirk NIP-98 failed, trying legacy connect():', nip98Err && nip98Err.message);
-                const result = await this._verifyLegacy(socketId, challenge, sessionToken);
-                verifyData = result.verifyData;
-                provenPublicKey = result.pubkey;
-            }
+            const result = await this._verifyNip98(socketId, challenge, sessionToken);
+            verifyData = result.verifyData;
+            provenPublicKey = result.pubkey;
         } else {
-            const result = await this._verifyLegacy(socketId, challenge, sessionToken);
+            const result = await this._verifyLegacy(socketId, challenge, sessionToken, keys);
             verifyData = result.verifyData;
             provenPublicKey = result.pubkey;
         }
@@ -108,22 +121,26 @@ const SmirkAuth = {
         // us into it and returned that account's session token. Persist it and reload so the whole
         // session re-establishes as that account (credits, address, history).
         if (verifyData && verifyData.adopted && verifyData.sessionToken) {
+            if (typeof SocketHandlers !== 'undefined') {
+                SocketHandlers._invalidatePaymentSession();
+            }
             try { localStorage.setItem('wownerogue_token', verifyData.sessionToken); } catch (_) { /* ignore */ }
             $('#messages').append($('<li class="status">').text('🔑 Signed in to your wallet-linked account. Reloading…'));
             setTimeout(function () { window.location.reload(); }, 700);
             return { success: true, linked: true, adopted: true, address: verifyData.address || null };
         }
 
-        // Step 3: Get wallet addresses and auto-set payout address
-        // Note: the proven public key is a pubkey (hex), NOT an address.
-        // We need to call getAddresses() to get the actual WOW address.
+        // Receiving addresses are independent of the proven login identity.
         let walletAddress = null;
         try {
             const addresses = await window.smirk.getAddresses();
             if (addresses && addresses.wow && window.socket) {
-                window.socket.emit('address:update', { address: addresses.wow });
+                // Prestige-only play never needs a payout address.
+                if (typeof SocketHandlers !== 'undefined' &&
+                    (SocketHandlers._directPayoutsEnabled || SocketHandlers._creditsPayoutsEnabled)) {
+                    window.socket.emit('address:update', { address: addresses.wow });
+                }
                 walletAddress = addresses.wow;
-                console.log('Smirk WOW address set:', addresses.wow.substring(0, 20) + '...');
             }
         } catch (addrErr) {
             console.warn('Could not get Smirk addresses:', addrErr.message);
@@ -169,10 +186,10 @@ const SmirkAuth = {
         try {
             signed = await window.smirk.signNostrEvent(evt);
         } catch (scopeErr) {
-            const needsScope = (scopeErr && scopeErr.code === 'NOT_AUTHORIZED')
-                || /nostr scope|getNostrPublicKey/i.test((scopeErr && scopeErr.message) || '');
+            const needsScope = scopeErr && scopeErr.code === 'NOT_AUTHORIZED';
             if (!needsScope) throw scopeErr;
-            await window.smirk.getNostrPublicKey(); // grant the Nostr scope (one-time per origin)
+            const granted = await window.smirk.getNostrPublicKey();
+            if (!granted) throw new Error('Smirk Nostr permission was declined.');
             signed = await window.smirk.signNostrEvent(evt);
         }
         if (!signed || typeof signed !== 'object') {
@@ -203,17 +220,7 @@ const SmirkAuth = {
      *
      * @returns {Promise<{verifyData: object, pubkey: string|null}>}
      */
-    async _verifyLegacy(socketId, challenge, sessionToken) {
-        // Connect to Smirk extension
-        let keys;
-        try {
-            keys = await window.smirk.connect();
-        } catch (smirkError) {
-            const e = new Error('Failed to connect to Smirk wallet: ' + (smirkError.message || 'Unknown error'));
-            e.code = smirkError && smirkError.code; // preserve SmirkRpcError code ('LOCKED', 'USER_REJECTED', …)
-            throw e;
-        }
-
+    async _verifyLegacy(socketId, challenge, sessionToken, keys) {
         if (!keys || !keys.wow) {
             throw new Error('Smirk wallet did not return WOW public key');
         }
@@ -266,23 +273,44 @@ const SmirkAuth = {
             return { linked: false, hasPayoutAddress: false };
         }
 
+        const epoch = this._sessionEpoch();
+        const socketId = window.socket.id;
+        const requestId = this._statusRequestId = (this._statusRequestId || 0) + 1;
+        let token = '';
+        try { token = localStorage.getItem('wownerogue_token') || ''; } catch (_) {}
+        const current = () => {
+            let activeToken = '';
+            try { activeToken = localStorage.getItem('wownerogue_token') || ''; } catch (_) {}
+            return epoch === this._sessionEpoch() && socketId === window.socket?.id &&
+                token === activeToken && requestId === this._statusRequestId;
+        };
         try {
             // /status is session-gated (BOLA fix): send the session token so a linked user
             // is recognised; without it the endpoint returns 401 and we fall through to unlinked.
-            var token = '';
-            try { token = localStorage.getItem('wownerogue_token') || ''; } catch (_) { token = ''; }
             const res = await fetch(`/api/auth/smirk/status?socketId=${encodeURIComponent(window.socket.id)}`, {
                 headers: token ? { 'X-Session-Token': token } : {}
             });
             if (res.ok) {
                 const data = await res.json();
-                this._isLinked = data.linked;
+                if (!current()) return { linked: false, hasPayoutAddress: false };
+                await this.checkWowAccess();
+                if (!current()) return { linked: false, hasPayoutAddress: false };
+                this._isLinked = data.linked === true;
+                this._updateButton($('#smirkLoginBtn'), data.linked ? (this._wowReady ? 'connected' : 'linked') : 'ready');
+                if (typeof SocketHandlers !== 'undefined' && SocketHandlers._refreshSmirkPaymentButton) {
+                    SocketHandlers._refreshSmirkPaymentButton();
+                }
                 return data;
             }
         } catch (e) {
             console.warn('Failed to check Smirk status:', e.message);
         }
 
+        if (current()) {
+            this._isLinked = false;
+            this._wowReady = false;
+            this._updateButton($('#smirkLoginBtn'), 'ready');
+        }
         return { linked: false, hasPayoutAddress: false };
     },
 
@@ -318,9 +346,14 @@ const SmirkAuth = {
                    .text('Connecting...');
                 break;
             case 'connected':
-                btn.prop('disabled', true)
-                   .css({ 'background': '#0a5c0a', 'border-color': '#0a8c0a', 'cursor': 'default' })
-                   .text('Smirk Connected');
+                btn.prop('disabled', false)
+                   .css({ 'background': '#0a5c0a', 'border-color': '#0a8c0a', 'cursor': 'pointer' })
+                   .text('Smirk connected · Recheck WOW access');
+                break;
+            case 'linked':
+                btn.prop('disabled', false)
+                   .css({ 'background': '#1a1a4d', 'cursor': 'pointer' })
+                   .text('Enable WOW payments');
                 break;
             case 'error':
                 btn.prop('disabled', false)
@@ -341,15 +374,18 @@ const SmirkAuth = {
         this._updateButton(btn, 'connecting');
 
         try {
-            const result = await this.login();
+            const result = this._isLinked
+                ? (await this.requestWowAccess(), { success: true, linked: true, address: this._walletAddress })
+                : await this.login();
 
             this._updateButton(btn, 'connected');
+            if (typeof SocketHandlers !== 'undefined' && SocketHandlers._refreshSmirkPaymentButton) {
+                SocketHandlers._refreshSmirkPaymentButton();
+            }
 
             // Show success message in chat
             const addressSet = result.address != null;
-            const successMsg = addressSet
-                ? 'Smirk wallet connected! Payout address set.'
-                : 'Smirk wallet authenticated! Please set your payout address manually.';
+            const successMsg = 'Smirk account connected. WOW payment permission granted.';
 
             // .text() sets textContent, so the message is safe from injection.
             $('#messages').append($('<li class="status">').text(successMsg));
@@ -362,7 +398,6 @@ const SmirkAuth = {
             return result;
 
         } catch (err) {
-            console.error('Smirk login failed:', err);
             this._updateButton(btn, 'error'); // button label becomes "Retry Smirk Connect"
 
             // A locked wallet is an action, not a red error. Current Smirk builds auto-open the
@@ -415,11 +450,7 @@ const SmirkAuth = {
             container.append(btn);
 
             // Check if already linked on page load
-            this.checkStatus().then(status => {
-                if (status.linked) {
-                    this._updateButton(btn, 'connected');
-                }
-            });
+            this.checkStatus();
 
             console.log('Smirk extension detected, connect button shown');
         } else {
@@ -483,7 +514,7 @@ if (typeof window.socket !== 'undefined') {
                 SmirkAuth.checkStatus().then(status => {
                     const btn = $('#smirkLoginBtn');
                     if (btn.length > 0 && status.linked) {
-                        SmirkAuth._updateButton(btn, 'connected');
+                        SmirkAuth._updateButton(btn, SmirkAuth._wowReady ? 'connected' : 'linked');
                     }
                 });
             }

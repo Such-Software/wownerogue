@@ -14,7 +14,7 @@ Everything else in the commit is excluded on purpose: `docs/`, `test/`, the root
 (service units, firewall and backup jobs, the hash-pinned financial audit SQL, the wallet output
 splitter), environment examples, `src/sim`, `src/jest.config.js`, and the operator-only commands
 `src/scripts/pvp-capture.js`, `src/scripts/stagenet-financial-canary.js`, `src/scripts/setup_db.js`,
-and `src/scripts/smoke.js`. Tests and operator tooling are source and control-plane inputs; they are
+`src/scripts/smoke.js`, and `src/scripts/showcase-browser-smoke.js`. Tests and operator tooling are source and control-plane inputs; they are
 not production runtime files, and sharing a Git commit with the runtime does not make them part of
 it.
 

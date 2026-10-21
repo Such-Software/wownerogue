@@ -8,7 +8,7 @@
  * window), so a map full of long-expired entries stayed full.
  */
 
-const express = require('express');
+const express = require('../src/node_modules/express');
 const http = require('http');
 
 const createAuthRoutes = require('../src/routes/auth');

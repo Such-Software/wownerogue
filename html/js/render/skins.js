@@ -41,18 +41,27 @@
         var s = RK.SKINS[id];
         if (!s) return null;
         if (sheets[id]) return sheets[id];
-        var rec = sheets[id] = { ready: false, cbs: [] };
+        var rec = sheets[id] = { ready: false, failed: false, cbs: [] };
         var img = new Image();
         img.onload = function () {
             rec.ready = true; rec.img = img;
-            rec.cbs.forEach(function (cb) { try { cb(rec); } catch (_) {} });
-            rec.cbs = [];
+            settle(rec);
         };
-        img.onerror = function () { if (root.console) console.warn('skin sheet failed:', s.sheet); };
+        img.onerror = function () {
+            rec.failed = true;
+            if (root.console) console.warn('skin sheet failed:', s.sheet);
+            settle(rec);
+        };
         img.src = s.sheet;
         return rec;
     };
+    function settle(rec) {
+        var callbacks = rec.cbs.slice();
+        rec.cbs.length = 0;
+        callbacks.forEach(function (cb) { try { cb(rec); } catch (_) {} });
+    }
     RK.skinSheet = function (id) { return (sheets[id] && sheets[id].ready) ? sheets[id] : null; };
+    RK.skinSheetFailed = function (id) { return !!(sheets[id] && sheets[id].failed); };
 
     // --- Movement-aware frame selection ------------------------------------------------------
     var last = {}; // entity id -> { x, y, t }

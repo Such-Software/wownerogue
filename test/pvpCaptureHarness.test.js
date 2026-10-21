@@ -7,6 +7,7 @@ const {
     DEFAULT_SEED,
     assertCaptureSafety,
     assertCaptureStateEnvironment,
+    assertFreeRoom,
     capturePageHtml,
     capturePresentation,
     captureResultSummary,
@@ -120,6 +121,51 @@ describe('deterministic PvP capture harness', () => {
             }
             expect(captureStateHash(rooms[0].toGameState()))
                 .toBe(captureStateHash(rooms[1].toGameState()));
+        }
+    });
+
+    test('the curated escape race reaches a decisive first exit with no money state', () => {
+        const config = options({ args: ['--ruleset', 'race', '--ticks', '120'] });
+        const room = createCaptureRoom(config);
+        room.start();
+        const events = [];
+
+        for (let tick = 0; tick < config.ticks && room.status === 'active'; tick++) {
+            const state = room.toGameState();
+            for (const botId of room.occupants.keys()) {
+                const move = planBotMove(botId, state);
+                if (Math.abs(move.dx) + Math.abs(move.dy) === 1) {
+                    room.queueMove(botId, move.dx, move.dy);
+                }
+            }
+            events.push(...room.resolveTick().events);
+        }
+        room.finalize();
+
+        const exits = events.filter(event => event.type === 'player_exit');
+        expect(room.status).toBe('finished');
+        expect(room.endReason).toBe('escaped');
+        expect(exits).toHaveLength(1);
+        expect(room.winnerId).toBe(exits[0].id);
+        expect(room.playerStates.get(room.winnerId).escaped).toBe(true);
+        expect(assertFreeRoom(room)).toBe(true);
+    });
+
+    test('race and co-op use distinct exit completion rules', () => {
+        for (const rulesetId of ['race', 'coop-escape']) {
+            const room = createCaptureRoom(options({ args: ['--ruleset', rulesetId] }));
+            room.start();
+            const [firstId] = room.occupants.keys();
+            const [x, y] = room.dungeon.exit;
+            room.occupants.get(firstId).moveTo(x, y);
+            const result = room.resolveTick();
+
+            expect(result.events.some(event => event.type === 'player_exit' && event.id === firstId))
+                .toBe(true);
+            expect(result.finished).toBe(rulesetId === 'race');
+            expect(room.status).toBe(rulesetId === 'race' ? 'finished' : 'active');
+            expect(room.pvpCombat).toBe(false);
+            expect(assertFreeRoom(room)).toBe(true);
         }
     });
 

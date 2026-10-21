@@ -276,12 +276,13 @@ class ConnectionHandler {
             if (sessionInfo.resumed) {
                 this.io.to(socket.id).emit('session_resumed', {
                     token: sessionInfo.token,
+                    userId: sessionInfo.user.id,
                     payoutAddress: sessionInfo.user.payout_address || null,
                     credits: sessionInfo.user.credits || 0,
                     totalCreditsPurchased: sessionInfo.user.total_credits_purchased || 0
                 });
             } else {
-                this.io.to(socket.id).emit('session_token', { token: sessionInfo.token });
+                this.io.to(socket.id).emit('session_token', { token: sessionInfo.token, userId: sessionInfo.user.id });
                 
                 // Only new sessions need address_confirmed; resumed ones carry payoutAddress
                 // in session_resumed.

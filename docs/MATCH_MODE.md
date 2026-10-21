@@ -41,6 +41,10 @@ value-bearing queues start differently on purpose.
 - If a queue is below the minimum player count, its members carry over and may leave until a freeze
   claims their row.
 - If a queue is empty, nothing happens.
+- A reconnecting session reattaches its own still-queued rows to the new socket, preserving queue
+  order and any held entry. The client receives `match_queue_joined` with `restored: true` for each
+  restored economy. An active match reconnect takes precedence; matched rows cannot be reclaimed
+  as queue entries.
 
 A match ends when:
 
@@ -216,7 +220,9 @@ Crypto races additionally require:
 Server emits:
 
 - `game_mode_info` includes `modes.match { enabled, economies, maxPlayers, activeRuleset, rulesets }`.
-- `match_queue_joined` and `match_queue_left` are queue responses.
+- `match_queue_joined` and `match_queue_left` are queue responses. A restored queue response includes
+  the authoritative `economy`, `position`, and `restored: true`; restoration never joins or charges
+  again.
 - `match_joined`, `match_start`, `match_tick`, `match_end` are the race lifecycle for players.
 - `match_rejoined` restores a reconnecting player; `match_settlement_pending` reports a result whose
   payout is still settling.

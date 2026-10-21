@@ -149,6 +149,7 @@
             return false;
         }
         if (visual.kind === 'skin') {
+            if (RK.skinSheetFailed && RK.skinSheetFailed(visual.appearance.avatar)) return false;
             if (RK.skinSheet && RK.skinSheet(visual.appearance.avatar)) return true;
             if (!RK.loadSkin) return false;
             rememberLoad('skin:' + visual.appearance.avatar, function (done) {
@@ -294,9 +295,18 @@
     function drawTopdownWorld(ctx, visual, entity, viewport, opts) {
         opts = opts || {};
         visual = visual && visual.appearance ? visual : resolve(visual, opts);
-        if (!ctx || !entity || !viewport || !visual.allowed || !ensureCanvasReady(visual, opts.onReady)) return false;
-        if (visual.kind === 'char') return drawTopdownChar(ctx, visual, entity, viewport, opts);
-        if (visual.kind === 'skin') return drawTopdownSkin(ctx, visual, entity, viewport, opts);
+        if (!ctx || !entity || !viewport || !visual.allowed) return false;
+        if (visual.kind === 'char') {
+            if (!ensureCanvasReady(visual, opts.onReady)) return false;
+            return drawTopdownChar(ctx, visual, entity, viewport, opts);
+        }
+        if (visual.kind === 'skin') {
+            if (ensureCanvasReady(visual, opts.onReady)) return drawTopdownSkin(ctx, visual, entity, viewport, opts);
+            if (RK.skinSheetFailed && RK.skinSheetFailed(visual.appearance.avatar)) {
+                var fallback = resolve({ avatar: 'char-villager' }, { projection: 'topdown', context: visual.context, entity: entity });
+                if (ensureCanvasReady(fallback, opts.onReady)) return drawTopdownChar(ctx, fallback, entity, viewport, opts);
+            }
+        }
         return false;
     }
 

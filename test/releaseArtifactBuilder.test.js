@@ -40,6 +40,7 @@ function fixture() {
     write(root, 'src/package-lock.json', '{"name":"fixture","lockfileVersion":3}\n');
     write(root, 'src/scripts/preflight.js', "'use strict';\n");
     write(root, 'src/scripts/migrate-disposable-clone.js', "'use strict';\n");
+    write(root, 'src/scripts/showcase-browser-smoke.js', "throw new Error('source-only browser harness');\n");
     write(root, 'src/scripts/pvp-capture.js', "throw new Error('source-only ad harness');\n");
     write(root, 'src/scripts/stagenet-financial-canary.js', "throw new Error('source-only transfer canary');\n");
     write(root, 'src/scripts/setup_db.js', "throw new Error('source-only database helper');\n");
@@ -136,6 +137,7 @@ describe('release artifact builder', () => {
         expect(members).not.toContain('candidate-1/scripts/deploy/migrate-monero-stagenet-wallet.sh');
         expect(members.some(member => /^candidate-1\/src\/\.env(?:\.|$)/.test(member))).toBe(false);
         expect(members.some(member => /\/\.env(?:\..*)?\.example$/.test(member))).toBe(false);
+        expect(members).not.toContain('candidate-1/src/scripts/showcase-browser-smoke.js');
         expect(members).not.toContain('candidate-1/src/scripts/pvp-capture.js');
         expect(members).not.toContain('candidate-1/src/scripts/stagenet-financial-canary.js');
         expect(members).not.toContain('candidate-1/src/scripts/setup_db.js');

@@ -1148,7 +1148,7 @@ class GameModeManager {
     async _findReusablePayment(userId, paymentType, productId = null) {
         if (!userId) return null;
         const result = await this.db.query(`
-            SELECT id, subaddress, expected_amount, payment_type, status, created_at, expires_at,
+            SELECT id, user_id, subaddress, expected_amount, payment_type, status, created_at, expires_at,
                    description, product_id, product_grants,
                    fairness_proof_version, fairness_offer_id, fairness_offer_issued_at,
                    fairness_commitment, fairness_server_seed, fairness_client_seed,
@@ -1189,6 +1189,7 @@ class GameModeManager {
         const amount = money.toSafe(money.toBig(row.expected_amount));
         return {
             id: row.id,
+            ownerUserId: row.user_id,
             address: row.subaddress,
             amount,
             amountFormatted: this.formatAtomicHuman(amount, 4),
@@ -2205,6 +2206,7 @@ class GameModeManager {
             
             return {
                 id: insertedRow?.id,
+                ownerUserId: user.id,
                 address: paymentResult.address,
                 invoiceId: paymentResult.invoiceId || paymentResult.address,
                 amount: money.toSafe(money.toBig(amount)),
