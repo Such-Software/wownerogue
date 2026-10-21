@@ -53,6 +53,9 @@
         },
 
         show({ existingAddress = null, message = null } = {}) {
+            if (typeof SocketHandlers === 'undefined' || SocketHandlers._anyPayoutsEnabled !== true) {
+                return;
+            }
             this.ensureInit();
             if (!this._elements.overlay.length) {
                 return;

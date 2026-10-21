@@ -204,6 +204,12 @@ body {
     border-top: 1px solid rgba(255,255,255,0.055);
 }
 
+.smirk-account-entry { margin-top: 8px; }
+.smirk-account-entry :is(button, a):focus-visible {
+    outline: 2px solid #aaf;
+    outline-offset: 2px;
+}
+
 /* =========================================================================
    HUD TOOLBAR: secondary "chip" controls (audio toggle + help / history /
    scores / manage-address). Small, bordered, glow-on-hover.

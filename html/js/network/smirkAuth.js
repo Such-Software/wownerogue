@@ -318,7 +318,7 @@ const SmirkAuth = {
      * Create and return the Smirk login button element
      */
     _createButton() {
-        const btn = $('<button id="smirkLoginBtn" class="menu-button">')
+        const btn = $('<button id="smirkLoginBtn" type="button" class="menu-button">')
             .css({
                 'background': '#1a1a4d',
                 'color': '#fff',
@@ -330,7 +330,7 @@ const SmirkAuth = {
                 'width': '100%',
                 'text-align': 'center'
             })
-            .text('Connect Smirk Wallet');
+            .text('Connect Smirk');
 
         return btn;
     },
@@ -363,7 +363,7 @@ const SmirkAuth = {
             default: // 'ready'
                 btn.prop('disabled', false)
                    .css({ 'background': '#1a1a4d', 'border-color': '#3a3a7d', 'cursor': 'pointer' })
-                   .text('Connect Smirk Wallet');
+                   .text('Connect Smirk');
         }
     },
 

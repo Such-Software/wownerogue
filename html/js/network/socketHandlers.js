@@ -18,6 +18,7 @@ const SocketHandlers = {
 
     _directModeEnabled: false,
     _directPayoutsEnabled: false,
+    _anyPayoutsEnabled: false,
     _paymentsEnabled: false,
     _isSmirkExplicitlyEnabled: function(data) {
         return !!data && data.smirkEnabled === true;
@@ -874,6 +875,10 @@ const SocketHandlers = {
     },
 
     onAddressPrompt: function(data) {
+        if (!SocketHandlers._anyPayoutsEnabled) {
+            console.warn('Ignoring payout address prompt while payouts are disabled.');
+            return;
+        }
         if (typeof AddressModal !== 'undefined') {
             AddressModal.show({
                 existingAddress: data?.existingAddress || null,
@@ -916,7 +921,14 @@ const SocketHandlers = {
             && data.modes.match.economies.crypto_race);
         var anyPayouts = SocketHandlers._creditsPayoutsEnabled
             || SocketHandlers._directPayoutsEnabled || matchCryptoPayouts;
+        SocketHandlers._anyPayoutsEnabled = anyPayouts;
         $('#manageAddressButton').toggle(anyPayouts);
+        $('#smirkAccountSection').toggle(SocketHandlers._smirkEnabled);
+        if (SocketHandlers._smirkEnabled && window.location.hash === '#smirkAccountSection'
+            && document.activeElement === document.body) {
+            document.getElementById('smirkAccountSection')?.focus({ preventScroll: true });
+        }
+        if (!anyPayouts && typeof AddressModal !== 'undefined') AddressModal.hide();
         if (data.entitlements && typeof SinglePlayerAvatar !== 'undefined') {
             SinglePlayerAvatar.applyEntitlements(data.entitlements);
         }
