@@ -25,6 +25,7 @@ class ChatHandler {
         this.chatHistory = new ChatHistoryManager({
             db: db || (gameModeManager?.db),
             debugManager: debugManager,
+            gameModeManager,
             maxHistoryMessages: 50
         });
 

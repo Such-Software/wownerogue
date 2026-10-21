@@ -3,10 +3,16 @@
  * Handles persistent storage and retrieval of chat messages
  */
 
+const { isWowPaymentsPaused } = require('../config/operatedProductProfiles');
+
+const LEGACY_PAYOUT_TIP = 'Escape the dungeon to win. Collect treasure for bonus payout!';
+const NO_PAYOUT_TIP = 'Escape the dungeon to win. Treasure can improve your score.';
+
 class ChatHistoryManager {
-    constructor({ db, debugManager, maxHistoryMessages = 50, inMemoryFallbackSize = 100 }) {
+    constructor({ db, debugManager, gameModeManager = null, maxHistoryMessages = 50, inMemoryFallbackSize = 100 }) {
         this.db = db;
         this.debugManager = debugManager;
+        this.gameModeManager = gameModeManager;
         this.maxHistoryMessages = maxHistoryMessages;
         
         // In-memory fallback for when DB is not available
@@ -21,6 +27,25 @@ class ChatHistoryManager {
         // Cleanup old messages periodically (once per day)
         this._cleanupInterval = null;
         this._maxMessageAge = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
+    }
+
+    _presentMessage(message) {
+        // Migration 011 seeded this one system tip before free/prestige-only policy existed.
+        // Keep the stored row intact and leave player-authored copies untouched.
+        if (message.socketId !== 'system' || message.username !== 'SERVER'
+            || message.type !== 'system' || message.message !== LEGACY_PAYOUT_TIP) return message;
+        const manager = this.gameModeManager;
+        if (!manager || typeof manager.isPayoutEnabledForMode !== 'function') return message;
+        let payoutAvailable = false;
+        try {
+            payoutAvailable = !isWowPaymentsPaused(process.env) && manager.paymentsEnabled && (
+                (manager.directModeEnabled && manager.isPayoutEnabledForMode('PAID_SINGLE'))
+                || (manager.creditsModeEnabled && manager.isPayoutEnabledForMode('PAID_CREDITS'))
+            );
+        } catch (_) {
+            // A failed policy read cannot justify advertising an old payout promise.
+        }
+        return payoutAvailable ? message : { ...message, message: NO_PAYOUT_TIP };
     }
 
     /**
@@ -206,7 +231,7 @@ class ChatHistoryManager {
                     LIMIT $1
                 `, [maxCount, minCount]);
 
-                return result.rows.map(row => ({
+                return result.rows.map(row => this._presentMessage({
                     id: row.id,
                     socketId: row.socket_id,
                     username: row.username,
@@ -225,13 +250,13 @@ class ChatHistoryManager {
 
         if (this._cacheInitialized && this._recentMessagesCache.length > 0) {
             const activeMessages = this._recentMessagesCache.filter(m => !m.deletedAt);
-            return activeMessages.slice(-limit);
+            return activeMessages.slice(-limit).map(message => this._presentMessage(message));
         }
 
         // Final fallback to in-memory
         if (this._inMemoryHistory.length > 0) {
             const activeMessages = this._inMemoryHistory.filter(m => !m.deletedAt);
-            return activeMessages.slice(-limit);
+            return activeMessages.slice(-limit).map(message => this._presentMessage(message));
         }
 
         return [];
