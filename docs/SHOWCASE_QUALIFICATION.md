@@ -29,9 +29,12 @@ wallet works.
 Run `npm run test:showcase-browser` from `src` with the cached Playwright Chromium available. The harness
 uses the real Tavern manager and two fresh browser clients on a loopback-only server. It verifies
 movement, chat, keyboard focus, mobile controls, missing-sheet failure, and Tiled/ASCII/Iso drawing.
-Its synthetic Iso grant is a fixture, not evidence of purchased or production entitlements. Browser
-output belongs under `~/Build/wowngeon`. No wallet extension, application database, or chain node is
-used. See the script's usage for the output location.
+Mica receives synthetic `roguelike-interior` and `iso-dungeon` grants from the source-owned default
+catalog; the harness proves the permitted character sprite draws. Moth receives the catalog's
+zero-grant snapshot and must retain original-only access. Both balances remain zero. These grants
+are test fixtures, not evidence of purchases or production entitlements. Browser output belongs
+under `~/Build/wowngeon`. No wallet extension, application database, or chain node is used. See the
+script's usage for the output location.
 
 For authoritative multiplayer Escape Race captures, follow [PVP_CAPTURE.md](PVP_CAPTURE.md). Run
 `race` with each of `tiles`, `ascii`, and `iso`; require a decisive first exit and matching final

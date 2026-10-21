@@ -339,8 +339,10 @@ the Tavern.
 
 For the isolated, gameplay-only Tavern browser smoke, run `npm run test:showcase-browser` from
 `src`. It starts a fresh loopback server and two anonymous browser contexts, with no database,
-wallet, paid entitlement, or queue/race flow. Its synthetic Iso entitlement is a visual fixture,
-not a purchase. Screenshots and a JSON result go to a unique directory under
+wallet, purchase, or queue/race flow. Mica receives synthetic `roguelike-interior` and `iso-dungeon`
+pack grants from the source-owned default catalog to prove permitted character drawing and Iso rendering.
+Moth receives the catalog's zero-grant snapshot and must retain original-only access. Both balances
+remain zero; neither fixture represents a purchase or production entitlement. Screenshots and a JSON result go to a unique directory under
 `~/Build/wowngeon/showcase-browser`; pass `-- --output-root <directory>` to choose another output
 root. The browser blocks requests outside its loopback server. A local browser route injects a 404
 for the generated Wownero skin sheet so its readable failed-asset state is checked consistently,

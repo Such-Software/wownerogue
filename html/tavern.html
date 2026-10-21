@@ -127,7 +127,7 @@
 
         <div id="modebar" class="hidden" role="group" aria-label="Render style"></div>
         <div id="packbar" class="hidden" role="group" aria-label="Visual pack"></div>
-        <div id="stage" class="hidden" aria-label="Shared tavern room"></div>
+        <div id="stage" class="hidden" aria-label="Shared tavern room" tabindex="-1"></div>
         <div id="tavernDpad" class="touch-pad hidden" role="group" aria-label="Tavern movement controls">
             <button type="button" data-dir="up" aria-label="Move up">▲</button>
             <button type="button" data-dir="left" aria-label="Move left">◀</button>
@@ -136,6 +136,21 @@
         </div>
         <p id="status" class="muted" role="status" aria-live="polite"></p>
         <p id="movementHint" class="muted hidden">Move with arrow keys or WASD · drag/pinch to explore · ★ may require credits · ⛔ is unavailable on this server.</p>
+
+        <!-- Keep the live arena ahead of chat and controls in the reading and visual order. -->
+        <section id="spectatorStage" class="hidden" aria-label="Live arena" tabindex="-1">
+            <div class="spectator-head">
+                <span id="spectatorLabel" class="muted"></span>
+                <button id="leaveSpectateBtn" class="secondary">← Back to tavern</button>
+            </div>
+            <div id="spectatorRender" class="spectator-render"></div>
+            <div id="spectatorDpad" class="touch-pad hidden" role="group" aria-label="Match movement controls">
+                <button type="button" data-dir="up" aria-label="Move up">▲</button>
+                <button type="button" data-dir="left" aria-label="Move left">◀</button>
+                <button type="button" data-dir="down" aria-label="Move down">▼</button>
+                <button type="button" data-dir="right" aria-label="Move right">▶</button>
+            </div>
+        </section>
 
         <div id="chatPanel" class="panel hidden">
             <div id="chatLog" aria-live="polite"></div>
@@ -170,19 +185,6 @@
             <h4 style="margin:0 0 8px;font-size:13px;">Active Matches</h4>
             <div id="activeMatchList" style="max-height:160px;overflow-y:auto;font-size:13px;"></div>
             <button id="closeMatchPanelBtn" class="secondary" style="margin-top:8px;">Close</button>
-        </div>
-        <div id="spectatorStage" class="hidden">
-            <div class="spectator-head">
-                <span id="spectatorLabel" class="muted"></span>
-                <button id="leaveSpectateBtn" class="secondary">← Back to tavern</button>
-            </div>
-            <div id="spectatorRender" class="spectator-render"></div>
-            <div id="spectatorDpad" class="touch-pad hidden" role="group" aria-label="Match movement controls">
-                <button type="button" data-dir="up" aria-label="Move up">▲</button>
-                <button type="button" data-dir="left" aria-label="Move left">◀</button>
-                <button type="button" data-dir="down" aria-label="Move down">▼</button>
-                <button type="button" data-dir="right" aria-label="Move right">▶</button>
-            </div>
         </div>
     </div>
 
@@ -219,6 +221,7 @@
         var spectatorRender = document.getElementById('spectatorRender');
         var spectatorDpad = document.getElementById('spectatorDpad');
         var leaveSpectateBtn = document.getElementById('leaveSpectateBtn');
+        var spectatorReturnFocus = null;
 
         // Character customization: persisted appearance identity, chosen before entering.
         var customizeBtn = document.getElementById('customizeBtn');
@@ -699,6 +702,7 @@
             if (spectatorCamera) spectatorCamera.update(spectatorRenderer);
         }
         function openSpectatorView(kind, label, initialState) {
+            spectatorReturnFocus = document.activeElement;
             spectatorKind = kind;
             spectatorPendingState = initialState || null;
             joinPanel.classList.add('hidden');
@@ -713,6 +717,7 @@
             spectatorDpad.classList.toggle('hidden', kind !== 'player-match');
             spectatorLabel.textContent = label || 'Live dungeon';
             leaveSpectateBtn.textContent = kind === 'player-match' ? 'Forfeit match' : '← Back to tavern';
+            spectatorStage.focus();
             destroySpectatorRenderer();
             var request = ++spectatorRequest;
             var renderMode = currentMode || (RK.loadMode && RK.loadMode('tiles')) || 'tiles';
@@ -746,6 +751,14 @@
                 joinPanel.classList.remove('hidden');
             }
             leaveSpectateBtn.textContent = '← Back to tavern';
+            var returnFocus = spectatorReturnFocus;
+            spectatorReturnFocus = null;
+            window.requestAnimationFrame(function () {
+                if (spectatorKind) return;
+                if (!returnFocus || !document.contains(returnFocus) || !returnFocus.getClientRects().length
+                    || returnFocus.disabled) returnFocus = state.you ? stageEl : joinBtn;
+                if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
+            });
         }
 
         function populateSoloGames(data) {
