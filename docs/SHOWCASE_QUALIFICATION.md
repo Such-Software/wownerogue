@@ -39,6 +39,11 @@ state hashes for the same seed. The capture imports the actual match engine but 
 players. It does not qualify the deployed scheduler, queue UI, account restoration, or Tavern-to-match
 navigation.
 
+For a fresh PostgreSQL cluster and the actual application entrypoint, run the two-browser
+[local lifecycle rehearsal](SHOWCASE_LIFECYCLE_SMOKE.md). It covers the free queue, real scheduler
+and countdown, keyboard-driven Escape Race, persisted result, and return to Tavern. It uses the
+local simulated-block source and has no wallet or payment authority.
+
 ## Smirk checkout contract
 
 Invoice delivery and reconnect restoration never open a wallet prompt. The user first sees the

@@ -263,6 +263,26 @@ describe('GameModeManager', () => {
                 }
             }
         });
+
+        test('free-play-only match mode does not advertise credit entry', () => {
+            const keys = ['MATCH_CRYPTO_RACE_ENABLED', 'MATCH_PAYOUTS_ENABLED'];
+            const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+            try {
+                process.env.MATCH_CRYPTO_RACE_ENABLED = 'false';
+                process.env.MATCH_PAYOUTS_ENABLED = 'false';
+                gmm.paymentsEnabled = false;
+                gmm.freePlayEnabled = true;
+                gmm.creditsModeEnabled = false;
+                expect(gmm._getMatchEconomies()).toEqual({ free: true });
+
+                gmm.creditsModeEnabled = true;
+                expect(gmm._getMatchEconomies()).toEqual({ free: true, credits_prestige: true });
+            } finally {
+                for (const key of keys) {
+                    if (old[key] === undefined) delete process.env[key]; else process.env[key] = old[key];
+                }
+            }
+        });
     });
 
     describe('calculatePayout', () => {

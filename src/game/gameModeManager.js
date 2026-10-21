@@ -662,7 +662,7 @@ class GameModeManager {
 
     _getMatchEconomies() {
         const out = { free: true };
-        if (this.creditsModeEnabled || this.freePlayEnabled) {
+        if (this.creditsModeEnabled) {
             out.credits_prestige = true;
         }
         // Crypto admission has its own explicit switch, payout cap, ruleset contract, and the

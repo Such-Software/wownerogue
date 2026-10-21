@@ -74,15 +74,25 @@ The profile also controls what `/api/game-modes` publishes: `selectPublicPaidMod
 emits only the profile's own paid mode, so a Wownero instance never advertises `PAID_SINGLE` and a
 Monerogue instance never advertises `PAID_CREDITS`.
 
+## Operated deployment status
+
+The activation and wallet-promotion sequence below is historical design guidance. Fleet retired the
+generic application activation and stagenet wallet promotion paths on 2026-09-10. There is no
+repeatable operated-application activation lane today. Staging and clone validation remain
+non-activating. Consult Fleet's `playbooks/WOWNGEON.md` and `RUNBOOK-wowngeon.md`; do not execute
+manual service, configuration, or `current` changes from this document against an operated instance.
+A successor requires reviewed migration and exact predecessor compatibility evidence.
+
 ## Step 0: Stage an immutable release
 
 Build one runtime artifact, then transfer only that blob into a root-owned mode-0700 candidate
 inbox. Compare the host's SHA-256 against an independently recorded digest; the sidecar file that
 travelled with the blob is not an independent provenance source.
 
-Blob staging, two-dump clone validation ([CLONE_MIGRATIONS.md](./CLONE_MIGRATIONS.md)), wallet
-candidate preparation and promotion, and per-instance release activation are performed by the
-separate, default-closed, hash-pinned fleet automation. Each operation is bound to literal hashes
+Blob staging and two-dump clone validation ([CLONE_MIGRATIONS.md](./CLONE_MIGRATIONS.md)) remain
+separate Fleet capabilities. Wallet promotion and general per-instance activation are retired;
+the remaining wallet candidate and one-shot cutover do not provide a repeatable update path.
+Every admitted operation is bound to literal hashes
 and exact receipts and infers no release, dump, wallet, predecessor, or instance. Manual extraction
 under `/var/www/<instance>/releases`, manual dependency installation, manual service commands, and a
 hand-written `current` symlink switch are not supported substitutes. A release directory is never
@@ -127,11 +137,10 @@ and mnemonic custody, an off-host recovery proof, an isolated rehearsal, exact a
 verification, and a separately reviewed maintenance and rollback plan. Root-level wallet templates in
 `scripts/deploy/` are operations source, not runtime files and not an instruction to install them.
 
-After activation, verify:
+After a separately reviewed activation, use read-only verification:
 
 ```bash
-sudo systemctl restart wownerogue.service
-journalctl -u wownerogue.service -n 50 --no-pager   # payment system enabled, payouts disabled
+systemctl is-active wownerogue.service
 curl -fsS localhost:3000/api/game-modes \
   | jq -e '.FREE.enabled == true and .PAID_CREDITS.enabled == true and (has("PAID_SINGLE") | not)'
 ```
@@ -234,9 +243,10 @@ sudo -u monerogue bash -c 'set -a; . /etc/monerogue/app.env; . /etc/monerogue/wa
 
 ## Step 5: Activate the instance and close the network
 
-The runtime artifact contains no service units. Wallet promotion and instance activation run through
-the hash-pinned fleet roles after the recovery, clone-validation, protected-environment, wallet,
-drain, and financial-audit gates pass. Do not copy a unit out of an application release.
+The runtime artifact contains no service units. A future Fleet activation transaction must prove
+recovery, clone validation, protected configuration, wallet boundaries, drain, and financial audits.
+There is no current repeatable lane to execute this step. Do not copy a unit out of an application
+release.
 
 Install the hash-pinned copies of `scripts/deploy/wowngeon-firewall.sh` (mode 0755 at
 `/usr/local/sbin/wowngeon-firewall`) and `scripts/deploy/wowngeon-firewall.service`, then set the

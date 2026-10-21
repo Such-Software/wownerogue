@@ -181,6 +181,8 @@ runtime_pathspecs=(
     ':(exclude)src/.env*'
     ':(glob,exclude)src/**/.env*'
     ':(exclude)src/scripts/showcase-browser-smoke.js'
+    ':(exclude)src/scripts/showcase-network-guard.js'
+    ':(exclude)src/scripts/showcase-lifecycle-smoke.js'
     ':(exclude)src/scripts/pvp-capture.js'
     ':(exclude)src/scripts/stagenet-financial-canary.js'
     ':(exclude)src/scripts/setup_db.js'
