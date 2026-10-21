@@ -21,6 +21,7 @@ test.each(['request', 'show', 'restore'])('the %s invoice path supplies an exact
     const manager = Object.create(GameModeManager.prototype);
     Object.assign(manager, {
         cryptoType: 'WOW', network: 'mainnet', currencyDecimals: 11,
+        paymentsEnabled: true,
         isPaymentIntakeEnabled: () => true,
         formatAtomicHuman: () => '1.2346',
         gameMode: 'PAID_CREDITS', creditsPackagePrice: row.expected_amount,
@@ -40,12 +41,15 @@ test.each(['request', 'show', 'restore'])('the %s invoice path supplies an exact
     handlers._allowInvoiceFlowForReserve = async () => true;
     handlers._ensureRequiredPayoutAddress = async () => ({ ok: true });
     handlers._monitorAddress = jest.fn();
-    const socket = { id: 'fixture-socket', emit: (event, data) => emitted.push([event, data]) };
+    const socket = { id: 'fixture-socket', connected: true,
+        emit: (event, data) => emitted.push([event, data]) };
     try {
         if (path === 'request') await handlers.handlePaymentRequest(socket, { type: 'credits_package' });
         else if (path === 'show') await handlers.createAndShowPaymentRequest(socket, { paymentType: 'credits_package' });
         else await SocketHandlers.prototype._restorePaymentMonitoring.call({
             gameModeManager: manager, paymentHandlers: handlers, debugManager: { CONSOLE_LOGGING: false },
+            sessionManager: { sessions: new Map([[socket.id, { id: 7 }]]) },
+            _isCurrentPaymentRestoreOwner: SocketHandlers.prototype._isCurrentPaymentRestoreOwner,
             connectionHandler: { getUserBySocket: () => ({ serverId: socket.id }) },
             broadcastManager: { sendStatusUpdate: jest.fn() }
         }, socket, 7);
