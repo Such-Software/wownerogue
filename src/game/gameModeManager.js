@@ -24,7 +24,7 @@ const { listMatchRulesets, resolveMatchRuleset } = require('./rulesets');
 const { matchPayoutAdmissionPolicy } = require('../network/matchEconomyPolicy');
 const { isSmirkEnabled } = require('../auth/smirkPolicy');
 const { reservePayoutCapacity } = require('../services/payoutAdmissionService');
-const { getOperatedProductProfile } = require('../config/operatedProductProfiles');
+const { getOperatedProductProfile, isWowPaymentsPaused } = require('../config/operatedProductProfiles');
 
 // A wallet "not enough (unlocked) money" error is raised BEFORE the tx is broadcast, so it is
 // safe to retry (no double-pay risk), unlike an ambiguous post-broadcast failure. Monero locks
@@ -350,6 +350,7 @@ class GameModeManager {
      * enforce it again in createPaymentRequest for non-Socket.IO callers.
      */
     isPaymentIntakeEnabled(paymentType) {
+        if (isWowPaymentsPaused(process.env)) return false;
         if (!this._isFinancialAdmissionAllowed()) return false;
         if (!this.paymentsEnabled) return false;
         if (paymentType === 'single_game') return Boolean(this.directModeEnabled);
@@ -662,6 +663,7 @@ class GameModeManager {
 
     _getMatchEconomies() {
         const out = { free: true };
+        if (isWowPaymentsPaused(process.env)) return out;
         if (this.creditsModeEnabled) {
             out.credits_prestige = true;
         }
@@ -1232,16 +1234,17 @@ class GameModeManager {
      * @returns {object} { mode, canUseCredits, canUseDirect, hasCredits, creditsBalance }
      */
     getEffectiveModeForUser(user) {
+        const pausedWow = isWowPaymentsPaused(process.env);
         const hasCredits = (user?.credits || 0) >= this.creditsPerGameCost;
-        const bothModesEnabled = this.directModeEnabled && this.creditsModeEnabled;
+        const bothModesEnabled = !pausedWow && this.directModeEnabled && this.creditsModeEnabled;
         
         // Determine available options
-        const canUseCredits = this.creditsModeEnabled && hasCredits;
-        const canUseDirect = this.directModeEnabled;
+        const canUseCredits = !pausedWow && this.creditsModeEnabled && hasCredits;
+        const canUseDirect = !pausedWow && this.directModeEnabled;
         
         // Determine effective mode
         let effectiveMode;
-        if (!this.paymentsEnabled) {
+        if (!this.paymentsEnabled || pausedWow) {
             effectiveMode = 'FREE';
         } else if (bothModesEnabled) {
             // Mixed mode: prefer based on config and availability
@@ -1269,13 +1272,13 @@ class GameModeManager {
             creditsRequired: this.creditsPerGameCost,
             bothModesEnabled,
             preferCreditsFirst: this.preferCreditsFirst,
-            creditsPayoutsEnabled: this.isPayoutEnabledForMode('PAID_CREDITS'),
-            directPayoutsEnabled: this.isPayoutEnabledForMode('PAID_SINGLE')
+            creditsPayoutsEnabled: !pausedWow && this.isPayoutEnabledForMode('PAID_CREDITS'),
+            directPayoutsEnabled: !pausedWow && this.isPayoutEnabledForMode('PAID_SINGLE')
         };
     }
 
     getPublicPreferredPaymentMode(user) {
-        if (!this.paymentsEnabled) {
+        if (!this.paymentsEnabled || isWowPaymentsPaused(process.env)) {
             return 'free';
         }
 
@@ -1344,7 +1347,7 @@ class GameModeManager {
                 });
             }
             
-            if (this.creditsModeEnabled) {
+            if (this.creditsModeEnabled && !isWowPaymentsPaused(process.env)) {
                 const pkg = this.getPrimaryCreditPackage();
                 options.push({
                     type: 'buy_credits',
@@ -2420,7 +2423,8 @@ class GameModeManager {
             : null;
         
         // Serialize atomic prices as exact numbers when safe, decimal strings otherwise.
-        const packages = this.configSnapshot?.modes?.credits?.packages || [];
+        const pausedWow = isWowPaymentsPaused(process.env);
+        const packages = pausedWow ? [] : (this.configSnapshot?.modes?.credits?.packages || []);
         const creditPackages = packages.map(pkg => ({
             id: pkg.id,
             label: pkg.label || pkg.id,
@@ -2435,7 +2439,7 @@ class GameModeManager {
                 2
             )
         }));
-        const cosmeticProducts = this.getCosmeticProducts().map(product => ({
+        const cosmeticProducts = (pausedWow ? [] : this.getCosmeticProducts()).map(product => ({
             id: product.id,
             label: product.label || product.id,
             price: money.toSafe(money.toBig(product.price)),
@@ -2453,7 +2457,7 @@ class GameModeManager {
                 commit: null
             },
             operatedProductProfileId: getOperatedProductProfile(process.env)?.id || null,
-            mode: this.gameMode,
+            mode: pausedWow ? 'FREE' : this.gameMode,
             freePlayEnabled: !!this.freePlayEnabled, // players may choose free play even on a paid instance
             cryptoType: this.cryptoType,
             currencyLabel: this.currencyLabel, // sXMR on stagenet, XMR on mainnet, WOW for Wownero
@@ -2461,40 +2465,41 @@ class GameModeManager {
             network: this.network,
             isTestNetwork: this.isTestNetwork,
             testnetWarning: testnetWarning,
-            singleGamePrice: this.singleGamePrice,
-            singleGamePriceFormatted: this.formatAtomicHuman(this.singleGamePrice, 2),
-            creditsPackagePrice: this.creditsPackagePrice,
-            creditsPerGame: this.creditsPerGameCost,
+            singleGamePrice: pausedWow ? 0 : this.singleGamePrice,
+            singleGamePriceFormatted: pausedWow ? null : this.formatAtomicHuman(this.singleGamePrice, 2),
+            creditsPackagePrice: pausedWow ? 0 : this.creditsPackagePrice,
+            creditsPerGame: pausedWow ? 0 : this.creditsPerGameCost,
             creditPackages: creditPackages,
             cosmeticProducts: cosmeticProducts,
-            creditsPayoutBaseValue: this.creditsPayoutBaseValue,
-            paymentsEnabled: this.paymentsEnabled,
+            creditsPayoutBaseValue: pausedWow ? 0 : this.creditsPayoutBaseValue,
+            paymentsEnabled: pausedWow ? false : this.paymentsEnabled,
             freePlayEnabled: this.freePlayEnabled,
-            directModeEnabled: this.directModeEnabled,
-            creditsModeEnabled: this.creditsModeEnabled,
-            payoutsEnabled: this.payoutsEnabled,
-            directPayoutsEnabled: this.isPayoutEnabledForMode('PAID_SINGLE'),
-            creditsPayoutsEnabled: this.isPayoutEnabledForMode('PAID_CREDITS'),
-            payoutMultipliers: {
+            directModeEnabled: pausedWow ? false : this.directModeEnabled,
+            creditsModeEnabled: pausedWow ? false : this.creditsModeEnabled,
+            payoutsEnabled: pausedWow ? false : this.payoutsEnabled,
+            directPayoutsEnabled: pausedWow ? false : this.isPayoutEnabledForMode('PAID_SINGLE'),
+            creditsPayoutsEnabled: pausedWow ? false : this.isPayoutEnabledForMode('PAID_CREDITS'),
+            payoutMultipliers: pausedWow ? { direct: null, credits: null } : {
                 direct: this.getImplementedPayoutMultipliersForMode('PAID_SINGLE'),
                 credits: this.getImplementedPayoutMultipliersForMode('PAID_CREDITS')
             },
             // Exact server-calculated amounts. The browser must never recreate money promises
             // with floating point multiplier arithmetic.
-            payoutOutcomes: {
+            payoutOutcomes: pausedWow ? { direct: null, credits: null } : {
                 direct: this._publicPayoutOutcomes('PAID_SINGLE'),
                 credits: this._publicPayoutOutcomes('PAID_CREDITS')
             },
             features: {
-                paymentRequired: this.paymentsEnabled,
-                creditsSystem: this.creditsModeEnabled,
-                payouts: this.isPayoutEnabledForMode('PAID_SINGLE')
+                paymentRequired: pausedWow ? false : this.paymentsEnabled,
+                creditsSystem: pausedWow ? false : this.creditsModeEnabled,
+                payouts: !pausedWow && (this.isPayoutEnabledForMode('PAID_SINGLE')
                     || this.isPayoutEnabledForMode('PAID_CREDITS')
+                )
             },
             earlyEntry: {
                 enabled: this.configSnapshot?.earlyEntry?.enabled ?? false,
                 allowInFreeMode: this.configSnapshot?.earlyEntry?.allowInFreeMode ?? false,
-                allowInCreditsMode: this.configSnapshot?.earlyEntry?.allowInCreditsMode ?? false
+                allowInCreditsMode: pausedWow ? false : (this.configSnapshot?.earlyEntry?.allowInCreditsMode ?? false)
             },
             // Smirk wallet integration. Smirk only works on mainnet, so it is forced off on
             // any test network (stagenet/testnet) regardless of SMIRK_ENABLED.

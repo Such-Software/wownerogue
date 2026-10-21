@@ -8,7 +8,8 @@
 
 const {
     SOURCE_SOFTWARE,
-    getOperatedProductProfile
+    getOperatedProductProfile,
+    isWowPaymentsPaused
 } = require('./operatedProductProfiles');
 
 const DEFAULT_POLICY_VERSION = '2026-07-22';
@@ -21,6 +22,7 @@ const ACKNOWLEDGEMENT_KEYS = new Set([
     'riskAccepted',
     'testnetUnderstood'
 ]);
+const WOW_PAYMENTS_PAUSED_NOTICE = 'Payments and prestige credit entry are currently unavailable. Free play remains available.';
 
 function isTrue(value) {
     return ['true', '1', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -78,12 +80,20 @@ function paidAcknowledgementRequired(env, gameModeManager) {
 }
 
 function buildCommerceDisclosure(gameModeManager, env = process.env) {
-    const operatedProduct = getOperatedProductProfile(env);
+    const profile = getOperatedProductProfile(env);
+    const pausedWow = isWowPaymentsPaused(env);
+    const operatedProduct = pausedWow
+        ? Object.freeze({
+            ...profile,
+            commerceSummary: WOW_PAYMENTS_PAUSED_NOTICE,
+            availabilityNotice: WOW_PAYMENTS_PAUSED_NOTICE
+        })
+        : profile;
     const cryptoType = String(gameModeManager?.cryptoType || env.CRYPTO_TYPE || 'WOW').toUpperCase();
     const network = String(gameModeManager?.network || env.MONERO_NETWORK || 'mainnet').toLowerCase();
     const isTestNetwork = Boolean(gameModeManager?.isTestNetwork)
         || (cryptoType === 'XMR' && network !== 'mainnet');
-    const paymentsEnabled = Boolean(gameModeManager?.paymentsEnabled);
+    const paymentsEnabled = !pausedWow && Boolean(gameModeManager?.paymentsEnabled);
     const directEnabled = paymentsEnabled && Boolean(gameModeManager?.directModeEnabled);
     const creditsEnabled = paymentsEnabled && Boolean(gameModeManager?.creditsModeEnabled);
     // A stale subordinate payout flag for a disabled product must not be advertised as an active
@@ -92,7 +102,7 @@ function buildCommerceDisclosure(gameModeManager, env = process.env) {
         && Boolean(gameModeManager?.isPayoutEnabledForMode?.('PAID_SINGLE'));
     const creditsPayouts = creditsEnabled
         && Boolean(gameModeManager?.isPayoutEnabledForMode?.('PAID_CREDITS'));
-    const cryptoMatchPayouts = isTrue(env.MATCH_ENABLED)
+    const cryptoMatchPayouts = !pausedWow && isTrue(env.MATCH_ENABLED)
         && isTrue(env.MATCH_CRYPTO_RACE_ENABLED)
         && isTrue(env.MATCH_PAYOUTS_ENABLED)
         && Boolean(gameModeManager?.payoutsEnabled);

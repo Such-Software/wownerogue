@@ -75,11 +75,18 @@ function getOperatedProductProfile(env = process.env) {
     return PROFILES[selectedProfileId(env)] || null;
 }
 
+function isWowPaymentsPaused(env = process.env) {
+    return selectedProfileId(env) === OPERATED_PRODUCT_PROFILE_IDS.WOW_PRESTIGE
+        && isExplicitFalse(env.PAYMENTS_ENABLED);
+}
+
 function selectPublicPaidModeDescriptors(env = process.env, descriptors = {}) {
     const profile = getOperatedProductProfile(env);
     if (!profile) {
         return { ...descriptors };
     }
+
+    if (isWowPaymentsPaused(env)) return {};
 
     const descriptor = descriptors[profile.gameMode];
     return descriptor === undefined ? {} : { [profile.gameMode]: descriptor };
@@ -144,10 +151,13 @@ function validateOperatedProductProfile(env = process.env, config = {}) {
         `LEGAL_POLICY_VERSION=${profile.legalPolicyVersion}`);
     requireContract(String(env.TERMS_EFFECTIVE_DATE || '').trim() === profile.termsEffectiveDate,
         `TERMS_EFFECTIVE_DATE=${profile.termsEffectiveDate}`);
-    requireContract(isExplicitTrue(env.PAYMENTS_ENABLED) && config?.paymentsEnabled === true,
-        'PAYMENTS_ENABLED=true');
-    requireContract(String(env.GAME_MODE || '').trim() === profile.gameMode,
-        `GAME_MODE=${profile.gameMode}`);
+    const pausedWow = isWowPaymentsPaused(env);
+    requireContract(pausedWow
+        ? config?.paymentsEnabled === false
+        : isExplicitTrue(env.PAYMENTS_ENABLED) && config?.paymentsEnabled === true,
+    pausedWow ? 'PAYMENTS_ENABLED=false with payments disabled' : 'PAYMENTS_ENABLED=true');
+    requireContract(String(env.GAME_MODE || '').trim() === (pausedWow ? 'FREE' : profile.gameMode),
+        `GAME_MODE=${pausedWow ? 'FREE' : profile.gameMode}`);
     requireContract(isExplicitTrue(env.PAID_ACKNOWLEDGEMENT_REQUIRED),
         'PAID_ACKNOWLEDGEMENT_REQUIRED=true');
     requireContract(isExplicitTrue(env.FREE_PLAY_ENABLED), 'FREE_PLAY_ENABLED=true');
@@ -162,12 +172,27 @@ function validateOperatedProductProfile(env = process.env, config = {}) {
     if (id === OPERATED_PRODUCT_PROFILE_IDS.WOW_PRESTIGE) {
         requireContract(cryptoType === 'WOW', 'CRYPTO_TYPE=WOW');
         requireContract(network === 'mainnet', 'MONERO_NETWORK=mainnet');
-        requireContract(String(env.PAYMENT_MODES || '').trim().toLowerCase() === 'credits',
-            'PAYMENT_MODES=credits');
+        if (pausedWow) {
+            requireContract(Object.prototype.hasOwnProperty.call(env, 'PAYMENT_MODES')
+                && String(env.PAYMENT_MODES).trim() === '', 'explicit empty PAYMENT_MODES');
+            requireContract(isExplicitFalse(env.CREDITS_ENABLED)
+                && config?.modes?.credits?.enabled === false, 'CREDITS_ENABLED=false');
+            requireContract(!env.CREDITS_PAYOUT_ENABLED || isExplicitFalse(env.CREDITS_PAYOUT_ENABLED),
+                'CREDITS_PAYOUT_ENABLED=false when set');
+            requireContract(isExplicitFalse(env.EARLY_ENTRY_CREDITS_MODE),
+                'EARLY_ENTRY_CREDITS_MODE=false');
+            requireContract(String(env.FINANCIAL_EVENT_SINK_URL || '').trim() === '',
+                'empty FINANCIAL_EVENT_SINK_URL');
+            requireContract(String(env.FINANCIAL_EVENT_SINK_TOKEN || '').trim() === '',
+                'empty FINANCIAL_EVENT_SINK_TOKEN');
+        } else {
+            requireContract(String(env.PAYMENT_MODES || '').trim().toLowerCase() === 'credits',
+                'PAYMENT_MODES=credits');
+            requireContract(isExplicitTrue(env.CREDITS_ENABLED)
+                && config?.modes?.credits?.enabled === true, 'CREDITS_ENABLED=true');
+        }
         requireContract(isExplicitFalse(env.DIRECT_PAYMENT_ENABLED)
             && config?.modes?.direct?.enabled === false, 'DIRECT_PAYMENT_ENABLED=false');
-        requireContract(isExplicitTrue(env.CREDITS_ENABLED)
-            && config?.modes?.credits?.enabled === true, 'CREDITS_ENABLED=true');
         requireContract(isExplicitFalse(env.PAYOUTS_ENABLED)
             && config?.payouts?.enabled === false, 'PAYOUTS_ENABLED=false');
         requireContract(isExplicitFalse(env.DIRECT_PAYOUTS_ENABLED)
@@ -204,6 +229,7 @@ module.exports = {
     OPERATED_PRODUCT_PROFILE_IDS,
     SOURCE_SOFTWARE,
     getOperatedProductProfile,
+    isWowPaymentsPaused,
     selectPublicPaidModeDescriptors,
     selectedProfileId,
     validateOperatedProductProfile

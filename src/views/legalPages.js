@@ -68,7 +68,9 @@ function operatorAndSoftwareStatus(disclosure) {
     const operated = disclosure.operatedProduct;
     const software = disclosure.software || {};
     const relationship = operated
-        ? `<p><strong>Operated-product scope:</strong> ${escapeHtml(operated.scopeNotice)}</p>${operated.noRealValueNotice
+        ? `<p><strong>Operated-product scope:</strong> ${escapeHtml(operated.scopeNotice)}</p>${operated.availabilityNotice
+            ? `<p><strong>Current availability:</strong> ${escapeHtml(operated.availabilityNotice)}</p>`
+            : ''}${operated.noRealValueNotice
             ? `<p class="no-real-value"><strong>${escapeHtml(operated.noRealValueNotice)}</strong></p>`
             : ''}<p>${escapeHtml(software.operatedBoundaryNotice)}</p><p>${escapeHtml(software.thirdPartyNotice)}</p>`
         : `<p><strong>Independent deployment:</strong> ${escapeHtml(software.thirdPartyNotice)}</p><p>${escapeHtml(software.operatedBoundaryNotice)}</p>`;
