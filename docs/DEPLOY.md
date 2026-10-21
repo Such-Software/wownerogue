@@ -89,11 +89,12 @@ The fleet `playbooks/wowngeon-stage-candidate.yml` role transfers exactly one ta
 selected root-owned mode-0700 candidate inbox and compares its remote SHA-256 with the
 independently recorded literal digest. It is a one-shot custody boundary, not deployment.
 
-The executable extraction and activation boundary lives only in the separately reviewed fleet
-repository as the default-closed `wowngeon_release_activate` role. This application checkout cannot
-attest which fleet revision is installed or authorize its execution. Follow the hash-pinned fleet
-runbook and literal receipt contract. Do not manually extract beneath `releases/`, install
-dependencies there, change `current`, restart an application, or run migrations merely because a
+Such Software application activation belongs to the reviewed Fleet control plane. Its generic
+`wowngeon_release_activate` role was retired on 2026-09-10; no repeatable replacement activation lane
+is available. The remaining one-shot Wownerogue cutover deliberately finishes stopped with ingress
+closed. This source checkout cannot authorize a live update. Follow Fleet's `playbooks/WOWNGEON.md`
+and `RUNBOOK-wowngeon.md` for current capabilities. Do not manually extract beneath `releases/`,
+install dependencies there, change `current`, restart an application, or run migrations because a
 blob has arrived.
 
 ---
@@ -279,12 +280,12 @@ release artifact. Provision them separately on any instance that offers the 3D r
 ## Updating the Deployment
 
 Run the full suite from the clean source commit, then build and verify the runtime artifact using
-[RELEASE_ARTIFACT.md](./RELEASE_ARTIFACT.md). Use the fleet blob-staging playbook, then proceed only
-through the hash-pinned `wowngeon_release_activate` role after its clone, wallet, accounting, drain,
-predecessor, and receipt gates pass. That role, not an application service identity or a manual
-shell session, builds a new immutable `/var/www/<instance>/releases/<release-id>`, installs the
-locked graph, verifies the clone and preflight evidence, seals ownership, and atomically selects
-`current`.
+[RELEASE_ARTIFACT.md](./RELEASE_ARTIFACT.md). Fleet blob staging and disposable-clone validation are
+non-activating capabilities. The generic activation role is retired, so a new reviewed update
+transaction and its exact migration, accounting, predecessor, and recovery evidence are required
+before an operated instance can select a new release. In particular, test the deployed predecessor
+against the candidate's post-migration schema and writes; a source revision with a similar name
+cannot stand in for deployed overlay bytes.
 
 Never run `git pull`, `npm install`, or `npm audit fix` inside the active release. Keep the previous
 release and database backup until the new version has passed public health, WebSocket,

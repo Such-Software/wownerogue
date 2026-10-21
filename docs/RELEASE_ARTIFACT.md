@@ -14,7 +14,9 @@ Everything else in the commit is excluded on purpose: `docs/`, `test/`, the root
 (service units, firewall and backup jobs, the hash-pinned financial audit SQL, the wallet output
 splitter), environment examples, `src/sim`, `src/jest.config.js`, and the operator-only commands
 `src/scripts/pvp-capture.js`, `src/scripts/stagenet-financial-canary.js`, `src/scripts/setup_db.js`,
-`src/scripts/smoke.js`, and `src/scripts/showcase-browser-smoke.js`. Tests and operator tooling are source and control-plane inputs; they are
+`src/scripts/smoke.js`, `src/scripts/showcase-browser-smoke.js`,
+`src/scripts/showcase-lifecycle-smoke.js`, and `src/scripts/showcase-network-guard.js`.
+Tests and operator tooling are source and control-plane inputs; they are
 not production runtime files, and sharing a Git commit with the runtime does not make them part of
 it.
 
@@ -121,12 +123,13 @@ activation boundary must then:
    validates payment and environment configuration only. It connects to neither PostgreSQL nor either
    RPC, so it does not replace database, daemon, or wallet health checks.
 
-The clone runner is deliberately non-activating. Production activation uses the separately reviewed,
-default-closed `wowngeon_release_activate` role in the fleet control-plane repository. Do not
-substitute manual extraction, dependency installation, service commands, or a hand-written `current`
-switch. That role refuses activation until the matching clone-validation receipt, wallet-promotion
-receipt, drain and audit gates, literal hashes, and rollback target all satisfy the contract in the
-fleet runbook `RUNBOOK-wowngeon.md`.
+The clone runner is deliberately non-activating. Fleet retired `wowngeon_release_activate` on
+2026-09-10, and there is no repeatable operated-application activation lane today. Its remaining
+one-shot Wownerogue cutover finishes stopped with ingress closed. Consult Fleet's
+`playbooks/WOWNGEON.md` and `RUNBOOK-wowngeon.md` for current capabilities. A reviewed successor must
+bind the exact migration, financial, predecessor compatibility, and recovery evidence before a
+live update. Do not substitute manual extraction, dependency installation, service commands, or a
+hand-written `current` switch for that missing capability.
 
 ## Source and operations boundary
 
@@ -136,7 +139,10 @@ source-tree deployment scripts nor fleet tools are copied beneath the applicatio
 A runtime artifact hash attests nothing about a separately delivered operations file; record and
 verify an independent hash for every such file in the fleet change plan.
 
-## Activation and rollback gate
+## Activation and rollback requirements
+
+These are requirements for a future reviewed Fleet transaction, not an executable deployment
+procedure. An artifact or clone-validation receipt cannot activate an operated instance.
 
 Drain public ingress and require zero active and queued games. Take and validate fresh dumps, and run
 the financial audit before and after stopping only the affected app. Preserve and validate the exact

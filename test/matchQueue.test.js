@@ -69,6 +69,32 @@ describe('MatchQueue', () => {
         delete process.env.MATCH_ENABLED;
     });
 
+    test('free-play-only mode rejects Prestige before debit, while explicit credits mode queues it', async () => {
+        process.env.MATCH_ENABLED = 'true';
+        const db = makeDb();
+        let creditsModeEnabled = false;
+        const gameModeManager = {
+            freePlayEnabled: true,
+            get creditsModeEnabled() { return creditsModeEnabled; },
+            _getMatchEconomies() {
+                return { free: true, ...(creditsModeEnabled ? { credits_prestige: true } : {}) };
+            }
+        };
+        const q = new MatchQueue({ db, gameModeManager });
+        q.initialized = true;
+
+        const disabled = await q.join({ userId: 1, socketId: 's1', sessionToken: 't1', economy: 'credits_prestige' });
+        expect(disabled).toEqual({ success: false, reason: 'economy_disabled' });
+        expect(db.queries).toHaveLength(0);
+        expect(q.length('credits_prestige')).toBe(0);
+
+        creditsModeEnabled = true;
+        const enabled = await q.join({ userId: 1, socketId: 's1', sessionToken: 't1', economy: 'credits_prestige' });
+        expect(enabled.success).toBe(true);
+        expect(q.length('credits_prestige')).toBe(1);
+        delete process.env.MATCH_ENABLED;
+    });
+
     test('free join adds to memory queue', async () => {
         process.env.MATCH_ENABLED = 'true';
         const db = makeDb();

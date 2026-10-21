@@ -10,6 +10,7 @@
     "debug": "NODE_ENV=debug node index.js",
     "test": "jest --runInBand",
     "test:showcase-browser": "node scripts/showcase-browser-smoke.js",
+    "test:showcase-lifecycle": "node scripts/showcase-lifecycle-smoke.js",
     "capture:pvp": "node scripts/pvp-capture.js",
     "canary:stagenet": "node scripts/stagenet-financial-canary.js",
     "db:migrate:clone": "node scripts/migrate-disposable-clone.js",
