@@ -56,6 +56,8 @@ describe('server-side fog of war', () => {
         process.env.DUNGEON_LEVELS = '1';
         const game = new Game('sock', user(), {});
         const exit = game.dungeon.exit;
+        // A generated spawn can already see the exit. Start this discovery test out of view.
+        setVisible(game, exit, false);
 
         expect(game.getState().exit).toBeNull();
 
