@@ -304,10 +304,15 @@ class PaymentHandlers {
             
             this.io.to(socket.id).emit('payment_created', {
                 paymentId: paymentRequest.id,
+                ownerUserId: paymentRequest.ownerUserId,
+                asset: String(cryptoType).toLowerCase(),
+                network: this.gameModeManager.network,
+                memo: paymentRequest.description,
                 address: paymentRequest.address,
                 amount: paymentRequest.amount,
                 amountFormatted: paymentRequest.amountFormatted,
-                humanAmount: paymentRequest.amountFormatted,
+                humanAmount: money.format(paymentRequest.amount, this.gameModeManager.currencyDecimals),
+                expiresAt: paymentRequest.expiresAt,
                 currency: cryptoType,
                 cryptoType: cryptoType,
                 package: paymentRequest.package,
@@ -485,10 +490,14 @@ class PaymentHandlers {
 
             this.io.to(socket.id).emit('payment_created', {
                 paymentId: paymentRequest.id,
+                ownerUserId: paymentRequest.ownerUserId,
+                asset: String(cryptoType).toLowerCase(),
+                network: this.gameModeManager.network,
+                memo: paymentRequest.description,
                 address: paymentRequest.address,
                 amount: paymentRequest.amount,
                 amountFormatted: formattedAmount,
-                humanAmount: formattedAmount,
+                humanAmount: money.format(paymentRequest.amount, this.gameModeManager.currencyDecimals),
                 paymentType,
                 productId: paymentRequest.productId,
                 grants: paymentRequest.grants,

@@ -92,6 +92,9 @@ See [`docs/MATCH_MODE.md`](docs/MATCH_MODE.md) for architecture, configuration, 
 [`docs/RULESETS.md`](docs/RULESETS.md) for the Escape Race, Last Alive, Score Attack, and Co-op
 Escape rulesets.
 
+The [showcase qualification guide](docs/SHOWCASE_QUALIFICATION.md) defines the Tavern, graphics,
+Escape Race, and Smirk acceptance checks.
+
 For deterministic multi-bot playtesting and 16:9/9:16 ad footage, use the loopback-only, free-only
 capture harness documented in [`docs/PVP_CAPTURE.md`](docs/PVP_CAPTURE.md). It drives the real match
 engine over Socket.IO but cannot connect to a deployment, database, wallet, or payout path.

@@ -182,6 +182,7 @@ const SocketHandlers = {
         // Connection handlers
         socket.on('connect', this.onConnect);
         socket.on('disconnect', function() {
+            SocketHandlers._invalidatePaymentSession();
             if (typeof CommerceConsent !== 'undefined' && CommerceConsent.clear) {
                 CommerceConsent.clear();
             }
@@ -311,6 +312,8 @@ const SocketHandlers = {
 
     onSessionToken: function(data) {
         if (data && data.token) {
+            SocketHandlers._invalidatePaymentSession();
+            SocketHandlers._sessionUserId = data.userId || null;
             try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('New session established. Token stored.'));
             UI.scrollChat();
@@ -332,6 +335,8 @@ const SocketHandlers = {
 
     onSessionResumed: function(data) {
         if (data && data.token) {
+            SocketHandlers._invalidatePaymentSession();
+            SocketHandlers._sessionUserId = data.userId || null;
             try { localStorage.setItem('wownerogue_token', data.token); } catch(e) {}
             $('#messages').append($('<li class="status">').text('Session resumed.'));
             UI.scrollChat();
@@ -899,6 +904,7 @@ const SocketHandlers = {
         SocketHandlers._paymentsEnabled = !!data.paymentsEnabled;
         SocketHandlers._smirkEnabled = SocketHandlers._isSmirkExplicitlyEnabled(data);
         SocketHandlers._cryptoType = data.cryptoType || 'WOW';
+        SocketHandlers._network = data.network || null;
         SocketHandlers._currencyLabel = data.currencyLabel || data.cryptoType || 'WOW'; // e.g. sXMR on stagenet
         SocketHandlers._explorerTxUrl = data.explorerTxUrl || null;
         if (typeof Leaderboard !== 'undefined' && Leaderboard.updateConfig) {
@@ -978,83 +984,116 @@ const SocketHandlers = {
     },
 
     onPaymentCreated: function(data) {
-        console.log('Payment created:', data);
         if (typeof AudioAlerts !== 'undefined') { AudioAlerts.playRequestCoin(); }
-
-        // Native Smirk payment is only possible while the user is linked through the extension.
-        if (typeof SmirkAuth !== 'undefined' && SmirkAuth._isLinked && SmirkAuth.isAvailable() &&
-            typeof window.smirk !== 'undefined' && window.smirk.requestPayment) {
-            SocketHandlers._trySmirkPayment(data);
-            return;
-        }
-
+        // Invoice delivery, replay and reconnect are never wallet consent.
         SocketHandlers._showPaymentFlow(data);
     },
 
-    /**
-     * Attempt payment via Smirk wallet extension.
-     * Falls back to normal address/QR flow on rejection or error.
-     */
-    _trySmirkPayment: async function(data) {
-        $('#messages').append($('<li class="status">').text('Opening Smirk wallet for payment...'));
-        UI.scrollChat();
-
-        try {
-            // Smirk expects a human-readable amount (e.g. "1"), not atomic units.
-            var payAmount = data.humanAmount || data.amountFormatted || String(data.amount);
-            var description = 'Single game entry';
-            if (data.paymentType === 'credits_package') {
-                description = 'Buy ' + (data.package ? data.package.credits : '') + ' credits';
-            } else if (data.paymentType === 'cosmetic_pack') {
-                description = 'Unlock ' + (data.package ? (data.package.label || data.package.id || 'premium pack') : 'premium pack');
-            }
-
-            await window.smirk.requestPayment({
-                address: data.address,
-                amount: payAmount,
-                asset: (SocketHandlers._cryptoType || 'WOW').toLowerCase(),
-                description: description
+    _smirkPaymentAdapter: null,
+    _getSmirkPaymentAdapter: function() {
+        if (!SocketHandlers._smirkPaymentAdapter) {
+            let storage = null;
+            try { storage = window.localStorage; } catch (_) {}
+            SocketHandlers._smirkPaymentAdapter = SmirkPayments.createAdapter({
+                storage,
+                withLock: window.navigator?.locks
+                    ? (name, work) => window.navigator.locks.request(name, work) : null
             });
+        }
+        return SocketHandlers._smirkPaymentAdapter;
+    },
 
-            // The user confirmed in Smirk and the transaction is submitted; server-side monitoring
-            // handles confirmation from here.
-            $('#messages').append($('<li class="status" style="color:#4ade80;">').text(
-                'Payment sent via Smirk! Waiting for confirmation...'
-            ));
-            UI.scrollChat();
+    _smirkPaymentCopy: function(state) {
+        return {
+            submitted: 'Smirk reported transaction submission. Waiting for backend confirmation. Do not pay again.',
+            unknown: 'Payment submission is uncertain. Check payment status and wallet history before any further payment. Do not pay again.',
+            failed: 'Smirk reported a failed payment. Check wallet history and invoice status before choosing any further payment.',
+            cancelled: 'Smirk payment cancelled. No automatic retry will be made.',
+            unavailable: 'Smirk payment permission is unavailable. Reconnect the wallet deliberately before creating another payment request.'
+        }[state];
+    },
 
-            if (typeof PaymentUI !== 'undefined') {
-                PaymentUI.showPaymentRequest(data);
-                $('#payment-status').html('<span style="color:#4ade80;">Payment sent via Smirk, awaiting confirmation...</span>');
+    _invalidatePaymentSession: function() {
+        SocketHandlers._paymentSessionEpoch = (SocketHandlers._paymentSessionEpoch || 0) + 1;
+        SocketHandlers._activePaymentId = null;
+        SocketHandlers._activePaymentData = null;
+        SocketHandlers._sessionUserId = null;
+        if (typeof SmirkAuth !== 'undefined') {
+            SmirkAuth._isLinked = false;
+            SmirkAuth._wowReady = false;
+        }
+        $('#smirkPayButton, .payment-info').remove();
+        $('#payment-ui, #payment-details').hide();
+        $('#payment-address').val('');
+        $('#payment-amount').text('');
+        $('#check-payment').removeData('payment-id').prop('disabled', true);
+        $('#copy-address').prop('disabled', true);
+        SocketHandlers.hidePaymentQR();
+    },
+
+    _trySmirkPayment: async function(data, button, consentEpoch = SocketHandlers._paymentSessionEpoch) {
+        if (button) button.prop('disabled', true);
+        try {
+            const admit = function() {
+                if (!SocketHandlers._smirkEnabled || SocketHandlers._cryptoType !== 'WOW' ||
+                    SocketHandlers._network !== 'mainnet' || !SmirkAuth._isLinked || !SmirkAuth._wowReady ||
+                    consentEpoch !== SocketHandlers._paymentSessionEpoch ||
+                    !SocketHandlers._sessionUserId || String(SocketHandlers._sessionUserId) !== String(data.ownerUserId) ||
+                    String(SocketHandlers._activePaymentId) !== String(data.paymentId)) {
+                    throw new Error('This WOW invoice is no longer active for the connected account. Check payment status first.');
+                }
+            };
+            admit();
+            if (!await SmirkAuth.checkWowAccess()) {
+                SmirkAuth._updateButton($('#smirkLoginBtn'), 'linked');
+                throw new Error('WOW permission is missing. Click Enable WOW payments to reconnect deliberately.');
             }
-            SocketHandlers._setBannerStatus('Pay', '#0af');
-            if (typeof Game !== 'undefined' && Game._paymentRequested) Game._paymentRequested();
-            if (typeof Game !== 'undefined' && Game.drawWaitingScreen) Game.drawWaitingScreen();
-
+            const result = await SocketHandlers._getSmirkPaymentAdapter().pay(data, window.smirk, admit);
+            if (consentEpoch !== SocketHandlers._paymentSessionEpoch ||
+                String(SocketHandlers._activePaymentId) !== String(data.paymentId)) return;
+            const message = SocketHandlers._smirkPaymentCopy(result.state);
+            $('#payment-status').text(message);
+            $('#messages').append($('<li class="status">').text(message));
+            SocketHandlers._protectSubmittedPayment(result.state);
         } catch (err) {
-            console.log('Smirk payment declined/failed, falling back to manual:', err);
-            var errMsg = String(err.message || err || '').toLowerCase();
+            if (consentEpoch !== SocketHandlers._paymentSessionEpoch ||
+                String(SocketHandlers._activePaymentId) !== String(data.paymentId)) return;
+            $('#payment-status').text(err.message);
+            $('#messages').append($('<li class="status">').text(err.message));
+        }
+        UI.scrollChat();
+    },
 
-            // Distinguish a user-initiated denial from an extension error.
-            var isUserDenied = errMsg.indexOf('denied') !== -1 ||
-                               errMsg.indexOf('rejected') !== -1 ||
-                               errMsg.indexOf('cancelled') !== -1 ||
-                               errMsg.indexOf('user') !== -1;
+    _protectSubmittedPayment: function(state) {
+        if (state !== 'unknown' && state !== 'submitted') return;
+        $('#copy-address, .copy-pay-address').prop('disabled', true);
+        SocketHandlers.hidePaymentQR();
+    },
 
-            if (isUserDenied) {
-                $('#messages').append($('<li class="status">').text(
-                    'Smirk payment cancelled. Use the address below.'
-                ));
-            } else {
-                // Extension error: invalidated context, service worker issue, and similar.
-                $('#messages').append($('<li class="status" style="color:#f59e0b;">').text(
-                    'Smirk payment unavailable, using manual payment. Refresh the page to restore Smirk.'
-                ));
-                SmirkAuth._isLinked = false;
+    _refreshSmirkPaymentButton: function() {
+        if (SocketHandlers._activePaymentData) SocketHandlers._showSmirkPaymentButton(SocketHandlers._activePaymentData);
+    },
+
+    _showSmirkPaymentButton: function(data) {
+        $('#smirkPayButton').remove();
+        if (typeof SmirkPayments === 'undefined' || typeof SmirkAuth === 'undefined' ||
+            !SmirkAuth._isLinked || !SmirkAuth.isAvailable() || !SocketHandlers._smirkEnabled ||
+            SocketHandlers._cryptoType !== 'WOW' || SocketHandlers._network !== 'mainnet' ||
+            !SocketHandlers._sessionUserId || String(SocketHandlers._sessionUserId) !== String(data.ownerUserId)) return;
+        try {
+            SmirkPayments.paymentRequest(data);
+            const adapter = SocketHandlers._getSmirkPaymentAdapter();
+            const previous = adapter.status(data);
+            if (previous) {
+                $('#payment-status').text(SocketHandlers._smirkPaymentCopy(previous.state));
+                return;
             }
-            UI.scrollChat();
-
-            SocketHandlers._showPaymentFlow(data);
+            const button = $('<button id="smirkPayButton" type="button" class="menu-button">').text('Pay with Smirk · WOW mainnet');
+            const consentEpoch = SocketHandlers._paymentSessionEpoch;
+            button.on('click', () => SocketHandlers._trySmirkPayment(data, button, consentEpoch));
+            $('#payment-details').append(button);
+        } catch (err) {
+            $('#payment-status').text('Smirk unavailable: ' + err.message);
         }
     },
 
@@ -1062,9 +1101,14 @@ const SocketHandlers = {
      * Show normal payment flow: modal + chat message + QR code
      */
     _showPaymentFlow: function(data) {
+        SocketHandlers._activePaymentId = data.paymentId;
+        SocketHandlers._activePaymentData = data;
+        $('#check-payment').prop('disabled', false);
+        $('#copy-address, .copy-pay-address').prop('disabled', false);
         if (typeof PaymentUI !== 'undefined') {
             PaymentUI.showPaymentRequest(data);
         }
+        SocketHandlers._showSmirkPaymentButton(data);
 
         const parts = [];
         const reusedCopy = data.reused
@@ -1151,6 +1195,12 @@ const SocketHandlers = {
             if (qrHolder) {
                 qrHolder.textContent = 'QR unavailable';
             }
+        }
+        if (typeof SmirkPayments !== 'undefined') {
+            try {
+                const previous = SocketHandlers._getSmirkPaymentAdapter().status(data);
+                if (previous) SocketHandlers._protectSubmittedPayment(previous.state);
+            } catch (_) { /* An unreadable history already refuses the wallet button. */ }
         }
     },
     
@@ -1271,6 +1321,11 @@ const SocketHandlers = {
     onPaymentConfirmed: function(data) {
         console.log('Payment confirmed in block:', data);
         if (!data || !data.paymentId) return; // A payload without a paymentId cannot be deduped.
+        if (String(SocketHandlers._activePaymentId) === String(data.paymentId)) {
+            SocketHandlers._activePaymentId = null;
+            SocketHandlers._activePaymentData = null;
+            $('#smirkPayButton').remove();
+        }
         SocketHandlers._expireOldClientPaymentMarkers();
         if (SocketHandlers._lastDisplayedConfirmation === data.paymentId) return;
         SocketHandlers._lastDisplayedConfirmation = data.paymentId;

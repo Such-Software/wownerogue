@@ -117,7 +117,7 @@
 
         var available = info.economies || {};
         var availableKeys = Object.keys(ECONOMIES).filter(function (key) { return !!available[key]; });
-        if (!available[selectedEconomy] && availableKeys.length) selectedEconomy = availableKeys[0];
+        if (!inQueue && !available[selectedEconomy] && availableKeys.length) selectedEconomy = availableKeys[0];
         els.economies.innerHTML = '';
         availableKeys.forEach(function (key) {
             var def = ECONOMIES[key];
@@ -151,6 +151,7 @@
             b.type = 'button'; b.textContent = meta.label
                 + (!availability.runtimeAvailable ? ' ⛔' : (meta.premium ? ' ★' : ''));
             b.className = (meta.id === mode ? 'active ' : '') + (usable ? '' : 'locked');
+            b.setAttribute('aria-pressed', meta.id === mode ? 'true' : 'false');
             b.disabled = !usable;
             if (!availability.runtimeAvailable) {
                 b.title = 'Unavailable on this server: optional renderer dependency disabled.';
@@ -272,10 +273,17 @@
     socket.on('match_queue_joined', function (res) {
         els.queueBtn.disabled = false;
         if (res && res.success) {
+            if (res.economy && ECONOMIES[res.economy]) selectedEconomy = res.economy;
             inQueue = true;
             els.queueBtn.classList.add('hidden');
             els.leaveBtn.classList.remove('hidden');
-            setStatus('Queued for ' + economyLabel(selectedEconomy) + ' · position ' + (res.position || '?') + ' · waiting for the next block.');
+            Array.prototype.forEach.call(els.economies.querySelectorAll('[data-economy]'), function (button) {
+                var selected = button.dataset.economy === selectedEconomy;
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            });
+            setStatus((res.restored ? 'Queue restored for ' : 'Queued for ') + economyLabel(selectedEconomy)
+                + ' · position ' + (res.position || '?') + ' · waiting for the next block.');
         } else {
             setStatus('Queue failed: ' + ((res && (res.reason || res.message)) || 'unknown error'));
         }
@@ -285,6 +293,7 @@
         inQueue = false;
         els.queueBtn.classList.remove('hidden');
         els.leaveBtn.classList.add('hidden');
+        renderEconomies();
         setStatus(res && res.success ? 'Left the queue. Any held entry was returned.' : 'Could not leave: ' + ((res && res.reason) || 'unknown error'));
     });
 
@@ -404,7 +413,7 @@
         else if (dir === 'right') sendMove(1, 0);
     }
     window.addEventListener('keydown', function (e) {
-        if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+        if (e.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable)) return;
         if (keyState[e.key]) return;
         keyState[e.key] = true;
         if (['ArrowUp', 'w', 'W'].indexOf(e.key) !== -1) { e.preventDefault(); directionMove('up'); }

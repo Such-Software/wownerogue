@@ -125,8 +125,8 @@
             <p id="joinStatus" role="status" aria-live="polite">Connecting to the tavern…</p>
         </form>
 
-        <div id="modebar" class="hidden"></div>
-        <div id="packbar" class="hidden"></div>
+        <div id="modebar" class="hidden" role="group" aria-label="Render style"></div>
+        <div id="packbar" class="hidden" role="group" aria-label="Visual pack"></div>
         <div id="stage" class="hidden" aria-label="Shared tavern room"></div>
         <div id="tavernDpad" class="touch-pad hidden" role="group" aria-label="Tavern movement controls">
             <button type="button" data-dir="up" aria-label="Move up">▲</button>
@@ -420,6 +420,7 @@
                 var b = document.createElement('button');
                 b.className = 'packbtn' + (p.id === activeId ? ' active' : '');
                 b.textContent = p.label;
+                b.setAttribute('aria-pressed', p.id === activeId ? 'true' : 'false');
                 b.addEventListener('click', function () {
                     if (RK.setActivePack(p.id)) { buildPackbar(); setMode(currentMode); }
                 });
@@ -428,7 +429,9 @@
         }
         function updateModeButtons() {
             Array.prototype.forEach.call(modebar.children, function (b) {
-                b.classList.toggle('active', b.dataset.mode === currentMode);
+                var active = b.dataset.mode === currentMode;
+                b.classList.toggle('active', active);
+                b.setAttribute('aria-pressed', active ? 'true' : 'false');
             });
         }
 
@@ -635,7 +638,7 @@
             if (!spectatorKind && state.you) socket.emit('tavern_move', { dir: dir });
         }
         window.addEventListener('keydown', function (e) {
-            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+            if (e.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable)) return;
             var dir = KEYS[e.key];
             if (!dir || (!state.you && spectatorKind !== 'player-match')) return;
             e.preventDefault();

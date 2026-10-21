@@ -1427,7 +1427,25 @@ class SocketHandlers {
             }
             const session = await this._resolveMatchSession(socket);
             if (!session) return;
-            await this.matchManager.handleReconnect(socket, session);
+            // An active room owns the player until its result is settled. A queued entrant has
+            // no room yet, so restore the durable queue row to this authenticated socket without
+            // joining again or touching its held credits/tickets.
+            const inMatch = await this.matchManager.handleReconnect(socket, session);
+            if (inMatch || !this.matchQueue?.reattach) return;
+            for (const economy of ['free', 'credits_prestige', 'crypto_race']) {
+                const restored = await this.matchQueue.reattach(
+                    session.userId, economy, socket.id, session.sessionToken
+                );
+                if (restored?.inQueue) {
+                    socket.emit('match_queue_joined', {
+                        success: true,
+                        economy,
+                        position: restored.position,
+                        alreadyQueued: true,
+                        restored: true
+                    });
+                }
+            }
         } catch (err) {
             if (this.debugManager?.CONSOLE_LOGGING) console.error('[SocketHandlers] match_reconnect error:', err.message);
             socket.emit('match_error', { message: 'Could not rejoin the match.' });
@@ -1793,10 +1811,14 @@ class SocketHandlers {
             // Re-emit payment_created to the client
             socket.emit('payment_created', {
                 paymentId: payment.id,
+                ownerUserId: dbUserId,
+                asset: String(cryptoType).toLowerCase(),
+                network: this.gameModeManager.network,
+                memo: payment.description,
                 address: payment.subaddress,
                 amount: payment.expected_amount,
                 amountFormatted: formattedAmount,
-                humanAmount: formattedAmount,
+                humanAmount: money.format(payment.expected_amount, this.gameModeManager.currencyDecimals),
                 paymentType: payment.payment_type,
                 cryptoType: cryptoType,
                 description: payment.description,
