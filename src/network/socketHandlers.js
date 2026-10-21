@@ -32,6 +32,8 @@ const {
 } = require('../game/soloRestartSnapshot');
 const { normalizeError } = require('../utils/errors');
 const money = require('../money/atomic');
+const ProductGrants = require('../payments/productGrants');
+const { isWowPaymentsPaused } = require('../config/operatedProductProfiles');
 const {
     buildCommerceDisclosure,
     validatePaidAcknowledgement
@@ -775,10 +777,6 @@ class SocketHandlers {
                             'Welcome back! Your game has been restored.');
                     }
                     
-                    // Restore payment monitoring if it was active
-                    if (suspendedState.paymentMonitoringActive && this.paymentHandlers) {
-                        this._restorePaymentMonitoring(socket, dbUserId);
-                    }
                 }
             }
         }
@@ -798,8 +796,6 @@ class SocketHandlers {
                         nextBlock: (this.debugManager.getCurrentBlockHeight ? this.debugManager.getCurrentBlockHeight() : 0) + 1
                     });
                     
-                    // Check for pending payment and restore monitoring
-                    this._restorePaymentMonitoring(socket, dbUserId);
                 }
             }
         }
@@ -807,6 +803,11 @@ class SocketHandlers {
         // Send game mode info to client
         if (this.gameModeManager) {
             socket.emit('game_mode_info', this.gameModeManager.getGameModeInfo());
+        }
+        // A pending invoice belongs to the authenticated session, whether or not its owner
+        // also has a suspended game or queue entry. Deliver capabilities before the invoice.
+        if (sessionInfo?.resumed && dbUserId) {
+            this._restorePaymentMonitoring(socket, dbUserId);
         }
         this._emitIdentity(socket).catch(err => {
             if (this.debugManager?.CONSOLE_LOGGING) console.warn('Failed to send identity snapshot:', err.message);
@@ -1747,14 +1748,20 @@ class SocketHandlers {
      * @param {number} dbUserId - The DB user ID
      */
     async _restorePaymentMonitoring(socket, dbUserId) {
-        if (!dbUserId || !this.paymentHandlers || !this.gameModeManager) {
+        const manager = this.gameModeManager;
+        if (!dbUserId || !this.paymentHandlers || !manager?.db
+            || manager.paymentsEnabled !== true || isWowPaymentsPaused(process.env)
+            || !this._isCurrentPaymentRestoreOwner(socket, dbUserId)) {
             return;
         }
+        const monitorBeforeRestore = this.paymentHandlers.socketPaymentMap?.get(socket.id) || null;
 
         try {
             // Query for pending (unpaid) payment requests for this user
-            const pendingResult = await this.gameModeManager.db.query(`
-                SELECT id, subaddress, expected_amount, payment_type, description, expires_at, address_index,
+            const pendingResult = await manager.db.query(`
+                SELECT id, user_id, subaddress, expected_amount, payment_type, description,
+                       expires_at, address_index, product_id, product_grants,
+                       provider_id, provider_invoice_id,
                        fairness_proof_version, fairness_offer_id, fairness_offer_issued_at,
                        fairness_commitment, fairness_server_seed, fairness_client_seed,
                        fairness_bound_at, fairness_consumed_at
@@ -1766,6 +1773,8 @@ class SocketHandlers {
                 LIMIT 1
             `, [dbUserId]);
 
+            if (!this._isCurrentPaymentRestoreOwner(socket, dbUserId)) return;
+
             if (pendingResult.rows.length === 0) {
                 // No pending payment to restore
                 if (this.debugManager.CONSOLE_LOGGING) {
@@ -1775,6 +1784,21 @@ class SocketHandlers {
             }
 
             const payment = pendingResult.rows[0];
+            const paymentType = payment.payment_type;
+            if (String(payment.user_id) !== String(dbUserId)
+                || !['single_game', 'credits_package', 'cosmetic_pack'].includes(paymentType)
+                || typeof manager.isPaymentIntakeEnabled !== 'function'
+                || !manager.isPaymentIntakeEnabled(paymentType)) return;
+
+            const cryptoType = manager.cryptoType;
+            const provider = manager.paymentProviders?.getProvider?.(cryptoType) || null;
+            const providerId = provider?.id || 'native-monero';
+            if ((payment.provider_id && payment.provider_id !== providerId)
+                || (providerId !== 'native-monero' && !payment.provider_invoice_id)) return;
+
+            // This socket may already be watching the same invoice after another restore path.
+            if (String(this.paymentHandlers.socketPaymentMap?.get(socket.id)?.paymentId)
+                === String(payment.id)) return;
             const fairnessProof = payment.payment_type === 'single_game'
                 && typeof this.gameModeManager._paymentFairnessProofFromRow === 'function'
                 ? this.gameModeManager._paymentFairnessProofFromRow(payment)
@@ -1788,9 +1812,8 @@ class SocketHandlers {
                     'This paid entry has no durable fairness binding and requires support review.');
                 return;
             }
-            const cryptoType = this.gameModeManager.cryptoType;
-            const formattedAmount = this.gameModeManager.formatAtomicHuman 
-                ? this.gameModeManager.formatAtomicHuman(payment.expected_amount, 3)
+            const formattedAmount = manager.formatAtomicHuman
+                ? manager.formatAtomicHuman(payment.expected_amount, 3)
                 : payment.expected_amount;
 
             // Generate QR code
@@ -1802,24 +1825,68 @@ class SocketHandlers {
                     payment.expected_amount,
                     cryptoType,
                     payment.description || 'Restored payment',
-                    this.gameModeManager.currencyDecimals
+                    manager.currencyDecimals
                 );
             } catch (qrErr) {
                 console.warn('QR generation failed during restore:', qrErr.message);
             }
+
+            if (!this._isCurrentPaymentRestoreOwner(socket, dbUserId)
+                || manager.paymentsEnabled !== true || isWowPaymentsPaused(process.env)
+                || !manager.isPaymentIntakeEnabled(paymentType)) return;
+            // Another request or concurrent restore may have installed a watcher while the DB
+            // and QR work awaited. Never replace it with the older snapshot read above.
+            const currentMonitor = this.paymentHandlers.socketPaymentMap?.get(socket.id) || null;
+            if (currentMonitor !== monitorBeforeRestore
+                || (currentMonitor && String(currentMonitor.paymentId) === String(payment.id))) return;
+
+            // Stop an older watcher before binding this invoice. A stop can remove the old
+            // address watcher, so binding first would risk stopping the newly restored one.
+            this.paymentHandlers.stopMonitoringForSocket(socket.id);
+
+            const currentUser = this.connectionHandler.getUserBySocket(socket.id) || { serverId: socket.id };
+            const paymentRequest = {
+                id: payment.id,
+                address: payment.subaddress,
+                invoiceId: payment.provider_invoice_id || payment.subaddress,
+                amount: payment.expected_amount,
+                amountFormatted: formattedAmount,
+                package: null,
+                fairnessProof
+            };
+
+            if (this.walletService && payment.subaddress && providerId === 'native-monero') {
+                this.walletService.addressToUser.set(payment.subaddress, {
+                    userId: String(dbUserId),
+                    socketId: socket.id,
+                    amount: money.toSafe(money.toBig(payment.expected_amount)),
+                    addressIndex: payment.address_index ?? 0,
+                    accountIndex: 0,
+                    detected: false,
+                    confirmed: false,
+                    status: 'pending'
+                });
+            }
+
+            if (typeof this.paymentHandlers._monitorAddress !== 'function') return;
+            this.paymentHandlers._monitorAddress(socket, paymentRequest, payment.expected_amount,
+                cryptoType, currentUser, paymentType, fairnessProof);
 
             // Re-emit payment_created to the client
             socket.emit('payment_created', {
                 paymentId: payment.id,
                 ownerUserId: dbUserId,
                 asset: String(cryptoType).toLowerCase(),
-                network: this.gameModeManager.network,
+                network: manager.network,
                 memo: payment.description,
                 address: payment.subaddress,
                 amount: payment.expected_amount,
                 amountFormatted: formattedAmount,
-                humanAmount: money.format(payment.expected_amount, this.gameModeManager.currencyDecimals),
+                humanAmount: money.format(payment.expected_amount, manager.currencyDecimals),
                 paymentType: payment.payment_type,
+                productId: payment.product_id,
+                grants: payment.product_grants
+                    ? ProductGrants.publicGrantSummary(payment.product_grants) : null,
                 cryptoType: cryptoType,
                 description: payment.description,
                 expiresAt: payment.expires_at,
@@ -1834,49 +1901,6 @@ class SocketHandlers {
                 } : null
             });
 
-            // Get current user object for queue operations
-            const currentUser = this.connectionHandler.getUserBySocket(socket.id) || { serverId: socket.id };
-
-            // Create a mock paymentRequest object for _monitorAddress
-            const paymentRequest = {
-                id: payment.id,
-                address: payment.subaddress,
-                amount: payment.expected_amount,
-                amountFormatted: formattedAmount,
-                package: null,
-                fairnessProof
-            };
-
-            // Re-register address in wallet service so checkPaymentStatus() can query the wallet RPC.
-            // This is essential after server restart or if the entry was lost during disconnect.
-            if (this.walletService && payment.subaddress) {
-                this.walletService.addressToUser.set(payment.subaddress, {
-                    userId: String(dbUserId),
-                    socketId: socket.id,
-                    amount: money.toSafe(money.toBig(payment.expected_amount)),
-                    addressIndex: payment.address_index ?? 0,
-                    accountIndex: 0,
-                    detected: false,
-                    confirmed: false,
-                    status: 'pending'
-                });
-            }
-
-            // Clear any monitoring already attached to this socket before restarting it.
-            this.paymentHandlers.stopMonitoringForSocket(socket.id);
-
-            if (typeof this.paymentHandlers._monitorAddress === 'function') {
-                this.paymentHandlers._monitorAddress(
-                    socket, 
-                    paymentRequest, 
-                    payment.expected_amount, 
-                    cryptoType, 
-                    currentUser, 
-                    payment.payment_type,
-                    fairnessProof
-                );
-            }
-
             // Send status update
             this.broadcastManager.sendStatusUpdate(
                 socket.id,
@@ -1890,6 +1914,11 @@ class SocketHandlers {
         } catch (error) {
             console.error(`[RestorePayment] Error restoring payment for user ${dbUserId}:`, error.message);
         }
+    }
+
+    _isCurrentPaymentRestoreOwner(socket, dbUserId) {
+        return this._isShuttingDown !== true && socket?.connected === true
+            && String(this.sessionManager?.sessions?.get(socket.id)?.id) === String(dbUserId);
     }
 
     // Helper methods
