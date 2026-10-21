@@ -1,4 +1,9 @@
 const money = require('../money/atomic');
+const SAFE_EVIDENCE_CODES = new Set([
+    'WALLET_PAYMENT_ADDRESS_UNAVAILABLE', 'WALLET_RECEIPT_EVIDENCE_INCOMPLETE',
+    'WALLET_IDENTITY_MISMATCH', 'WALLET_RPC_AUTH_NOT_ENFORCED',
+    'WALLET_RPC_AUTH_UNVERIFIED', 'EXTERNAL_SERVICE_ERROR', 'VALIDATION_ERROR'
+]);
 
 function boundedInteger(value, fallback, min, max) {
     const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -97,9 +102,20 @@ class LatePaymentReconciler {
             for (const payment of candidates.rows) {
                 try {
                     const status = await this._status(payment);
+                    if (!status || !Array.isArray(status.receipts)
+                        || typeof status.confirmed !== 'boolean'
+                        || typeof status.complete !== 'boolean'
+                        || (status.in_mempool === true && status.receipts.length === 0)
+                        || (status.confirmed === true && status.receipts.length === 0)
+                        || (status.complete === true && status.confirmed !== true)
+                        || (status.receipts.length > 0 && status.confirmed !== true)
+                        || ((payment.provider_id || 'native-monero') !== 'native-monero'
+                            && status.receipts.length === 0)) {
+                        throw new Error('Payment receipt evidence is unavailable');
+                    }
                     const result = await this.gameModeManager.reconcileLatePaymentForReview(
                         payment.id,
-                        Array.isArray(status?.receipts) ? status.receipts : []
+                        status.receipts
                     );
                     if (result?.checked) {
                         checked += 1;
@@ -111,7 +127,9 @@ class LatePaymentReconciler {
                     }
                 } catch (error) {
                     errors += 1;
-                    this.logger.error?.(`[LatePayment] Reconciliation failed for payment ${payment.id}: ${error.message}`);
+                    const reason = SAFE_EVIDENCE_CODES.has(error?.code)
+                        ? error.code : 'payment_evidence_unavailable';
+                    this.logger.error?.(`[LatePayment] Reconciliation failed for payment ${payment.id}: ${reason}`);
                 }
             }
             return { skipped: false, checked, reviews, errors };

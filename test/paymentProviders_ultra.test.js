@@ -96,6 +96,13 @@ describe('BTCPayProvider (Greenfield)', () => {
             expect(st.amount).toBe(150000000000); // 1.5 * 1e11
         });
 
+        test('accepts harmless gateway trailing zeros beyond chain precision', async () => {
+            const st = await mk('Settled', [{
+                cryptoCode: 'WOW', totalPaid: '1.500000000000', amount: '1.500000000000'
+            }], ['WOW']).getWalletStatus('inv1');
+            expect(st.amount).toBe(150000000000);
+        });
+
         test('gateway atomic amounts above Number.MAX_SAFE_INTEGER remain exact strings', async () => {
             const st = await mk('Settled', [{
                 cryptoCode: 'XMR',
@@ -112,6 +119,34 @@ describe('BTCPayProvider (Greenfield)', () => {
             expect(st.confirmed).toBe(false);
             expect(st.complete).toBe(false);
             expect(st.amount).toBe(500000000000);
+        });
+
+        test.each([null, {}, [], [{ cryptoCode: 'WOW', amount: '1' }],
+            [{ cryptoCode: 'WOW', totalPaid: '0', amount: '1' }],
+            [{ cryptoCode: 'WOW', totalPaid: '1.2.3', amount: '1' }],
+            [{ cryptoCode: 'WOW', totalPaid: '1-', amount: '1' }],
+            [{ cryptoCode: 'WOW', totalPaid: '1.000000000001', amount: '1' }],
+            [{ cryptoCode: 'UNKNOWN', totalPaid: '1', amount: '1' }],
+            [{ totalPaid: '1', amount: '1' }]])(
+            'refuses settled invoices with incomplete payment-method evidence', async (methods) => {
+                await expect(mk('Settled', methods, ['WOW']).getWalletStatus('inv1')).rejects.toThrow();
+            }
+        );
+
+        test('refuses a failed payment-method read for a settled invoice', async () => {
+            const provider = new BTCPayProvider({
+                baseUrl: 'x', storeId: 's', apiKey: 'k', chains: ['WOW'],
+                fetchImpl: recordingFetch([
+                    { method: 'GET', match: /\/invoices\/inv1$/, body: { id: 'inv1', status: 'Settled' } },
+                    { method: 'GET', match: /\/invoices\/inv1\/payment-methods$/, ok: false, status: 503,
+                        body: { message: 'payment evidence unavailable' } }
+                ])
+            });
+            await expect(provider.getWalletStatus('inv1')).rejects.toThrow();
+        });
+
+        test('refuses an unrecognized gateway status instead of reporting an empty scan', async () => {
+            await expect(mk('Unrecognized', [], ['WOW']).getWalletStatus('inv1')).rejects.toThrow();
         });
 
         test('New -> pending, no amount', async () => {

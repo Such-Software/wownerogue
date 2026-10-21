@@ -597,7 +597,10 @@ class GameModeManager {
      * The payment is left expired and a durable manual-review item is upserted. This makes late
      * mining/refund cases visible while keeping stale or unbound entries out of the game queue.
      */
-    async reconcileLatePaymentForReview(paymentId, receipts = []) {
+    async reconcileLatePaymentForReview(paymentId, receipts) {
+        if (!Array.isArray(receipts)) {
+            throw new ValidationError('Payment receipt evidence is unavailable');
+        }
         return this.db.withTransaction(async (client) => {
             const locked = await client.query(`
                 SELECT id, status, expected_amount, provider_id, address_index
@@ -631,7 +634,7 @@ class GameModeManager {
             }
 
             const coverageComplete = observed >= money.toBig(payment.expected_amount);
-            await client.query(`
+            const review = await client.query(`
                 INSERT INTO payment_late_reviews (
                     payment_id, provider_id, observed_amount, expected_amount,
                     receipt_count, metadata
@@ -647,13 +650,15 @@ class GameModeManager {
                     metadata = EXCLUDED.metadata,
                     last_observed_at = NOW(),
                     resolved_at = NULL
+                WHERE payment_late_reviews.status = 'needs_review'
+                RETURNING status
             `, [paymentId, payment.provider_id || 'native-monero', observed.toString(),
                 String(payment.expected_amount), evidence.receiptCount,
                 JSON.stringify({ coverageComplete, entitlementGranted: false })]);
 
             return {
                 checked: true,
-                needsReview: true,
+                needsReview: review.rows[0]?.status === 'needs_review',
                 observedAmount: observed.toString(),
                 coverageComplete
             };

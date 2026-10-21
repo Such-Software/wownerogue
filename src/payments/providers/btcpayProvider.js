@@ -3,15 +3,17 @@ const ChainProfile = require('../../chain/chainProfile');
 const Atomic = require('../../money/atomic');
 
 // Convert a decimal crypto string (e.g. "1.5") to an integer atomic amount for `decimals` places.
-// Truncates any digits beyond `decimals` (the gateway already quantizes to chain precision).
+// Extra fractional places are accepted only when they are zero at chain precision.
 function decimalToAtomic(dec, decimals) {
     const s = String(dec == null ? '' : dec).trim();
-    if (!s || s === '-') return 0;
-    const neg = s[0] === '-';
-    const [ip, fpRaw = ''] = s.replace('-', '').split('.');
+    if (!/^(0|[1-9]\d*)(?:\.\d+)?$/.test(s)) {
+        throw new Error('Invalid invoice amount');
+    }
+    const [ip, fpRaw = ''] = s.split('.');
+    if (/[^0]/.test(fpRaw.slice(decimals))) throw new Error('Invalid invoice amount precision');
     const fp = (fpRaw + '0'.repeat(decimals)).slice(0, decimals);
     const atomic = BigInt(ip || '0') * (10n ** BigInt(decimals)) + BigInt(fp || '0');
-    return Atomic.toSafe(neg ? -atomic : atomic);
+    return Atomic.toSafe(atomic);
 }
 
 /**
@@ -121,17 +123,39 @@ class BTCPayProvider extends PaymentProvider {
     async getWalletStatus(invoiceRef) {
         const id = typeof invoiceRef === 'object' ? invoiceRef.invoiceId : invoiceRef;
         const inv = await this._req('GET', `/api/v1/stores/${this.storeId}/invoices/${id}`);
+        if (!inv || !['Settled', 'Complete', 'Processing', 'Expired', 'Invalid', 'New'].includes(inv.status)) {
+            throw new Error('Invoice status evidence is unavailable');
+        }
         const mapped = BTCPayProvider._mapStatus(inv.status);
         let amount = 0, required = 0;
         if (mapped.status === 'processing' || mapped.status === 'paid') {
+            let methods;
             try {
-                const methods = await this._req('GET', `/api/v1/stores/${this.storeId}/invoices/${id}/payment-methods`);
-                const list = Array.isArray(methods) ? methods : [];
-                const m = list[0] || {};
-                const dec = ChainProfile.decimalsFor(m.cryptoCode || m.paymentMethod || '');
+                methods = await this._req('GET', `/api/v1/stores/${this.storeId}/invoices/${id}/payment-methods`);
+            } catch (_) {
+                throw new Error('Invoice payment-method read failed');
+            }
+            if (!Array.isArray(methods) || methods.length === 0) {
+                throw new Error('Invoice payment-method evidence is unavailable');
+            }
+            const m = methods[0];
+            if (!m || (m.totalPaid == null && m.paymentMethodPaid == null) || m.amount == null) {
+                throw new Error('Invoice payment-method amounts are unavailable');
+            }
+            try {
+                const chain = String(m.cryptoCode || m.paymentMethod || '').split('-')[0].toUpperCase();
+                if (!ChainProfile.isSupported(chain) || !this.supportsChain(chain)) {
+                    throw new Error('Unsupported invoice payment method');
+                }
+                const dec = ChainProfile.decimalsFor(chain);
                 amount = decimalToAtomic(m.totalPaid != null ? m.totalPaid : m.paymentMethodPaid, dec);
                 required = decimalToAtomic(m.amount, dec);
-            } catch (_) { /* amount stays 0; a Settled invoice still confirms via `complete` */ }
+            } catch (_) {
+                throw new Error('Invoice payment-method amounts are invalid');
+            }
+            if (Atomic.toBig(required) <= 0n || (mapped.status === 'paid' && Atomic.toBig(amount) <= 0n)) {
+                throw new Error('Invoice payment-method amounts are incomplete');
+            }
         }
         return {
             in_mempool: mapped.status === 'processing',
