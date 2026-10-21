@@ -18,6 +18,7 @@
 const { normalizeError } = require('../utils/errors');
 const { createFinancialRecoveryError } = require('../utils/financialRecoveryError');
 const { matchPayoutAdmissionPolicy } = require('./matchEconomyPolicy');
+const { isWowPaymentsPaused } = require('../config/operatedProductProfiles');
 const crypto = require('crypto');
 const { PAID_FREEZE_VERSION, buildPaidEntrantFreeze } = require('./matchFairness');
 
@@ -373,6 +374,7 @@ class MatchQueue {
 
     _isEconomyAvailable(economy) {
         if (!this.enabled || !this._validateEconomy(economy)) return false;
+        if (economy !== 'free' && isWowPaymentsPaused(process.env)) return false;
         if (economy === 'crypto_race') {
             // Never let an injected/legacy queue bypass the crypto admission contract. This is
             // evaluated on every join/drain so a hot kill-switch takes effect immediately.
