@@ -156,6 +156,8 @@ const SocketHandlers = {
         // If the low-level socket connected before handlers were registered, emulate onConnect.
         if (window.socket && window.socket.connected) {
             this.onConnect();
+        } else if (window.socket && typeof window.socket.connect === 'function') {
+            window.socket.connect();
         }
     },
     
@@ -183,6 +185,7 @@ const SocketHandlers = {
         // Connection handlers
         socket.on('connect', this.onConnect);
         socket.on('disconnect', function() {
+            SocketHandlers._didConnect = false;
             SocketHandlers._invalidatePaymentSession();
             if (typeof CommerceConsent !== 'undefined' && CommerceConsent.clear) {
                 CommerceConsent.clear();

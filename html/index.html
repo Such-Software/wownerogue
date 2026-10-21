@@ -14,20 +14,23 @@
     <!-- Initialize socket with resume token (for persistent anonymous session) -->
     <script>
         (function(){
-            let opts = {};
+            let opts = { autoConnect: false };
             window._localStorageAvailable = false;
             try {
                 // Test localStorage availability (fails in private browsing on some browsers)
                 localStorage.setItem('_test', '1');
                 localStorage.removeItem('_test');
                 window._localStorageAvailable = true;
-                const existing = localStorage.getItem('wownerogue_token');
-                if (existing) {
-                    // Send the session token in the handshake `auth` payload, NOT the URL
-                    // query string. Query strings leak into proxy/access/referer logs;
-                    // auth is carried in the connection body.
-                    opts.auth = { resumeToken: existing };
-                }
+                // Read the current token for every initial connection and reconnect, rather
+                // than retaining the token that existed when this page first loaded.
+                opts.auth = function(callback) {
+                    let resumeToken = null;
+                    if (window._localStorageAvailable) {
+                        try { resumeToken = localStorage.getItem('wownerogue_token'); } catch(_) {}
+                    }
+                    // Credentials stay in Socket.IO's handshake auth payload, never the URL.
+                    callback(resumeToken ? { resumeToken: resumeToken } : {});
+                };
             } catch(_) {
                 window._localStorageAvailable = false;
                 console.warn('localStorage unavailable - session will not persist');
