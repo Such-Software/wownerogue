@@ -12,6 +12,7 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 const { Client } = require('pg');
 const { chromium } = require('playwright-core');
+const { challengeInsertQuery } = require('../routes/auth');
 
 const execFile = promisify(childProcess.execFile);
 const ROOT = path.resolve(__dirname, '../..');
@@ -143,6 +144,7 @@ function classifyStartupFailure(output) {
 
 function classifyHarnessFailure(error, phase) {
     const sqlStateCodes = {
+        '42P08': 'DATABASE_PARAMETER_TYPE_CONFLICT',
         '42P01': 'DATABASE_TABLE_UNDEFINED',
         '42703': 'DATABASE_COLUMN_UNDEFINED',
         '42883': 'DATABASE_FUNCTION_UNDEFINED',
@@ -369,6 +371,19 @@ async function main() {
             if (!error.code) error.code = startupHealthCode;
             throw error;
         });
+
+        // PREPARE checks the route's actual parameter inference without generating a
+        // challenge, activating Smirk, or passing any authentication values to PostgreSQL.
+        phase = 'auth-query-compile';
+        const authDb = new Client({ host: socketDir, port: dbPort, database: dbName, user: dbUser,
+            connectionTimeoutMillis: 2000, statement_timeout: 5000, lock_timeout: 2000 });
+        try {
+            await authDb.connect();
+            await authDb.query(`PREPARE showcase_smirk_challenge AS ${challengeInsertQuery}`);
+            await authDb.query('DEALLOCATE showcase_smirk_challenge');
+        } finally {
+            await authDb.end();
+        }
 
         phase = 'browser-setup';
         browser = await chromium.launch({ headless: true });
