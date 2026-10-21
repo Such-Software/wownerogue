@@ -1,7 +1,8 @@
 'use strict';
 
 // Gameplay-only browser check. This deliberately avoids the application entrypoint, database,
-// wallet, payment handlers, and queue/race transitions. The Iso grant below is a visible fixture.
+// wallet, payment handlers, and queue/race transitions. Mica receives synthetic Interior and Iso
+// grants; Moth receives the source-owned zero-grant catalog fixture and must remain original-only.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -9,23 +10,22 @@ const express = require('express');
 const { Server } = require('socket.io');
 const { chromium } = require('playwright-core');
 const TavernManager = require('../network/tavernManager');
+const Entitlements = require('../multiplayer/entitlements');
 
 const ROOT = path.resolve(__dirname, '../..');
 const HTML_ROOT = path.join(ROOT, 'html');
 const OUTPUT_BASE = path.join(os.homedir(), 'Build', 'wowngeon', 'showcase-browser');
-const FIXTURE_ENTITLEMENTS = Object.freeze({
-    premium: true,
-    level: 'free',
-    credits: 0,
-    totalCreditsPurchased: 0,
-    packs: Object.freeze({
-        'iso-dungeon': true,
-        'generated-skins': false,
-        'kenney-3d-characters': false,
-        'roguelike-dungeon': false,
-        'iso-medieval': false
-    })
-});
+const ZERO_FUNDS_USER = Object.freeze({ credits: 0, total_credits_purchased: 0 });
+const FIXTURE_PACK_GRANTS = Object.freeze([
+    Object.freeze({ pack_id: 'roguelike-interior' }),
+    Object.freeze({ pack_id: 'iso-dungeon' })
+]);
+const FIXTURE_ENTITLEMENTS = Object.freeze(Entitlements.snapshotForUser(ZERO_FUNDS_USER, FIXTURE_PACK_GRANTS));
+const FREE_ENTITLEMENTS = Object.freeze(Entitlements.snapshotForUser(ZERO_FUNDS_USER, []));
+
+function entitlementsForSocket(socket) {
+    return socket.data.showcaseFixture === true ? FIXTURE_ENTITLEMENTS : FREE_ENTITLEMENTS;
+}
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -65,9 +65,7 @@ async function main() {
     const manager = new TavernManager({
         io,
         tickMs: 50,
-        entitlementProvider: socket => socket.data.showcaseFixture === true
-            ? FIXTURE_ENTITLEMENTS
-            : { premium: false, totalCreditsPurchased: 0, packs: {} },
+        entitlementProvider: entitlementsForSocket,
         globalChatProvider: {
             publish(message) {
                 io.emit('chat_broadcast', {
@@ -107,15 +105,11 @@ async function main() {
         });
         socket.on('identity:get', () => socket.emit('identity_update', {
             appearance: { avatar: 'default' },
-            entitlements: socket.data.showcaseFixture ? FIXTURE_ENTITLEMENTS : {
-                premium: false, level: 'free', credits: 0, totalCreditsPurchased: 0, packs: {}
-            }
+            entitlements: entitlementsForSocket(socket)
         }));
         socket.on('identity:update', data => socket.emit('identity_update', {
             appearance: data?.appearance || { avatar: 'default' },
-            entitlements: socket.data.showcaseFixture ? FIXTURE_ENTITLEMENTS : {
-                premium: false, level: 'free', credits: 0, totalCreditsPurchased: 0, packs: {}
-            }
+            entitlements: entitlementsForSocket(socket)
         }));
         socket.on('tavern_join', data => manager.join(socket, data));
         socket.on('tavern_move', data => manager.move(socket, data));
@@ -186,12 +180,73 @@ async function main() {
         for (const { page } of Object.values(views)) {
             await page.locator('#joinBtn').waitFor({ state: 'visible' });
             await page.waitForFunction(() => document.getElementById('joinBtn') && !document.getElementById('joinBtn').disabled);
+            await page.waitForFunction(() => window.RK && window.RK.entitlements
+                && Object.prototype.hasOwnProperty.call(window.RK.entitlements.packs, 'roguelike-interior'));
+        }
+        const packPolicy = {};
+        for (const role of ['mica', 'moth']) {
+            packPolicy[role] = await views[role].page.evaluate(() => {
+                const ids = ['original', 'roguelike-interior', 'generated-skins', 'iso-dungeon',
+                    'roguelike-dungeon', 'iso-medieval', 'kenney-3d-characters'];
+                const appearance = RK.avatarVisuals.resolve({ avatar: 'default' }, { projection: 'topdown' });
+                return {
+                    canUse: Object.fromEntries(ids.map(id => [id, RK.canUsePack(id)])),
+                    resolvedDefaultPack: appearance.pack,
+                    resolvedDefaultAllowed: appearance.allowed,
+                    activeTopdownPack: RK.activePackId('topdown'),
+                    credits: RK.entitlements.credits,
+                    totalCreditsPurchased: RK.entitlements.totalCreditsPurchased
+                };
+            });
+        }
+        assert(packPolicy.moth.canUse.original && !packPolicy.moth.canUse['roguelike-interior']
+            && !packPolicy.moth.canUse['generated-skins'] && !packPolicy.moth.canUse['iso-dungeon']
+            && !packPolicy.moth.canUse['roguelike-dungeon'] && !packPolicy.moth.canUse['iso-medieval']
+            && !packPolicy.moth.canUse['kenney-3d-characters'], 'Moth did not retain original-only zero-grant policy');
+        assert(packPolicy.moth.resolvedDefaultPack === 'roguelike-interior'
+            && !packPolicy.moth.resolvedDefaultAllowed && packPolicy.moth.activeTopdownPack === 'original'
+            && packPolicy.moth.credits === 0 && packPolicy.moth.totalCreditsPurchased === 0,
+        'Moth default character or active tileset bypassed the real pack policy');
+        assert(packPolicy.mica.canUse.original && packPolicy.mica.canUse['roguelike-interior']
+            && packPolicy.mica.canUse['iso-dungeon'] && !packPolicy.mica.canUse['generated-skins']
+            && !packPolicy.mica.canUse['roguelike-dungeon'] && !packPolicy.mica.canUse['iso-medieval']
+            && !packPolicy.mica.canUse['kenney-3d-characters'], 'Mica fixture did not match its two explicit pack grants');
+        assert(packPolicy.mica.resolvedDefaultPack === 'roguelike-interior'
+            && packPolicy.mica.resolvedDefaultAllowed && packPolicy.mica.credits === 0
+            && packPolicy.mica.totalCreditsPurchased === 0,
+        'Mica synthetic character grant changed the no-funds balance or failed to permit the asset');
+        for (const { page } of Object.values(views)) {
+            await page.evaluate(() => {
+                const original = RK.drawCharTileCanvas;
+                window.__showcaseCharTileDraws = 0;
+                RK.drawCharTileCanvas = function () {
+                    window.__showcaseCharTileDraws += 1;
+                    return original.apply(this, arguments);
+                };
+            });
         }
         await views.mica.page.locator('#name').fill('Mica');
         await views.mica.page.locator('#joinBtn').click();
         await views.moth.page.locator('#name').fill('Moth');
         await views.moth.page.locator('#joinBtn').click();
         await Promise.all(Object.values(views).map(({ page }) => page.locator('#stage canvas.rk-canvas').waitFor({ state: 'visible' })));
+        await views.mica.page.waitForFunction(() => RK.charAtlas() && window.__showcaseCharTileDraws > 0,
+            undefined, { timeout: 5000 });
+        const characterRenderProof = {};
+        for (const role of ['mica', 'moth']) {
+            characterRenderProof[role] = await views[role].page.evaluate(() => ({
+                atlasReady: !!RK.charAtlas(),
+                drawCalls: window.__showcaseCharTileDraws,
+                defaultAllowed: RK.avatarVisuals.resolve({ avatar: 'default' }, { projection: 'topdown' }).allowed
+            }));
+        }
+        assert(characterRenderProof.mica.atlasReady && characterRenderProof.mica.drawCalls > 0
+            && characterRenderProof.mica.defaultAllowed, 'Permitted synthetic Interior character was not actually drawn');
+        assert(characterRenderProof.moth.drawCalls === 0 && !characterRenderProof.moth.defaultAllowed,
+            'Original-only free client unexpectedly drew a gated character');
+        await views.mica.page.screenshot({
+            path: path.join(outputDir, 'tavern-synthetic-interior-character.png'), fullPage: true
+        });
         await pageWaitFor(() => manager.room.size === 2, 3000, 'Two browser clients joined TavernManager');
         assert(clientsByRole.size === 2, 'Both page-owned client ids were not registered');
         const ids = { mica: clientsByRole.get('mica'), moth: clientsByRole.get('moth') };
@@ -290,6 +345,63 @@ async function main() {
             return current.x !== mothStart.x || current.y !== mothStart.y;
         }, 1500, 'Mobile movement control moves the other player');
 
+        const layoutScene = {
+            visibleTiles: Array.from({ length: 12 }, () => Array(12).fill("'1")),
+            exploredTiles: Array.from({ length: 12 }, () => Array(12).fill("'1")),
+            players: [{ id: ids.mica, name: 'Layout fixture', x: 5, y: 5, appearance: { avatar: 'default' } }],
+            entrance: [0, 0], exit: [11, 11], monster: null, items: {}, isSpectating: true
+        };
+        const desktopPage = views.mica.page;
+        await desktopPage.setViewportSize({ width: 1280, height: 900 });
+        await desktopPage.locator('#chatInput').focus();
+        io.to(ids.mica).emit('spectate_start', { playerId: 'layout fixture', initialState: layoutScene });
+        await desktopPage.locator('#spectatorStage').waitFor({ state: 'visible' });
+        await desktopPage.waitForFunction(() => document.activeElement === document.getElementById('spectatorStage'));
+        await desktopPage.keyboard.press('Enter');
+        await desktopPage.keyboard.press('Space');
+        assert(await desktopPage.locator('#spectatorStage').isVisible(),
+            'Enter or Space activated a control when the active arena received focus');
+        const desktopArena = await desktopPage.evaluate(() => {
+            const arena = document.getElementById('spectatorStage').getBoundingClientRect();
+            const chat = document.getElementById('chatPanel').getBoundingClientRect();
+            return {
+                arenaTop: arena.top, arenaBottom: arena.bottom, arenaHeight: arena.height,
+                chatTop: chat.top, viewportHeight: document.documentElement.clientHeight,
+                orderedBeforeChat: !!(document.getElementById('spectatorStage').compareDocumentPosition(
+                    document.getElementById('chatPanel')) & Node.DOCUMENT_POSITION_FOLLOWING)
+            };
+        });
+        assert(desktopArena.orderedBeforeChat && desktopArena.arenaBottom <= desktopArena.chatTop,
+            'Active arena does not precede chat in reading and viewport order');
+        assert(desktopArena.arenaHeight >= 300 && desktopArena.arenaTop < desktopArena.viewportHeight,
+            'Desktop active arena is not meaningfully visible in the initial viewport');
+        await desktopPage.locator('#leaveSpectateBtn').click();
+        await desktopPage.waitForFunction(() => document.activeElement === document.getElementById('chatInput'));
+
+        const mobilePage = views.moth.page;
+        await mobilePage.locator('#tavernDpad [data-dir="up"]').focus();
+        io.to(ids.moth).emit('spectate_start', { playerId: 'layout fixture', initialState: layoutScene });
+        await mobilePage.locator('#spectatorStage').waitFor({ state: 'visible' });
+        await mobilePage.waitForFunction(() => document.activeElement === document.getElementById('spectatorStage'));
+        const mobileArena = await mobilePage.evaluate(() => {
+            const arena = document.getElementById('spectatorStage').getBoundingClientRect();
+            const chat = document.getElementById('chatPanel').getBoundingClientRect();
+            return {
+                viewport: document.documentElement.clientWidth,
+                document: document.documentElement.scrollWidth,
+                arenaTop: arena.top, arenaBottom: arena.bottom, arenaHeight: arena.height,
+                chatTop: chat.top,
+                orderedBeforeChat: !!(document.getElementById('spectatorStage').compareDocumentPosition(
+                    document.getElementById('chatPanel')) & Node.DOCUMENT_POSITION_FOLLOWING)
+            };
+        });
+        assert(mobileArena.orderedBeforeChat && mobileArena.arenaBottom <= mobileArena.chatTop,
+            'Mobile active arena does not precede chat in reading and viewport order');
+        assert(mobileArena.document <= mobileArena.viewport && mobileArena.arenaHeight >= 300
+            && mobileArena.arenaTop < 844, 'Mobile active arena overflows or falls below the initial viewport');
+        await mobilePage.locator('#leaveSpectateBtn').click();
+        await mobilePage.waitForFunction(() => document.activeElement === document.querySelector('#tavernDpad [data-dir="up"]'));
+
         const unexpectedHttpFailures = observedHttpFailures.filter(f => !(f.status === 404 && f.path === expectedMissingSkin));
         assert(observedHttpFailures.some(f => f.status === 404 && f.path === expectedMissingSkin), 'Expected missing generated skin was not requested');
         assert(unexpectedHttpFailures.length === 0, `Unexpected HTTP failures: ${JSON.stringify(unexpectedHttpFailures)}`);
@@ -298,22 +410,31 @@ async function main() {
 
         const screenshotPaths = {};
         for (const role of ['mica', 'moth']) {
-            const filename = `tavern-mobile-${role}.png`;
+            const filename = role === 'moth'
+                ? 'tavern-mobile-free-original-baseline.png'
+                : `tavern-mobile-${role}.png`;
             await views[role].page.screenshot({ path: path.join(outputDir, filename), fullPage: true });
             screenshotPaths[role] = filename;
         }
         const result = {
             ok: true,
-            scope: 'gameplay-only Tavern browser smoke; no queue/race transitions',
+            scope: 'gameplay-only Tavern browser smoke with isolated spectator layout fixture; no queue/race transitions',
             origin: '127.0.0.1 loopback only',
-            fixture: 'synthetic Iso entitlement fixture; zero credits, no purchase, no generated skins or 3D grant',
+            fixture: 'Mica receives synthetic roguelike-interior and iso-dungeon grants; Moth receives the authoritative zero-grant, original-only snapshot; both have zero balances and no purchase, skin or 3D grant',
             clients: { count: clientsByRole.size, mappedByPageOwnedSocketId: true },
+            packPolicy,
+            characterRenderProof,
             modes: modeResults,
             chat: 'broadcast to both clients',
             keyboardFocusGuards: ['input', 'select', 'contenteditable'],
             mobile,
+            activeArena: { desktop: desktopArena, mobile: mobileArena, arenaReceivesSafeInitialFocus: true, tavernFocusRestored: true },
             missingGeneratedSkin: skinFailure,
-            screenshots: { desktopIso: 'tavern-desktop-iso.png', mobile: screenshotPaths },
+            screenshots: {
+                syntheticInteriorCharacter: 'tavern-synthetic-interior-character.png',
+                freeOriginalBaseline: screenshotPaths.moth,
+                desktopIso: 'tavern-desktop-iso.png', mobile: screenshotPaths
+            },
             unexpectedHttpFailures,
             externalRequestsBlocked: blockedExternal.length,
             outputDir

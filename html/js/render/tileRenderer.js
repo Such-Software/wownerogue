@@ -72,13 +72,20 @@
         host.appendChild(this.canvas);
         this._snap = null;      // offscreen snapshot of the base scene (tiles + entities)
         this._lastScene = null;
+        this._avatarReadyRepaintScheduled = false;
+        this._destroyed = false;
+        var self = this;
+        this._onAvatarReady = function () {
+            if (self._avatarAssetsReady(self._lastScene)) self._scheduleAvatarReadyRepaint();
+        };
         this._embers = [];
         this._raf = null;
         this._t = 0;
     }
 
     TileRenderer.prototype.render = function (scene) {
-        if (!scene || !this.ctx) return;
+        if (!scene || !this.ctx || this._destroyed) return;
+        this._lastScene = scene;
         var cell = this.cell, ctx = this.ctx;
         this.canvas.width = scene.cols * cell;
         this.canvas.height = scene.rows * cell;
@@ -171,6 +178,7 @@
         }
 
         var now = Date.now();
+        var onAvatarReady = this._onAvatarReady;
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
             // Dungeon features (entrance / exit / treasure): real tiles, glyph fallback.
@@ -216,7 +224,7 @@
                 var mAvatar = e.avatar || 'char-goblin';
                 if (window.RK && RK.avatarVisuals && RK.avatarVisuals.drawTopdownWorld) {
                     var mv = RK.avatarVisuals.resolve({ avatar: mAvatar }, { projection: 'topdown', context: 'dungeon', entity: e });
-                    if (RK.avatarVisuals.drawTopdownWorld(ctx, mv, e, { screenX: e.x, screenY: e.y, cell: cell }, { now: now })) continue;
+                    if (RK.avatarVisuals.drawTopdownWorld(ctx, mv, e, { screenX: e.x, screenY: e.y, cell: cell }, { now: now, onReady: onAvatarReady })) continue;
                 }
                 if (window.RK && RK.drawCharCanvas && RK.drawCharCanvas(ctx, { x: e.x, y: e.y, avatar: mAvatar }, cell, now)) continue;
                 var mx = e.x * cell + cell / 2, my = e.y * cell + cell / 2, mr = cell * 0.34;
@@ -253,7 +261,7 @@
                     screenX: e.x,
                     screenY: e.y,
                     cell: cell
-                }, { now: now })) continue;
+                }, { now: now, onReady: onAvatarReady })) continue;
             } else {
                 if (window.RK && RK.isChar && RK.isChar(e.avatar) && RK.drawCharCanvas(ctx, e, cell, now)) continue;
                 if (window.RK && RK.isSkin && RK.isSkin(e.avatar) && RK.drawSkinCanvas(ctx, e, cell, now)) continue;
@@ -292,12 +300,41 @@
         var _fp = findPlayer(scene);
         if (_fp) this.focusPoint = { x: (_fp.x + 0.5) * cell, y: (_fp.y + 0.5) * cell };
 
-        this._lastScene = scene;
         this._collectEmitters(scene);
         this._snapshot();
         this._ensureEmbers(scene);
         this._composite(scene);
         this._startLoop();
+    };
+
+    // Character atlases load asynchronously. Coalesce callbacks from multiple entities and repaint
+    // the latest retained scene once the ready assets can be drawn.
+    TileRenderer.prototype._scheduleAvatarReadyRepaint = function () {
+        if (this._destroyed || !this.ctx || this._avatarReadyRepaintScheduled) return;
+        this._avatarReadyRepaintScheduled = true;
+        var self = this;
+        root.requestAnimationFrame(function () {
+            self._avatarReadyRepaintScheduled = false;
+            if (self._destroyed || !self.ctx || !self._lastScene) return;
+            self.render(self._lastScene);
+        });
+    };
+
+    TileRenderer.prototype._avatarAssetsReady = function (scene) {
+        var rk = window.RK;
+        if (!scene || !Array.isArray(scene.entities) || !rk || !rk.avatarVisuals || !rk.avatarVisuals.resolve) return false;
+        for (var i = 0; i < scene.entities.length; i++) {
+            var entity = scene.entities[i];
+            var appearance = entity.appearance || { avatar: entity.avatar || (entity.kind === 'monster' ? 'char-goblin' : 'default') };
+            var visual = rk.avatarVisuals.resolve(appearance, { projection: 'topdown', context: 'tavern', entity: entity });
+            if (!visual.allowed) continue;
+            if (visual.kind === 'char' && rk.charAtlas && rk.charAtlas()) return true;
+            if (visual.kind === 'skin' && rk.skinSheet && rk.skinSheet(visual.appearance.avatar)) return true;
+            // A failed generated sheet changes the next draw into the permitted Villager fallback path.
+            // Repaint once for that state change so the fallback atlas can start loading.
+            if (visual.kind === 'skin' && rk.skinSheetFailed && rk.skinSheetFailed(visual.appearance.avatar)) return true;
+        }
+        return false;
     };
 
     // Cache the fire/hazard tile positions once per scene so the flicker loop can animate them
@@ -493,6 +530,7 @@
     };
 
     TileRenderer.prototype.destroy = function () {
+        this._destroyed = true;
         if (this._raf != null) { root.cancelAnimationFrame(this._raf); this._raf = null; }
         if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
         this.canvas = null;

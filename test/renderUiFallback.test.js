@@ -195,13 +195,14 @@ describe('renderer controls and failed skin fallback', () => {
     test('a normal character still waits for its atlas and resolves the render callback', () => {
         let atlasReady;
         let atlasLoaded = false;
+        const loadAtlas = jest.fn(callback => { atlasReady = callback; });
         const RK = {
             CHARS: { 'char-villager': { frame: 1 } },
             normalizeAppearance: appearance => ({ avatar: typeof appearance === 'string' ? appearance : appearance.avatar || 'default' }),
             appearance: appearance => ({ label: appearance.avatar }),
             isChar: id => id === 'char-villager',
             charAtlas: () => atlasLoaded ? {} : null,
-            loadCharAtlas: callback => { atlasReady = callback; },
+            loadCharAtlas: loadAtlas,
             charAppearance: appearance => ({ avatar: appearance.avatar, tint: 'none', colors: {}, equipment: {} }),
             charFrame: () => ({ squash: 1, bob: 0 }),
             drawCharTileCanvas: jest.fn(),
@@ -218,7 +219,10 @@ describe('renderer controls and failed skin fallback', () => {
         const ready = jest.fn();
         const canvas = { beginPath() {}, ellipse() {}, stroke() {} };
         const entity = { id: 'me', x: 1, y: 1, facing: 'down', you: true };
-        expect(RK.avatarVisuals.drawTopdownWorld(canvas, visual, entity, { screenX: 1, screenY: 1, cell: 24 }, { onReady: ready })).toBe(false);
+        for (let i = 0; i < 12; i++) {
+            expect(RK.avatarVisuals.drawTopdownWorld(canvas, visual, entity, { screenX: 1, screenY: 1, cell: 24 }, { onReady: ready })).toBe(false);
+        }
+        expect(loadAtlas).toHaveBeenCalledTimes(1);
 
         atlasLoaded = true;
         atlasReady();

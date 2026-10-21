@@ -128,7 +128,7 @@
 
     function rememberLoad(key, start, onReady) {
         if (loading[key]) {
-            if (onReady) loading[key].push(onReady);
+            if (onReady && loading[key].indexOf(onReady) === -1) loading[key].push(onReady);
             return;
         }
         loading[key] = onReady ? [onReady] : [];
