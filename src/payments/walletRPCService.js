@@ -8,6 +8,20 @@ const XMR_ADDRESS_PATTERN = /^(?:4|8|5|7|9|B)[1-9A-HJ-NP-Za-km-z]{90,110}$/;
 const WOW_ADDRESS_PATTERN = /^(?:(?:Wo|WO|ww|WW)[0-9A-Za-z]{88,112}|W[0-9A-Za-z]{90,112})$/;
 const KNOWN_NETWORKS = new Set(['mainnet', 'stagenet', 'testnet']);
 
+function incompleteReceiptEvidence() {
+    return new ExternalServiceError('Wallet receipt response is incomplete.', {
+        code: 'WALLET_RECEIPT_EVIDENCE_INCOMPLETE',
+        safeMessage: 'Payment status is unavailable.'
+    });
+}
+
+function validWalletResult(response, fields) {
+    const result = response?.result;
+    return result && typeof result === 'object' && !Array.isArray(result)
+        && fields.every(field => !Object.prototype.hasOwnProperty.call(result, field)
+            || Array.isArray(result[field]));
+}
+
 function normalizeNetwork(value) {
     const normalized = String(value || '').trim().toLowerCase();
     return KNOWN_NETWORKS.has(normalized) ? normalized : null;
@@ -398,17 +412,14 @@ class WalletRPCService {
 
     async checkPaymentStatus(address) {
         try {
-            await this.ensureNetworkIdentity();
             const userInfo = this.addressToUser.get(address);
             if (!userInfo) {
-                return { 
-                    complete: false, 
-                    in_mempool: false,
-                    confirmed: false,
-                    amount: 0,
-                    confirmations: 0
-                };
+                throw new ExternalServiceError('Payment address is not registered for wallet receipt inspection.', {
+                    code: 'WALLET_PAYMENT_ADDRESS_UNAVAILABLE',
+                    safeMessage: 'Payment status is unavailable.'
+                });
             }
+            await this.ensureNetworkIdentity();
 
             // `get_transfers` supplies transaction state (pool, double-spend, timelock and
             // confirmation metadata), but it does not expose a stable identity for each owned
@@ -422,11 +433,15 @@ class WalletRPCService {
                 account_index: userInfo.accountIndex,
                 subaddr_indices: [userInfo.addressIndex]
             });
+            // Wownero's epee serializer omits empty std::list fields. A successful result {}
+            // is valid zero evidence; a present non-array list or missing result is not.
+            if (!validWalletResult(response, ['in', 'pool'])) throw incompleteReceiptEvidence();
             const outputResponse = await this.rpcCall('incoming_transfers', {
                 transfer_type: 'all',
                 account_index: userInfo.accountIndex,
                 subaddr_indices: [userInfo.addressIndex]
             });
+            if (!validWalletResult(outputResponse, ['transfers'])) throw incompleteReceiptEvidence();
 
             let confirmedReceived = 0n;
             let poolReceived = 0n;
@@ -463,6 +478,12 @@ class WalletRPCService {
                 const canonical = String(raw).trim();
                 return /^\d+$/.test(canonical) && BigInt(canonical) === 0n;
             };
+            const hasValidUnlockTime = (tx) => {
+                const raw = tx?.unlock_time;
+                if (typeof raw === 'number') return Number.isSafeInteger(raw) && raw >= 0;
+                if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return false;
+                return BigInt(raw) <= 18446744073709551615n;
+            };
             const belongsToRequestedSubaddress = (tx) => {
                 const direct = receiptAddressIndex(tx);
                 if (direct !== null) return direct === userInfo.addressIndex;
@@ -497,22 +518,32 @@ class WalletRPCService {
             // own: its transaction must also appear as a safe, mined incoming transfer for the
             // exact requested subaddress.
             const confirmedTx = new Map();
+            const incomingTx = new Map();
             for (const tx of (response.result?.in || [])) {
                 const txHash = String(tx?.txid || '').trim().toLowerCase();
+                if (!TX_HASH_PATTERN.test(txHash)) throw incompleteReceiptEvidence();
                 const height = Number(tx?.height);
                 const accountIndex = receiptAccountIndex(tx);
                 const reportedConfirmations = Number(tx?.confirmations);
                 let transactionAmount = null;
                 try { transactionAmount = money.toBig(tx?.amount); } catch (_) { /* rejected below */ }
-                if (!TX_HASH_PATTERN.test(txHash)
-                    || !belongsToRequestedSubaddress(tx)
+                if (!Number.isSafeInteger(height) || height < 0
+                    || !Number.isSafeInteger(reportedConfirmations) || reportedConfirmations < 0
+                    || !hasValidUnlockTime(tx)
+                    || typeof tx?.double_spend_seen !== 'boolean'
+                    || transactionAmount === null || transactionAmount <= 0n
+                    || (receiptAddressIndex(tx) === null && !Array.isArray(tx?.subaddr_indices))) {
+                    throw incompleteReceiptEvidence();
+                }
+                if (!belongsToRequestedSubaddress(tx)
                     || (accountIndex !== null && accountIndex !== userInfo.accountIndex)
-                    || tx?.double_spend_seen !== false
+                ) continue;
+                incomingTx.set(txHash, { height, amount: transactionAmount });
+                if (tx.double_spend_seen !== false
                     || !hasSafeUnlockTime(tx)
-                    || !Number.isSafeInteger(height) || height <= 0
-                    || !Number.isSafeInteger(reportedConfirmations)
+                    || height <= 0
                     || reportedConfirmations < this.minConfirmations
-                    || transactionAmount === null || transactionAmount <= 0n) {
+                ) {
                     continue;
                 }
                 confirmedTx.set(txHash, {
@@ -522,28 +553,39 @@ class WalletRPCService {
                 });
             }
 
+            const observedConfirmedTx = new Set();
             for (const output of (outputResponse.result?.transfers || [])) {
                 const txHash = String(output?.tx_hash || '').trim().toLowerCase();
+                if (!TX_HASH_PATTERN.test(txHash)) throw incompleteReceiptEvidence();
                 const txState = confirmedTx.get(txHash);
                 const addressIndex = receiptAddressIndex(output);
                 const accountIndex = receiptAccountIndex(output);
                 const outputId = receiptOutputId(output);
                 const blockHeight = Number(output?.block_height);
-                if (!txState
-                    || addressIndex !== userInfo.addressIndex
-                    || (accountIndex !== null && accountIndex !== userInfo.accountIndex)
-                    || !outputId
-                    || !Number.isSafeInteger(blockHeight) || blockHeight <= 0
-                    || blockHeight !== txState.height
-                    || output?.frozen === true) {
+                let amount;
+                try { amount = money.toBig(output?.amount); } catch (_) { /* rejected below */ }
+                if (addressIndex === null || !Number.isSafeInteger(blockHeight)
+                    || blockHeight <= 0 || amount === undefined || amount <= 0n) {
+                    throw incompleteReceiptEvidence();
+                }
+                if (addressIndex !== userInfo.addressIndex
+                    || (accountIndex !== null && accountIndex !== userInfo.accountIndex)) continue;
+                const incomingState = incomingTx.get(txHash);
+                if (!incomingState || blockHeight !== incomingState.height
+                    || amount > incomingState.amount) throw incompleteReceiptEvidence();
+                if (!txState) continue;
+                observedConfirmedTx.add(txHash);
+                if (!outputId) throw incompleteReceiptEvidence();
+                if (output?.frozen === true) continue;
+                const receiptKey = `${txHash}:${outputId}`;
+                const priorReceipt = confirmedReceipts.get(receiptKey);
+                if (priorReceipt) {
+                    if (priorReceipt.amount !== amount.toString()) throw incompleteReceiptEvidence();
                     continue;
                 }
-                const amount = money.toBig(output.amount);
-                if (amount <= 0n || amount > txState.remainingAmount) continue;
-                const receiptKey = `${txHash}:${outputId}`;
+                if (amount > txState.remainingAmount) throw incompleteReceiptEvidence();
                 // RPC responses may repeat the same output; replaying identical evidence must
                 // never increase confirmed coverage.
-                if (confirmedReceipts.has(receiptKey)) continue;
                 confirmedReceipts.set(receiptKey, {
                     evidenceType: 'chain_output',
                     evidenceId: receiptKey,
@@ -556,6 +598,9 @@ class WalletRPCService {
                 });
                 confirmedReceived += amount;
                 txState.remainingAmount -= amount;
+            }
+            if (Array.from(confirmedTx.keys()).some(txHash => !observedConfirmedTx.has(txHash))) {
+                throw incompleteReceiptEvidence();
             }
 
             confirmed = confirmedReceipts.size > 0;
@@ -600,15 +645,15 @@ class WalletRPCService {
             };
         } catch (error) {
             // Axios/Digest errors retain request configuration, including Authorization. Never
-            // inspect the whole object in logs; rpcCall already records a credential-free label.
-            console.error('❌ Failed to check payment status:', error?.message || 'wallet RPC failure');
-            return { 
-                complete: false, 
-                in_mempool: false,
-                confirmed: false,
-                amount: 0,
-                confirmations: 0
-            };
+            // inspect the whole object or its message in logs. An unknown read must not become
+            // a successful zero-payment observation for the late receipt scanner.
+            this.isHealthy = false;
+            this.lastHealthFailureAt = Date.now();
+            console.error('❌ Failed to check payment status:', error?.code || 'wallet_unavailable');
+            throw error instanceof AppError ? error : new ExternalServiceError('Wallet receipt inspection failed.', {
+                safeMessage: 'Payment status is unavailable.',
+                cause: error
+            });
         }
     }
 
@@ -618,14 +663,16 @@ class WalletRPCService {
         }
 
         const watcher = setInterval(async () => {
-            const status = await this.checkPaymentStatus(address);
-            
-            if (status.in_mempool || status.confirmed) {
-                callback(status);
-
-                if (status.confirmed && status.complete) {
-                    this.stopPaymentMonitoring(address);
+            try {
+                const status = await this.checkPaymentStatus(address);
+                if (status.in_mempool || status.confirmed) {
+                    callback(status);
+                    if (status.confirmed && status.complete) {
+                        this.stopPaymentMonitoring(address);
+                    }
                 }
+            } catch (_) {
+                // Keep polling; the wallet read was unknown, not a negative payment observation.
             }
         }, interval);
 

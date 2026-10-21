@@ -398,6 +398,22 @@ describe('WalletRPCService Payment Monitoring', () => {
     svc.stopPaymentMonitoring(address);
   });
 
+  test('a failed poll does not call the payer or stop the monitor', async () => {
+    const callback = jest.fn();
+    svc.checkPaymentStatus = jest.fn()
+      .mockRejectedValueOnce(new Error('wallet unavailable'))
+      .mockResolvedValueOnce({ confirmed: true, complete: true });
+    svc.startPaymentMonitoring('wow1retry', callback, 100);
+
+    await jest.advanceTimersByTimeAsync(100);
+    expect(callback).not.toHaveBeenCalled();
+    expect(svc.paymentWatchers.has('wow1retry')).toBe(true);
+
+    await jest.advanceTimersByTimeAsync(100);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(svc.paymentWatchers.has('wow1retry')).toBe(false);
+  });
+
   test('cleanupUserPayments removes all monitors for user', () => {
     const userId = 'user123';
     const addr1 = 'wow1addr1';
@@ -429,14 +445,58 @@ describe('WalletRPCService.checkPaymentStatus', () => {
     svc = new WalletRPCService(debugManagerMock);
   });
 
-  test('returns default status for unknown address', async () => {
-    const status = await svc.checkPaymentStatus('unknown_address');
-    
-    expect(status.complete).toBe(false);
-    expect(status.in_mempool).toBe(false);
-    expect(status.confirmed).toBe(false);
-    expect(status.amount).toBe(0);
-    expect(status.confirmations).toBe(0);
+  test('does not classify an unregistered address as a successful empty wallet read', async () => {
+    await expect(svc.checkPaymentStatus('unknown_address')).rejects.toMatchObject({
+      code: 'WALLET_PAYMENT_ADDRESS_UNAVAILABLE'
+    });
+  });
+
+  test.each([
+    ['explicit empty lists', { in: [], pool: [] }, { transfers: [] }],
+    ['omitted empty lists', {}, {}]
+  ])('distinguishes %s from unknown evidence', async (_case, transfers, outputs) => {
+    svc.addressToUser.set('wow1empty', {
+      userId: 'user1', socketId: 'sock1', amount: 100,
+      addressIndex: 5, accountIndex: 0
+    });
+    svc.rpcCall = jest.fn()
+      .mockResolvedValueOnce({ result: transfers })
+      .mockResolvedValueOnce({ result: outputs });
+
+    const status = await svc.checkPaymentStatus('wow1empty');
+    expect(status).toEqual(expect.objectContaining({
+      complete: false, confirmed: false, amount: 0, receipts: []
+    }));
+  });
+
+  test.each([
+    ['first wallet RPC failure', () => jest.fn().mockRejectedValue(new Error('transport failed'))],
+    ['second wallet RPC failure', () => jest.fn()
+      .mockResolvedValueOnce({ result: { in: [], pool: [] } })
+      .mockRejectedValueOnce(new Error('auth failed'))],
+    ['missing transaction result', () => jest.fn()
+      .mockResolvedValueOnce({ result: null })
+      .mockResolvedValueOnce({ result: { transfers: [] } })],
+    ['non-array output list', () => jest.fn()
+      .mockResolvedValueOnce({ result: { in: [], pool: [] } })
+      .mockResolvedValueOnce({ result: { transfers: null } })],
+    ['malformed transfer list', () => jest.fn()
+      .mockResolvedValueOnce({ result: { in: {}, pool: [] } })
+      .mockResolvedValueOnce({ result: { transfers: [] } })]
+  ])('rejects %s instead of reporting zero receipts', async (_case, rpc) => {
+    svc.addressToUser.set('wow1unknown', {
+      userId: 'user1', socketId: 'sock1', amount: 100,
+      addressIndex: 5, accountIndex: 0
+    });
+    svc.rpcCall = rpc();
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(svc.checkPaymentStatus('wow1unknown')).rejects.toMatchObject({
+        statusCode: expect.any(Number), code: expect.any(String)
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('checks mempool and confirmed transfers', async () => {
@@ -524,7 +584,7 @@ describe('WalletRPCService.checkPaymentStatus', () => {
       addressIndex: 8, accountIndex: 0, detected: false, confirmed: false
     });
     svc.rpcCall = jest.fn()
-      .mockResolvedValueOnce({ result: { pool: [], in: [
+      .mockResolvedValueOnce({ result: { in: [
         confirmedTransfer({ txid: 'b'.repeat(64), amount: 400, height: 301,
           confirmations: 3, minor: 8 }),
         confirmedTransfer({ txid: 'a'.repeat(64), amount: 600, height: 302,
@@ -577,7 +637,7 @@ describe('WalletRPCService.checkPaymentStatus', () => {
     expect(status.receipts.map(receipt => receipt.outputId)).toEqual([firstPubkey, secondPubkey]);
   });
 
-  test('fails closed when a confirmed transfer has no stable output identifier', async () => {
+  test('reports unknown evidence when a confirmed transfer lacks its output identifier', async () => {
     svc.addressToUser.set('wow1missingoutputid', {
       userId: 'user1', socketId: 'sock1', amount: 100,
       addressIndex: 14, accountIndex: 0, detected: false, confirmed: false
@@ -590,12 +650,63 @@ describe('WalletRPCService.checkPaymentStatus', () => {
         txHash: '8'.repeat(64), amount: 100, blockHeight: 500, minor: 14
       })] } });
 
-    const status = await svc.checkPaymentStatus('wow1missingoutputid');
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(svc.checkPaymentStatus('wow1missingoutputid')).rejects.toMatchObject({
+        code: 'WALLET_RECEIPT_EVIDENCE_INCOMPLETE'
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
 
-    expect(status.complete).toBe(false);
-    expect(status.confirmed).toBe(false);
-    expect(status.amount).toBe(0);
-    expect(status.receipts).toEqual([]);
+  test('reports unknown evidence when the output RPC omits a safe confirmed transfer', async () => {
+    svc.addressToUser.set('wow1missingoutput', {
+      userId: 'user1', socketId: 'sock1', amount: 100,
+      addressIndex: 14, accountIndex: 0
+    });
+    svc.rpcCall = jest.fn()
+      .mockResolvedValueOnce({ result: { pool: [], in: [confirmedTransfer({
+        txid: '8'.repeat(64), amount: 100, height: 500, confirmations: 1, minor: 14
+      })] } })
+      .mockResolvedValueOnce({ result: { transfers: [] } });
+
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(svc.checkPaymentStatus('wow1missingoutput')).rejects.toMatchObject({
+        code: 'WALLET_RECEIPT_EVIDENCE_INCOMPLETE'
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test.each([
+    ['mismatched block height', { amount: 100, blockHeight: 501 }, true],
+    ['output amount exceeding the transaction', { amount: 101, blockHeight: 500 }, true],
+    ['output without transaction state', { amount: 100, blockHeight: 500 }, false]
+  ])('rejects %s across wallet receipt views', async (_case, outputShape, includeTx) => {
+    svc.addressToUser.set('wow1contradiction', {
+      userId: 'user1', socketId: 'sock1', amount: 100,
+      addressIndex: 14, accountIndex: 0
+    });
+    svc.rpcCall = jest.fn()
+      .mockResolvedValueOnce({ result: includeTx ? { in: [confirmedTransfer({
+        txid: '8'.repeat(64), amount: 100, height: 500, confirmations: 1, minor: 14
+      })] } : {} })
+      .mockResolvedValueOnce({ result: { transfers: [incomingOutput({
+        txHash: '8'.repeat(64), pubkey: 'a'.repeat(64), globalIndex: 500,
+        minor: 14, ...outputShape
+      })] } });
+
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(svc.checkPaymentStatus('wow1contradiction')).rejects.toMatchObject({
+        code: 'WALLET_RECEIPT_EVIDENCE_INCOMPLETE'
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('ignores double-spend-marked and explicitly timelocked incoming transfers', async () => {
@@ -608,17 +719,13 @@ describe('WalletRPCService.checkPaymentStatus', () => {
         confirmedTransfer({ txid: '7'.repeat(64), amount: 100, height: 600,
           confirmations: 2, minor: 15, doubleSpend: true }),
         confirmedTransfer({ txid: '6'.repeat(64), amount: 100, height: 601,
-          confirmations: 2, minor: 15, unlockTime: 42 }),
-        confirmedTransfer({ txid: '5'.repeat(64), amount: 100, height: 602,
-          confirmations: 2, minor: 15, unlockTime: Number.MAX_SAFE_INTEGER + 1 })
+          confirmations: 2, minor: 15, unlockTime: 42 })
       ] } })
       .mockResolvedValueOnce({ result: { transfers: [
         incomingOutput({ txHash: '7'.repeat(64), pubkey: 'a'.repeat(64), globalIndex: 600,
           amount: 100, blockHeight: 600, minor: 15 }),
         incomingOutput({ txHash: '6'.repeat(64), pubkey: 'b'.repeat(64), globalIndex: 601,
-          amount: 100, blockHeight: 601, minor: 15 }),
-        incomingOutput({ txHash: '5'.repeat(64), pubkey: 'c'.repeat(64), globalIndex: 602,
-          amount: 100, blockHeight: 602, minor: 15 })
+          amount: 100, blockHeight: 601, minor: 15 })
       ] } });
 
     const status = await svc.checkPaymentStatus('wow1unsafeoutputs');
@@ -627,6 +734,27 @@ describe('WalletRPCService.checkPaymentStatus', () => {
     expect(status.confirmed).toBe(false);
     expect(status.amount).toBe(0);
     expect(status.receipts).toEqual([]);
+  });
+
+  test('rejects an incoming transfer with an unsafe numeric unlock time', async () => {
+    svc.addressToUser.set('wow1invalidunlock', {
+      userId: 'user1', socketId: 'sock1', amount: 100,
+      addressIndex: 15, accountIndex: 0
+    });
+    svc.rpcCall = jest.fn()
+      .mockResolvedValueOnce({ result: { in: [confirmedTransfer({
+        txid: '5'.repeat(64), amount: 100, height: 602,
+        confirmations: 2, minor: 15, unlockTime: Number.MAX_SAFE_INTEGER + 1
+      })] } })
+      .mockResolvedValueOnce({ result: { transfers: [] } });
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(svc.checkPaymentStatus('wow1invalidunlock')).rejects.toMatchObject({
+        code: 'WALLET_RECEIPT_EVIDENCE_INCOMPLETE'
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('requires the configured minimum confirmations and rejects frozen output evidence', async () => {
