@@ -18,6 +18,7 @@ const SocketHandlers = {
 
     _directModeEnabled: false,
     _directPayoutsEnabled: false,
+    _anyPayoutsEnabled: false,
     _paymentsEnabled: false,
     _isSmirkExplicitlyEnabled: function(data) {
         return !!data && data.smirkEnabled === true;
@@ -155,6 +156,8 @@ const SocketHandlers = {
         // If the low-level socket connected before handlers were registered, emulate onConnect.
         if (window.socket && window.socket.connected) {
             this.onConnect();
+        } else if (window.socket && typeof window.socket.connect === 'function') {
+            window.socket.connect();
         }
     },
     
@@ -182,6 +185,7 @@ const SocketHandlers = {
         // Connection handlers
         socket.on('connect', this.onConnect);
         socket.on('disconnect', function() {
+            SocketHandlers._didConnect = false;
             SocketHandlers._invalidatePaymentSession();
             if (typeof CommerceConsent !== 'undefined' && CommerceConsent.clear) {
                 CommerceConsent.clear();
@@ -874,6 +878,10 @@ const SocketHandlers = {
     },
 
     onAddressPrompt: function(data) {
+        if (!SocketHandlers._anyPayoutsEnabled) {
+            console.warn('Ignoring payout address prompt while payouts are disabled.');
+            return;
+        }
         if (typeof AddressModal !== 'undefined') {
             AddressModal.show({
                 existingAddress: data?.existingAddress || null,
@@ -916,7 +924,14 @@ const SocketHandlers = {
             && data.modes.match.economies.crypto_race);
         var anyPayouts = SocketHandlers._creditsPayoutsEnabled
             || SocketHandlers._directPayoutsEnabled || matchCryptoPayouts;
+        SocketHandlers._anyPayoutsEnabled = anyPayouts;
         $('#manageAddressButton').toggle(anyPayouts);
+        $('#smirkAccountSection').toggle(SocketHandlers._smirkEnabled);
+        if (SocketHandlers._smirkEnabled && window.location.hash === '#smirkAccountSection'
+            && document.activeElement === document.body) {
+            document.getElementById('smirkAccountSection')?.focus({ preventScroll: true });
+        }
+        if (!anyPayouts && typeof AddressModal !== 'undefined') AddressModal.hide();
         if (data.entitlements && typeof SinglePlayerAvatar !== 'undefined') {
             SinglePlayerAvatar.applyEntitlements(data.entitlements);
         }

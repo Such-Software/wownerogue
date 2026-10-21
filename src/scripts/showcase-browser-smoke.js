@@ -1,8 +1,9 @@
 'use strict';
 
-// Gameplay-only browser check. This deliberately avoids the application entrypoint, database,
-// wallet, payment handlers, and queue/race transitions. Mica receives synthetic Interior and Iso
-// grants; Moth receives the source-owned zero-grant catalog fixture and must remain original-only.
+// Local browser checks cover the real TavernManager, pack-gated rendering, and a client-only
+// account/payout visibility matrix. They do not start the application entrypoint, database, live
+// wallet, payment handlers, or multiplayer queue. Mica receives synthetic Interior and Iso grants;
+// Moth receives the source-owned zero-grant catalog fixture and must remain original-only.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -48,6 +49,209 @@ function isLoopback(hostname) {
     return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
 }
 
+function accountGameModeInfo({ smirkEnabled, payoutsEnabled }) {
+    return {
+        mode: payoutsEnabled ? 'PAID_SINGLE' : 'FREE',
+        freePlayEnabled: true,
+        earlyEntry: { enabled: false },
+        creditsPerGame: 1,
+        creditsPayoutsEnabled: false,
+        directModeEnabled: payoutsEnabled,
+        directPayoutsEnabled: payoutsEnabled,
+        paymentsEnabled: payoutsEnabled,
+        smirkEnabled,
+        cryptoType: 'WOW',
+        currencyLabel: 'WOW',
+        network: 'mainnet',
+        singleGamePrice: 100000000000,
+        singleGamePriceFormatted: '1 WOW',
+        creditPackages: [],
+        cosmeticProducts: [],
+        payoutOutcomes: {},
+        modes: {
+            solo: false,
+            tavern: true,
+            multiplayer: true,
+            match: { enabled: true, economies: { free: true } }
+        }
+    };
+}
+
+async function runAccountVisibilityMatrix(page) {
+    const initial = await page.evaluate(() => ({
+        smirkSectionHidden: getComputedStyle(document.getElementById('smirkAccountSection')).display === 'none',
+        payoutControlHidden: getComputedStyle(document.getElementById('manageAddressButton')).display === 'none'
+    }));
+    assert(initial.smirkSectionHidden && initial.payoutControlHidden,
+        'Account or payout controls were visible before an explicit server game-mode snapshot');
+
+    await page.evaluate(data => SocketHandlers.onGameModeInfo(data),
+        accountGameModeInfo({ smirkEnabled: true, payoutsEnabled: false }));
+    const connectButton = page.getByRole('button', { name: 'Connect Smirk', exact: true });
+    try {
+        await connectButton.waitFor({ state: 'visible', timeout: 1500 });
+    } catch (error) {
+        const state = await page.evaluate(() => ({
+            explicitFlag: SocketHandlers._smirkEnabled,
+            authInitialized: SmirkAuth._initialized,
+            providerAvailable: SmirkAuth.isAvailable(),
+            sectionDisplay: getComputedStyle(document.getElementById('smirkAccountSection')).display,
+            containerPresent: !!document.getElementById('smirkButtonContainer'),
+            buttonPresent: !!document.getElementById('smirkLoginBtn'),
+            containerContents: document.getElementById('smirkButtonContainer')?.textContent || ''
+        }));
+        throw new Error(`Smirk account entry did not become visible (${JSON.stringify(state)}): ${error.message}`);
+    }
+    await page.locator('#tavernButton').waitFor({ state: 'visible' });
+    const freeAccount = await page.evaluate(() => {
+        const region = document.getElementById('smirkAccountSection');
+        const button = document.getElementById('smirkLoginBtn');
+        const bounds = button.getBoundingClientRect();
+        return {
+            regionLabel: region.getAttribute('aria-label'),
+            tavernEnabled: getComputedStyle(document.getElementById('tavernButton')).display !== 'none',
+            payoutsControlHidden: getComputedStyle(document.getElementById('manageAddressButton')).display === 'none',
+            addressModalHidden: document.getElementById('addressModal').classList.contains('hidden'),
+            buttonText: button.textContent.trim(),
+            buttonWidth: bounds.width,
+            buttonRight: bounds.right,
+            viewportWidth: document.documentElement.clientWidth,
+            documentWidth: document.documentElement.scrollWidth
+        };
+    });
+    assert(freeAccount.regionLabel === 'Smirk account' && freeAccount.tavernEnabled
+        && freeAccount.payoutsControlHidden && freeAccount.addressModalHidden,
+    'Explicit Smirk access did not expose an accessible account entry while keeping payout controls closed');
+    assert(freeAccount.buttonWidth > 0 && freeAccount.buttonRight <= freeAccount.viewportWidth
+        && freeAccount.documentWidth <= freeAccount.viewportWidth,
+    'Smirk account entry is not usable within the mobile viewport');
+    await page.evaluate(() => {
+        window.__smirkAccountClickCount = 0;
+        SmirkAuth._handleClick = function () { window.__smirkAccountClickCount += 1; };
+    });
+    await connectButton.click();
+    await page.waitForFunction(() => window.__smirkAccountClickCount === 1);
+    await page.evaluate(() => {
+        AddressModal.show();
+        SocketHandlers.onAddressPrompt({});
+    });
+    assert(await page.locator('#addressModal').evaluate(node => node.classList.contains('hidden')),
+        'A payout address prompt opened while payout modes were disabled');
+
+    await page.evaluate(data => SocketHandlers.onGameModeInfo(data),
+        accountGameModeInfo({ smirkEnabled: false, payoutsEnabled: false }));
+    const defaultClosed = await page.evaluate(() => ({
+        accountHidden: getComputedStyle(document.getElementById('smirkAccountSection')).display === 'none',
+        payoutControlHidden: getComputedStyle(document.getElementById('manageAddressButton')).display === 'none'
+    }));
+    assert(defaultClosed.accountHidden && defaultClosed.payoutControlHidden,
+        'The server-off baseline exposed Smirk or payout controls');
+
+    await page.evaluate(data => SocketHandlers.onGameModeInfo(data),
+        accountGameModeInfo({ smirkEnabled: false, payoutsEnabled: true }));
+    const payoutAccess = await page.evaluate(() => ({
+        accountHidden: getComputedStyle(document.getElementById('smirkAccountSection')).display === 'none',
+        payoutControlVisible: getComputedStyle(document.getElementById('manageAddressButton')).display !== 'none'
+    }));
+    assert(payoutAccess.accountHidden && payoutAccess.payoutControlVisible,
+        'A permitted payout mode did not expose address management independently of Smirk');
+    await page.locator('#manageAddressButton').click();
+    await page.locator('#addressModal').waitFor({ state: 'visible' });
+    await page.evaluate(data => SocketHandlers.onGameModeInfo(data),
+        accountGameModeInfo({ smirkEnabled: false, payoutsEnabled: false }));
+    assert(await page.locator('#addressModal').evaluate(node => node.classList.contains('hidden')),
+        'Payout address modal stayed open after the server disabled payout modes');
+
+    return {
+        explicitSmirkWithFreeTavern: freeAccount,
+        serverOffBaseline: defaultClosed,
+        permittedPayoutAddressManagement: payoutAccess,
+        visibleSmirkButtonClickWired: true,
+        unsolicitedPayoutPromptIgnored: true,
+        payoutModalClosedWhenFeatureDisabled: true,
+        syntheticSnapshotsOnly: true,
+        provider: 'local Smirk stub; click handler intercepted before authentication'
+    };
+}
+
+async function runTavernAccountLink(page, outputDir) {
+    await page.goto(`${page.url().split('/').slice(0, 3).join('/')}/tavern`);
+    const accountLink = page.locator('#smirkAccountLink');
+    await accountLink.waitFor({ state: 'attached' });
+    assert(await accountLink.evaluate(node => node.hidden),
+        'The Tavern exposed its Smirk account link before an explicit enabled snapshot');
+    await page.evaluate(data => window.__deliverSocketEvent('game_mode_info', data),
+        accountGameModeInfo({ smirkEnabled: false, payoutsEnabled: false }));
+    assert(await accountLink.evaluate(node => node.hidden),
+        'The Tavern exposed its Smirk account link when the server flag was off');
+    await page.evaluate(data => window.__deliverSocketEvent('game_mode_info', data),
+        accountGameModeInfo({ smirkEnabled: true, payoutsEnabled: false }));
+    await accountLink.waitFor({ state: 'visible' });
+    const linkState = await page.evaluate(() => {
+        const link = document.getElementById('smirkAccountLink');
+        const bounds = link.getBoundingClientRect();
+        const header = document.querySelector('.tavern-head').getBoundingClientRect();
+        const title = document.querySelector('.tavern-head h1').getBoundingClientRect();
+        const nav = link.parentElement.getBoundingClientRect();
+        return {
+            href: link.getAttribute('href'),
+            viewportWidth: document.documentElement.clientWidth,
+            documentWidth: document.documentElement.scrollWidth,
+            linkRight: bounds.right,
+            linkWidth: bounds.width,
+            header: { left: header.left, right: header.right, width: header.width },
+            title: { left: title.left, right: title.right, width: title.width },
+            nav: { left: nav.left, right: nav.right, width: nav.width },
+            controlsInsideHeader: header.left <= title.left && title.right <= header.right
+                && header.left <= nav.left && nav.right <= header.right
+        };
+    });
+    assert(linkState.href === '/#smirkAccountSection' && linkState.linkWidth > 0
+        && linkState.linkRight <= linkState.viewportWidth
+        && linkState.documentWidth <= linkState.viewportWidth
+        && linkState.header.right <= linkState.viewportWidth && linkState.controlsInsideHeader,
+    'The enabled Tavern account link is not usable within the mobile viewport');
+    await page.getByRole('link', { name: 'Smirk account', exact: true }).focus();
+    assert(await accountLink.evaluate(node => document.activeElement === node),
+        'The enabled Tavern account link is not keyboard focusable');
+    await page.screenshot({ path: path.join(outputDir, 'tavern-smirk-account-link.png'), fullPage: true });
+    await accountLink.click();
+    await page.waitForURL('**/#smirkAccountSection');
+    await page.waitForFunction(() => document.readyState === 'complete'
+        && typeof SocketHandlers !== 'undefined' && typeof SmirkAuth !== 'undefined');
+    await page.evaluate(data => SocketHandlers.onGameModeInfo(data),
+        accountGameModeInfo({ smirkEnabled: true, payoutsEnabled: false }));
+    const destination = await page.evaluate(() => ({
+        path: location.pathname,
+        hash: location.hash,
+        sectionFocusable: document.activeElement === document.getElementById('smirkAccountSection'),
+        sectionVisible: getComputedStyle(document.getElementById('smirkAccountSection')).display !== 'none',
+        payoutControlHidden: getComputedStyle(document.getElementById('manageAddressButton')).display === 'none'
+    }));
+    assert(destination.path === '/' && destination.hash === '#smirkAccountSection'
+        && destination.sectionFocusable && destination.sectionVisible && destination.payoutControlHidden,
+    'The Tavern account link did not land at the enabled, payout-free lobby account section');
+    await page.screenshot({ path: path.join(outputDir, 'lobby-smirk-account-entry.png'), fullPage: true });
+    const connectButton = page.getByRole('button', { name: 'Connect Smirk', exact: true });
+    await connectButton.waitFor({ state: 'visible' });
+    await page.evaluate(() => {
+        window.__smirkAccountClickCount = 0;
+        SmirkAuth._handleClick = function () { window.__smirkAccountClickCount += 1; };
+    });
+    await connectButton.click();
+    await page.waitForFunction(() => window.__smirkAccountClickCount === 1);
+    return {
+        mobileTavernLink: linkState,
+        keyboardFocusable: true,
+        lobbyDestination: destination,
+        visibleButtonClickWired: true,
+        screenshots: {
+            tavern: 'tavern-smirk-account-link.png',
+            lobby: 'lobby-smirk-account-entry.png'
+        }
+    };
+}
+
 async function main() {
     assert(process.env.NODE_ENV !== 'production', 'Refusing to run with NODE_ENV=production');
     assert(fs.existsSync(path.join(HTML_ROOT, 'tavern.html')), 'Tavern source page is missing');
@@ -91,6 +295,13 @@ async function main() {
     app.get('/runtime-config.js', (_req, res) => {
         res.type('application/javascript').send('window.WOWNGEON_RUNTIME = {rendererLocalEnabled:false, rendererCdnEnabled:false};');
     });
+    app.get('/api/game-modes', (_req, res) => res.json({ hostedBy: null }));
+    app.get('/api/disclosures', (_req, res) => res.json({
+        policyVersion: 'local-browser-fixture-v1',
+        service: { anyPayoutsEnabled: false }
+    }));
+    app.get('/api/stats', (_req, res) => res.json({ gamesToday: 0, escapesToday: 0, payoutsEnabled: false }));
+    app.get('/api/auth/smirk/status', (_req, res) => res.json({ linked: false, hasPayoutAddress: false }));
     app.get('/tavern', (_req, res) => res.sendFile(path.join(HTML_ROOT, 'tavern.html')));
     app.use(express.static(HTML_ROOT));
 
@@ -177,6 +388,62 @@ async function main() {
         }
 
         await Promise.all(Object.values(views).map(({ page }) => page.goto(`${origin}/tavern`)));
+
+        const accountContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+        accountContext.on('requestfailed', request => {
+            const url = new URL(request.url());
+            if (!isLoopback(url.hostname) || Number(url.port || 80) !== address.port) {
+                blockedExternal.push(url.origin);
+            }
+        });
+        await accountContext.route('**/*', route => {
+            const url = new URL(route.request().url());
+            if (url.protocol === 'data:' || url.protocol === 'blob:') return route.continue();
+            if (url.protocol === 'http:' && isLoopback(url.hostname) && Number(url.port || 80) === address.port) {
+                return route.continue();
+            }
+            blockedExternal.push(url.origin);
+            return route.abort('blockedbyclient');
+        });
+        const accountPage = await accountContext.newPage();
+        await accountPage.addInitScript(() => {
+            window.smirk = {
+                async connect() { return { wow: {} }; },
+                async getPublicKeys() { return {}; },
+                async getAddresses() { return {}; }
+            };
+        });
+        await accountPage.route('**/socket.io/socket.io.js', route => route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `window.io = function () {\n` +
+                `  var listeners = {};\n` +
+                `  var client = { id: 'smirk-account-browser-fixture', connected: true,\n` +
+                `    on: function (name, fn) { (listeners[name] || (listeners[name] = [])).push(fn); },\n` +
+                `    emit: function () {}\n` +
+                `  };\n` +
+                `  window.__deliverSocketEvent = function (name, data) { (listeners[name] || []).forEach(function (fn) { fn(data); }); };\n` +
+                `  window.socket = client;\n` +
+                `  return client;\n` +
+                `};`
+        }));
+        accountPage.on('pageerror', error => browserFailures.push(error.message));
+        accountPage.on('console', message => {
+            if (message.type() === 'error') browserFailures.push(message.text());
+        });
+        accountPage.on('response', response => {
+            if (response.status() >= 400) {
+                observedHttpFailures.push({ path: new URL(response.url()).pathname, status: response.status() });
+            }
+        });
+        await accountPage.goto(`${origin}/`);
+        await accountPage.waitForFunction(() => document.readyState === 'complete'
+            && typeof SocketHandlers !== 'undefined' && typeof SmirkAuth !== 'undefined'
+            && typeof InputHandler !== 'undefined' && window.socket?.connected);
+        await accountPage.waitForTimeout(250);
+        const accountUi = await runAccountVisibilityMatrix(accountPage);
+        const tavernAccountLink = await runTavernAccountLink(accountPage, outputDir);
+
         for (const { page } of Object.values(views)) {
             await page.locator('#joinBtn').waitFor({ state: 'visible' });
             await page.waitForFunction(() => document.getElementById('joinBtn') && !document.getElementById('joinBtn').disabled);
@@ -418,7 +685,7 @@ async function main() {
         }
         const result = {
             ok: true,
-            scope: 'gameplay-only Tavern browser smoke with isolated spectator layout fixture; no queue/race transitions',
+            scope: 'local Tavern lifecycle/graphics smoke plus a client-only account visibility matrix; no paid gameplay, queue/race transitions, database, or live wallet',
             origin: '127.0.0.1 loopback only',
             fixture: 'Mica receives synthetic roguelike-interior and iso-dungeon grants; Moth receives the authoritative zero-grant, original-only snapshot; both have zero balances and no purchase, skin or 3D grant',
             clients: { count: clientsByRole.size, mappedByPageOwnedSocketId: true },
@@ -430,10 +697,13 @@ async function main() {
             mobile,
             activeArena: { desktop: desktopArena, mobile: mobileArena, arenaReceivesSafeInitialFocus: true, tavernFocusRestored: true },
             missingGeneratedSkin: skinFailure,
+            accountUi,
+            tavernAccountLink,
             screenshots: {
                 syntheticInteriorCharacter: 'tavern-synthetic-interior-character.png',
                 freeOriginalBaseline: screenshotPaths.moth,
-                desktopIso: 'tavern-desktop-iso.png', mobile: screenshotPaths
+                desktopIso: 'tavern-desktop-iso.png', mobile: screenshotPaths,
+                smirkAccount: tavernAccountLink.screenshots
             },
             unexpectedHttpFailures,
             externalRequestsBlocked: blockedExternal.length,

@@ -10,6 +10,16 @@ const { verifyNip98Event } = require('../utils/nip98');
 const AUTH_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_MAX_KEYS = 10000;
 
+// Shared with the real PostgreSQL lifecycle check so parameter inference is exercised
+// against the migrated schema, rather than accepted only by query mocks.
+const challengeInsertQuery = `
+  INSERT INTO smirk_challenges (challenge, socket_id, user_id)
+  SELECT $1::varchar(64), $2::varchar(255), id
+  FROM users
+  WHERE id = $3 AND socket_id = $2 AND anon_token = $4
+  RETURNING id
+`;
+
 /**
  * The host a NIP-98 auth event must be signed for.
  *
@@ -260,13 +270,7 @@ router.post('/api/auth/smirk/challenge', challengeRateLimit, asyncHandler(async 
 
   // Store a stable user binding as well as the current socket. The user binding is what
   // prevents a public Tavern/Match socket id from being used to attach an attacker's key.
-  const inserted = await db.query(`
-    INSERT INTO smirk_challenges (challenge, socket_id, user_id)
-    SELECT $1, $2, id
-    FROM users
-    WHERE id = $3 AND socket_id = $2 AND anon_token = $4
-    RETURNING id
-  `, [challenge, socketId, session.userId, session.token]);
+  const inserted = await db.query(challengeInsertQuery, [challenge, socketId, session.userId, session.token]);
   if (inserted.rows.length !== 1) throw unauthorized();
 
   // Opportunistic cleanup of expired and long-used challenges.
@@ -470,3 +474,5 @@ router.get('/api/auth/smirk/status', asyncHandler(async (req, res) => {
 
   return router;
 };
+
+module.exports.challengeInsertQuery = challengeInsertQuery;

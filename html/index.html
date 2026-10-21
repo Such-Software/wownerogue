@@ -14,20 +14,23 @@
     <!-- Initialize socket with resume token (for persistent anonymous session) -->
     <script>
         (function(){
-            let opts = {};
+            let opts = { autoConnect: false };
             window._localStorageAvailable = false;
             try {
                 // Test localStorage availability (fails in private browsing on some browsers)
                 localStorage.setItem('_test', '1');
                 localStorage.removeItem('_test');
                 window._localStorageAvailable = true;
-                const existing = localStorage.getItem('wownerogue_token');
-                if (existing) {
-                    // Send the session token in the handshake `auth` payload, NOT the URL
-                    // query string. Query strings leak into proxy/access/referer logs;
-                    // auth is carried in the connection body.
-                    opts.auth = { resumeToken: existing };
-                }
+                // Read the current token for every initial connection and reconnect, rather
+                // than retaining the token that existed when this page first loaded.
+                opts.auth = function(callback) {
+                    let resumeToken = null;
+                    if (window._localStorageAvailable) {
+                        try { resumeToken = localStorage.getItem('wownerogue_token'); } catch(_) {}
+                    }
+                    // Credentials stay in Socket.IO's handshake auth payload, never the URL.
+                    callback(resumeToken ? { resumeToken: resumeToken } : {});
+                };
             } catch(_) {
                 window._localStorageAvailable = false;
                 console.warn('localStorage unavailable - session will not persist');
@@ -169,6 +172,9 @@
             <button id="animationToggleButton" class="ctrl-btn ctrl-btn--anim" style="display: none;">
                 🎬 DISABLE ANIMATION
             </button>
+            <section id="smirkAccountSection" class="smirk-account-entry" aria-label="Smirk account" tabindex="-1" style="display:none;">
+                <div id="smirkButtonContainer"></div>
+            </section>
             <div class="hud-toolbar">
                 <label>
                     <input type="checkbox" id="audioAlertsToggle"> Audio Alerts
@@ -301,20 +307,6 @@
             <h2 id="addressModalTitle">Manage Payout Address</h2>
             <p class="modal-description">Enter your Wownero (WOW) or Monero (XMR) address below. This will be used for payouts when you escape.</p>
             <p class="modal-description" style="font-size:11px; color:#888; margin-top:8px; padding:6px; background:rgba(255,200,0,0.1); border-radius:4px;">💡 <strong>Session Info:</strong> Your address and credits are tied to a browser session token stored locally. They will persist across page refreshes but will be lost if you clear cookies, use incognito mode, or switch browsers.</p>
-
-            <!-- Smirk Wallet Integration -->
-            <div id="smirkSection" style="margin: 15px 0; padding: 12px; background: rgba(26,26,77,0.5); border: 1px solid #3a3a7d; border-radius: 6px;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                    <span style="font-size: 1.2em;">🔐</span>
-                    <strong style="color: #aaf;">Connect with Smirk Wallet</strong>
-                </div>
-                <p style="font-size: 11px; color: #999; margin-bottom: 10px;">Automatically set your payout address by connecting your Smirk browser wallet.</p>
-                <div id="smirkButtonContainer">
-                    <!-- Will be populated by smirkAuth.js -->
-                </div>
-            </div>
-
-            <div style="text-align: center; color: #666; margin: 10px 0; font-size: 12px;">or enter manually</div>
 
             <form id="addressModalForm">
                 <label for="addressModalInput" class="modal-label">Payout Address</label>
