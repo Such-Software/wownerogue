@@ -133,8 +133,8 @@ class NostrChatProvider extends ChatProvider {
     // (escaped text, exactly like a normal global message) and publishes the pre-signed event to
     // the relays WITHOUT re-signing, so it carries the player's OWN npub, not the bridge. The
     // signed id is marked seen so the relay round-trip doesn't re-deliver it.
-    async relaySignedEvent({ event, username, text, ts, socketId, userId } = {}) {
-        await this.local.publish({ scope: 'global', username, text, ts, socketId, userId });
+    async relaySignedEvent({ event, username, text, ts, socketId, userId, onLocalDelivery } = {}) {
+        await this.local.publish({ scope: 'global', username, text, ts, socketId, userId, onLocalDelivery });
         if (this._globalEnabled() && event && event.id) {
             this._markSeen(event.id);
             try { await this.transport.publish(event); }

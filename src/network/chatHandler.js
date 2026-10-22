@@ -84,6 +84,7 @@ class ChatHandler {
      * Handle incoming chat messages with rate limiting
      */
     async handleChatMessage(socket, msg, additionalHandlers = {}) {
+        const postingSession = this._captureChatSession(socket);
         try {
             // Rate limiting keys on stable id + IP so reconnecting can't reset the counter.
             const rlId = stableId(socket, this.gameModeManager?.sessionManager);
@@ -117,7 +118,7 @@ class ChatHandler {
             }
 
             // If not a command, broadcast as chat message
-            await this._handleChatBroadcast(socket, msg);
+            await this._handleChatBroadcast(socket, msg, additionalHandlers.acceptedSpeech, postingSession);
 
         } catch (error) {
             console.error('Chat handler error:', error);
@@ -132,7 +133,7 @@ class ChatHandler {
      * login), moderates, then relays it: the provider publishes the pre-signed event to nostr under
      * the player's npub, not the bridge. Serves lobby and tavern, both of which render global scope.
      */
-    async handleSignedChatMessage(socket, payload) {
+    async handleSignedChatMessage(socket, payload, acceptedSpeech = null) {
         try {
             const rlId = stableId(socket, this.gameModeManager?.sessionManager);
             const rlIp = clientIp(socket);
@@ -167,20 +168,35 @@ class ChatHandler {
                 maxLen: 280
             });
             if (!verdict.ok) {
-                if (this.debugManager.CONSOLE_LOGGING) console.warn('[chat] signed event rejected:', verdict.reason);
+                if (this.debugManager?.CONSOLE_LOGGING) console.warn('[chat] signed event rejected:', verdict.reason);
                 this.broadcastManager.sendStatusUpdate(socket.id, 'warning', 'Your signed message could not be verified.');
                 return;
             }
 
+            try {
+                if (await this.chatHistory.isUserChatBanned(userId, { strict: true })) {
+                    this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'You have been banned from chat.');
+                    return;
+                }
+            } catch (_) {
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Chat moderation is temporarily unavailable.');
+                return;
+            }
+            if (this.gameModeManager.sessionManager.sessions.get(socket.id) !== session || session.id !== userId) return;
             const username = row.display_name || row.username || String(npub).slice(0, 8);
             const text = escapeChatText(verdict.content, 200);
 
             // Delivers in-game (escaped) + relays the client-signed event to nostr under the player's npub.
             await this.chatProvider.relaySignedEvent({
-                event, scope: 'global', username, text, ts: Date.now(), socketId: socket.id, userId
+                event, scope: 'global', username, text, ts: Date.now(), socketId: socket.id, userId,
+                onLocalDelivery: () => {
+                    if (this.gameModeManager.sessionManager.sessions.get(socket.id) === session && session.id === userId
+                        && typeof acceptedSpeech === 'function') acceptedSpeech(verdict.content.slice(0, 200));
+                }
             });
         } catch (err) {
             console.error('Signed chat handler error:', err.message);
+            this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Signed chat could not be delivered. Please try again.');
         }
     }
 
@@ -340,7 +356,15 @@ class ChatHandler {
         }
     }
 
-    async _handleChatBroadcast(socket, msg) {
+    _captureChatSession(socket) {
+        const sessions = this.gameModeManager?.sessionManager?.sessions;
+        const session = sessions?.get(socket.id);
+        const userId = session?.id;
+        return { userId, isCurrent: () => socket.disconnected !== true
+            && sessions?.get(socket.id) === session && session?.id === userId };
+    }
+
+    async _handleChatBroadcast(socket, msg, acceptedSpeech = null, postingSession = this._captureChatSession(socket)) {
         if (typeof msg !== 'string') return;
         const trimmed = msg.trim();
         if (!trimmed) return;
@@ -359,19 +383,24 @@ class ChatHandler {
             try {
                 const userRow = await this.gameModeManager.getOrCreateUser(socket.id);
                 userId = userRow?.id || null;
+                if (!userId) throw new Error('Chat user lookup did not resolve a user.');
 
-                if (userId && await this.chatHistory.isUserChatBanned(userId)) {
+                if (userId && await this.chatHistory.isUserChatBanned(userId, { strict: true })) {
                     this.broadcastManager.sendStatusUpdate(socket.id, 'error',
                         'You have been banned from chat.');
                     return;
                 }
             } catch (e) {
-                // Continue without user lookup - allow message
+                // Unknown moderation cannot authorize a global message.
                 if (this.debugManager?.CONSOLE_LOGGING) {
                     console.warn('User lookup for chat failed:', e.message);
                 }
+                this.broadcastManager.sendStatusUpdate(socket.id, 'error', 'Chat moderation is temporarily unavailable.');
+                return;
             }
         }
+
+        if (!postingSession.isCurrent() || (postingSession.userId != null && userId !== postingSession.userId)) return;
 
         // Additional rate limit for broadcast messages (more restrictive)
         const now = Date.now();
@@ -397,14 +426,17 @@ class ChatHandler {
             .slice(0, MAX_MESSAGE_LENGTH);
         const username = socket.id.substring(0, 6);
 
-        // The provider broadcasts and saves to history (fire-and-forget).
+        // Await local provider acceptance before room speech can be emitted.
         await this.chatProvider.publish({
             scope: 'global',
             username: username,
             text: safe,
             ts: now,
             socketId: socket.id,
-            userId: userId
+            userId: userId,
+            onLocalDelivery: () => {
+                if (postingSession.isCurrent() && typeof acceptedSpeech === 'function') acceptedSpeech(trimmed);
+            }
         });
     }
 

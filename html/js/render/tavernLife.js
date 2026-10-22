@@ -42,7 +42,8 @@
     var CAT_LINES = ["meow", "mrrrow", "prrrrp", "hisss", "...", "mew"];
     var WELCOME_LINES = ["Welcome!", "Pull up a stool.", "New face, nice.", "Come in, sit down."];
 
-    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function pick(arr, random) { return arr[Math.floor((random || Math.random)() * arr.length)]; }
+    function between(random, min, max) { return min + random() * (max - min); }
 
     // ---- NPC definitions --------------------------------------------------------
     // NPCs are identified by a prefix so they don't collide with real socket ids.
@@ -56,32 +57,108 @@
             avatar: avatar,
             appearance: { avatar: avatar, tint: 'none', equipment: { body: 'none', head: 'none', shield: 'none', weapon: 'none' } },
             x: x, y: y, facing: 'down',
+            homeX: x, homeY: y,
             targetX: x, targetY: y,
             moveCooldown: 0,
-            sitTimer: 0,
-            // Stagger the first lines so entering the room feels conversational instead of every
-            // patron opening a bubble on the same frame.
-            speechTimer: opts.speechTimer == null ? 1800 + Math.random() * 7000 : opts.speechTimer,
+            phase: opts.phase || 'idle',
+            phaseUntil: opts.phaseUntil || 0,
+            speechTimer: opts.speechTimer == null ? 1800 : opts.speechTimer,
             speech: null, speechUntil: 0,
             color: opts.color || '#d7dbe0',
             label: opts.label || null,
             role: opts.role || 'patron',
-            roamArea: opts.roamArea || null
+            roleArea: opts.roleArea || null,
+            serviceStops: opts.serviceStops || null,
+            serviceIndex: opts.serviceIndex || 0,
+            excursionTarget: null
         };
     }
 
-    function bartendersArea(cols, rows) {
-        // Behind the bar: the row between the top wall and the counter (y=1). Sealed off by the
-        // counter, so the bartender stays back there and never wanders onto the customer floor.
-        return { minY: 1, maxY: 1, minX: 3, maxX: Math.max(5, cols - 5) };
+    var CARDINAL_STEPS = [
+        { x: 0, y: -1, facing: 'up' },
+        { x: -1, y: 0, facing: 'left' },
+        { x: 1, y: 0, facing: 'right' },
+        { x: 0, y: 1, facing: 'down' }
+    ];
+
+    function tileAt(scene, x, y) {
+        if (!scene || x < 0 || y < 0 || x >= scene.cols || y >= scene.rows || !scene.grid || !scene.grid[y]) return null;
+        return scene.grid[y][x];
     }
-    function patronsArea(cols, rows) {
-        // Patrons roam the middle/lower floor.
-        return { minY: 3, maxY: rows - 2, minX: 1, maxX: cols - 2 };
+
+    function isWalkable(scene, x, y) {
+        var tile = tileAt(scene, x, y);
+        if (tile == null) return false;
+        var definition = scene.legend && scene.legend[tile];
+        if (definition && typeof definition.solid === 'boolean') return !definition.solid;
+        return tile === 'floor' || tile === 'chair' || tile === 'door' || tile === 'rug';
     }
-    function catArea(cols, rows) {
-        // The customer floor (in front of the bar): not behind the counter, not the walls.
-        return { minY: 4, maxY: rows - 2, minX: 1, maxX: cols - 2 };
+
+    function cellsFor(scene, predicate) {
+        var cells = [];
+        for (var y = 0; y < scene.rows; y++) {
+            for (var x = 0; x < scene.cols; x++) {
+                if (predicate(x, y, tileAt(scene, x, y))) cells.push({ x: x, y: y });
+            }
+        }
+        return cells;
+    }
+
+    function semanticBarArea(scene) {
+        var best = null;
+        for (var y = 0; y < scene.rows; y++) {
+            var x = 0;
+            while (x < scene.cols) {
+                if (tileAt(scene, x, y) !== 'bar') { x++; continue; }
+                var start = x;
+                while (x + 1 < scene.cols && tileAt(scene, x + 1, y) === 'bar') x++;
+                var end = x;
+                if (end > start && y > 0) {
+                    var candidate = { minX: start + 1, maxX: end - 1, minY: y - 1, maxY: y - 1, counterY: y };
+                    var lane = cellsFor(scene, function (cx, cy) {
+                        return cx >= candidate.minX && cx <= candidate.maxX && cy === candidate.minY
+                            && tileAt(scene, cx, cy) === 'floor';
+                    });
+                    if (lane.length && (!best || end - start > best.length)) {
+                        best = { area: candidate, length: end - start, cells: lane };
+                    }
+                }
+                x++;
+            }
+        }
+        return best;
+    }
+
+    function semanticTablesAndSeats(scene) {
+        var tables = cellsFor(scene, function (x, y, tile) { return tile === 'table'; });
+        var pairs = [];
+        for (var i = 0; i < tables.length; i++) {
+            var table = tables[i];
+            var seat = { x: table.x, y: table.y + 1 };
+            if (tileAt(scene, seat.x, seat.y) === 'chair') pairs.push({ table: table, seat: seat });
+        }
+        return pairs;
+    }
+
+    function tableServiceStops(scene, tables) {
+        var stops = [];
+        for (var i = 0; i < tables.length; i++) {
+            var table = tables[i].table;
+            var candidates = [
+                { x: table.x, y: table.y - 1 },
+                { x: table.x - 1, y: table.y },
+                { x: table.x + 1, y: table.y }
+            ];
+            for (var j = 0; j < candidates.length; j++) {
+                var point = candidates[j];
+                if (!isWalkable(scene, point.x, point.y) || tileAt(scene, point.x, point.y) !== 'floor') continue;
+                if (!stops.some(function (existing) { return existing.x === point.x && existing.y === point.y; })) {
+                    stops.push(point);
+                    break;
+                }
+            }
+        }
+        return stops;
     }
 
     // ---- Speech bubbles ---------------------------------------------------------
@@ -93,29 +170,51 @@
     var BUBBLE_FADE = 500;
 
     function measureBubble(ctx, text) {
+        var key = ctx.canvas.width + ':' + ctx.canvas.height + ':' + text;
+        var cache = ctx._tavernBubbleLayouts || (ctx._tavernBubbleLayouts = new Map());
+        if (cache.has(key)) return cache.get(key);
         ctx.font = BUBBLE_FONT;
-        var metrics = ctx.measureText(text);
-        var w = Math.ceil(metrics.width) + BUBBLE_PADDING * 2;
-        var h = 22 + BUBBLE_PADDING * 2;
-        return { w: w, h: h };
+        var lineHeight = 16;
+        var width = Math.max(1, Math.min(320, ctx.canvas.width - 8) - BUBBLE_PADDING * 2);
+        var lines = [], current = '';
+        Array.from(text).forEach(function (letter) {
+            if (letter === '\n') { lines.push(current); current = ''; return; }
+            if (current && ctx.measureText(current + letter).width > width) {
+                lines.push(current); current = '';
+            }
+            current += letter;
+        });
+        if (current || !lines.length) lines.push(current);
+        var maxLines = Math.max(1, Math.floor((ctx.canvas.height - 8 - BUBBLE_PADDING * 2) / lineHeight));
+        if (lines.length > maxLines) {
+            lines = lines.slice(0, maxLines);
+            var last = lines.pop();
+            while (last && ctx.measureText(last + '…').width > width) last = Array.from(last).slice(0, -1).join('');
+            lines.push(last + '…');
+        }
+        var widest = Math.max.apply(null, lines.map(function (line) { return ctx.measureText(line).width; }));
+        var layout = { w: Math.min(width, Math.ceil(widest)) + BUBBLE_PADDING * 2,
+            h: lines.length * lineHeight + BUBBLE_PADDING * 2, lines: lines, lineHeight: lineHeight };
+        if (cache.size >= 32) cache.delete(cache.keys().next().value);
+        cache.set(key, layout);
+        return layout;
     }
 
     function drawBubble(ctx, x, y, text, alpha) {
-        if (alpha <= 0 || !text) return;
+        if (alpha <= 0 || !text || x < 0 || y < 0 || x > ctx.canvas.width || y > ctx.canvas.height) return;
         var dim = measureBubble(ctx, text);
         var bw = dim.w, bh = dim.h;
-        // Clamp so the bubble stays on screen.
         var bx = Math.max(4, Math.min(x - bw / 2, ctx.canvas.width - bw - 4));
         var by = y - bh - BUBBLE_TAIL;
-        if (by < 4) by = y + BUBBLE_TAIL + 4; // flip below if no room above
+        if (by < 4) by = y + BUBBLE_TAIL + 4;
+        by = Math.max(4, Math.min(by, ctx.canvas.height - bh - 4));
+        var above = by + bh <= y;
 
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.font = BUBBLE_FONT;
         ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
-
-        // Bubble body (rounded rect).
+        ctx.textAlign = 'left';
         ctx.fillStyle = 'rgba(18,24,32,0.94)';
         ctx.strokeStyle = 'rgba(120,140,165,0.55)';
         ctx.lineWidth = 1.5;
@@ -124,24 +223,24 @@
         ctx.fill();
         ctx.stroke();
 
-        // Tail pointer.
-        var tailX = Math.max(bx + 12, Math.min(x, bx + bw - 12));
-        ctx.fillStyle = 'rgba(18,24,32,0.94)';
+        var tailX = Math.max(bx + 5, Math.min(x, bx + bw - 5));
+        var edgeY = above ? by + bh : by;
         ctx.beginPath();
-        ctx.moveTo(tailX - 5, by + bh);
-        ctx.lineTo(tailX + 5, by + bh);
-        ctx.lineTo(tailX, by + bh + (by < y ? BUBBLE_TAIL : -BUBBLE_TAIL));
+        ctx.moveTo(tailX - 5, edgeY);
+        ctx.lineTo(tailX + 5, edgeY);
+        ctx.lineTo(tailX, edgeY + (above ? BUBBLE_TAIL : -BUBBLE_TAIL));
         ctx.closePath();
         ctx.fill();
-
-        // Text.
         ctx.fillStyle = '#e8edf3';
-        ctx.fillText(text, bx + bw / 2, by + bh / 2);
+        dim.lines.forEach(function (line, index) {
+            ctx.fillText(line, bx + BUBBLE_PADDING,
+                by + BUBBLE_PADDING + dim.lineHeight * (index + 0.5));
+        });
         ctx.restore();
     }
 
     // ---- The TavernLife controller ----------------------------------------------
-    function TavernLife(host, getScene, getCell) {
+    function TavernLife(host, getScene, getCell, options) {
         this.host = host;
         this.getScene = getScene;
         this.getCell = getCell || function () { return 24; };
@@ -152,7 +251,14 @@
         this._raf = null;
         this._lastTick = 0;
         this._spawned = false;
-        this._realBubbles = {}; // socketId -> { text, until } from real chat
+        this._realBubbles = Object.create(null); // socketId -> { text, until } from real chat
+        options = options || {};
+        this._now = typeof options.now === 'function' ? options.now : function () { return Date.now(); };
+        this._random = typeof options.random === 'function' ? options.random : function () { return Math.random(); };
+        this._projectEntityHead = typeof options.projectEntityHead === 'function' ? options.projectEntityHead : null;
+        this._barCells = [];
+        this._excursionOwner = null;
+        this._nextExcursionAt = 0;
     }
 
     TavernLife.prototype._ensureOverlay = function () {
@@ -177,129 +283,265 @@
 
     TavernLife.prototype.spawn = function () {
         if (this._spawned) return;
-        this._spawned = true;
         var scene = this.getScene();
-        if (!scene) return;
-        var cols = scene.cols, rows = scene.rows;
-        var grid = scene.grid;
+        if (!scene || !scene.grid || !scene.cols || !scene.rows) return;
 
-        // Find walkable tiles for spawning.
-        function isFloor(x, y) {
-            return y >= 0 && y < rows && x >= 0 && x < cols && grid[y] && grid[y][x] === 'floor';
-        }
-        function findFloor(cx, cy) {
-            for (var r = 1; r < 8; r++) {
-                for (var dy = -r; dy <= r; dy++) {
-                    for (var dx = -r; dx <= r; dx++) {
-                        var x = cx + dx, y = cy + dy;
-                        if (isFloor(x, y)) return { x: x, y: y };
-                    }
-                }
-            }
-            return { x: 1, y: 1 };
-        }
+        // A designed room is opt-in for ambient actors. Without both semantic bar and
+        // table/chair structure, do not invent coordinates or fall back onto arbitrary floor.
+        var bar = semanticBarArea(scene);
+        var tablePairs = semanticTablesAndSeats(scene);
+        if (!bar || !tablePairs.length) return;
 
-        // Bartender BEHIND the bar (row 1, between the top wall and the counter).
-        var barSpot = findFloor(Math.floor(cols / 2), 1);
-        var bartender = makeNPC('bartender', 'bartender', 'char-merchant', barSpot.x, barSpot.y, {
-            label: 'Bartender', color: '#c9a25e', role: 'bartender',
-            roamArea: bartendersArea(cols, rows)
+        var now = this._now();
+        this._barCells = bar.cells;
+        var barStart = bar.cells[Math.floor(bar.cells.length / 2)];
+        var bartender = makeNPC('bartender', 'bartender', 'char-merchant', barStart.x, barStart.y, {
+            label: 'Barkeep', color: '#c9a25e', role: 'bartender', roleArea: bar.area,
+            phase: 'stationed', phaseUntil: now + between(this._random, 9000, 17000),
+            speechTimer: between(this._random, 9000, 17000)
         });
+        bartender.barCells = bar.cells;
         this.npcs.push(bartender);
 
-        // 2-3 patrons near tables (middle area).
+        // Four guests begin on actual chairs below actual tables. Their seats are stable
+        // home coordinates, not random floor tiles that merely look like sitting.
         var patronAvatars = ['char-villager', 'char-elder', 'char-bard', 'char-wizard', 'char-ranger', 'char-rogue'];
         var patronColors = ['#7eb6c9', '#c9a0d4', '#a0c97e', '#d4b0a0', '#8fa0d4'];
-        var numPatrons = 2 + Math.floor(Math.random() * 2);
-        for (var i = 0; i < numPatrons; i++) {
-            var px = 4 + Math.floor(Math.random() * (cols - 8));
-            var py = 5 + Math.floor(Math.random() * (rows - 8));
-            var spot = findFloor(px, py);
-            this.npcs.push(makeNPC('patron' + i, 'patron', patronAvatars[i % patronAvatars.length],
-                spot.x, spot.y, {
-                    label: 'Patron', color: patronColors[i % patronColors.length],
-                    roamArea: patronsArea(cols, rows),
-                    sitTimer: 2000 + Math.random() * 4000
-                }));
+        var desiredPatrons = Math.min(4, tablePairs.length);
+        var selectedSeats = [];
+        for (var p = 0; p < desiredPatrons; p++) {
+            var seatIndex = desiredPatrons === 1 ? 0 : Math.floor(p * (tablePairs.length - 1) / (desiredPatrons - 1));
+            var pair = tablePairs[seatIndex];
+            if (selectedSeats.some(function (seat) { return seat.x === pair.seat.x && seat.y === pair.seat.y; })) continue;
+            selectedSeats.push(pair.seat);
+            this.npcs.push(makeNPC('patron' + p, 'patron', patronAvatars[p % patronAvatars.length], pair.seat.x, pair.seat.y, {
+                label: 'Patron', color: patronColors[p % patronColors.length],
+                role: 'patron', roleArea: { minX: 1, maxX: scene.cols - 2, minY: 3, maxY: scene.rows - 2 },
+                phase: 'seated', phaseUntil: now + between(this._random, 90000, 180000),
+                speechTimer: between(this._random, 9000, 22000)
+            }));
         }
 
-        // A tavern cat: a random pixel cat from the Pet Cats Pack that wanders the floor.
-        var catSpot = findFloor(4, rows - 4);
-        var cat = makeNPC('cat', 'cat', null, catSpot.x, catSpot.y, {
-            label: null, color: '#e8a060', role: 'cat', roamArea: catArea(cols, rows)
-        });
-        cat.catSprite = (RK.randomCatId ? RK.randomCatId() : 'cat3');
-        this.npcs.push(cat);
+        // The server-authoritative layout supplies table waypoints. The server remains
+        // unaware of these client-only decorative actors.
+        var stops = tableServiceStops(scene, tablePairs);
+        if (stops.length) {
+            var waitressStart = stops[0];
+            var waitress = makeNPC('waitress', 'waitress', 'char-villager', waitressStart.x, waitressStart.y, {
+                label: 'Waitress', color: '#e1c17a', role: 'waitress',
+                roleArea: { minX: 1, maxX: scene.cols - 2, minY: 3, maxY: scene.rows - 2 },
+                serviceStops: stops, serviceIndex: 0,
+                phase: 'serving', phaseUntil: now + between(this._random, 4500, 7000),
+                speechTimer: between(this._random, 14000, 26000)
+            });
+            this.npcs.push(waitress);
+        }
+
+        // Keep the existing cat, but give it long rests and short paths so it reads as
+        // occasional background life instead of another continuously roaming guest.
+        var catCells = cellsFor(scene, function (x, y, tile) {
+            return tile === 'floor' && x > 1 && x < scene.cols - 2 && y >= 4 && y < scene.rows - 2;
+        }).filter(function (point) { return !this._occupiedByOther(null, point.x, point.y); }, this);
+        if (catCells.length) {
+            var catSpot = catCells[Math.floor(this._random() * catCells.length)];
+            var cat = makeNPC('cat', 'cat', null, catSpot.x, catSpot.y, {
+                label: null, color: '#e8a060', role: 'cat',
+                roleArea: { minX: 2, maxX: scene.cols - 3, minY: 4, maxY: scene.rows - 3 },
+                phase: 'resting', phaseUntil: now + between(this._random, 9000, 17000),
+                speechTimer: between(this._random, 18000, 30000)
+            });
+            cat.catSprite = (RK.randomCatId ? RK.randomCatId() : 'cat3');
+            this.npcs.push(cat);
+        }
+        this._spawned = true;
     };
 
-    TavernLife.prototype._pickTarget = function (npc, scene) {
-        var area = npc.roamArea;
-        if (!area) return;
-        var grid = scene.grid;
-        var cols = scene.cols, rows = scene.rows;
-        for (var tries = 0; tries < 12; tries++) {
-            var tx = area.minX + Math.floor(Math.random() * (area.maxX - area.minX + 1));
-            var ty = area.minY + Math.floor(Math.random() * (area.maxY - area.minY + 1));
-            if (ty >= 0 && ty < rows && tx >= 0 && tx < cols && grid[ty] && grid[ty][tx] === 'floor') {
-                npc.targetX = tx;
-                npc.targetY = ty;
-                return;
+    TavernLife.prototype._isRoleCell = function (npc, scene, x, y) {
+        if (!isWalkable(scene, x, y)) return false;
+        var area = npc.roleArea;
+        if (area && (x < area.minX || x > area.maxX || y < area.minY || y > area.maxY)) return false;
+        if (npc.role === 'patron') {
+            return Math.abs(x - npc.homeX) + Math.abs(y - npc.homeY) <= 3;
+        }
+        if (npc.role === 'bartender') return tileAt(scene, x, y) === 'floor';
+        if (npc.role === 'waitress') return tileAt(scene, x, y) === 'floor';
+        if (npc.role === 'cat') return tileAt(scene, x, y) === 'floor';
+        return false;
+    };
+
+    TavernLife.prototype._occupiedByOther = function (npc, x, y) {
+        return this.npcs.some(function (other) {
+            return other !== npc && other.x === x && other.y === y;
+        });
+    };
+
+    TavernLife.prototype._findPath = function (npc, scene, target) {
+        if (!target || !this._isRoleCell(npc, scene, target.x, target.y) || this._occupiedByOther(npc, target.x, target.y)) return null;
+        if (npc.x === target.x && npc.y === target.y) return [];
+        var startKey = npc.x + ',' + npc.y;
+        var queue = [{ x: npc.x, y: npc.y }];
+        var visited = new Set([startKey]);
+        var previous = new Map();
+        while (queue.length) {
+            var point = queue.shift();
+            for (var i = 0; i < CARDINAL_STEPS.length; i++) {
+                var step = CARDINAL_STEPS[i];
+                var nx = point.x + step.x, ny = point.y + step.y;
+                var key = nx + ',' + ny;
+                if (visited.has(key) || !this._isRoleCell(npc, scene, nx, ny) || this._occupiedByOther(npc, nx, ny)) continue;
+                visited.add(key);
+                previous.set(key, { from: point.x + ',' + point.y, step: step });
+                if (nx === target.x && ny === target.y) {
+                    var path = [];
+                    var cursor = key;
+                    while (cursor !== startKey) {
+                        var entry = previous.get(cursor);
+                        var parts = cursor.split(',');
+                        path.unshift({ x: Number(parts[0]), y: Number(parts[1]), facing: entry.step.facing });
+                        cursor = entry.from;
+                    }
+                    return path;
+                }
+                queue.push({ x: nx, y: ny });
             }
         }
+        return null;
     };
 
-    TavernLife.prototype._moveNPC = function (npc, scene, dt) {
-        if (npc.sitTimer > 0) {
-            npc.sitTimer -= dt;
-            return;
-        }
-        npc.moveCooldown -= dt;
-        if (npc.moveCooldown > 0) return;
-
-        // Arrived at target?
-        if (npc.x === npc.targetX && npc.y === npc.targetY) {
-            var sitTime = npc.role === 'cat' ? 1000 + Math.random() * 2000 : 3000 + Math.random() * 5000;
-            npc.sitTimer = sitTime;
-            this._pickTarget(npc, scene);
-            return;
-        }
-
-        // Step toward target (one tile, cardinal only).
-        var dx = npc.targetX - npc.x;
-        var dy = npc.targetY - npc.y;
-        var stepX = 0, stepY = 0;
-        if (Math.abs(dx) >= Math.abs(dy) && dx !== 0) stepX = Math.sign(dx);
-        else if (dy !== 0) stepY = Math.sign(dy);
-        else if (dx !== 0) stepX = Math.sign(dx);
-
-        var nx = npc.x + stepX, ny = npc.y + stepY;
-        var grid = scene.grid;
-        if (ny >= 0 && ny < scene.rows && nx >= 0 && nx < scene.cols && grid[ny] && grid[ny][nx] === 'floor') {
-            npc.x = nx; npc.y = ny;
-            if (stepX < 0) npc.facing = 'left';
-            else if (stepX > 0) npc.facing = 'right';
-            else if (stepY < 0) npc.facing = 'up';
-            else if (stepY > 0) npc.facing = 'down';
-        } else {
-            // Blocked: pick a new target.
-            this._pickTarget(npc, scene);
-        }
-        // Cat moves faster; bartender slower.
-        npc.moveCooldown = npc.role === 'cat' ? 280 : npc.role === 'bartender' ? 500 : 380;
+    TavernLife.prototype._setTarget = function (npc, target) {
+        if (!target) return false;
+        npc.targetX = target.x;
+        npc.targetY = target.y;
+        return true;
     };
 
-    TavernLife.prototype._maybeSpeak = function (npc, now) {
+    TavernLife.prototype._stepTowardTarget = function (npc, scene, dt) {
+        if (npc.x === npc.targetX && npc.y === npc.targetY) return true;
+        npc.moveCooldown = Math.max(0, npc.moveCooldown - dt);
+        if (npc.moveCooldown > 0) return false;
+        var path = this._findPath(npc, scene, { x: npc.targetX, y: npc.targetY });
+        if (!path || !path.length) return false;
+        var next = path[0];
+        // Recheck immediately before moving: actors may have changed occupancy this frame.
+        if (!this._isRoleCell(npc, scene, next.x, next.y) || this._occupiedByOther(npc, next.x, next.y)) return false;
+        npc.x = next.x;
+        npc.y = next.y;
+        npc.facing = next.facing;
+        npc.moveCooldown = npc.role === 'waitress' ? 850 : npc.role === 'bartender' ? 1200 : npc.role === 'cat' ? 1400 : 1000;
+        return npc.x === npc.targetX && npc.y === npc.targetY;
+    };
+
+    TavernLife.prototype._startPatronExcursion = function (npc, scene, now) {
+        var candidates = cellsFor(scene, function (x, y, tile) {
+            return tile === 'floor' && Math.abs(x - npc.homeX) + Math.abs(y - npc.homeY) > 0 &&
+                Math.abs(x - npc.homeX) + Math.abs(y - npc.homeY) <= 3 &&
+                x > 1 && x < scene.cols - 2 && y >= 3 && y < scene.rows - 2;
+        });
+        var reachable = candidates.filter(function (point) {
+            return !this._occupiedByOther(npc, point.x, point.y) && !!this._findPath(npc, scene, point);
+        }, this);
+        if (!reachable.length) {
+            npc.phaseUntil = now + between(this._random, 30000, 50000);
+            return false;
+        }
+        var target = reachable[Math.floor(this._random() * reachable.length)];
+        npc.excursionTarget = target;
+        npc.phase = 'outbound';
+        npc.phaseUntil = 0;
+        this._setTarget(npc, target);
+        this._excursionOwner = npc.id;
+        return true;
+    };
+
+    TavernLife.prototype._updatePatron = function (npc, scene, now) {
+        if (npc.phase === 'seated') {
+            if (now >= npc.phaseUntil && !this._excursionOwner && now >= this._nextExcursionAt) {
+                this._startPatronExcursion(npc, scene, now);
+            }
+            return;
+        }
+        if (npc.phase === 'outbound' && npc.x === npc.targetX && npc.y === npc.targetY) {
+            npc.phase = 'pausing';
+            npc.phaseUntil = now + between(this._random, 2500, 5000);
+        } else if (npc.phase === 'pausing' && now >= npc.phaseUntil) {
+            npc.phase = 'returning';
+            this._setTarget(npc, { x: npc.homeX, y: npc.homeY });
+        } else if (npc.phase === 'returning' && npc.x === npc.homeX && npc.y === npc.homeY) {
+            npc.phase = 'seated';
+            npc.excursionTarget = null;
+            npc.phaseUntil = now + between(this._random, 90000, 180000);
+            this._excursionOwner = null;
+            this._nextExcursionAt = now + between(this._random, 45000, 90000);
+        }
+    };
+
+    TavernLife.prototype._updateWaitress = function (npc, now) {
+        if (npc.phase === 'walking' && npc.x === npc.targetX && npc.y === npc.targetY) {
+            npc.phase = 'serving';
+            npc.phaseUntil = now + between(this._random, 5000, 9000);
+            return;
+        }
+        if (npc.phase !== 'serving' || now < npc.phaseUntil || !npc.serviceStops || !npc.serviceStops.length) return;
+        npc.serviceIndex = (npc.serviceIndex + 1) % npc.serviceStops.length;
+        this._setTarget(npc, npc.serviceStops[npc.serviceIndex]);
+        npc.phase = 'walking';
+    }
+
+
+    TavernLife.prototype._updateBartender = function (npc, now) {
+        if (npc.phase === 'stationed' && now >= npc.phaseUntil) {
+            var cells = (npc.barCells || []).filter(function (point) {
+                return !(point.x === npc.x && point.y === npc.y) && !this._occupiedByOther(npc, point.x, point.y) && !!this._findPath(npc, this.getScene(), point);
+            }, this);
+            if (cells.length) {
+                // Walk to a nearby point along the counter, then pause to serve.
+                cells.sort(function (a, b) {
+                    return Math.abs(a.x - npc.x) - Math.abs(b.x - npc.x);
+                });
+                var near = cells.slice(0, Math.min(4, cells.length));
+                this._setTarget(npc, near[Math.floor(this._random() * near.length)]);
+                npc.phase = 'working';
+            } else {
+                npc.facing = npc.facing === 'left' ? 'right' : 'left';
+                npc.phaseUntil = now + between(this._random, 7000, 14000);
+            }
+        }
+        if (npc.phase === 'working' && npc.x === npc.targetX && npc.y === npc.targetY) {
+            npc.phase = 'stationed';
+            npc.phaseUntil = now + between(this._random, 9000, 18000);
+        }
+    };
+
+    TavernLife.prototype._updateCat = function (npc, scene, now) {
+        if (npc.phase === 'resting' && now >= npc.phaseUntil) {
+            var candidates = cellsFor(scene, function (x, y, tile) {
+                return tile === 'floor' && Math.abs(x - npc.x) + Math.abs(y - npc.y) > 0 &&
+                    Math.abs(x - npc.x) + Math.abs(y - npc.y) <= 2 && this._isRoleCell(npc, scene, x, y);
+            }.bind(this)).filter(function (point) {
+                return !this._occupiedByOther(npc, point.x, point.y) && !!this._findPath(npc, scene, point);
+            }, this);
+            if (candidates.length) {
+                this._setTarget(npc, candidates[Math.floor(this._random() * candidates.length)]);
+                npc.phase = 'walking';
+            } else npc.phaseUntil = now + between(this._random, 8000, 14000);
+        }
+        if (npc.phase === 'walking' && npc.x === npc.targetX && npc.y === npc.targetY) {
+            npc.phase = 'resting';
+            npc.phaseUntil = now + between(this._random, 9000, 18000);
+        }
+    };
+
+    TavernLife.prototype._maybeSpeak = function (npc, now, dt) {
         if (npc.speech && now < npc.speechUntil) return;
-        npc.speechTimer -= 16;
+        npc.speechTimer -= dt;
         if (npc.speechTimer > 0) return;
         var lines;
         if (npc.role === 'bartender') lines = BARTENDER_LINES;
         else if (npc.role === 'cat') lines = CAT_LINES;
         else lines = PATRON_LINES;
-        npc.speech = pick(lines);
+        npc.speech = pick(lines, this._random);
         npc.speechUntil = now + BUBBLE_DURATION;
-        npc.speechTimer = 8000 + Math.random() * 12000; // next speech gap
-        if (npc.role === 'cat') npc.speechTimer = 6000 + Math.random() * 10000;
+        npc.speechTimer = between(this._random, 18000, 32000);
     };
 
     // Inject NPC entities into a scene so the renderer draws them.
@@ -328,15 +570,26 @@
         return scene;
     };
 
-    // Show a speech bubble for a real player (called on chat_broadcast).
+    // Show a speech bubble for a real player (called by the explicit tavern_speech mapping).
     TavernLife.prototype.showPlayerBubble = function (socketId, text) {
-        this._realBubbles[socketId] = { text: text, until: Date.now() + BUBBLE_DURATION };
+        if (typeof socketId !== 'string' || typeof text !== 'string' || !text.trim()) return;
+        this._realBubbles[socketId] = { text: text.slice(0, 200), until: this._now() + BUBBLE_DURATION };
     };
 
-    // Get the screen position of an entity for a given renderer/cell size.
-    // This is renderer-agnostic: top-down uses grid coords * cell; iso uses projection.
+    // Project the top of an entity, before the viewport transform scales its rendered size.
     TavernLife.prototype._entityScreenPos = function (e, scene, cell, mode) {
         var pos;
+        if (mode === '3d' && this._projectEntityHead) {
+            var projected = this._projectEntityHead(e);
+            if (!projected || !Number.isFinite(projected.x) || !Number.isFinite(projected.y)) return null;
+            // The 3D callback returns viewport-relative pixels, so do not apply the 2D
+            // canvas transform again.
+            return { x: projected.x, y: projected.y };
+        }
+        var humanoid = e.role !== 'cat' && (!e.kind || e.kind === 'avatar' || e.kind === 'player');
+        var visual = (mode === 'iso' || humanoid) && RK.avatarVisuals && RK.avatarVisuals.resolve(e.appearance || { avatar: e.avatar }, {
+            projection: mode === 'iso' ? 'iso' : 'topdown', entity: e
+        });
         if (mode === 'iso') {
             // Match IsoRenderer._project: originX = margin + rows * tileW/2 + tileW; originY = margin + imageH
             var tileW = (RK.isoAssets && RK.isoAssets.tile && RK.isoAssets.tile.w) || 84;
@@ -349,13 +602,21 @@
                 x: originX + (e.x - e.y) * tileW / 2,
                 y: originY + (e.x + e.y) * tileH / 2
             };
+            // Iso character images are anchored at their feet, above the floor diamond.
+            var character = visual && visual.allowed && visual.character;
+            pos.y += character ? tileH * 0.95 - (character.imageH || 92) : -8;
         } else if (mode === '3d') {
-            // 3D renderer uses Three.js; we can't easily get screen coords.
-            // Skip speech bubbles for 3D mode.
             return null;
         } else {
-            // top-down / ascii / fancy: grid coords * cell
-            pos = { x: e.x * cell + cell / 2, y: e.y * cell + cell / 2 };
+            var head = 0.2;
+            if (mode === 'ascii') head = 0;
+            else if (visual && visual.allowed && visual.kind === 'char') head = -0.9;
+            else if (visual && visual.allowed && visual.kind === 'skin') {
+                var skin = RK.SKINS && RK.SKINS[visual.appearance.avatar];
+                head = RK.skinSheetFailed && RK.skinSheetFailed(visual.appearance.avatar)
+                    ? -0.9 : 1 - ((skin && skin.scale) || 1.7);
+            }
+            pos = { x: (e.x + 0.5) * cell, y: (e.y + head) * cell };
         }
         var view = this._viewTransform;
         if (view) return { x: view.left + pos.x * view.scaleX, y: view.top + pos.y * view.scaleY };
@@ -375,10 +636,17 @@
             var remaining = npc.speechUntil - now;
             if (remaining < BUBBLE_FADE) alpha = remaining / BUBBLE_FADE;
             var pos = this._entityScreenPos(npc, scene, cell, mode);
-            if (pos) drawBubble(ctx, pos.x, pos.y - cell * 0.3 * ((this._viewTransform && this._viewTransform.scaleY) || 1), npc.speech, alpha);
+            if (pos) drawBubble(ctx, pos.x, pos.y, npc.speech, alpha);
         }
 
-        // Real player bubbles (from chat).
+        // Remove departed visits as well as expired messages, even when no NPC can spawn.
+        var present = new Set(scene.entities.filter(function (entity) { return !entity._npc; })
+            .map(function (entity) { return entity.id; }));
+        var bubbles = this._realBubbles;
+        Object.keys(bubbles).forEach(function (id) {
+            if (!present.has(id) || now >= bubbles[id].until) delete bubbles[id];
+        });
+        // Real player bubbles (from accepted room speech).
         var occupants = scene.entities;
         for (var j = 0; j < occupants.length; j++) {
             var e = occupants[j];
@@ -392,21 +660,28 @@
             var rRemaining = bubble.until - now;
             if (rRemaining < BUBBLE_FADE) rAlpha = rRemaining / BUBBLE_FADE;
             var rPos = this._entityScreenPos(e, scene, cell, mode);
-            if (rPos) drawBubble(ctx, rPos.x, rPos.y - cell * 0.3 * ((this._viewTransform && this._viewTransform.scaleY) || 1), bubble.text, rAlpha);
+            if (rPos) drawBubble(ctx, rPos.x, rPos.y, bubble.text, rAlpha);
         }
     };
 
     // Main update: called every frame via rAF.
     TavernLife.prototype.update = function (scene, cell, mode) {
-        if (!scene || !this._spawned) return;
-        var now = Date.now();
-        var dt = now - (this._lastTick || now);
+        if (!scene) return;
+        var now = this._now();
+        var dt = this._lastTick ? Math.max(0, Math.min(1000, now - this._lastTick)) : 0;
         this._lastTick = now;
 
-        // Update NPC movement and speech.
+        // Update role-specific schedules before taking at most one cardinal path step.
         for (var i = 0; i < this.npcs.length; i++) {
-            this._moveNPC(this.npcs[i], scene, dt);
-            this._maybeSpeak(this.npcs[i], now);
+            var actor = this.npcs[i];
+            if (actor.role === 'patron') this._updatePatron(actor, scene, now);
+            else if (actor.role === 'waitress') this._updateWaitress(actor, now);
+            else if (actor.role === 'bartender') this._updateBartender(actor, now);
+            else if (actor.role === 'cat') this._updateCat(actor, scene, now);
+            if (actor.phase === 'outbound' || actor.phase === 'returning' || actor.phase === 'walking' || actor.phase === 'working') {
+                this._stepTowardTarget(actor, scene, dt);
+            }
+            this._maybeSpeak(actor, now, dt);
         }
 
         // Update NPC entity positions in the scene.
@@ -477,8 +752,8 @@
     TavernLife.prototype.welcomeBubbles = function () {
         // Make the bartender greet when the player joins.
         if (this.npcs.length > 0 && this.npcs[0].role === 'bartender') {
-            var now = Date.now();
-            this.npcs[0].speech = pick(WELCOME_LINES);
+            var now = this._now();
+            this.npcs[0].speech = pick(WELCOME_LINES, this._random);
             this.npcs[0].speechUntil = now + BUBBLE_DURATION;
             this.npcs[0].speechTimer = 5000;
         }

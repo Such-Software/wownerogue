@@ -22,6 +22,8 @@ class ChatProvider {
      * @param {number} [msg.ts]       Timestamp (ms).
      * @param {string} [msg.socketId]
      * @param {number|null} [msg.userId]
+     * @param {function} [msg.onLocalDelivery] Trusted server callback, once after local emit.
+     *        Never persisted, broadcast or forwarded to a relay; not a relay acknowledgement.
      */
     async publish(msg) { // eslint-disable-line no-unused-vars
         throw new Error('ChatProvider.publish not implemented');
@@ -42,7 +44,7 @@ class ChatProvider {
      * Deliver a message whose nostr event was signed by the CLIENT (per-player identity, Phase 2).
      * The base/local provider has no relay, so it just delivers the message in-game: the signed
      * `event` is ignored. NostrChatProvider overrides this to ALSO publish the pre-signed event.
-     * @param {object} req  { event, scope, username, text, ts, socketId, userId }
+     * @param {object} req  { event, scope, username, text, ts, socketId, userId, onLocalDelivery }
      */
     async relaySignedEvent({ event, ...msg } = {}) { // eslint-disable-line no-unused-vars
         return this.publish({ scope: 'global', ...msg });

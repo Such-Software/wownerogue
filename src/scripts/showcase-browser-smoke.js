@@ -3,7 +3,7 @@
 // Local browser checks cover the real TavernManager, pack-gated rendering, and a client-only
 // account/payout visibility matrix. They do not start the application entrypoint, database, live
 // wallet, payment handlers, or multiplayer queue. Mica receives synthetic Interior and Iso grants;
-// Moth receives the source-owned zero-grant catalog fixture and must remain original-only.
+// Moth receives the source-owned zero-grant catalog fixture and the free Adventurer baseline.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -12,6 +12,7 @@ const { Server } = require('socket.io');
 const { chromium } = require('playwright-core');
 const TavernManager = require('../network/tavernManager');
 const Entitlements = require('../multiplayer/entitlements');
+const SocketChatProvider = require('../network/chat/SocketChatProvider');
 
 const ROOT = path.resolve(__dirname, '../..');
 const HTML_ROOT = path.join(ROOT, 'html');
@@ -270,18 +271,18 @@ async function main() {
         io,
         tickMs: 50,
         entitlementProvider: entitlementsForSocket,
-        globalChatProvider: {
-            publish(message) {
-                io.emit('chat_broadcast', {
-                    scope: 'global', username: message.username, message: message.text
-                });
-            }
-        }
+        // The production local provider invokes onLocalDelivery after the accepted chat
+        // broadcast. It has no history manager here, so this remains local and ephemeral.
+        globalChatProvider: new SocketChatProvider({ io })
     });
     const browserFailures = [];
     const blockedExternal = [];
     const clientsByRole = new Map();
-    const expectedMissingSkin = '/assets/generated/wownero_walk.webp';
+    const expectedMissingSkinPaths = [
+        '/assets/generated/monero_knight_walk.webp',
+        '/assets/generated/wownero_walk.webp',
+        '/assets/generated/operative_walk.webp'
+    ];
     const observedHttpFailures = [];
 
     app.use((req, res, next) => {
@@ -367,11 +368,13 @@ async function main() {
                 }
             });
             const page = await context.newPage();
-            await page.route(`**${expectedMissingSkin}`, route => route.fulfill({
-                status: 404,
-                contentType: 'text/plain',
-                body: 'Generated skin failure fixture'
-            }));
+            for (const skinPath of expectedMissingSkinPaths) {
+                await page.route(`**${skinPath}`, route => route.fulfill({
+                    status: 404,
+                    contentType: 'text/plain',
+                    body: 'Generated skin failure fixture'
+                }));
+            }
             page.on('response', response => {
                 if (response.status() >= 400) {
                     observedHttpFailures.push({ path: new URL(response.url()).pathname, status: response.status() });
@@ -381,7 +384,7 @@ async function main() {
             page.on('console', message => {
                 if (message.type() !== 'error') return;
                 const expectedAssetFailure = message.text().includes('Failed to load resource')
-                    && observedHttpFailures.some(f => f.status === 404 && f.path === expectedMissingSkin);
+                    && observedHttpFailures.some(f => f.status === 404 && expectedMissingSkinPaths.includes(f.path));
                 if (!expectedAssetFailure) browserFailures.push(message.text());
             });
             views[role] = { context, page };
@@ -458,7 +461,9 @@ async function main() {
                 const appearance = RK.avatarVisuals.resolve({ avatar: 'default' }, { projection: 'topdown' });
                 return {
                     canUse: Object.fromEntries(ids.map(id => [id, RK.canUsePack(id)])),
+                    canUseModes: Object.fromEntries(['tiles', 'ascii', 'iso', '3d'].map(id => [id, RK.canUseMode(id)])),
                     resolvedDefaultPack: appearance.pack,
+                    resolvedDefaultAvatar: appearance.appearance && appearance.appearance.avatar,
                     resolvedDefaultAllowed: appearance.allowed,
                     activeTopdownPack: RK.activePackId('topdown'),
                     credits: RK.entitlements.credits,
@@ -470,25 +475,66 @@ async function main() {
             && !packPolicy.moth.canUse['generated-skins'] && !packPolicy.moth.canUse['iso-dungeon']
             && !packPolicy.moth.canUse['roguelike-dungeon'] && !packPolicy.moth.canUse['iso-medieval']
             && !packPolicy.moth.canUse['kenney-3d-characters'], 'Moth did not retain original-only zero-grant policy');
-        assert(packPolicy.moth.resolvedDefaultPack === 'roguelike-interior'
-            && !packPolicy.moth.resolvedDefaultAllowed && packPolicy.moth.activeTopdownPack === 'original'
+        assert(packPolicy.moth.resolvedDefaultPack === null
+            && packPolicy.moth.resolvedDefaultAvatar === 'char-villager' && packPolicy.moth.resolvedDefaultAllowed
+            && packPolicy.moth.activeTopdownPack === 'original'
             && packPolicy.moth.credits === 0 && packPolicy.moth.totalCreditsPurchased === 0,
-        'Moth default character or active tileset bypassed the real pack policy');
+        'Moth free Adventurer or active tileset did not match the real zero-grant policy');
+        // The character policy is independent of the tileset policy: Moth keeps the free
+        // Adventurer avatar while the paid Interior, Iso, and 3D modes remain locked.
+        const mothPicker = views.moth.page;
+        await mothPicker.locator('#customizeBtn').click();
+        const adventurerCard = mothPicker.locator('.rk-avatar-grid .rk-option-card').filter({ hasText: 'Adventurer' });
+        await adventurerCard.waitFor({ state: 'visible' });
+        const adventurerState = await adventurerCard.evaluate(node => {
+            const rect = node.getBoundingClientRect();
+            return {
+                selected: node.classList.contains('is-selected'),
+                locked: node.classList.contains('is-locked'),
+                visible: rect.width > 0 && rect.height > 0,
+                label: node.innerText.trim()
+            };
+        });
+        assert(adventurerState.selected && !adventurerState.locked && adventurerState.visible,
+            'The free Adventurer was not visibly selected in Moth’s picker');
+        const paidModeStates = await mothPicker.evaluate(() => Object.fromEntries(['iso', '3d'].map(id => {
+            const mode = RK.RENDER_MODES.find(item => item.id === id);
+            const button = Array.from(document.querySelectorAll('.rk-mode-grid .rk-mode-card'))
+                .find(node => node.textContent.includes(mode.label));
+            return [id, { allowed: RK.canUseMode(id), locked: !!button?.classList.contains('is-locked'),
+                disabled: button?.getAttribute('aria-disabled') === 'true' }];
+        })));
+        assert(!paidModeStates.iso.allowed && paidModeStates.iso.locked && paidModeStates.iso.disabled
+            && !paidModeStates['3d'].allowed && paidModeStates['3d'].locked && paidModeStates['3d'].disabled,
+        'Moth’s paid Iso or 3D render mode was not locked in the picker');
+        const adventurerScreenshot = 'tavern-free-adventurer-picker.png';
+        await mothPicker.screenshot({ path: path.join(outputDir, adventurerScreenshot), fullPage: true });
+        await mothPicker.locator('.rk-customize-shell .rk-cancel').click();
         assert(packPolicy.mica.canUse.original && packPolicy.mica.canUse['roguelike-interior']
             && packPolicy.mica.canUse['iso-dungeon'] && !packPolicy.mica.canUse['generated-skins']
             && !packPolicy.mica.canUse['roguelike-dungeon'] && !packPolicy.mica.canUse['iso-medieval']
             && !packPolicy.mica.canUse['kenney-3d-characters'], 'Mica fixture did not match its two explicit pack grants');
-        assert(packPolicy.mica.resolvedDefaultPack === 'roguelike-interior'
+        assert(packPolicy.mica.resolvedDefaultPack === null && packPolicy.mica.resolvedDefaultAvatar === 'char-villager'
             && packPolicy.mica.resolvedDefaultAllowed && packPolicy.mica.credits === 0
             && packPolicy.mica.totalCreditsPurchased === 0,
-        'Mica synthetic character grant changed the no-funds balance or failed to permit the asset');
+        'Mica’s free Adventurer or no-funds balance did not match the fixture');
         for (const { page } of Object.values(views)) {
             await page.evaluate(() => {
-                const original = RK.drawCharTileCanvas;
-                window.__showcaseCharTileDraws = 0;
-                RK.drawCharTileCanvas = function () {
-                    window.__showcaseCharTileDraws += 1;
-                    return original.apply(this, arguments);
+                const original = RK.avatarVisuals.drawTopdownWorld;
+                window.__showcasePlayerCharacterDraws = {
+                    count: 0, charVillagerSeen: false, nonCanonicalAvatarSeen: false
+                };
+                RK.avatarVisuals.drawTopdownWorld = function (ctx, visual, entity) {
+                    const drawn = original.apply(this, arguments);
+                    if (drawn && entity && entity.you === true) {
+                        window.__showcasePlayerCharacterDraws.count += 1;
+                        if (visual && visual.appearance && visual.appearance.avatar === 'char-villager') {
+                            window.__showcasePlayerCharacterDraws.charVillagerSeen = true;
+                        } else {
+                            window.__showcasePlayerCharacterDraws.nonCanonicalAvatarSeen = true;
+                        }
+                    }
+                    return drawn;
                 };
             });
         }
@@ -497,22 +543,29 @@ async function main() {
         await views.moth.page.locator('#name').fill('Moth');
         await views.moth.page.locator('#joinBtn').click();
         await Promise.all(Object.values(views).map(({ page }) => page.locator('#stage canvas.rk-canvas').waitFor({ state: 'visible' })));
-        await views.mica.page.waitForFunction(() => RK.charAtlas() && window.__showcaseCharTileDraws > 0,
+        await views.mica.page.waitForFunction(() => RK.charAtlas() && window.__showcasePlayerCharacterDraws.count > 0,
+            undefined, { timeout: 5000 });
+        await views.moth.page.waitForFunction(() => RK.charAtlas() && window.__showcasePlayerCharacterDraws.count > 0,
             undefined, { timeout: 5000 });
         const characterRenderProof = {};
         for (const role of ['mica', 'moth']) {
             characterRenderProof[role] = await views[role].page.evaluate(() => ({
                 atlasReady: !!RK.charAtlas(),
-                drawCalls: window.__showcaseCharTileDraws,
+                playerDraws: window.__showcasePlayerCharacterDraws,
+                resolvedDefaultAvatar: RK.avatarVisuals.resolve({ avatar: 'default' }, { projection: 'topdown' }).appearance.avatar,
                 defaultAllowed: RK.avatarVisuals.resolve({ avatar: 'default' }, { projection: 'topdown' }).allowed
             }));
         }
-        assert(characterRenderProof.mica.atlasReady && characterRenderProof.mica.drawCalls > 0
-            && characterRenderProof.mica.defaultAllowed, 'Permitted synthetic Interior character was not actually drawn');
-        assert(characterRenderProof.moth.drawCalls === 0 && !characterRenderProof.moth.defaultAllowed,
-            'Original-only free client unexpectedly drew a gated character');
+        assert(characterRenderProof.mica.atlasReady && characterRenderProof.mica.playerDraws.count > 0
+            && characterRenderProof.mica.defaultAllowed, 'Mica’s permitted character was not actually drawn');
+        assert(characterRenderProof.moth.atlasReady && characterRenderProof.moth.playerDraws.count > 0
+            && characterRenderProof.moth.playerDraws.charVillagerSeen
+            && !characterRenderProof.moth.playerDraws.nonCanonicalAvatarSeen
+            && characterRenderProof.moth.resolvedDefaultAvatar === 'char-villager'
+            && characterRenderProof.moth.defaultAllowed,
+        'The free Moth avatar did not render as the canonical Adventurer');
         await views.mica.page.screenshot({
-            path: path.join(outputDir, 'tavern-synthetic-interior-character.png'), fullPage: true
+            path: path.join(outputDir, 'tavern-mica-synthetic-interior-tileset.png'), fullPage: true
         });
         await pageWaitFor(() => manager.room.size === 2, 3000, 'Two browser clients joined TavernManager');
         assert(clientsByRole.size === 2, 'Both page-owned client ids were not registered');
@@ -521,10 +574,67 @@ async function main() {
         assert(manager.room.getOccupant(ids.mica)?.name === 'Mica', 'Mica page id does not map to its server occupant');
         assert(manager.room.getOccupant(ids.moth)?.name === 'Moth', 'Moth page id does not map to its server occupant');
 
+        const speechText = 'Room check & <b>hello</b>';
+        for (const { page } of Object.values(views)) {
+            await page.evaluate(expected => {
+                window.__showcaseSpeechCalls = [];
+                window.__showcaseSpeechPaints = [];
+                window.__showcaseSpeechAnchors = [];
+                window.__showcaseExpectedSpeechText = expected;
+                const proto = RK.TavernLife.prototype;
+                const show = proto.showPlayerBubble;
+                proto.showPlayerBubble = function (id, text) {
+                    window.__showcaseSpeechCalls.push({ id, text });
+                    return show.call(this, id, text);
+                };
+                const screenPos = proto._entityScreenPos;
+                proto._entityScreenPos = function (entity) {
+                    const point = screenPos.apply(this, arguments);
+                    if (entity && this._realBubbles && this._realBubbles[entity.id]
+                        && this._realBubbles[entity.id].text === expected && point) {
+                        window.__showcaseSpeechAnchors.push({ id: entity.id, x: point.x, y: point.y });
+                    }
+                    return point;
+                };
+                const fillText = CanvasRenderingContext2D.prototype.fillText;
+                CanvasRenderingContext2D.prototype.fillText = function (text) {
+                    if (text === window.__showcaseExpectedSpeechText) window.__showcaseSpeechPaints.push(text);
+                    return fillText.apply(this, arguments);
+                };
+            }, speechText);
+        }
         const chatInput = views.mica.page.locator('#chatInput');
-        await chatInput.fill('Room check');
+        await chatInput.fill(speechText);
         await views.mica.page.locator('#chatForm button[type="submit"]').click();
-        await views.moth.page.locator('#chatLog').getByText('Room check').waitFor();
+        for (const { page } of Object.values(views)) {
+            await page.locator('#chatLog .cline').filter({ hasText: speechText }).waitFor();
+            await page.waitForFunction(expected => window.__showcaseSpeechCalls.length === 1
+                && window.__showcaseSpeechCalls[0].text === expected
+                && window.__showcaseSpeechPaints.length > 0, speechText);
+        }
+        const speechProof = {};
+        const speechScreenshots = {};
+        for (const role of ['mica', 'moth']) {
+            speechProof[role] = await views[role].page.evaluate(() => {
+                const lines = Array.from(document.querySelectorAll('#chatLog .cline'))
+                    .filter(node => node.textContent.includes(window.__showcaseExpectedSpeechText));
+                return {
+                    calls: window.__showcaseSpeechCalls,
+                    paints: window.__showcaseSpeechPaints.length,
+                    anchors: window.__showcaseSpeechAnchors,
+                    exactTextLineCount: lines.length,
+                    injectedBoldElements: lines.reduce((sum, line) => sum + line.querySelectorAll('b').length, 0)
+                };
+            });
+            assert(speechProof[role].calls.length === 1 && speechProof[role].calls[0].id === ids.mica
+                && speechProof[role].calls[0].text === speechText && speechProof[role].paints > 0
+                && speechProof[role].anchors.some(anchor => anchor.id === ids.mica)
+                && speechProof[role].exactTextLineCount === 1 && speechProof[role].injectedBoldElements === 0,
+            `${role} did not render one escaped speech bubble above the exact Mica occupant`);
+            const filename = `tavern-${role}-accepted-chat-bubble.png`;
+            await views[role].page.screenshot({ path: path.join(outputDir, filename), fullPage: true });
+            speechScreenshots[role] = filename;
+        }
 
         const keyboard = views.mica.page;
         const micaStart = { ...manager.room.getOccupant(ids.mica) };
@@ -669,8 +779,13 @@ async function main() {
         await mobilePage.locator('#leaveSpectateBtn').click();
         await mobilePage.waitForFunction(() => document.activeElement === document.querySelector('#tavernDpad [data-dir="up"]'));
 
-        const unexpectedHttpFailures = observedHttpFailures.filter(f => !(f.status === 404 && f.path === expectedMissingSkin));
-        assert(observedHttpFailures.some(f => f.status === 404 && f.path === expectedMissingSkin), 'Expected missing generated skin was not requested');
+        const observedMissingSkinPaths = new Set(observedHttpFailures
+            .filter(f => f.status === 404 && expectedMissingSkinPaths.includes(f.path))
+            .map(f => f.path));
+        assert(expectedMissingSkinPaths.every(skinPath => observedMissingSkinPaths.has(skinPath)),
+            'The local fixture did not exercise each registered generated-skin fallback');
+        const unexpectedHttpFailures = observedHttpFailures.filter(f => f.status !== 404
+            || !expectedMissingSkinPaths.includes(f.path));
         assert(unexpectedHttpFailures.length === 0, `Unexpected HTTP failures: ${JSON.stringify(unexpectedHttpFailures)}`);
         assert(blockedExternal.length === 0, `Browser attempted external network access: ${blockedExternal.join(', ')}`);
         assert(browserFailures.length === 0, `Browser errors: ${browserFailures.join(' | ')}`);
@@ -687,20 +802,23 @@ async function main() {
             ok: true,
             scope: 'local Tavern lifecycle/graphics smoke plus a client-only account visibility matrix; no paid gameplay, queue/race transitions, database, or live wallet',
             origin: '127.0.0.1 loopback only',
-            fixture: 'Mica receives synthetic roguelike-interior and iso-dungeon grants; Moth receives the authoritative zero-grant, original-only snapshot; both have zero balances and no purchase, skin or 3D grant',
+            fixture: 'Mica receives synthetic roguelike-interior and iso-dungeon grants; Moth receives the authoritative zero-grant, original-only snapshot and free Adventurer; both have zero balances and no purchase, skin or 3D grant',
             clients: { count: clientsByRole.size, mappedByPageOwnedSocketId: true },
             packPolicy,
+            freeAdventurerPicker: { moth: adventurerState, paidModes: paidModeStates, screenshot: adventurerScreenshot },
             characterRenderProof,
             modes: modeResults,
-            chat: 'broadcast to both clients',
+            chat: { acceptedRoomSpeech: speechProof, screenshots: speechScreenshots, text: speechText },
             keyboardFocusGuards: ['input', 'select', 'contenteditable'],
             mobile,
             activeArena: { desktop: desktopArena, mobile: mobileArena, arenaReceivesSafeInitialFocus: true, tavernFocusRestored: true },
             missingGeneratedSkin: skinFailure,
+            missingGeneratedSkinFixturePaths: expectedMissingSkinPaths,
             accountUi,
             tavernAccountLink,
             screenshots: {
-                syntheticInteriorCharacter: 'tavern-synthetic-interior-character.png',
+                micaSyntheticInteriorTileset: 'tavern-mica-synthetic-interior-tileset.png',
+                freeAdventurerPicker: adventurerScreenshot,
                 freeOriginalBaseline: screenshotPaths.moth,
                 desktopIso: 'tavern-desktop-iso.png', mobile: screenshotPaths,
                 smirkAccount: tavernAccountLink.screenshots

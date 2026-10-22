@@ -857,6 +857,7 @@ class SocketHandlers {
         };
 
         on('chat message', (msg) => this.chatHandler.handleChatMessage(socket, msg, {
+            acceptedSpeech: this.tavernManager.captureSpeech(socket),
             // Legacy text command has no client contribution, but still consumes the already
             // published one-time server offer with an empty clientSeed.
             handleGameQueue: (commandSocket) => runAdmission('chat_game_queue',
@@ -865,7 +866,8 @@ class SocketHandlers {
             handleStatsRequest: (socket) => this.handleStatsRequest(socket)
         }));
         // Client-signed global chat event (posts under the player's own Smirk npub).
-        on('chat_signed', (payload) => this.chatHandler.handleSignedChatMessage(socket, payload));
+        on('chat_signed', (payload) => this.chatHandler.handleSignedChatMessage(
+            socket, payload, this.tavernManager.captureSpeech(socket)));
     on('player_move', (moveData) => this.movementManager.handleMove(socket.id, moveData));
         on('disconnect', () => this.handleDisconnect(socket));
         on('debug_ping', (data) => this.handleDebugPing(socket, data));

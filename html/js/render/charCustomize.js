@@ -28,12 +28,13 @@
 
     function baseAppearances() {
         var list = [
-            { id: 'default', label: 'Adventurer', kind: 'color', color: '#9aa4b2' },
+            { id: 'char-villager', label: 'Adventurer', kind: 'char' },
             { id: 'green', label: 'Verdant', kind: 'color', color: '#3fb950' },
             { id: 'amber', label: 'Amber', kind: 'color', color: '#d29922' },
             { id: 'red', label: 'Crimson', kind: 'color', color: '#f85149' }
         ];
         for (var cid in (RK.CHARS || {})) {
+            if (cid === 'char-villager') continue;
             var c = RK.CHARS[cid];
             list.push({ id: cid, label: c.label || cid, kind: 'char' });
         }
@@ -50,7 +51,7 @@
     function baseAppearance(id) {
         var all = baseAppearances();
         for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
-        return all[0];
+        return all.find(function (a) { return a.id === 'char-villager'; }) || null;
     }
 
     // The base appearance catalog. Kept for existing callers that expect a flat list.
@@ -59,10 +60,10 @@
     RK.normalizeAppearance = function (input) {
         if (input && input.appearance && !input.avatar) input = input.appearance;
         if (typeof input === 'string') input = { avatar: input };
-        input = input || {};
+        if (!input || typeof input !== 'object') input = {};
 
-        var avatar = input.avatar || input.id || 'default';
-        if (!baseAppearance(avatar) || baseAppearance(avatar).id !== avatar) avatar = 'default';
+        var avatar = input.avatar || input.id || 'char-villager';
+        if (avatar === 'default' || !baseAppearance(avatar) || baseAppearance(avatar).id !== avatar) avatar = 'char-villager';
 
         var base = baseAppearance(avatar);
         var isChar = !!(RK.isChar && RK.isChar(avatar));
@@ -134,6 +135,8 @@
 
     function appearanceVisibleInProjection(a, projection) {
         if (!a) return false;
+        // The free default remains selectable across projections; this does not unlock a mode.
+        if (a.id === 'char-villager') return true;
         if (projection === 'topdown') return a.kind === 'color' || a.kind === 'char' || a.kind === 'skin';
         if (projection === 'iso') return hasIsoCharacter(a);
         if (projection === '3d') return a.kind === 'model3d';

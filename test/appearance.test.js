@@ -39,11 +39,8 @@ describe('appearance catalog normalization', () => {
         });
     });
 
-    test('falls back unknown avatars to default', () => {
-        expect(Appearance.normalizeAppearance('rainbow')).toEqual({
-            avatar: 'default',
-            tint: 'none',
-            equipment: { body: 'none', head: 'none', shield: 'none', weapon: 'none' }
-        });
+    test.each([undefined, null, {}, 'default', 'rainbow'])('normalizes legacy and missing defaults to the free Adventurer (%p)', input => {
+        expect(Appearance.normalizeAppearance(input)).toEqual(Appearance.normalizeAppearance('char-villager'));
+        expect(Appearance.normalizeAppearance(input).avatar).toBe('char-villager');
     });
 });

@@ -295,16 +295,23 @@ class ChatHistoryManager {
      * @param {number} userId - User ID to check
      * @returns {boolean} True if user is banned
      */
-    async isUserChatBanned(userId) {
-        if (!userId || !this.db) return false;
+    async isUserChatBanned(userId, { strict = false } = {}) {
+        if (!userId || !this.db) {
+            if (strict) throw new Error('Chat moderation is temporarily unavailable.');
+            return false;
+        }
 
         try {
             const result = await this.db.query(
                 'SELECT chat_banned FROM users WHERE id = $1',
                 [userId]
             );
+            if (strict && typeof result.rows[0]?.chat_banned !== 'boolean') {
+                throw new Error('Chat moderation is temporarily unavailable.');
+            }
             return result.rows[0]?.chat_banned === true;
         } catch (error) {
+            if (strict) throw new Error('Chat moderation is temporarily unavailable.');
             console.error('Failed to check chat ban status:', error.message);
             return false;
         }

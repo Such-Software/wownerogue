@@ -81,8 +81,8 @@ describe('IdentityService', () => {
 
     const snapshot = await svc.saveAppearanceForSocket(makeSocket(), { avatar: 'monero-knight' });
 
-    expect(snapshot.appearance.avatar).toBe('default');
-    expect(db.state.user.appearance.avatar).toBe('default');
+    expect(snapshot.appearance.avatar).toBe('char-villager');
+    expect(db.state.user.appearance.avatar).toBe('char-villager');
   });
 
   test('allows an explicitly granted pack appearance', async () => {

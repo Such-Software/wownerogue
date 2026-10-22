@@ -7,8 +7,8 @@ describe('cosmetic entitlements', () => {
 
     expect(Entitlements.canUsePack(entitlements, 'generated-skins')).toBe(false);
     expect(Entitlements.canUsePack(entitlements, 'kenney-3d-characters')).toBe(false);
-    expect(Entitlements.normalizeAppearance({ avatar: 'monero-knight' }, entitlements).avatar).toBe('default');
-    expect(Entitlements.normalizeAppearance({ avatar: 'kenney-survivor-male' }, entitlements).avatar).toBe('default');
+    expect(Entitlements.normalizeAppearance({ avatar: 'monero-knight' }, entitlements).avatar).toBe('char-villager');
+    expect(Entitlements.normalizeAppearance({ avatar: 'kenney-survivor-male' }, entitlements).avatar).toBe('char-villager');
   });
 
   test('graduated ladder: credit spend unlocks packs by threshold', () => {
@@ -32,7 +32,7 @@ describe('cosmetic entitlements', () => {
     expect(entitlements.packs['generated-skins']).toBe(true);
     expect(entitlements.packs['kenney-3d-characters']).toBe(false);
     expect(Entitlements.normalizeAppearance({ avatar: 'monero-knight' }, entitlements).avatar).toBe('monero-knight');
-    expect(Entitlements.normalizeAppearance({ avatar: 'kenney-survivor-male' }, entitlements).avatar).toBe('default');
+    expect(Entitlements.normalizeAppearance({ avatar: 'kenney-survivor-male' }, entitlements).avatar).toBe('char-villager');
   });
 
   test('appearance catalog reports all premium avatar ids, including 3D models', () => {

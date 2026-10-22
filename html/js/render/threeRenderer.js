@@ -919,6 +919,31 @@
         return true;
     };
 
+    // Project the live interpolated mesh head into the host's CSS viewport. The chat overlay
+    // uses viewport pixels, so neither the 2D camera nor device-pixel scaling belongs here.
+    ThreeRenderer.prototype.projectEntityHead = function (id) {
+        if (this._destroyed || !this.renderer || !this.camera ||
+            !Object.prototype.hasOwnProperty.call(this.entities, id)) return null;
+        var entity = this.entities[id];
+        if (!entity || !entity.obj || entity.obj.visible === false) return null;
+        var canvas = this.renderer.domElement;
+        if (!canvas || !canvas.getBoundingClientRect || !this.host.getBoundingClientRect) return null;
+        var rect = canvas.getBoundingClientRect(), host = this.host.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0 && host.width > 0 && host.height > 0)) return null;
+        // Both fitted character models and the built-in avatar fallback are below two units.
+        var head = new this.THREE.Vector3(0, 2, 0);
+        entity.obj.updateWorldMatrix(true, false);
+        entity.obj.localToWorld(head);
+        this.camera.updateMatrixWorld();
+        head.project(this.camera);
+        if (![head.x, head.y, head.z].every(Number.isFinite) ||
+            Math.abs(head.x) > 1 || Math.abs(head.y) > 1 || Math.abs(head.z) > 1) return null;
+        var x = rect.left - host.left + (head.x + 1) * rect.width / 2;
+        var y = rect.top - host.top + (1 - head.y) * rect.height / 2;
+        if (x < 0 || y < 0 || x > host.width || y > host.height) return null;
+        return { x: x, y: y };
+    };
+
     ThreeRenderer.prototype.destroy = function () {
         this._destroyed = true;
         if (this._raf) cancelAnimationFrame(this._raf);

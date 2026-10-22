@@ -102,9 +102,11 @@ the flat `avatar` field remains as a compatibility shortcut and as the first dis
 sprite and skin loading.
 
 Normalization in `src/multiplayer/appearance.js` is total: an unknown avatar id collapses to
-`default`, unknown equipment collapses to `none` per slot, and unknown tints, skin tones, and hair
+`char-villager` (Adventurer), including the legacy `default` alias. Unknown equipment collapses to `none` per slot, and unknown tints, skin tones, and hair
 colors collapse to their defaults. Flat colour avatars carry no equipment or colour detail; 3D model
-avatars carry colours but no 2D equipment overlays; character avatars carry both.
+avatars carry colours but no 2D equipment overlays; character avatars carry both. The free Adventurer
+card is visible in every projection picker. Its topdown sprite does not require a premium environment
+pack; switching projection preserves the saved identity and existing pack restrictions.
 
 The contract is renderer-agnostic:
 
@@ -224,9 +226,16 @@ governs them.
 Message text is escaped at publish time because delivery is trusted-escaped and rendered as HTML on
 the client.
 
-Speech bubbles resolve the speaker from the occupant list **by display name**. The chat provider
-publishes a short `publicId`, never the raw socket id, so anything keying bubbles off `socketId`
-never fires.
+Accepted live speech uses the room-only `tavern_speech` event and the exact occupant handle already
+present in its room snapshot. Names, global public IDs, history and remote relay events never identify
+a bubble speaker. Local delivery emits the bubble before any pending relay publication completes;
+this does not claim relay delivery. Bubbles render literal text above the character, wrap within the
+viewport, expire, and are removed when the occupant leaves. See [CHAT_AND_NOSTR.md](CHAT_AND_NOSTR.md).
+
+Ambient actors follow room semantics: patrons spend most of their time in table seats, with one short
+excursion at a time and a shared quiet interval. The waitress follows table-service stops; the
+barkeep stays in the connected floor lane behind the counter. Rooms missing suitable furniture
+omit these actors. Decorative movement does not alter server player collision or authority.
 
 ## Chain ambience
 
@@ -341,9 +350,10 @@ For the isolated, gameplay-only Tavern browser smoke, run `npm run test:showcase
 `src`. It starts a fresh loopback server and two anonymous browser contexts, with no database,
 wallet, purchase, or queue/race flow. Mica receives synthetic `roguelike-interior` and `iso-dungeon`
 pack grants from the source-owned default catalog to prove permitted character drawing and Iso rendering.
-Moth receives the catalog's zero-grant snapshot and must retain original-only access. Both balances
+Moth receives the catalog's zero-grant snapshot and must retain original-only access. The smoke also submits one local message, checks its literal chat line and exact speaker bubble in
+both views, and verifies the zero-grant Adventurer picker and real character draw path. Both balances
 remain zero; neither fixture represents a purchase or production entitlement. Screenshots and a JSON result go to a unique directory under
 `~/Build/wowngeon/showcase-browser`; pass `-- --output-root <directory>` to choose another output
 root. The browser blocks requests outside its loopback server. A local browser route injects a 404
-for the generated Wownero skin sheet so its readable failed-asset state is checked consistently,
-whether or not that ignored asset is present on the workstation.
+for each of the three registered generated skin sheets so their failed-asset state is checked
+consistently, whether or not these ignored assets are present on the workstation.
