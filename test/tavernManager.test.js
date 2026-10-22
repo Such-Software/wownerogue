@@ -123,7 +123,8 @@ describe('TavernManager', () => {
             const mgr = new TavernManager({ io });
             const s = makeFakeSocket('a', io);
             await mgr.join(s, { appearance: { avatar: 'monero-knight' } });
-            expect(mgr.room.getOccupant('a').avatar).toBe('default');
+            expect(mgr.room.getOccupant('a').avatar).not.toBe('monero-knight');
+            expect(TavernManager.AVATARS).toContain(mgr.room.getOccupant('a').avatar);
 
             const paid = new TavernManager({
                 io,

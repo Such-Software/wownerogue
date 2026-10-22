@@ -34,12 +34,12 @@ function buildDefaultTavern(cols = 28, rows = 15) {
     for (let x = 3; x < cols - 3; x += 4) set(x, 0, 'W');
     for (let y = 4; y < rows - 3; y += 4) { set(0, y, 'W'); set(cols - 1, y, 'W'); }
 
-    // The bar: a counter across the top interior (row 2), a shelf of bottles behind it (row 1),
-    // and a keg (barrel) bracketing each end. Row 1 is the bartender's space, sealed off by the
-    // counter; players can't get behind it.
+    // The bar: a counter across the top interior (row 2), two bottle shelves as endcaps behind
+    // it (row 1), and a keg bracketing each end. The open row between the endcaps is a legal
+    // bartender lane, while the counter still seals it off from the customer floor.
     const barY = 2, barX0 = 3, barX1 = cols - 5;
     for (let x = barX0; x <= barX1; x++) set(x, barY, '=');
-    for (let x = barX0; x <= barX1; x += 2) set(x, barY - 1, 'h'); // bottles behind the bar
+    set(barX0, barY - 1, 'h'); set(barX1, barY - 1, 'h'); // bottle-shelf endcaps, clear staff lane
     set(barX0 - 1, barY, 'k'); set(barX1 + 1, barY, 'k');           // kegs bracket the counter
 
     // Tables (each with a chair below it), spread across the main floor with walkable aisles.

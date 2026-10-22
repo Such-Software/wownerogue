@@ -27,7 +27,7 @@ class SocketChatProvider extends ChatProvider {
     }
 
     async publish(msg = {}) {
-        const { scope = 'global', username, text, ts = Date.now(), socketId = null, userId = null } = msg;
+        const { scope = 'global', username, text, ts = Date.now(), socketId = null, userId = null, onLocalDelivery = null } = msg;
 
         // Defense in depth (S1): never broadcast the raw full socket.id to other clients; it is
         // a hijackable handle. Derive a short, non-sensitive public id for display/attribution.
@@ -44,12 +44,14 @@ class SocketChatProvider extends ChatProvider {
             } else {
                 this.io.emit('chat_broadcast', { username, message: text, timestamp: ts, publicId });
             }
+            if (typeof onLocalDelivery === 'function') onLocalDelivery();
             return;
         }
 
         // Room-scoped (e.g. tavern): delivered only to occupants of that room. The `scope`
         // field lets a room client filter these from any global broadcasts it also receives.
         this.io.to(scope).emit('chat_broadcast', { username, message: text, timestamp: ts, publicId, scope });
+        if (typeof onLocalDelivery === 'function') onLocalDelivery();
     }
 
     async getHistory({ scope = 'global', limit = 50 } = {}) {

@@ -518,6 +518,11 @@
             // Spawn client-side NPCs (bartender, patrons, cat) for a lively tavern.
             tavernLife = new RK.TavernLife(stageEl, function () { return currentScene; }, function () {
                 return currentRenderer && currentRenderer.cell || 24;
+            }, {
+                projectEntityHead: function (entity) {
+                    return currentRenderer && typeof currentRenderer.projectEntityHead === 'function'
+                        ? currentRenderer.projectEntityHead(entity.id) : null;
+                }
             });
             tavernLife.setMode(currentMode || 'tiles');
             tavernLife.spawn();
@@ -565,27 +570,17 @@
             var isGlobal = !m.scope || m.scope === 'global';
             if (!isGlobal && m.scope !== state.channel) return;
             addChatLine(m.username, m.message);
-            // Speech bubble above the speaker's avatar.
-            //
-            // This used to key off `m.socketId`, which the chat provider deliberately stopped
-            // sending (it publishes a short `publicId` instead so the raw socket id never leaves the
-            // server), so the bubble branch simply never ran and nobody in the tavern ever spoke
-            // visibly. Resolve the speaker from the occupant list by display name instead, which
-            // needs no additional identity on the wire.
-            if (tavernLife) {
-                var speaker = null;
-                for (var oi = 0; oi < state.occupants.length; oi++) {
-                    if (state.occupants[oi] && state.occupants[oi].name === m.username) {
-                        speaker = state.occupants[oi];
-                        break;
-                    }
-                }
-                if (speaker) {
-                    // m.message is server-escaped HTML; strip tags for the bubble.
-                    var text = m.message ? m.message.replace(/<[^>]*>/g, '') : '';
-                    tavernLife.showPlayerBubble(speaker.id, text);
-                }
-            }
+        });
+        // Only the server's accepted, room-scoped event can identify a live speaker.
+        // Global messages, relay deliveries and history never imply a room occupant.
+        socket.on('tavern_speech', function (m) {
+            if (!m || typeof m.occupantId !== 'string' || typeof m.text !== 'string') return;
+            if (!tavernLife) return;
+            var present = state.occupants.some(function (o) { return o && o.id === m.occupantId; });
+            if (present) tavernLife.showPlayerBubble(m.occupantId, m.text);
+        });
+        socket.on('status_update', function (n) {
+            if (n && typeof n.message === 'string') addSystemLine(n.message);
         });
         socket.on('tavern_notice', function (n) {
             if (n && n.message) addSystemLine(n.message);
@@ -622,11 +617,10 @@
             e.preventDefault();
             var text = chatInput.value;
             if (text && text.trim()) {
-                // Try to post under the player's OWN Smirk npub (per-player identity); fall back to
-                // the normal unsigned send if Smirk signing isn't available/declined.
-                if (window.smirkChatSign) {
+                // A declined/failed signing request is not permission to send unsigned chat.
+                if (window.smirkChatSign && window.smirk && typeof window.smirk.signNostrEvent === 'function') {
                     window.smirkChatSign(socket, text.trim(), 'wowngeon-global').then(function (signed) {
-                        if (!signed) socket.emit('tavern_chat', { text: text });
+                        if (!signed) addSystemLine('Message not sent. Signing was declined or unavailable.');
                     });
                 } else {
                     socket.emit('tavern_chat', { text: text });

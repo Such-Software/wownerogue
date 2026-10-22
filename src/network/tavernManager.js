@@ -38,6 +38,7 @@ class TavernManager {
         this._lastMoveAt = new Map();    // socketId -> timestamp
         this.chatCooldownMs = 900;       // per-occupant chat flood guard
         this._lastChatAt = new Map();    // socketId -> timestamp
+        this._chatInFlight = new Map();  // socketId -> unique send admission token
         this._tickInterval = null;
         this.entitlementProvider = entitlementProvider;
 
@@ -169,40 +170,89 @@ class TavernManager {
         if (!this.enabled) return;
         const occ = this.room.getOccupant(socket.id);
         if (!occ) return; // must be in the tavern to talk
+        const speech = this._captureSpeech(socket);
 
         let text = (data && typeof data.text === 'string') ? data.text.trim() : '';
         if (!text) return;
         if (text.length > TavernManager.MAX_CHAT_LENGTH) text = text.slice(0, TavernManager.MAX_CHAT_LENGTH);
 
         const now = Date.now();
-        if (now - (this._lastChatAt.get(socket.id) || 0) < this.chatCooldownMs) {
+        if (this._chatInFlight.has(socket.id)
+            || now - (this._lastChatAt.get(socket.id) || 0) < this.chatCooldownMs) {
             // Tell the sender instead of silently dropping: a silent drop with a cleared
             // input reads as "my message disappeared".
             this._notice(socket, 'Easy, wait a moment before your next message.');
             return;
         }
 
-        const moderation = await this._moderateChat(socket);
-        if (!moderation.allowed) {
-            this._notice(socket, moderation.message);
-            return;
+        // Claim synchronously before moderation can yield. A failed lookup releases the claim
+        // without imposing a new cooldown; accepted delivery keeps the existing cooldown policy.
+        const admission = {};
+        this._chatInFlight.set(socket.id, admission);
+        try {
+            const moderation = await this._moderateChat(socket);
+            if (!moderation.allowed) {
+                this._notice(socket, moderation.message);
+                return;
+            }
+            if (!speech.isCurrent()) return;
+            this._lastChatAt.set(socket.id, now);
+
+            const username = occ.name || String(socket.id).slice(0, 6);
+            // Global chat remains trusted-escaped HTML. Speech uses the original plain text.
+            const provider = this.globalChatProvider || this.chatProvider;
+            const scope = this.globalChatProvider ? 'global' : this.channel;
+            await provider.publish({
+                scope,
+                username,
+                text: escapeHtml(text),
+                ts: now,
+                socketId: socket.id,
+                userId: moderation.userId,
+                onLocalDelivery: () => {
+                    // Relay fan-out can remain pending after accepted local delivery.
+                    if (this._chatInFlight.get(socket.id) === admission) this._chatInFlight.delete(socket.id);
+                    speech.accept(text);
+                }
+            });
+        } finally {
+            // A later send, including on the same visit, may already own another admission.
+            if (this._chatInFlight.get(socket.id) === admission) this._chatInFlight.delete(socket.id);
         }
+    }
 
-        this._lastChatAt.set(socket.id, now);
+    // Capture before async authentication/publishing. A new visit on the same socket is a
+    // different Occupant and must never inherit a delayed message from the previous visit.
+    captureSpeech(socket) {
+        return this._captureSpeech(socket)?.accept || null;
+    }
 
-        const username = occ.name || String(socket.id).slice(0, 6);
-        // Escape here: delivery is trusted-escaped and rendered as HTML on the client. Routing to
-        // global chat (persisted, broadcast to everyone, relayed over nostr when enabled) keeps the
-        // tavern in one global conversation; tavern-scoped is used when no global provider exists.
-        const provider = this.globalChatProvider || this.chatProvider;
-        const scope = this.globalChatProvider ? 'global' : this.channel;
-        provider.publish({
-            scope,
-            username,
-            text: escapeHtml(text),
-            ts: now,
-            socketId: socket.id,
-            userId: moderation.userId
+    _captureSpeech(socket) {
+        const occ = this.enabled && this.room.getOccupant(socket.id);
+        if (!occ) return null;
+        const sessions = this.chatModeration?.sessionManager?.sessions;
+        const session = sessions?.get(socket.id);
+        const userId = session?.id;
+        const isCurrent = () => this.enabled && socket.disconnected !== true
+            && this.room.getOccupant(socket.id) === occ
+            && sessions?.get(socket.id) === session && session?.id === userId;
+        let delivered = false;
+        return {
+            isCurrent,
+            accept: (text) => {
+                if (delivered) return;
+                delivered = true;
+                if (isCurrent()) this._emitSpeech(occ, text);
+            }
+        };
+    }
+
+    _emitSpeech(occ, text) {
+        if (!this.enabled || this.room.getOccupant(occ.id) !== occ) return;
+        if (typeof text !== 'string' || !text.trim()) return;
+        // Occupant handles already belong to this room snapshot. Never add them to global chat.
+        this.io.to(this.channel).emit('tavern_speech', {
+            occupantId: occ.id, text: text.slice(0, TavernManager.MAX_CHAT_LENGTH)
         });
     }
 
@@ -237,15 +287,18 @@ class TavernManager {
             const row = mod.getOrCreateUser ? await mod.getOrCreateUser(socket.id) : null;
             userId = row?.id || null;
         } catch (e) {
-            if (this.debugManager?.CONSOLE_LOGGING) console.warn('[Tavern] chat user lookup failed:', e.message);
+            return { allowed: false, message: 'Chat moderation is temporarily unavailable.', userId: null };
         }
 
+        if (!userId && mod.getOrCreateUser) {
+            return { allowed: false, message: 'Chat moderation is temporarily unavailable.', userId: null };
+        }
         if (userId && mod.chatHistory?.isUserChatBanned) {
             let banned = false;
             try {
-                banned = await mod.chatHistory.isUserChatBanned(userId);
+                banned = await mod.chatHistory.isUserChatBanned(userId, { strict: true });
             } catch (e) {
-                if (this.debugManager?.CONSOLE_LOGGING) console.warn('[Tavern] ban lookup failed:', e.message);
+                return { allowed: false, message: 'Chat moderation is temporarily unavailable.', userId };
             }
             if (banned) return { allowed: false, message: 'You have been banned from chat.', userId };
         }
@@ -261,6 +314,7 @@ class TavernManager {
         const existed = this.room.removeOccupant(socketId);
         this._lastMoveAt.delete(socketId);
         this._lastChatAt.delete(socketId);
+        this._chatInFlight.delete(socketId);
         if (existed) {
             const sock = socket || (this.io.sockets?.sockets?.get?.(socketId));
             if (sock) sock.leave(this.channel);
@@ -281,6 +335,7 @@ class TavernManager {
         }
         this._lastMoveAt.clear();
         this._lastChatAt.clear();
+        this._chatInFlight.clear();
     }
 }
 

@@ -71,6 +71,7 @@
             this._sizeKey = key;
             this._hadRoom = hasRoom;
         }
+        this._lastScene = scene;
         this._syncEntities(scene);
     };
 
@@ -292,11 +293,38 @@
         var cell = this.cell, seen = {}, RKr = window.RK, focusFallback = null;
         for (var i = 0; i < scene.entities.length; i++) {
             var e = scene.entities[i];
+            var isAvatar = e.kind === 'avatar' || e.kind === 'player';
+            var visual = isAvatar && RKr && RKr.avatarVisuals && RKr.avatarVisuals.resolve(
+                e.appearance || { avatar: e.avatar }, { projection: 'topdown', context: 'tavern', entity: e });
+            if (visual) e = Object.assign({}, e, { appearance: visual.appearance, avatar: visual.appearance.avatar });
             seen[e.id] = true;
-            var wantSkin = !!(RKr && RKr.isSkin && RKr.isSkin(e.avatar));
-            var wantChar = !!(RKr && RKr.isChar && RKr.isChar(e.avatar));
-            if (wantSkin && !RKr.skinSheet(e.avatar)) RKr.loadSkin(e.avatar); // lazy fetch
-            if (wantChar && !RKr.charAtlas()) RKr.loadCharAtlas();
+            var allowed = !visual || visual.allowed;
+            var wantSkin = !!(allowed && RKr && RKr.isSkin && RKr.isSkin(e.avatar));
+            var wantChar = !!(allowed && RKr && RKr.isChar && RKr.isChar(e.avatar));
+            if (visual && (wantSkin || wantChar)) {
+                var self = this;
+                if (!this._onAvatarReady) this._onAvatarReady = function () {
+                    if (!self.app || self._avatarRepaintQueued || !self._lastScene) return;
+                    // A failed load is not readiness; do not schedule a retry loop.
+                    var ready = self._lastScene.entities.some(function (entity) {
+                        if (entity.kind !== 'avatar' && entity.kind !== 'player') return false;
+                        var v = RKr.avatarVisuals.resolve(entity.appearance || { avatar: entity.avatar }, { projection: 'topdown' });
+                        var sprite = self.sprites[entity.id];
+                        return (!sprite || sprite.kind !== v.kind) && v.allowed && ((v.kind === 'char' && RKr.charAtlas && RKr.charAtlas()) ||
+                            (v.kind === 'skin' && RKr.skinSheet && RKr.skinSheet(v.appearance.avatar)));
+                    });
+                    if (!ready) return;
+                    self._avatarRepaintQueued = true;
+                    root.requestAnimationFrame(function () {
+                        self._avatarRepaintQueued = false;
+                        if (self.app && self._lastScene) self._syncEntities(self._lastScene);
+                    });
+                };
+                RKr.avatarVisuals.ensureCanvasReady(visual, this._onAvatarReady);
+            } else {
+                if (wantSkin && !RKr.skinSheet(e.avatar)) RKr.loadSkin(e.avatar);
+                if (wantChar && !RKr.charAtlas()) RKr.loadCharAtlas();
+            }
             var kind = (wantSkin && RKr.skinSheet(e.avatar)) ? 'skin'
                      : (wantChar && RKr.charAtlas()) ? 'char'
                      : 'circle';

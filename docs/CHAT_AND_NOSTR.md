@@ -2,7 +2,9 @@
 
 Chat has two layers: local delivery (Socket.IO plus Postgres history) and an optional nostr fan-out
 that carries the same conversation across servers and into the Smirk ecosystem. Both sit behind one
-seam, so callers are identical either way.
+seam, so callers are identical either way. Local chat does not require a relay or a wallet.
+Smirk can sign messages with the player's Nostr identity; relay transport is configured separately
+through `NOSTR_RELAYS` (default `wss://relay.smirk.cash`). Signing does not enable relay fan-out.
 
 ## The provider seam
 
@@ -54,12 +56,13 @@ one object is the whole difference between the two identity models.
 
 ### Server bridge signer
 
-The server signs every outbound global message with a single key from `NOSTR_BRIDGE_SK`
+The server signs ordinary outbound global messages with a single key from `NOSTR_BRIDGE_SK`
 (`createBridgeSigner`, accepting an `nsec` or 64-hex secret). The player's display name rides in an
 `['n', name]` tag. This works for every player, including anonymous ones, but on nostr the whole
 server reads as one account. The bridge pubkey must be accepted by the relay's write policy, either
 by being a registered npub or by sitting in the relay write allowlist. With no key configured the
-signer is `null` and global chat is receive-only.
+signer is `null`: ordinary messages still deliver locally but are not bridge-published. Verified
+client-signed messages can still publish without a bridge key when relay fan-out is enabled.
 
 ### Client per-player signing
 
@@ -88,7 +91,7 @@ client                          server (ChatHandler)                  relay
   login); a valid signature by any other key is rejected with `pubkey-mismatch`. Content is capped at
   280 characters.
 - `ChatHandler.handleSignedChatMessage` runs the sequence: rate limit, resolve the session's npub
-  from the database, verify, escape, relay. A session with no linked npub is told to sign in with
+  from the database, verify, check the chat ban, escape, relay. A failed ban lookup refuses delivery. A session with no linked npub is told to sign in with
   Smirk. The display name comes from `display_name` or `username`, falling back to the first 8
   characters of the npub.
 - `NostrChatProvider.relaySignedEvent` performs local delivery and then `transport.publish(event)`
@@ -96,9 +99,9 @@ client                          server (ChatHandler)                  relay
 - `html/js/smirkChatSign.js` is the client helper. It signs through `window.smirk.signNostrEvent` and
   emits `chat_signed`. Signing is attempted first; on `NOT_AUTHORIZED` it calls `getNostrPublicKey()`
   once to obtain the nostr scope grant and retries, the same pattern as `SmirkAuth`, so a returning
-  user sees a single approval. It resolves `false` whenever Smirk is unavailable or declines, and the
-  caller then falls back to the ordinary unsigned send. The helper is loaded on `tavern.html`, whose
-  send path tries it before `tavern_chat`.
+  user sees a single approval. The helper resolves `false` whenever Smirk is unavailable or declines.
+  The Tavern sends ordinary `tavern_chat` when no signer is available. Once signing is attempted, a
+  denial or failure shows a notice and sends nothing; it never silently switches to unsigned chat.
 
 The server registers the `chat_signed` socket event in `src/network/socketHandlers.js`.
 
@@ -108,10 +111,10 @@ The game publishes each event to every relay in `NOSTR_RELAYS` and lets each rel
 reject it; there is no per-player routing or allowlist in game code. Reading is the mirror: subscribe
 to all relays and dedupe by event id.
 
-| Player | Signs as | Reaches |
+| Message | Signs as | Reaches |
 |--------|----------|---------|
-| Anonymous | not signed | in-game chat only |
-| Signed in with Smirk | own npub | in-game chat plus every relay whose write policy accepts that npub |
+| Ordinary message, including anonymous | server bridge key if configured | in-game chat; optional bridge publication when enabled and configured |
+| Verified client-signed message | own npub | in-game chat plus every relay whose write policy accepts that npub |
 
 A premium subscription also sets the player's entitlement tier, which unlocks cosmetics; see
 [MONETIZATION.md](MONETIZATION.md). Entitlements are per-pack tier based
@@ -141,7 +144,8 @@ Relay admission is configured on the relay side, in the Smirk backend that front
   are escaped and capped at 200 characters for in-game rendering; the event published to nostr is the
   client's original, unmodified.
 - Chat bans are checked against `ChatHistoryManager.isUserChatBanned` before a message is published.
-  The tavern applies the same rate limiter and ban check before anything reaches global chat.
+  The tavern and signed path apply the same rate limiter and ban check before anything reaches global
+  chat. User/ban lookup failures refuse delivery; missing moderation evidence is not an allowed status.
 - Remote (relay-sourced) messages are escaped with `escapeChatText`, capped at 200 characters,
   attributed from the `n` tag or the first 8 characters of the author pubkey, and rate limited to
   `maxRemotePerMin` (120 per minute by default) so a hostile relay cannot flood in-game clients.
@@ -152,6 +156,22 @@ Relay admission is configured on the relay side, in the Smirk backend that front
 - `NostrTransport` degrades to a warning and a no-op if `nostr-tools` or `ws` cannot load, so
   enabling nostr chat cannot crash the server.
 
+## Tavern speech bubbles
+
+`chat_broadcast` and `chat_history` populate the log only. Display names and short public IDs are
+not avatar identities: duplicate names, prefix collisions and relay posts must never select a speaker.
+
+After accepted local delivery, a trusted server-only `onLocalDelivery` callback emits `tavern_speech` only to the speaker's Tavern room,
+with `{occupantId, text}`. The handle is the exact occupant ID already in that room's snapshots; text
+is plain text for the renderer, not HTML. The server captures the current occupant and session before
+async work and rechecks them after publishing. Leaving/rejoining or replacing the session suppresses
+stale speech. This callback runs once after the local broadcast returns, before optional relay work,
+so a pending or refused relay cannot delay or duplicate the bubble. It is never a wire/history field.
+The client additionally requires that exact occupant in its current room snapshot.
+Ordinary and verified signed sends use this path. Rejected messages, history and remote relay posts
+do not produce speech. A bubble proves accepted local delivery, not persistence or relay acceptance:
+optional relay failures can be contained after the provider has delivered locally.
+
 ## Configuration
 
 | Variable | Meaning |
@@ -161,7 +181,7 @@ Relay admission is configured on the relay side, in the Smirk backend that front
 | `NOSTR_RELAYS` | Comma-separated relay URLs. Default `wss://relay.smirk.cash`. |
 | `NOSTR_CHAT_TAG` | Shared channel topic. Default `wowngeon-global`. |
 | `NOSTR_CHAT_KIND` | Event kind. Default `1`. |
-| `NOSTR_BRIDGE_SK` | Bridge secret key (`nsec` or 64-hex). Omit for receive-only global chat. |
+| `NOSTR_BRIDGE_SK` | Bridge secret key (`nsec` or 64-hex). Omit to disable bridge signing of ordinary messages; client-signed publication is independent. |
 | `NOSTR_SERVER_ORIGIN` | Value for the `origin` tag on bridge-signed events. Falls back to `SERVER_ID`. |
 
 The full server environment template is `src/.env.example`.

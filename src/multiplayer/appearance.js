@@ -100,8 +100,9 @@ function normalizeAppearance(input = {}) {
     if (typeof input === 'string') input = { avatar: input };
     if (!input || typeof input !== 'object') input = {};
 
-    let avatar = input.avatar || input.id || 'default';
-    if (!isValidAvatar(avatar)) avatar = 'default';
+    let avatar = input.avatar || input.id || 'char-villager';
+    // Retain legacy input compatibility while giving every default a real free character.
+    if (avatar === 'default' || !isValidAvatar(avatar)) avatar = 'char-villager';
 
     if (!isCharAvatar(avatar) && !isModel3dAvatar(avatar)) {
         return { avatar, tint: 'none', equipment: { ...DEFAULT_EQUIPMENT } };

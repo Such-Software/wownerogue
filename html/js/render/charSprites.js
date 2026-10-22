@@ -103,7 +103,7 @@
 
     // Curated humanoid characters (verified non-empty, by sight), one tile index each.
     RK.CHARS = {
-        'char-villager':  { id: 'char-villager',  label: 'Villager',  frame: 270 },
+        'char-villager':  { id: 'char-villager',  label: 'Adventurer', frame: 270 },
         'char-elder':     { id: 'char-elder',     label: 'Elder',     frame: 271 },
         'char-barbarian': { id: 'char-barbarian', label: 'Barbarian', frame: 324 },
         'char-monk':      { id: 'char-monk',      label: 'Monk',      frame: 379 },

@@ -6,7 +6,7 @@
 
     var RK = root.RK = root.RK || {};
     var DEFAULT_EQUIPMENT = { body: 'none', head: 'none', shield: 'none', weapon: 'none' };
-    var DEFAULT_APPEARANCE = { avatar: 'default', tint: 'none', equipment: DEFAULT_EQUIPMENT };
+    var DEFAULT_APPEARANCE = { avatar: 'char-villager', tint: 'none', equipment: DEFAULT_EQUIPMENT };
     var loading = {};
 
     function normalize(appearance) {
@@ -20,7 +20,8 @@
             return (skin && skin.pack) || 'generated-skins';
         }
         if (kind === 'model3d') return 'kenney-3d-characters';
-        return 'roguelike-interior';
+        // Built-in characters and color identities are free, independent of environment packs.
+        return null;
     }
 
     function kindFor(appearance, projection) {
@@ -88,17 +89,6 @@
         opts = opts || {};
         var ap = normalize(appearance);
         var projection = opts.projection || 'legacy-rot';
-        // A player who never customized arrives as avatar 'default' (or an unknown id), which is not
-        // a char/skin/model and would fall to the grey circle. On the TAVERN canvas path, coerce it
-        // to a real Kenney character so nobody is a grey dot in a room of people. But NOT on
-        // 'legacy-rot' (the single-player dungeon): there RenderEngine falls back to the original @
-        // hero TILE, which is what an un-customized player expects (grey circle was a canvas-only
-        // problem). iso/3d keep their own fallbacks below.
-        if (ap && projection !== 'iso' && projection !== '3d' && projection !== 'legacy-rot') {
-            var a = ap.avatar;
-            var known = (RK.isChar && RK.isChar(a)) || (RK.isSkin && RK.isSkin(a)) || (a && /^kenney-/.test(a));
-            if (!known) ap = Object.assign({}, ap, { avatar: 'char-villager' });
-        }
         var kind = kindFor(ap, projection);
         var pack = packFor(ap, kind, projection);
         var visual = {

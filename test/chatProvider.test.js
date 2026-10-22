@@ -67,3 +67,28 @@ describe('SocketChatProvider', () => {
         expect(shut).toBe(false);
     });
 });
+
+describe('trusted local delivery boundary', () => {
+    test.each(['global', 'tavern:main'])('callback follows successful local emit and is never a payload/history field: %s', async scope => {
+        const io = makeFakeIo();
+        const saved = [];
+        const provider = new SocketChatProvider({ io, historyManager: { saveMessage: async message => { saved.push(message); }, getRecentMessages: async () => [] } });
+        const delivered = jest.fn(() => {
+            expect(io.emitted.some(e => e.event === 'chat_broadcast')).toBe(true);
+        });
+        await provider.publish({ scope, username: 'Speaker', text: 'hello', onLocalDelivery: delivered });
+        expect(delivered).toHaveBeenCalledTimes(1);
+        expect(io.emitted.every(e => !Object.hasOwn(e.payload, 'onLocalDelivery'))).toBe(true);
+        expect(saved.every(message => !Object.hasOwn(message, 'onLocalDelivery'))).toBe(true);
+        await provider.getHistory({ scope });
+        expect(delivered).toHaveBeenCalledTimes(1);
+    });
+
+    test('failed local emit never invokes delivery even though the publisher rejects', async () => {
+        const delivered = jest.fn();
+        const io = { emit() { throw new Error('disposable local emit failure'); } };
+        const provider = new SocketChatProvider({ io });
+        await expect(provider.publish({ scope: 'global', text: 'refused', onLocalDelivery: delivered })).rejects.toThrow();
+        expect(delivered).not.toHaveBeenCalled();
+    });
+});
